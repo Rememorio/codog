@@ -114,13 +114,15 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 11)
+	require.Len(t, infos, 12)
 	require.Equal(t, "bash", infos[0].Name)
 	_, ok = registry.Info("notebook_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("web_fetch")
 	require.True(t, ok)
 	_, ok = registry.Info("web_search")
+	require.True(t, ok)
+	_, ok = registry.Info("tool_search")
 	require.True(t, ok)
 }
 
@@ -198,6 +200,19 @@ func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 	info, ok := registry.Info("notebook_edit")
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
+}
+
+func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	out, err := ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"web fetch","max_results":3}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"query": "web fetch"`)
+	require.Contains(t, out, `"name": "web_fetch"`)
+	require.NotContains(t, out, `"name": "write_file"`)
+
+	info, ok := registry.Info("tool_search")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

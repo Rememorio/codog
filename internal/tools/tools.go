@@ -114,6 +114,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
+	reg.Register(ToolSearchTool{Registry: reg})
 	return reg
 }
 
@@ -917,6 +918,111 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+type ToolSearchTool struct {
+	Registry *Registry
+}
+
+func (ToolSearchTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "tool_search",
+		Description: "Search the currently available Codog tools by name, description, or permission.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query":       map[string]any{"type": "string"},
+				"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ToolSearchTool) Permission() Permission { return PermissionReadOnly }
+
+func (t ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	if t.Registry == nil {
+		return "", errors.New("tool registry is not available")
+	}
+	var payload struct {
+		Query      string `json:"query"`
+		MaxResults int    `json:"max_results"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	limit := payload.MaxResults
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	matches := searchToolInfos(t.Registry.Infos(), payload.Query, limit)
+	return pretty(map[string]any{
+		"query":   strings.TrimSpace(payload.Query),
+		"matches": matches,
+		"total":   len(matches),
+	}), nil
+}
+
+func searchToolInfos(infos []ToolInfo, query string, limit int) []ToolInfo {
+	query = strings.ToLower(strings.TrimSpace(query))
+	terms := strings.Fields(query)
+	type scored struct {
+		info  ToolInfo
+		score int
+	}
+	scoredMatches := make([]scored, 0, len(infos))
+	for _, info := range infos {
+		score := 1
+		if query != "" {
+			score = toolInfoScore(info, terms, query)
+			if score == 0 {
+				continue
+			}
+		}
+		scoredMatches = append(scoredMatches, scored{info: info, score: score})
+	}
+	sort.Slice(scoredMatches, func(i, j int) bool {
+		if scoredMatches[i].score != scoredMatches[j].score {
+			return scoredMatches[i].score > scoredMatches[j].score
+		}
+		return scoredMatches[i].info.Name < scoredMatches[j].info.Name
+	})
+	if len(scoredMatches) > limit {
+		scoredMatches = scoredMatches[:limit]
+	}
+	matches := make([]ToolInfo, 0, len(scoredMatches))
+	for _, match := range scoredMatches {
+		matches = append(matches, match.info)
+	}
+	return matches
+}
+
+func toolInfoScore(info ToolInfo, terms []string, query string) int {
+	haystack := strings.ToLower(info.Name + " " + info.Description + " " + string(info.Permission))
+	score := 0
+	if strings.EqualFold(info.Name, query) {
+		score += 20
+	}
+	if strings.Contains(strings.ToLower(info.Name), query) {
+		score += 10
+	}
+	for _, term := range terms {
+		if strings.Contains(strings.ToLower(info.Name), term) {
+			score += 6
+		}
+		if strings.Contains(haystack, term) {
+			score += 2
+		} else {
+			return 0
+		}
+	}
+	return score
 }
 
 type TodoReadTool struct {
