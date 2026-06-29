@@ -29,6 +29,12 @@ type Task struct {
 	Error         string         `json:"error,omitempty"`
 	RestartedFrom string         `json:"restarted_from,omitempty"`
 	RestartedBy   string         `json:"restarted_by,omitempty"`
+	Messages      []TaskMessage  `json:"messages,omitempty"`
+}
+
+type TaskMessage struct {
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type WatchEvent struct {
@@ -309,6 +315,9 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		if getErr == nil && current.Status != "running" {
 			return
 		}
+		if getErr == nil {
+			task = current
+		}
 		now := time.Now().UTC()
 		task.CompletedAt = &now
 		task.Status = "completed"
@@ -318,6 +327,25 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		}
 		_ = s.save(task)
 	}()
+	return task, nil
+}
+
+func (s Store) Update(id string, message string) (Task, error) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return Task{}, errors.New("message is required")
+	}
+	task, err := s.Status(id)
+	if err != nil {
+		return Task{}, err
+	}
+	task.Messages = append(task.Messages, TaskMessage{
+		Message:   message,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err := s.save(task); err != nil {
+		return Task{}, err
+	}
 	return task, nil
 }
 

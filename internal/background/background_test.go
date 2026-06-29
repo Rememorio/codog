@@ -108,6 +108,28 @@ func TestListRefreshesExitedRunningTask(t *testing.T) {
 	require.Equal(t, "exited", tasks[0].Status)
 }
 
+func TestUpdateAppendsTaskMessage(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Now().UTC()
+	require.NoError(t, store.save(Task{
+		ID:        "task",
+		Command:   "echo hi",
+		Status:    "completed",
+		StartedAt: now,
+		LogPath:   filepath.Join(store.Dir, "task.log"),
+	}))
+
+	task, err := store.Update("task", "first update")
+	require.NoError(t, err)
+	require.Len(t, task.Messages, 1)
+	require.Equal(t, "first update", task.Messages[0].Message)
+
+	task, err = store.Get("task")
+	require.NoError(t, err)
+	require.Len(t, task.Messages, 1)
+	require.Equal(t, "first update", task.Messages[0].Message)
+}
+
 func TestPruneRemovesOldCompletedTasksAndKeepsRunning(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	now := time.Now().UTC()

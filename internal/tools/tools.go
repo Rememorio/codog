@@ -125,6 +125,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskUpdateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStopTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TodoReadTool{Workspace: workspace})
@@ -1355,6 +1357,107 @@ func (t TaskStatusTool) Execute(_ context.Context, input json.RawMessage) (strin
 		return "", err
 	}
 	return pretty(task), nil
+}
+
+type TaskGetTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskGetTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_get",
+		Description: "Get background task metadata and stored task messages by task id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id": map[string]any{"type": "string"},
+				"id":      map[string]any{"type": "string"},
+			},
+			"required":             []string{"task_id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskGetTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TaskGetTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		TaskID string `json:"task_id"`
+		ID     string `json:"id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	id := payload.TaskID
+	if id == "" {
+		id = payload.ID
+	}
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("task_id is required")
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Status(id)
+	if err != nil {
+		return "", err
+	}
+	return pretty(task), nil
+}
+
+type TaskUpdateTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskUpdateTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_update",
+		Description: "Append a message update to a background task registry entry.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id": map[string]any{"type": "string"},
+				"id":      map[string]any{"type": "string"},
+				"message": map[string]any{"type": "string"},
+			},
+			"required":             []string{"task_id", "message"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskUpdateTool) Permission() Permission { return PermissionDanger }
+
+func (t TaskUpdateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		TaskID  string `json:"task_id"`
+		ID      string `json:"id"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	id := payload.TaskID
+	if id == "" {
+		id = payload.ID
+	}
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("task_id is required")
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Update(id, payload.Message)
+	if err != nil {
+		return "", err
+	}
+	last := ""
+	if len(task.Messages) > 0 {
+		last = task.Messages[len(task.Messages)-1].Message
+	}
+	return pretty(map[string]any{
+		"id":            task.ID,
+		"status":        task.Status,
+		"message_count": len(task.Messages),
+		"last_message":  last,
+	}), nil
 }
 
 type TaskStopTool struct {
