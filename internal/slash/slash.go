@@ -65,6 +65,7 @@ func Specs() []Spec {
 		{Name: "/review", Usage: "/review [--staged|--base REF]", Description: "Review changed files with diff summary and security findings."},
 		{Name: "/focus", Usage: "/focus [PATH...]", Description: "Show or add focused context paths."},
 		{Name: "/unfocus", Usage: "/unfocus [PATH...|--all]", Description: "Remove focused context paths."},
+		{Name: "/add-dir", Usage: "/add-dir [PATH...|remove PATH|clear]", Description: "Allow tools to access additional directories."},
 		{Name: "/output-style", Usage: "/output-style [list|show|set|clear]", Description: "Show or change the active output style."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},

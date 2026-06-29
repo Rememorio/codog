@@ -119,6 +119,21 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"additional_dirs":["../shared","/tmp/example"]}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, []string{"../shared", "/tmp/example"}, cfg.AdditionalDirs)
+
+	t.Setenv("CODOG_ADDITIONAL_DIRS", "one"+string(os.PathListSeparator)+"two")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, []string{"one", "two"}, cfg.AdditionalDirs)
+}
+
 func TestLoadEditorBridgeToken(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

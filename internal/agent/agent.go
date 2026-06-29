@@ -35,6 +35,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
+	"github.com/Rememorio/codog/internal/pathscope"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
@@ -163,10 +164,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return err
 	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
 	app := &App{
 		Config:    cfg,
 		Client:    anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
-		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy}),
+		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy, AdditionalDirs: additionalDirs}),
 		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace: workspace,
 		Out:       os.Stdout,
@@ -209,6 +214,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Focus(rest)
 	case "unfocus":
 		return app.Unfocus(rest)
+	case "add-dir":
+		return app.AddDir(rest)
 	case "output-style":
 		return app.OutputStyle(rest)
 	case "skills":
@@ -1776,6 +1783,134 @@ func (a *App) Focus(args []string) error {
 		return err
 	}
 	return a.renderFocusReport(format, report)
+}
+
+func (a *App) AddDir(args []string) error {
+	req, err := parseAddDirArgs(args)
+	if err != nil {
+		return err
+	}
+	var report pathscope.Report
+	switch req.Action {
+	case "list":
+		report, err = pathscope.BuildReport(a.Workspace, a.Config.AdditionalDirs, "list")
+	case "add":
+		if _, err = pathscope.Add(a.Workspace, req.Paths); err == nil {
+			err = a.refreshBuiltinToolScope()
+		}
+		if err == nil {
+			report, err = pathscope.BuildReport(a.Workspace, a.Config.AdditionalDirs, "add")
+		}
+	case "remove":
+		if _, err = pathscope.Remove(a.Workspace, req.Paths); err == nil {
+			err = a.refreshBuiltinToolScope()
+		}
+		if err == nil {
+			report, err = pathscope.BuildReport(a.Workspace, a.Config.AdditionalDirs, "remove")
+		}
+	case "clear":
+		if report, err = pathscope.Clear(a.Workspace); err == nil {
+			err = a.refreshBuiltinToolScope()
+		}
+		if err == nil {
+			report, err = pathscope.BuildReport(a.Workspace, a.Config.AdditionalDirs, "clear")
+		}
+	default:
+		err = fmt.Errorf("unknown add-dir action %q", req.Action)
+	}
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	pathscope.RenderText(a.Out, report)
+	return nil
+}
+
+type addDirRequest struct {
+	Format string
+	Action string
+	Paths  []string
+}
+
+func parseAddDirArgs(args []string) (addDirRequest, error) {
+	req := addDirRequest{Format: "text", Action: "list"}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("add-dir output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--clear":
+			req.Action = "clear"
+		case arg == "--remove":
+			req.Action = "remove"
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown add-dir output format %q", req.Format)
+	}
+	if len(positionals) == 0 {
+		if req.Action == "remove" {
+			return req, errors.New("add-dir remove requires at least one path")
+		}
+		return req, nil
+	}
+	switch strings.ToLower(positionals[0]) {
+	case "list", "show":
+		req.Action = "list"
+		req.Paths = nil
+	case "add":
+		req.Action = "add"
+		req.Paths = positionals[1:]
+	case "remove", "rm", "delete":
+		req.Action = "remove"
+		req.Paths = positionals[1:]
+	case "clear", "reset":
+		req.Action = "clear"
+		req.Paths = nil
+	default:
+		if req.Action == "remove" {
+			req.Paths = positionals
+		} else {
+			req.Action = "add"
+			req.Paths = positionals
+		}
+	}
+	if (req.Action == "add" || req.Action == "remove") && len(req.Paths) == 0 {
+		return req, fmt.Errorf("add-dir %s requires at least one path", req.Action)
+	}
+	return req, nil
+}
+
+func (a *App) refreshBuiltinToolScope() error {
+	if a.Tools == nil {
+		return nil
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(a.Workspace, a.Config.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	a.Tools.UpdateBuiltinScope(a.Workspace, tools.RegistryOptions{
+		SandboxStrategy: a.Config.Future.SandboxStrategy,
+		AdditionalDirs:  additionalDirs,
+	})
+	return nil
 }
 
 func (a *App) Unfocus(args []string) error {
@@ -3524,6 +3659,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Unfocus(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/add-dir":
+		if err := a.AddDir(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/output-style":
 		if err := a.OutputStyle(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -4954,6 +5093,10 @@ func (a *App) systemPrompt() string {
 		builder.WriteString("\n\n")
 		builder.WriteString(rendered)
 	}
+	if rendered := pathscope.RenderPrompt(a.Workspace, a.Config.AdditionalDirs); rendered != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(rendered)
+	}
 	return builder.String()
 }
 
@@ -5016,6 +5159,7 @@ Usage:
   %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
+  %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
@@ -5050,7 +5194,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

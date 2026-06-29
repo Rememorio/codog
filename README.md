@@ -22,7 +22,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
-  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
@@ -47,6 +47,9 @@ Claude Code source.
 - `/focus` and `codog focus [PATH...]` maintain focused context paths in
   `.codog/focus.json` and inject focused file contents into future prompts;
   `/unfocus` and `codog unfocus [PATH...|--all]` remove them.
+- `/add-dir` and `codog add-dir [PATH...|remove PATH|clear]` persist
+  workspace-local extra directories that `read_file`, `write_file`,
+  `edit_file`, `grep`, and `glob` can access after path-scope validation.
 - `/diff`, `/commit`, `/log`, `/changelog`, `/release-notes`, `/blame`, `/stash`, `/git`, and
   `codog git` provide local git status, diff, log, changelog, blame, stash, and
   commit workflows.
@@ -167,6 +170,7 @@ codog --permission-mode prompt prompt "inspect the repo"
     "initial_backoff_ms": 500,
     "max_backoff_ms": 5000
   },
+  "additional_dirs": ["../shared"],
   "max_turns": 8,
   "max_tokens": 4096,
   "enabled_skills": ["go-review"],
@@ -203,3 +207,7 @@ Environment overrides:
 - `CODOG_MODEL`
 - `CODOG_PERMISSION_MODE`
 - `CODOG_CONFIG_HOME`
+- `CODOG_RATE_LIMIT_MAX_RETRIES`
+- `CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS`
+- `CODOG_RATE_LIMIT_MAX_BACKOFF_MS`
+- `CODOG_ADDITIONAL_DIRS`

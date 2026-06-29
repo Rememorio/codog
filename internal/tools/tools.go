@@ -72,6 +72,7 @@ type ToolInfo struct {
 
 type RegistryOptions struct {
 	SandboxStrategy string
+	AdditionalDirs  []string
 }
 
 type Prompter struct {
@@ -101,11 +102,11 @@ func NewRegistry(workspace string) *Registry {
 func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg := &Registry{tools: map[string]Tool{}}
 	reg.Register(BashTool{Workspace: workspace, SandboxStrategy: opts.SandboxStrategy})
-	reg.Register(ReadFileTool{Workspace: workspace})
-	reg.Register(WriteFileTool{Workspace: workspace})
-	reg.Register(EditFileTool{Workspace: workspace})
-	reg.Register(GrepTool{Workspace: workspace})
-	reg.Register(GlobTool{Workspace: workspace})
+	reg.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	return reg
@@ -113,6 +114,15 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 
 func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Definition().Name] = tool
+}
+
+func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
+	r.Register(BashTool{Workspace: workspace, SandboxStrategy: opts.SandboxStrategy})
+	r.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 }
 
 func (r *Registry) Has(name string) bool {
@@ -426,7 +436,8 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 }
 
 type ReadFileTool struct {
-	Workspace string
+	Workspace      string
+	AdditionalDirs []string
 }
 
 func (ReadFileTool) Definition() anthropic.ToolDefinition {
@@ -457,7 +468,7 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	path, err := safePath(t.Workspace, payload.Path, false)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
 	if err != nil {
 		return "", err
 	}
@@ -483,7 +494,8 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 }
 
 type WriteFileTool struct {
-	Workspace string
+	Workspace      string
+	AdditionalDirs []string
 }
 
 func (WriteFileTool) Definition() anthropic.ToolDefinition {
@@ -512,7 +524,7 @@ func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	path, err := safePath(t.Workspace, payload.Path, true)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, true)
 	if err != nil {
 		return "", err
 	}
@@ -530,7 +542,8 @@ func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string
 }
 
 type EditFileTool struct {
-	Workspace string
+	Workspace      string
+	AdditionalDirs []string
 }
 
 func (EditFileTool) Definition() anthropic.ToolDefinition {
@@ -566,7 +579,7 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if payload.OldString == "" {
 		return "", errors.New("old_string is required")
 	}
-	path, err := safePath(t.Workspace, payload.Path, false)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
 	if err != nil {
 		return "", err
 	}
@@ -597,7 +610,8 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 }
 
 type GrepTool struct {
-	Workspace string
+	Workspace      string
+	AdditionalDirs []string
 }
 
 func (GrepTool) Definition() anthropic.ToolDefinition {
@@ -645,7 +659,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	root := t.Workspace
 	if payload.Path != "" {
-		root, err = safePath(t.Workspace, payload.Path, false)
+		root, err = safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
 		if err != nil {
 			return "", err
 		}
@@ -681,8 +695,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		lines := strings.Split(string(data), "\n")
 		for i, line := range lines {
 			if re.MatchString(line) {
-				rel, _ := filepath.Rel(t.Workspace, path)
-				matches = append(matches, map[string]any{"path": rel, "line": i + 1, "text": line})
+				matches = append(matches, map[string]any{"path": displayPath(t.Workspace, path), "line": i + 1, "text": line})
 				if len(matches) >= limit {
 					return filepath.SkipAll
 				}
@@ -697,7 +710,8 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 }
 
 type GlobTool struct {
-	Workspace string
+	Workspace      string
+	AdditionalDirs []string
 }
 
 func (GlobTool) Definition() anthropic.ToolDefinition {
@@ -734,7 +748,7 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	root := t.Workspace
 	var err error
 	if payload.Path != "" {
-		root, err = safePath(t.Workspace, payload.Path, false)
+		root, err = safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
 		if err != nil {
 			return "", err
 		}
@@ -763,8 +777,7 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			ok, _ = filepath.Match(payload.Pattern, filepath.Base(path))
 		}
 		if ok {
-			workspaceRel, _ := filepath.Rel(t.Workspace, path)
-			files = append(files, workspaceRel)
+			files = append(files, displayPath(t.Workspace, path))
 		}
 		return nil
 	})
@@ -850,6 +863,10 @@ func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string
 }
 
 func safePath(workspace, requested string, allowMissing bool) (string, error) {
+	return safePathInScope(workspace, nil, requested, allowMissing)
+}
+
+func safePathInScope(workspace string, additionalDirs []string, requested string, allowMissing bool) (string, error) {
 	if requested == "" {
 		return "", errors.New("path is required")
 	}
@@ -860,40 +877,95 @@ func safePath(workspace, requested string, allowMissing bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
+	roots := []string{root}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		roots[0] = resolved
+	} else {
 		return "", err
+	}
+	for _, dir := range additionalDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			return "", err
+		}
+		roots = append(roots, resolved)
 	}
 	candidate := requested
 	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(root, candidate)
+		candidate = filepath.Join(roots[0], candidate)
 	}
 	candidate, err = filepath.Abs(candidate)
 	if err != nil {
 		return "", err
 	}
-	resolved := candidate
+	resolved := ""
 	if allowMissing {
-		parent := filepath.Dir(candidate)
-		parentResolved, err := filepath.EvalSymlinks(parent)
+		resolved, err = resolveMissingCandidate(candidate)
 		if err != nil {
 			return "", err
 		}
-		resolved = filepath.Join(parentResolved, filepath.Base(candidate))
 	} else {
 		resolved, err = filepath.EvalSymlinks(candidate)
 		if err != nil {
 			return "", err
 		}
 	}
-	rel, err := filepath.Rel(root, resolved)
+	for _, root := range roots {
+		if pathWithin(root, resolved) {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("path escapes workspace scope: %s", requested)
+}
+
+func resolveMissingCandidate(candidate string) (string, error) {
+	var missing []string
+	cursor := candidate
+	for {
+		resolved, err := filepath.EvalSymlinks(cursor)
+		if err == nil {
+			parts := append([]string{resolved}, missing...)
+			return filepath.Join(parts...), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			return "", err
+		}
+		missing = append([]string{filepath.Base(cursor)}, missing...)
+		cursor = parent
+	}
+}
+
+func pathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		return "", err
+		return false
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("path escapes workspace: %s", requested)
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
+}
+
+func displayPath(workspace string, path string) string {
+	root, err := filepath.Abs(workspace)
+	if err == nil {
+		if resolved, evalErr := filepath.EvalSymlinks(root); evalErr == nil {
+			root = resolved
+		}
+		if rel, relErr := filepath.Rel(root, path); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
+			return rel
+		}
 	}
-	return resolved, nil
+	return path
 }
 
 func ignoredDir(name string) bool {

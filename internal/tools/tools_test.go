@@ -27,6 +27,30 @@ func TestReadFileRejectsWorkspaceEscape(t *testing.T) {
 	require.Contains(t, err.Error(), "escapes workspace")
 }
 
+func TestFileToolsAllowAdditionalDirs(t *testing.T) {
+	workspace := t.TempDir()
+	extra := filepath.Join(t.TempDir(), "extra")
+	require.NoError(t, os.MkdirAll(extra, 0o755))
+	extraFile := filepath.Join(extra, "notes.txt")
+	require.NoError(t, os.WriteFile(extraFile, []byte("alpha\nbeta\n"), 0o644))
+
+	input, _ := json.Marshal(map[string]string{"path": extraFile})
+	out, err := ReadFileTool{Workspace: workspace, AdditionalDirs: []string{extra}}.Execute(context.Background(), input)
+	require.NoError(t, err)
+	require.Contains(t, out, "alpha")
+
+	writeInput, _ := json.Marshal(map[string]string{"path": filepath.Join(extra, "new", "created.txt"), "content": "created"})
+	out, err = WriteFileTool{Workspace: workspace, AdditionalDirs: []string{extra}}.Execute(context.Background(), writeInput)
+	require.NoError(t, err)
+	require.Contains(t, out, "create")
+	require.FileExists(t, filepath.Join(extra, "new", "created.txt"))
+
+	grepInput, _ := json.Marshal(map[string]any{"pattern": "beta", "path": extra, "limit": 5})
+	out, err = GrepTool{Workspace: workspace, AdditionalDirs: []string{extra}}.Execute(context.Background(), grepInput)
+	require.NoError(t, err)
+	require.Contains(t, out, extraFile)
+}
+
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "a.txt")

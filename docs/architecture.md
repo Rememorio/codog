@@ -11,6 +11,8 @@ Codog follows a small-core layout:
   The client owns provider retry/backoff behavior for transport, 429, and
   selected 5xx failures.
 - `internal/tools`: built-in tool registry and permission gate.
+- `internal/pathscope`: workspace-local additional directory state and prompt
+  rendering for multi-root file tool access.
 - `internal/session`: workspace-scoped JSONL session persistence, export
   rendering, and legacy flat-session compatibility.
 - `internal/prompthistory`: prompt-history report shaping and text rendering for

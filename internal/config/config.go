@@ -74,6 +74,7 @@ type Config struct {
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
+	AdditionalDirs      []string                   `json:"additional_dirs,omitempty"`
 	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
 	Hooks               HookConfig                 `json:"hooks,omitempty"`
 	MCPServers          map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
@@ -235,6 +236,9 @@ func merge(dst *Config, src Config) {
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
 	}
+	if len(src.AdditionalDirs) != 0 {
+		dst.AdditionalDirs = append([]string(nil), src.AdditionalDirs...)
+	}
 	if len(src.EnabledSkills) != 0 {
 		dst.EnabledSkills = append([]string(nil), src.EnabledSkills...)
 	}
@@ -372,6 +376,9 @@ func applyEnv(cfg *Config) {
 			cfg.RateLimit.MaxBackoffMS = parsed
 		}
 	}
+	if value := os.Getenv("CODOG_ADDITIONAL_DIRS"); value != "" {
+		cfg.AdditionalDirs = splitPathList(value)
+	}
 }
 
 func applyFlags(cfg *Config, overrides FlagOverrides) {
@@ -498,4 +505,16 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+
+func splitPathList(value string) []string {
+	parts := filepath.SplitList(value)
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

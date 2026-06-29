@@ -29,6 +29,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
+	"github.com/Rememorio/codog/internal/pathscope"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/todos"
@@ -699,6 +700,43 @@ func TestFocusCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/unfocus --all", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Entries          0")
 	require.NotContains(t, app.systemPrompt(), "<focused_context>")
+	require.Empty(t, errOut.String())
+}
+
+func TestAddDirCommandAndSlashUpdatesToolScope(t *testing.T) {
+	workspace := t.TempDir()
+	extra := filepath.Join(t.TempDir(), "extra")
+	require.NoError(t, os.MkdirAll(extra, 0o755))
+	extraFile := filepath.Join(extra, "notes.txt")
+	require.NoError(t, os.WriteFile(extraFile, []byte("extra body\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.AddDir([]string{extra, "--json"}))
+	require.Contains(t, out.String(), `"kind": "additional_dirs"`)
+	require.Contains(t, out.String(), extra)
+	require.FileExists(t, pathscope.Path(workspace))
+	require.Contains(t, app.systemPrompt(), "<additional_directories>")
+	out.Reset()
+
+	input, _ := json.Marshal(map[string]string{"path": extraFile})
+	toolOut, err := app.Tools.Execute(context.Background(), "read_file", input, nil)
+	require.NoError(t, err)
+	require.Contains(t, toolOut, "extra body")
+
+	require.True(t, app.handleSlash(context.Background(), "/add-dir remove "+extra, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Additional Directories")
+	require.NotContains(t, app.systemPrompt(), "<additional_directories>")
+	_, err = app.Tools.Execute(context.Background(), "read_file", input, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes workspace")
 	require.Empty(t, errOut.String())
 }
 
