@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,7 +138,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 40)
+	require.Len(t, infos, 41)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -200,6 +201,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("repl")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("remote_trigger")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("skill")
@@ -275,6 +279,25 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	info, ok = registry.Info("web_search")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+}
+
+func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "token", r.Header.Get("x-test"))
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, "payload", string(data))
+		w.Header().Set("x-result", "ok")
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	out, err := RemoteTriggerTool{}.Execute(context.Background(), []byte(`{"url":"`+server.URL+`","method":"POST","headers":{"x-test":"token"},"body":"payload"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"status_code": 200`)
+	require.Contains(t, out, `"body": "{\"ok\":true}"`)
+	require.Contains(t, out, `"X-Result": [`)
 }
 
 func TestNotebookEditToolUpdatesNotebook(t *testing.T) {

@@ -11,7 +11,8 @@ Claude Code source.
 - Interactive REPL
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,
-  `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `notebook_edit`,
+  `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `remote_trigger`,
+  `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
   `team_create`, `team_delete`,
   `enter_worktree`, `exit_worktree`,

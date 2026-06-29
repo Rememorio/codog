@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,6 +125,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
+	reg.Register(RemoteTriggerTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EnterWorktreeTool{Workspace: workspace})
@@ -1115,6 +1117,85 @@ func (WebSearchTool) Execute(ctx context.Context, input json.RawMessage) (string
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+type RemoteTriggerTool struct{}
+
+func (RemoteTriggerTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "remote_trigger",
+		Description: "Trigger a remote HTTP action or webhook endpoint.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"url":     map[string]any{"type": "string"},
+				"method":  map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"}},
+				"headers": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+				"body":    map[string]any{"type": "string"},
+			},
+			"required":             []string{"url"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (RemoteTriggerTool) Permission() Permission { return PermissionDanger }
+
+func (RemoteTriggerTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		URL     string            `json:"url"`
+		Method  string            `json:"method"`
+		Headers map[string]string `json:"headers"`
+		Body    string            `json:"body"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	payload.URL = strings.TrimSpace(payload.URL)
+	if payload.URL == "" {
+		return "", errors.New("url is required")
+	}
+	method := strings.ToUpper(strings.TrimSpace(payload.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodHead:
+	default:
+		return "", fmt.Errorf("unsupported HTTP method: %s", method)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, payload.URL, strings.NewReader(payload.Body))
+	if err != nil {
+		return "", err
+	}
+	for key, value := range payload.Headers {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	if payload.Body != "" && req.Header.Get("content-type") == "" {
+		req.Header.Set("content-type", "text/plain; charset=utf-8")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"url":         payload.URL,
+		"method":      method,
+		"status_code": resp.StatusCode,
+		"status":      resp.Status,
+		"headers":     resp.Header,
+		"body":        string(data),
+	}), nil
 }
 
 type NotebookEditTool struct {
