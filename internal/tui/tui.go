@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/slash"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,6 +20,7 @@ type model struct {
 	result   Result
 	width    int
 	height   int
+	matches  []string
 }
 
 func Prompt() (Result, error) {
@@ -56,21 +58,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+s":
 			m.result = Result{Submitted: true, Prompt: strings.TrimSpace(m.textarea.Value())}
 			return m, tea.Quit
+		case "tab":
+			m = m.completeSlashCommand()
+			return m, nil
 		}
 	}
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
+	if strings.TrimSpace(m.textarea.Value()) == "" || !strings.HasPrefix(strings.TrimSpace(m.textarea.Value()), "/") {
+		m.matches = nil
+	}
 	return m, cmd
 }
 
 func (m model) View() string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Codog TUI")
-	help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Ctrl+S submit · Esc quit")
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Ctrl+S submit · Tab complete · Esc quit")
 	body := m.textarea.View()
 	if strings.TrimSpace(body) == "" {
 		body = "\n"
 	}
+	if len(m.matches) > 0 {
+		body += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(strings.Join(m.matches, "  "))
+	}
 	return fmt.Sprintf("%s\n\n%s\n\n%s\n", title, body, help)
+}
+
+func (m model) completeSlashCommand() model {
+	value := strings.TrimSpace(m.textarea.Value())
+	candidates := slash.Candidates(value)
+	switch len(candidates) {
+	case 0:
+		m.matches = nil
+	case 1:
+		m.textarea.SetValue(candidates[0] + " ")
+		m.matches = nil
+	default:
+		if len(candidates) > 8 {
+			candidates = candidates[:8]
+		}
+		m.matches = candidates
+	}
+	return m
 }
 
 func max(a, b int) int {

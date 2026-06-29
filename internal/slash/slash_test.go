@@ -52,6 +52,8 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/references")
 	require.Contains(t, out.String(), "/definition")
 	require.Contains(t, out.String(), "/hover")
+	require.Contains(t, out.String(), "/completion")
+	require.Contains(t, out.String(), "/format")
 	require.Contains(t, out.String(), "/export")
 	require.Contains(t, out.String(), "/history")
 	require.Contains(t, out.String(), "/summary")
@@ -83,4 +85,13 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/plugins")
 	require.Contains(t, out.String(), "/marketplace")
 	require.Contains(t, out.String(), "/providers")
+}
+
+func TestCandidatesFiltersSlashCommands(t *testing.T) {
+	candidates := Candidates("/co")
+	require.Contains(t, candidates, "/compact")
+	require.Contains(t, candidates, "/completion")
+	require.Contains(t, candidates, "/commands")
+	require.NotContains(t, candidates, "/status")
+	require.Empty(t, Candidates("co"))
 }

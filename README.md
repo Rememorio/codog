@@ -38,7 +38,8 @@ Claude Code source.
 - System prompt override and append support with `--system-prompt` and
   `--append-system-prompt`
 
-- `codog tui` starts a Bubble Tea prompt composer.
+- `codog tui` starts a Bubble Tea prompt composer with Tab completion for
+  slash commands.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,

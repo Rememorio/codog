@@ -110,6 +110,27 @@ func Lookup(name string) (Spec, bool) {
 	return Spec{}, false
 }
 
+func Candidates(prefix string) []string {
+	prefix = strings.TrimSpace(prefix)
+	if !strings.HasPrefix(prefix, "/") {
+		return nil
+	}
+	candidates := []string{}
+	seen := map[string]bool{}
+	for _, spec := range Specs() {
+		if !strings.HasPrefix(spec.Name, prefix) {
+			continue
+		}
+		if seen[spec.Name] {
+			continue
+		}
+		seen[spec.Name] = true
+		candidates = append(candidates, spec.Name)
+	}
+	sort.Strings(candidates)
+	return candidates
+}
+
 func RenderHelp(w io.Writer) {
 	for _, spec := range Specs() {
 		fmt.Fprintf(w, "%-10s %s\n", spec.Usage, spec.Description)
