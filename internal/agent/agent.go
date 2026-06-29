@@ -2301,6 +2301,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleDiffSlash(fields[1:])
 	case "/commit":
 		a.handleCommitSlash(fields[1:])
+	case "/log":
+		a.handleLogSlash(fields[1:])
+	case "/blame":
+		a.handleBlameSlash(fields[1:])
+	case "/git":
+		if err := a.Git(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/export":
 		a.handleExportSlash(fields[1:], sess)
 	case "/history", "/prompt-history":
@@ -2594,7 +2602,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status | git diff [--staged] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git blame FILE [line] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -2609,6 +2617,26 @@ func (a *App) Git(args []string) error {
 			return err
 		}
 		fmt.Fprintln(a.Out, diff)
+	case "log":
+		limit, err := parseOptionalPositiveInt(args[1:], 20, "git log count")
+		if err != nil {
+			return err
+		}
+		log, err := gitops.Log(a.Workspace, limit)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, log)
+	case "blame":
+		path, line, err := parseGitBlameArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		blame, err := gitops.Blame(a.Workspace, path, line)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, blame)
 	case "commit":
 		options := parseGitCommitArgs(args[1:])
 		result, err := gitops.Commit(a.Workspace, options)
@@ -2623,6 +2651,36 @@ func (a *App) Git(args []string) error {
 	return nil
 }
 
+func parseOptionalPositiveInt(args []string, defaultValue int, label string) (int, error) {
+	if len(args) == 0 {
+		return defaultValue, nil
+	}
+	if len(args) != 1 {
+		return 0, fmt.Errorf("usage: %s", label)
+	}
+	value, err := strconv.Atoi(args[0])
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", label)
+	}
+	return value, nil
+}
+
+func parseGitBlameArgs(args []string) (string, int, error) {
+	if len(args) == 0 || len(args) > 2 {
+		return "", 0, errors.New("usage: codog git blame FILE [line]")
+	}
+	path := args[0]
+	line := 0
+	if len(args) == 2 {
+		parsed, err := strconv.Atoi(args[1])
+		if err != nil || parsed <= 0 {
+			return "", 0, errors.New("blame line must be a positive integer")
+		}
+		line = parsed
+	}
+	return path, line, nil
+}
+
 func (a *App) handleDiffSlash(args []string) {
 	diff, err := gitops.Diff(a.Workspace, containsFold(args, "--staged") || containsFold(args, "--cached"))
 	if err != nil {
@@ -2634,6 +2692,34 @@ func (a *App) handleDiffSlash(args []string) {
 		return
 	}
 	fmt.Fprintln(a.Out, diff)
+}
+
+func (a *App) handleLogSlash(args []string) {
+	limit, err := parseOptionalPositiveInt(args, 20, "/log count")
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	log, err := gitops.Log(a.Workspace, limit)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	fmt.Fprintln(a.Out, log)
+}
+
+func (a *App) handleBlameSlash(args []string) {
+	path, line, err := parseGitBlameArgs(args)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	blame, err := gitops.Blame(a.Workspace, path, line)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	fmt.Fprintln(a.Out, blame)
 }
 
 func (a *App) handleCommitSlash(args []string) {
@@ -3148,7 +3234,7 @@ Usage:
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
-  %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
+  %s [flags] git status | git diff [--staged] | git log [count] | git blame FILE [line] | git commit [--all] MESSAGE
   %s mock-server :8089
   %s self-test
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]

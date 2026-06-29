@@ -31,8 +31,8 @@ Claude Code source.
   messages.
 - `/search` and `codog search PATTERN [--path PATH] [--glob GLOB]` search
   workspace file contents without making a provider request.
-- `/diff`, `/commit`, and `codog git` provide local git status, diff, and
-  commit workflows.
+- `/diff`, `/commit`, `/log`, `/blame`, `/git`, and `codog git` provide local
+  git status, diff, log, blame, and commit workflows.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and
   `.codog/skills`.
 - `codog mcp` inspects configured stdio MCP servers, and configured MCP tools

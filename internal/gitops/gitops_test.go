@@ -33,6 +33,15 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	require.NotEmpty(t, result.Commit)
 	require.Contains(t, result.Summary, "add notes")
 
+	log, err := Log(workspace, 1)
+	require.NoError(t, err)
+	require.Contains(t, log, "add notes")
+
+	blame, err := Blame(workspace, "notes.txt", 1)
+	require.NoError(t, err)
+	require.Contains(t, blame, "hello")
+	require.Contains(t, blame, "Codog Test")
+
 	status, err = Status(workspace)
 	require.NoError(t, err)
 	require.True(t, strings.Contains(status, "## main") || strings.Contains(status, "## master"))

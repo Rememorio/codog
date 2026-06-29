@@ -221,6 +221,14 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "add notes")
 	out.Reset()
 
+	require.NoError(t, app.Git([]string{"log", "1"}))
+	require.Contains(t, out.String(), "add notes")
+	out.Reset()
+
+	require.NoError(t, app.Git([]string{"blame", "notes.txt", "1"}))
+	require.Contains(t, out.String(), "hello")
+	out.Reset()
+
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\nagain\n"), 0o644))
 	require.NoError(t, app.Git([]string{"diff"}))
 	require.Contains(t, out.String(), "+again")
@@ -237,6 +245,18 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/commit --all slash commit", sess))
 	require.Contains(t, errOut.String(), "commit ")
 	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/log 1", sess))
+	require.Contains(t, out.String(), "slash commit")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/blame notes.txt 1", sess))
+	require.Contains(t, out.String(), "hello slash")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/git status", sess))
+	require.Contains(t, out.String(), "## ")
+	out.Reset()
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\nchanged\n"), 0o644))
 	require.True(t, app.handleSlash(context.Background(), "/diff", sess))

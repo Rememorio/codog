@@ -30,6 +30,26 @@ func Diff(workspace string, staged bool) (string, error) {
 	return git(workspace, args...)
 }
 
+func Log(workspace string, limit int) (string, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	return git(workspace, "log", "--oneline", "--decorate", fmt.Sprintf("--max-count=%d", limit))
+}
+
+func Blame(workspace string, path string, line int) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("blame file is required")
+	}
+	args := []string{"blame"}
+	if line > 0 {
+		args = append(args, "-L", fmt.Sprintf("%d,%d", line, line))
+	}
+	args = append(args, "--", path)
+	return git(workspace, args...)
+}
+
 func Commit(workspace string, options CommitOptions) (CommitResult, error) {
 	message := strings.TrimSpace(options.Message)
 	if message == "" {
