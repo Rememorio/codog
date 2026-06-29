@@ -22,6 +22,8 @@ func Specs() []Spec {
 		{Name: "/memory", Usage: "/memory", Description: "List loaded project memory files."},
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
+		{Name: "/max-tokens", Usage: "/max-tokens [count]", Description: "Show or switch max output tokens."},
+		{Name: "/max-turns", Usage: "/max-turns [count]", Description: "Show or switch max model/tool turns."},
 		{Name: "/permissions", Usage: "/permissions [mode]", Description: "Show or switch the current permission mode."},
 		{Name: "/allowed-tools", Usage: "/allowed-tools [list|add|remove|clear]", Description: "Show or modify runtime allow rules."},
 		{Name: "/clear", Usage: "/clear [--confirm]", Description: "Start a fresh local session."},
@@ -39,6 +41,9 @@ func Specs() []Spec {
 		{Name: "/search", Usage: "/search PATTERN [--glob GLOB]", Description: "Search files in the workspace."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},
+		{Name: "/system-prompt", Usage: "/system-prompt", Description: "Show the active system prompt."},
+		{Name: "/tool-details", Usage: "/tool-details TOOL", Description: "Show detailed information for a tool."},
+		{Name: "/tokens", Usage: "/tokens", Description: "Alias for /cost."},
 		{Name: "/version", Usage: "/version", Description: "Show CLI version and build information."},
 		{Name: "/exit", Usage: "/exit", Description: "Exit the REPL."},
 	}

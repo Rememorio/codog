@@ -76,6 +76,22 @@ func TestPrompterEmitsDecision(t *testing.T) {
 	require.Equal(t, "deny_rule", decision.Reason)
 }
 
+func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+
+	info, ok := registry.Info("BASH")
+	require.True(t, ok)
+	require.Equal(t, "bash", info.Name)
+	require.Equal(t, PermissionDanger, info.Permission)
+	required, ok := info.InputSchema["required"].([]string)
+	require.True(t, ok)
+	require.Contains(t, required, "command")
+
+	infos := registry.Infos()
+	require.Len(t, infos, 6)
+	require.Equal(t, "bash", infos[0].Name)
+}
+
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX cat")

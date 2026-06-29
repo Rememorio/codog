@@ -62,6 +62,13 @@ type Registry struct {
 	tools map[string]Tool
 }
 
+type ToolInfo struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Permission  Permission     `json:"permission"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
 type RegistryOptions struct {
 	SandboxStrategy string
 }
@@ -116,6 +123,30 @@ func (r *Registry) Definitions() []anthropic.ToolDefinition {
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
+}
+
+func (r *Registry) Infos() []ToolInfo {
+	infos := make([]ToolInfo, 0, len(r.tools))
+	for _, tool := range r.tools {
+		def := tool.Definition()
+		infos = append(infos, ToolInfo{
+			Name:        def.Name,
+			Description: def.Description,
+			Permission:  tool.Permission(),
+			InputSchema: def.InputSchema,
+		})
+	}
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	return infos
+}
+
+func (r *Registry) Info(name string) (ToolInfo, bool) {
+	for _, info := range r.Infos() {
+		if strings.EqualFold(info.Name, name) {
+			return info, true
+		}
+	}
+	return ToolInfo{}, false
 }
 
 func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage, prompter *Prompter) (string, error) {

@@ -180,6 +180,32 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"os":`)
 }
 
+func TestSystemPromptAndToolDetailsSlashCommands(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use the project style."), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.True(t, app.handleSlash(context.Background(), "/system-prompt", sess))
+	require.Contains(t, out.String(), "Use the project style.")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/tool-details bash", sess))
+	require.Contains(t, out.String(), "Tool")
+	require.Contains(t, out.String(), "Name             bash")
+	require.Contains(t, out.String(), "Permission       danger-full-access")
+	require.Contains(t, out.String(), `"command"`)
+	require.Empty(t, errOut.String())
+}
+
 func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\n"), 0o644))
@@ -248,6 +274,16 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/model model-b", sess))
 	require.Equal(t, "model-b", app.Config.Model)
 	require.Contains(t, errOut.String(), "model=model-b")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/max-tokens 2048", sess))
+	require.Equal(t, 2048, app.Config.MaxTokens)
+	require.Contains(t, errOut.String(), "max_tokens=2048")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/max-turns 6", sess))
+	require.Equal(t, 6, app.Config.MaxTurns)
+	require.Contains(t, errOut.String(), "max_turns=6")
 	errOut.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/permissions", sess))

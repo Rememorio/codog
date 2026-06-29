@@ -16,6 +16,8 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/memory")
 	require.Contains(t, out.String(), "/config")
 	require.Contains(t, out.String(), "/model")
+	require.Contains(t, out.String(), "/max-tokens")
+	require.Contains(t, out.String(), "/max-turns")
 	require.Contains(t, out.String(), "/permissions")
 	require.Contains(t, out.String(), "/allowed-tools")
 	require.Contains(t, out.String(), "/clear")
@@ -31,5 +33,8 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/search")
 	require.Contains(t, out.String(), "/session")
 	require.Contains(t, out.String(), "/mcp")
+	require.Contains(t, out.String(), "/system-prompt")
+	require.Contains(t, out.String(), "/tool-details")
+	require.Contains(t, out.String(), "/tokens")
 	require.Contains(t, out.String(), "/version")
 }

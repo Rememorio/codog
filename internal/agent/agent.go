@@ -2271,10 +2271,20 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
+	case "/tokens":
+		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/config":
 		a.handleConfigSlash(fields[1:])
 	case "/model":
 		a.handleModelSlash(fields[1:])
+	case "/max-tokens":
+		a.handleMaxTokensSlash(fields[1:])
+	case "/max-turns":
+		a.handleMaxTurnsSlash(fields[1:])
+	case "/system-prompt":
+		fmt.Fprintln(a.Out, a.systemPrompt())
+	case "/tool-details":
+		a.handleToolDetailsSlash(fields[1:])
 	case "/permissions":
 		a.handlePermissionsSlash(fields[1:])
 	case "/allowed-tools":
@@ -2381,6 +2391,69 @@ func (a *App) handleModelSlash(args []string) {
 	}
 	a.Config.Model = model
 	fmt.Fprintf(a.Err, "model=%s\n", a.Config.Model)
+}
+
+func (a *App) handleMaxTokensSlash(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(a.Err, "max_tokens=%d\n", a.Config.MaxTokens)
+		return
+	}
+	if len(args) != 1 {
+		fmt.Fprintln(a.Err, "usage: /max-tokens [count]")
+		return
+	}
+	value, err := strconv.Atoi(args[0])
+	if err != nil || value <= 0 {
+		fmt.Fprintln(a.Err, "max_tokens must be a positive integer")
+		return
+	}
+	a.Config.MaxTokens = value
+	fmt.Fprintf(a.Err, "max_tokens=%d\n", a.Config.MaxTokens)
+}
+
+func (a *App) handleMaxTurnsSlash(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(a.Err, "max_turns=%d\n", a.Config.MaxTurns)
+		return
+	}
+	if len(args) != 1 {
+		fmt.Fprintln(a.Err, "usage: /max-turns [count]")
+		return
+	}
+	value, err := strconv.Atoi(args[0])
+	if err != nil || value <= 0 {
+		fmt.Fprintln(a.Err, "max_turns must be a positive integer")
+		return
+	}
+	a.Config.MaxTurns = value
+	fmt.Fprintf(a.Err, "max_turns=%d\n", a.Config.MaxTurns)
+}
+
+func (a *App) handleToolDetailsSlash(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(a.Err, "usage: /tool-details TOOL")
+		return
+	}
+	if a.Tools == nil {
+		fmt.Fprintln(a.Err, "error: tool registry is not initialized")
+		return
+	}
+	info, ok := a.Tools.Info(args[0])
+	if !ok {
+		fmt.Fprintf(a.Err, "unknown tool: %s\n", args[0])
+		return
+	}
+	renderToolInfo(a.Out, info)
+}
+
+func renderToolInfo(out io.Writer, info tools.ToolInfo) {
+	fmt.Fprintln(out, "Tool")
+	fmt.Fprintf(out, "  Name             %s\n", info.Name)
+	fmt.Fprintf(out, "  Permission       %s\n", info.Permission)
+	fmt.Fprintf(out, "  Description      %s\n", info.Description)
+	data, _ := json.MarshalIndent(info.InputSchema, "  ", "  ")
+	fmt.Fprintln(out, "  Input schema")
+	fmt.Fprintln(out, string(data))
 }
 
 func (a *App) handlePermissionsSlash(args []string) {
