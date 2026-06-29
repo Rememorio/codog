@@ -7,7 +7,7 @@ Claude Code source.
 ## Features
 
 - Single Go binary: `codog`
-- One-shot prompt mode
+- One-shot prompt mode through `codog prompt` or Claude-compatible `codog -p`
 - Interactive REPL
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,

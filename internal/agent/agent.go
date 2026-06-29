@@ -7125,11 +7125,14 @@ func containsFold(values []string, target string) bool {
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	printMode := false
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
 	flags.StringVar(&base.SessionID, "session", base.SessionID, "session id")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
+	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
+	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
@@ -7139,6 +7142,12 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "", nil, err
 	}
 	rest := flags.Args()
+	if printMode {
+		if len(rest) > 0 && rest[0] == "prompt" {
+			rest = rest[1:]
+		}
+		return base, "prompt", rest, nil
+	}
 	if len(rest) == 0 {
 		return base, "", nil, nil
 	}
@@ -7150,7 +7159,7 @@ func printHelp(out io.Writer) {
 	fmt.Fprintf(out, `%s is a Go-native coding agent CLI.
 
 Usage:
-  %s [flags] prompt "explain this repo"
+  %s [flags] prompt "explain this repo" | -p "explain this repo"
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
   %s [flags] repl

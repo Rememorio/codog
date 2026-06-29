@@ -113,6 +113,20 @@ func TestParseFlagsSupportsPermissionSkipAliases(t *testing.T) {
 	require.Empty(t, rest)
 }
 
+func TestParseFlagsSupportsPrintAliases(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"-p", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, config.FlagOverrides{}, overrides)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--print", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+	require.False(t, overrides.SkipPermissions)
+}
+
 func TestDumpManifestsCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
