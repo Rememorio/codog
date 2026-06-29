@@ -157,6 +157,54 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "+changed")
 }
 
+func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			APIKey:         "api-key-secret",
+			AuthToken:      "auth-token-secret",
+			BaseURL:        "https://api.example.test",
+			Model:          "model-a",
+			MaxTokens:      1000,
+			MaxTurns:       3,
+			PermissionMode: "workspace-write",
+			PermissionRules: config.PermissionRules{
+				Allow: []string{"read_file"},
+				Deny:  []string{"bash:rm"},
+			},
+		},
+		Out: &out,
+		Err: &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.True(t, app.handleSlash(context.Background(), "/config auth", sess))
+	require.Contains(t, out.String(), `"base_url": "https://api.example.test"`)
+	require.NotContains(t, out.String(), "api-key-secret")
+	require.NotContains(t, out.String(), "auth-token-secret")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/model model-b", sess))
+	require.Equal(t, "model-b", app.Config.Model)
+	require.Contains(t, errOut.String(), "model=model-b")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/permissions", sess))
+	require.Contains(t, out.String(), `"permission_mode": "workspace-write"`)
+	require.Contains(t, out.String(), `"bash:rm"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/permissions read-only", sess))
+	require.Equal(t, "read-only", app.Config.PermissionMode)
+	require.Contains(t, errOut.String(), "permission_mode=read-only")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/permissions invalid", sess))
+	require.Equal(t, "read-only", app.Config.PermissionMode)
+	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
+}
+
 func TestExportCommandWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

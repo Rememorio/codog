@@ -18,7 +18,8 @@ Claude Code source.
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags
 
 - `codog tui` starts a Bubble Tea prompt composer.
-- REPL slash commands: `/help`, `/status`, `/cost`, `/compact`, `/skills`, `/mcp`.
+- REPL slash commands: `/help`, `/status`, `/config`, `/model`,
+  `/permissions`, `/cost`, `/compact`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or

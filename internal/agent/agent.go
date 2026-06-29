@@ -74,10 +74,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		cfg.APIKey = redact(cfg.APIKey)
-		cfg.AuthToken = redact(cfg.AuthToken)
-		cfg.Future.RemoteAuthToken = redact(cfg.Future.RemoteAuthToken)
-		cfg.Future.EditorBridgeToken = redact(cfg.Future.EditorBridgeToken)
+		cfg = redactedConfig(cfg)
 		data, _ := json.MarshalIndent(map[string]any{"config": cfg, "paths": paths}, "", "  ")
 		fmt.Fprintln(os.Stdout, string(data))
 		return nil
@@ -1616,6 +1613,12 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		fmt.Fprintf(a.Err, "session=%s messages=%d model=%s permission=%s\n", sess.ID, len(sess.Messages), a.Config.Model, a.Config.PermissionMode)
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
+	case "/config":
+		a.handleConfigSlash(fields[1:])
+	case "/model":
+		a.handleModelSlash(fields[1:])
+	case "/permissions":
+		a.handlePermissionsSlash(fields[1:])
 	case "/compact":
 		before := len(sess.Messages)
 		sess.Messages = runloop.CompactMessages(sess.Messages, a.Config.AutoCompactMessages)
@@ -1638,6 +1641,95 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	}
 	return true
+}
+
+func (a *App) handleConfigSlash(args []string) {
+	payload, err := a.runtimeConfigPayload(args)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+}
+
+func (a *App) handleModelSlash(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintf(a.Err, "model=%s\n", a.Config.Model)
+		return
+	}
+	model := strings.TrimSpace(strings.Join(args, " "))
+	if model == "" {
+		fmt.Fprintln(a.Err, "usage: /model [name]")
+		return
+	}
+	a.Config.Model = model
+	fmt.Fprintf(a.Err, "model=%s\n", a.Config.Model)
+}
+
+func (a *App) handlePermissionsSlash(args []string) {
+	if len(args) == 0 || args[0] == "show" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"permission_mode":  a.Config.PermissionMode,
+			"permission_rules": a.Config.PermissionRules,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return
+	}
+	mode := args[0]
+	if args[0] == "mode" || args[0] == "set" {
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /permissions [read-only|workspace-write|danger-full-access|prompt|allow]")
+			return
+		}
+		mode = args[1]
+	}
+	if !validPermissionMode(mode) {
+		fmt.Fprintf(a.Err, "unknown permission mode: %s\n", mode)
+		return
+	}
+	a.Config.PermissionMode = mode
+	fmt.Fprintf(a.Err, "permission_mode=%s\n", a.Config.PermissionMode)
+}
+
+func (a *App) runtimeConfigPayload(args []string) (any, error) {
+	cfg := redactedConfig(a.Config)
+	if len(args) == 0 {
+		return cfg, nil
+	}
+	switch strings.ToLower(args[0]) {
+	case "model":
+		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns}, nil
+	case "permissions", "permission":
+		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
+	case "mcp":
+		return cfg.MCPServers, nil
+	case "hooks":
+		return cfg.Hooks, nil
+	case "skills":
+		return map[string]any{"enabled_skills": cfg.EnabledSkills}, nil
+	case "auth":
+		return map[string]any{"api_key": cfg.APIKey, "auth_token": cfg.AuthToken, "base_url": cfg.BaseURL}, nil
+	default:
+		return nil, fmt.Errorf("unknown config section %q", args[0])
+	}
+}
+
+func redactedConfig(cfg config.Config) config.Config {
+	cfg.APIKey = redact(cfg.APIKey)
+	cfg.AuthToken = redact(cfg.AuthToken)
+	cfg.Future.RemoteAuthToken = redact(cfg.Future.RemoteAuthToken)
+	cfg.Future.EditorBridgeToken = redact(cfg.Future.EditorBridgeToken)
+	return cfg
+}
+
+func validPermissionMode(mode string) bool {
+	switch tools.Permission(mode) {
+	case tools.PermissionReadOnly, tools.PermissionWorkspace, tools.PermissionDanger, tools.PermissionPrompt, tools.PermissionAllow:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) Git(args []string) error {
