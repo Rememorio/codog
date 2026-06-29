@@ -205,6 +205,27 @@ func TestBootstrapPlanCommand(t *testing.T) {
 	require.Contains(t, out.String(), "load_config")
 }
 
+func TestSystemPromptCommand(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			SystemPrompt:       "Custom base.",
+			AppendSystemPrompt: "Extra instructions.",
+		},
+		Workspace: t.TempDir(),
+		Out:       &out,
+	}
+
+	require.NoError(t, app.SystemPromptCommand([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "system-prompt"`)
+	require.Contains(t, out.String(), "Custom base.")
+	out.Reset()
+
+	require.NoError(t, app.SystemPromptCommand(nil))
+	require.Contains(t, out.String(), "Custom base.")
+	require.Contains(t, out.String(), "Extra instructions.")
+}
+
 func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	configHome := t.TempDir()
 	store := session.NewStore(configHome)

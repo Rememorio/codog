@@ -335,6 +335,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.DumpManifests(rest)
 	case "bootstrap-plan":
 		return app.BootstrapPlan(rest)
+	case "system-prompt":
+		return app.SystemPromptCommand(rest)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
@@ -685,6 +687,25 @@ func renderBootstrapPlan(out io.Writer, report bootstrapPlanReport) {
 	for index, phase := range report.Phases {
 		fmt.Fprintf(out, "  %d. %s\t%s\n", index+1, phase.Name, phase.Description)
 	}
+}
+
+func (a *App) SystemPromptCommand(args []string) error {
+	format, err := parseSimpleOutputFormat("system-prompt", args)
+	if err != nil {
+		return err
+	}
+	prompt := a.systemPrompt()
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":          "system-prompt",
+			"status":        "ok",
+			"system_prompt": prompt,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, prompt)
+	return nil
 }
 
 func (a *App) Background(args []string) error {
@@ -7285,6 +7306,7 @@ Usage:
   %s self-test
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
   %s bootstrap-plan [--json|--output-format text|json]
+  %s system-prompt [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
@@ -7313,7 +7335,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
