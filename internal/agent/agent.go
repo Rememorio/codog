@@ -39,6 +39,7 @@ import (
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
 	"github.com/Rememorio/codog/internal/releasenotes"
+	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/securityreview"
@@ -228,6 +229,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Changelog(rest)
 	case "release-notes":
 		return app.ReleaseNotes(rest)
+	case "review":
+		return app.Review(rest)
 	case "run":
 		return app.RunCommand(ctx, rest)
 	case "test":
@@ -2279,6 +2282,88 @@ func parseSecurityReviewArgs(args []string) (securityReviewRequest, error) {
 	}
 }
 
+type reviewRequest struct {
+	Format string
+	Base   string
+	Staged bool
+	Limit  int
+}
+
+func (a *App) Review(args []string) error {
+	req, err := parseReviewArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := localreview.Run(a.Workspace, localreview.Options{
+		Base:   req.Base,
+		Staged: req.Staged,
+		Limit:  req.Limit,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	localreview.RenderText(a.Out, report)
+	return nil
+}
+
+func parseReviewArgs(args []string) (reviewRequest, error) {
+	req := reviewRequest{Format: "text", Limit: 200}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--staged":
+			req.Staged = true
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return reviewRequest{}, errors.New("review output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--base":
+			index++
+			if index >= len(args) {
+				return reviewRequest{}, errors.New("review base ref is required")
+			}
+			req.Base = args[index]
+		case strings.HasPrefix(arg, "--base="):
+			req.Base = strings.TrimPrefix(arg, "--base=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return reviewRequest{}, errors.New("review limit is required")
+			}
+			limit, err := strconv.Atoi(args[index])
+			if err != nil {
+				return reviewRequest{}, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return reviewRequest{}, err
+			}
+			req.Limit = limit
+		default:
+			return reviewRequest{}, fmt.Errorf("unknown review argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return reviewRequest{}, fmt.Errorf("unknown review output format %q", req.Format)
+	}
+}
+
 func renderVersion(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("version", args)
 	if err != nil {
@@ -3412,6 +3497,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/security-review":
 		if err := a.SecurityReview(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/review":
+		if err := a.Review(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/focus":
@@ -4830,6 +4919,7 @@ Usage:
   %s [flags] env [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
+  %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] cost --resume latest
@@ -4864,7 +4954,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

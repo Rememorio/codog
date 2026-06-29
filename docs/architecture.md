@@ -27,6 +27,8 @@ Codog follows a small-core layout:
   and model-facing todo tools.
 - `internal/securityreview`: local heuristic scanner for credential and
   shell-command risk patterns.
+- `internal/review`: changed-file review summaries that combine git diff
+  metadata with security findings for touched paths.
 - `internal/workerstate`: file-based worker observability surface shared by
   REPL, one-shot prompts, and `codog state`.
 - `internal/versioninfo`: version, build metadata, runtime, and workspace
