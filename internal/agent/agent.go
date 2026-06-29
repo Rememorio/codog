@@ -4198,10 +4198,18 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err != nil {
 		return err
 	}
+	if err := a.runSessionTurn(ctx, "prompt", sess, input, "completed"); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
+	return nil
+}
+
+func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
 	if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
 		return err
 	}
-	a.writeWorkerState("prompt", "running", sess, "")
+	a.writeWorkerState(mode, "running", sess, "")
 	effectiveConfig := a.effectiveConfig()
 	runner := runloop.Runner{
 		Config:    effectiveConfig,
@@ -4215,7 +4223,7 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	}
 	result, err := runner.Run(ctx, sess.Messages, input)
 	if err != nil {
-		a.writeWorkerState("prompt", "error", sess, err.Error())
+		a.writeWorkerState(mode, "error", sess, err.Error())
 		return err
 	}
 	for _, msg := range result.Messages[len(sess.Messages):] {
@@ -4224,8 +4232,7 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 		}
 	}
 	sess.Messages = result.Messages
-	a.writeWorkerState("prompt", "completed", sess, "")
-	fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
+	a.writeWorkerState(mode, successStatus, sess, "")
 	return nil
 }
 
@@ -4260,34 +4267,10 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		if a.handleSlash(ctx, line, sess) {
 			continue
 		}
-		if err := a.Sessions.AppendInput(sess.ID, line); err != nil {
-			return err
-		}
-		a.writeWorkerState("repl", "running", sess, "")
-		effectiveConfig := a.effectiveConfig()
-		runner := runloop.Runner{
-			Config:    effectiveConfig,
-			Client:    a.Client,
-			Tools:     a.Tools,
-			Prompter:  a.prompter(sess.ID),
-			Workspace: a.Workspace,
-			Out:       a.Out,
-			System:    a.systemPrompt(),
-			OnToolUse: a.auditToolUse(sess.ID),
-		}
-		result, err := runner.Run(ctx, sess.Messages, line)
-		if err != nil {
-			a.writeWorkerState("repl", "error", sess, err.Error())
+		if err := a.runSessionTurn(ctx, "repl", sess, line, "idle"); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			continue
 		}
-		for _, msg := range result.Messages[len(sess.Messages):] {
-			if err := a.Sessions.Append(sess.ID, msg); err != nil {
-				return err
-			}
-		}
-		sess.Messages = result.Messages
-		a.writeWorkerState("repl", "idle", sess, "")
 	}
 	return scanner.Err()
 }
@@ -4518,9 +4501,37 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/rewind":
 		a.handleRewindSlash(fields[1:], sess)
 	default:
+		if a.handleCustomSlash(ctx, line, sess) {
+			return true
+		}
 		if _, ok := slash.Lookup(fields[0]); !ok {
 			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
 		}
+	}
+	return true
+}
+
+func (a *App) handleCustomSlash(ctx context.Context, line string, sess *session.Session) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, fields[0])
+	if err != nil {
+		if errors.Is(err, customcommands.ErrNotFound) {
+			return false
+		}
+		fmt.Fprintln(a.Err, "error:", err)
+		return true
+	}
+	args := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+	rendered := customcommands.Render(command, args)
+	if strings.TrimSpace(rendered.Rendered) == "" {
+		fmt.Fprintf(a.Err, "custom command %s rendered an empty prompt\n", fields[0])
+		return true
+	}
+	if err := a.runSessionTurn(ctx, "repl", sess, rendered.Rendered, "idle"); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
 	}
 	return true
 }

@@ -1420,6 +1420,49 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "custom done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team-review.md"), []byte("Review this target: $ARGUMENTS"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess, err := app.Sessions.Open("custom-slash")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/team-review target.go", sess))
+	require.Contains(t, out.String(), "custom done")
+	require.Empty(t, errOut.String())
+	require.Len(t, sess.Messages, 2)
+	require.Equal(t, "user", sess.Messages[0].Role)
+	require.Equal(t, "Review this target: target.go", sess.Messages[0].Content[0].Text)
+	history, err := app.Sessions.PromptHistory("custom-slash")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, "Review this target: target.go", history[0].Text)
+}
+
 func TestExportCommandWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -25,6 +25,8 @@ type Rendered struct {
 	Rendered string `json:"rendered"`
 }
 
+var ErrNotFound = errors.New("custom command not found")
+
 type root struct {
 	path   string
 	source string
@@ -85,7 +87,7 @@ func Find(configHome, workspace, name string) (Command, error) {
 		body := string(data)
 		return Command{Name: name, Path: path, Source: root.source, Preview: preview(body), Body: body}, nil
 	}
-	return Command{}, fmt.Errorf("custom command %q not found", name)
+	return Command{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
 
 func Render(command Command, args string) Rendered {
