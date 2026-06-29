@@ -139,6 +139,47 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	require.Contains(t, errOut.String(), "session deleted: "+forkedID)
 }
 
+func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "resume me")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{Model: "mock", PermissionMode: "workspace-write"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       &errOut,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/clear", sess))
+	require.NotEqual(t, "source", sess.ID)
+	require.Empty(t, sess.Messages)
+	require.Contains(t, errOut.String(), "session cleared:")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/resume source", sess))
+	require.Equal(t, "source", sess.ID)
+	require.Len(t, sess.Messages, 1)
+	require.Contains(t, errOut.String(), "session resumed: source")
+}
+
+func TestRuntimeInfoSlashCommands(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{Workspace: t.TempDir(), Out: &out, Err: io.Discard}
+	sess := &session.Session{ID: "session"}
+
+	require.True(t, app.handleSlash(context.Background(), "/version", sess))
+	require.Contains(t, out.String(), "Codog")
+	require.Contains(t, out.String(), "Version")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/sandbox", sess))
+	require.Contains(t, out.String(), `"os":`)
+}
+
 func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\n"), 0o644))

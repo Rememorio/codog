@@ -2069,6 +2069,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	switch fields[0] {
 	case "/status":
 		a.renderStatus("text", sess)
+	case "/sandbox":
+		if err := a.Sandbox(); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/version":
+		if err := renderVersion(a.Out, a.Workspace, nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/init":
 		if err := a.Init(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2111,12 +2119,52 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		_ = a.MCP(ctx, nil)
 	case "/session":
 		a.handleSessionSlash(fields[1:], sess)
+	case "/clear":
+		a.handleClearSlash(fields[1:], sess)
+	case "/resume":
+		a.handleResumeSlash(fields[1:], sess)
 	default:
 		if _, ok := slash.Lookup(fields[0]); !ok {
 			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
 		}
 	}
 	return true
+}
+
+func (a *App) handleClearSlash(args []string, sess *session.Session) {
+	for _, arg := range args {
+		if arg != "--confirm" {
+			fmt.Fprintln(a.Err, "usage: /clear [--confirm]")
+			return
+		}
+	}
+	next, err := a.Sessions.Open("")
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	*sess = *next
+	a.writeWorkerState("repl", "idle", sess, "")
+	fmt.Fprintf(a.Err, "session cleared: %s\n", sess.ID)
+}
+
+func (a *App) handleResumeSlash(args []string, sess *session.Session) {
+	id := "latest"
+	if len(args) > 0 {
+		id = args[0]
+	}
+	if len(args) > 1 {
+		fmt.Fprintln(a.Err, "usage: /resume [session-id|latest]")
+		return
+	}
+	next, err := a.Sessions.Open(id)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	*sess = *next
+	a.writeWorkerState("repl", "idle", sess, "")
+	fmt.Fprintf(a.Err, "session resumed: %s\n", sess.ID)
 }
 
 func (a *App) handleHistorySlash(args []string, sess *session.Session) {
