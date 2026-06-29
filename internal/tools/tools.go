@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/mcp"
 )
 
 type Permission string
@@ -43,6 +45,16 @@ type CommandTool struct {
 	Command     string
 	Args        []string
 	Workspace   string
+}
+
+type MCPTool struct {
+	Name        string
+	Description string
+	Schema      map[string]any
+	Required    Permission
+	ServerName  string
+	Server      config.MCPServerConfig
+	RemoteName  string
 }
 
 type Registry struct {
@@ -213,6 +225,70 @@ func (t CommandTool) Execute(ctx context.Context, input json.RawMessage) (string
 		result["error"] = err.Error()
 	}
 	return pretty(result), nil
+}
+
+func NewMCPToolName(serverName, toolName string) string {
+	return "mcp__" + toolNameComponent(serverName, "server") + "__" + toolNameComponent(toolName, "tool")
+}
+
+func toolNameComponent(value, fallback string) string {
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '_' || r == '-':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	component := strings.Trim(builder.String(), "_-")
+	if component == "" {
+		return fallback
+	}
+	return component
+}
+
+func (t MCPTool) Definition() anthropic.ToolDefinition {
+	schema := t.Schema
+	if schema == nil {
+		schema = map[string]any{
+			"type":                 "object",
+			"additionalProperties": true,
+		}
+	}
+	description := t.Description
+	if description == "" {
+		description = fmt.Sprintf("Call MCP tool %s on server %s.", t.RemoteName, t.ServerName)
+	}
+	return anthropic.ToolDefinition{
+		Name:        t.Name,
+		Description: description,
+		InputSchema: schema,
+	}
+}
+
+func (t MCPTool) Permission() Permission {
+	if t.Required == "" {
+		return PermissionWorkspace
+	}
+	return t.Required
+}
+
+func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	result := mcp.CallTool(ctx, t.ServerName, t.Server, t.RemoteName, input)
+	if result.Error != "" {
+		return "", errors.New(result.Error)
+	}
+	if len(result.Result) == 0 {
+		return "{}", nil
+	}
+	return string(result.Result), nil
 }
 
 type BashTool struct {

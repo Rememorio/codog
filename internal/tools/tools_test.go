@@ -1,13 +1,17 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,4 +74,49 @@ func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
 	}.Execute(context.Background(), []byte(`{"ok":true}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ok`)
+}
+
+func TestMCPToolCallsRemoteTool(t *testing.T) {
+	out, err := MCPTool{
+		Name:       NewMCPToolName("test server", "echo"),
+		ServerName: "test server",
+		Server: config.MCPServerConfig{
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestMCPToolHelperProcess"},
+			Env:     []string{"CODOG_MCP_TOOL_HELPER=1"},
+		},
+		RemoteName: "echo",
+	}.Execute(context.Background(), []byte(`{"text":"hi"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"text":"echo"`)
+}
+
+func TestMCPToolHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_MCP_TOOL_HELPER") != "1" {
+		return
+	}
+	reader := bufio.NewScanner(os.Stdin)
+	for reader.Scan() {
+		var req map[string]any
+		if err := json.Unmarshal([]byte(reader.Text()), &req); err != nil {
+			continue
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			writeMCPResponse(id, map[string]any{"protocolVersion": "2024-11-05"})
+		case "tools/call":
+			params, _ := req["params"].(map[string]any)
+			name, _ := params["name"].(string)
+			writeMCPResponse(id, map[string]any{"content": []map[string]any{{"type": "text", "text": name}}})
+		}
+	}
+	os.Exit(0)
+}
+
+func writeMCPResponse(id any, result map[string]any) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, _ := json.Marshal(payload)
+	fmt.Println(strings.TrimSpace(string(data)))
 }

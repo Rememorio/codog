@@ -19,6 +19,13 @@ func TestCallToolAndReadResource(t *testing.T) {
 		Args:    []string{"-test.run=TestMCPHelperProcess"},
 		Env:     []string{"CODOG_MCP_HELPER=1"},
 	}
+	tools := ListTools(context.Background(), "test", server)
+	require.Empty(t, tools.Error)
+	require.Len(t, tools.Tools, 1)
+	require.Equal(t, "echo", tools.Tools[0].Name)
+	require.Equal(t, "Echo text.", tools.Tools[0].Description)
+	require.Equal(t, "object", tools.Tools[0].InputSchema["type"])
+
 	call := CallTool(context.Background(), "test", server, "echo", json.RawMessage(`{"text":"hi"}`))
 	require.Empty(t, call.Error)
 	require.Contains(t, string(call.Result), "hi")
@@ -56,7 +63,16 @@ func TestMCPHelperProcess(t *testing.T) {
 				"serverInfo":      map[string]any{"name": "test", "version": "0.0.0"},
 			})
 		case "tools/list":
-			writeMCP(id, map[string]any{"tools": []map[string]any{{"name": "echo"}}})
+			writeMCP(id, map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{"type": "string"},
+					},
+				},
+			}}})
 		case "tools/call":
 			writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
 		case "resources/list":

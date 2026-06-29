@@ -20,7 +20,8 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/cost`, `/compact`, `/skills`, `/mcp`.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and
   `.codog/skills`.
-- `codog mcp` inspects configured stdio MCP servers and attempts `tools/list`.
+- `codog mcp` inspects configured stdio MCP servers, and configured MCP tools
+  are exposed to the model as `mcp__server__tool` tool calls.
 - Hook commands can run before and after tool use.
 - `codog cost --resume latest` estimates session token usage and rough cost.
 - Request context is automatically compacted for long sessions.

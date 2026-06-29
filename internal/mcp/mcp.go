@@ -20,6 +20,18 @@ type ServerStatus struct {
 	Error string   `json:"error,omitempty"`
 }
 
+type ToolInfo struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"input_schema,omitempty"`
+}
+
+type ToolListResult struct {
+	Server string     `json:"server"`
+	Tools  []ToolInfo `json:"tools,omitempty"`
+	Error  string     `json:"error,omitempty"`
+}
+
 type ToolCallResult struct {
 	Server string          `json:"server"`
 	Tool   string          `json:"tool"`
@@ -64,8 +76,20 @@ func InspectAll(ctx context.Context, servers map[string]config.MCPServerConfig) 
 }
 
 func Inspect(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
+	result := ListTools(ctx, name, server)
+	if result.Error != "" {
+		return ServerStatus{Name: name, Error: result.Error}
+	}
+	tools := make([]string, 0, len(result.Tools))
+	for _, tool := range result.Tools {
+		tools = append(tools, tool.Name)
+	}
+	return ServerStatus{Name: name, Tools: tools}
+}
+
+func ListTools(ctx context.Context, serverName string, server config.MCPServerConfig) ToolListResult {
 	if server.Command == "" {
-		return ServerStatus{Name: name, Error: "missing command"}
+		return ToolListResult{Server: serverName, Error: "missing command"}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -74,14 +98,14 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 	cmd.Env = append(os.Environ(), server.Env...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
 	if err := cmd.Start(); err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
 	defer cmd.Process.Kill()
 
@@ -96,32 +120,66 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
 	if _, err := readResponse(reader); err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
+	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
 	resp, err := readResponse(reader)
 	if err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
 	if resp.Error != nil {
-		return ServerStatus{Name: name, Error: resp.Error.Message}
+		return ToolListResult{Server: serverName, Error: resp.Error.Message}
 	}
 	var payload struct {
-		Tools []struct {
-			Name string `json:"name"`
-		} `json:"tools"`
+		Tools []map[string]json.RawMessage `json:"tools"`
 	}
 	if err := json.Unmarshal(resp.Result, &payload); err != nil {
-		return ServerStatus{Name: name, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
-	var tools []string
-	for _, tool := range payload.Tools {
-		tools = append(tools, tool.Name)
+	tools := make([]ToolInfo, 0, len(payload.Tools))
+	for _, rawTool := range payload.Tools {
+		tool, err := decodeTool(rawTool)
+		if err != nil {
+			return ToolListResult{Server: serverName, Error: err.Error()}
+		}
+		if tool.Name == "" {
+			continue
+		}
+		tools = append(tools, tool)
 	}
-	return ServerStatus{Name: name, Tools: tools}
+	return ToolListResult{Server: serverName, Tools: tools}
+}
+
+func decodeTool(raw map[string]json.RawMessage) (ToolInfo, error) {
+	var tool ToolInfo
+	if data := raw["name"]; len(data) != 0 {
+		if err := json.Unmarshal(data, &tool.Name); err != nil {
+			return ToolInfo{}, err
+		}
+	}
+	if data := raw["description"]; len(data) != 0 {
+		_ = json.Unmarshal(data, &tool.Description)
+	}
+	schema := raw["inputSchema"]
+	if len(schema) == 0 {
+		schema = raw["input_schema"]
+	}
+	if len(schema) != 0 && string(schema) != "null" {
+		if err := json.Unmarshal(schema, &tool.InputSchema); err != nil {
+			return ToolInfo{}, err
+		}
+	}
+	if tool.InputSchema == nil {
+		tool.InputSchema = map[string]any{
+			"type":                 "object",
+			"additionalProperties": true,
+		}
+	}
+	return tool, nil
 }
 
 func CallTool(ctx context.Context, serverName string, server config.MCPServerConfig, toolName string, arguments json.RawMessage) ToolCallResult {

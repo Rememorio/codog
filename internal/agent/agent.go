@@ -49,6 +49,8 @@ type App struct {
 	Out       io.Writer
 	Err       io.Writer
 	In        io.Reader
+
+	mcpToolsLoaded bool
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
@@ -279,6 +281,35 @@ func (a *App) RegisterPluginTools() error {
 	return nil
 }
 
+func (a *App) RegisterMCPTools(ctx context.Context) error {
+	if a.mcpToolsLoaded {
+		return nil
+	}
+	for serverName, server := range a.Config.MCPServers {
+		result := mcp.ListTools(ctx, serverName, server)
+		if result.Error != "" {
+			return fmt.Errorf("mcp server %q: %s", serverName, result.Error)
+		}
+		for _, remoteTool := range result.Tools {
+			name := tools.NewMCPToolName(serverName, remoteTool.Name)
+			if a.Tools.Has(name) {
+				return fmt.Errorf("mcp tool %q conflicts with an existing tool", name)
+			}
+			a.Tools.Register(tools.MCPTool{
+				Name:        name,
+				Description: remoteTool.Description,
+				Schema:      remoteTool.InputSchema,
+				Required:    tools.PermissionWorkspace,
+				ServerName:  serverName,
+				Server:      server,
+				RemoteName:  remoteTool.Name,
+			})
+		}
+	}
+	a.mcpToolsLoaded = true
+	return nil
+}
+
 func (a *App) ListAgents() error {
 	defs, err := agentdefs.Load(a.Workspace)
 	if err != nil {
@@ -346,6 +377,9 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if strings.TrimSpace(input) == "" {
 		return errors.New("prompt is empty")
 	}
+	if err := a.RegisterMCPTools(ctx); err != nil {
+		return err
+	}
 	sess, err := a.openSession(overrides)
 	if err != nil {
 		return err
@@ -373,6 +407,9 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 }
 
 func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
+	if err := a.RegisterMCPTools(ctx); err != nil {
+		return err
+	}
 	sess, err := a.openSession(overrides)
 	if err != nil {
 		return err
