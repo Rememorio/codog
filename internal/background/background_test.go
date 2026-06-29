@@ -58,6 +58,20 @@ func TestStopRunningTask(t *testing.T) {
 	require.NotNil(t, stopped.CompletedAt)
 }
 
+func TestRunRecordsExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	store := Store{Dir: t.TempDir()}
+	task, err := store.Run("exit 7", t.TempDir())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := store.Status(task.ID)
+		return err == nil && status.Status == "failed" && status.ExitCode != nil && *status.ExitCode == 7
+	}, 2*time.Second, 50*time.Millisecond)
+}
+
 func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")

@@ -25,6 +25,7 @@ type Task struct {
 	Status        string         `json:"status"`
 	StartedAt     time.Time      `json:"started_at"`
 	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
+	ExitCode      *int           `json:"exit_code,omitempty"`
 	LogPath       string         `json:"log_path"`
 	Error         string         `json:"error,omitempty"`
 	RestartedFrom string         `json:"restarted_from,omitempty"`
@@ -321,6 +322,10 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		now := time.Now().UTC()
 		task.CompletedAt = &now
 		task.Status = "completed"
+		if cmd.ProcessState != nil {
+			exitCode := cmd.ProcessState.ExitCode()
+			task.ExitCode = &exitCode
+		}
 		if err != nil {
 			task.Status = "failed"
 			task.Error = err.Error()

@@ -814,14 +814,25 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(createOut), &task))
 	require.NotEmpty(t, task.ID)
 
+	var completed background.Task
 	require.Eventually(t, func() bool {
 		statusOut, err := TaskStatusTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
-		return err == nil && !strings.Contains(statusOut, `"status": "running"`)
+		if err != nil {
+			return false
+		}
+		if err := json.Unmarshal([]byte(statusOut), &completed); err != nil {
+			return false
+		}
+		return completed.Status != "running"
 	}, 2*time.Second, 20*time.Millisecond)
+	require.NotNil(t, completed.ExitCode)
+	require.Equal(t, 0, *completed.ExitCode)
 
 	outputOut, err := TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, outputOut, "task-output")
+	require.Contains(t, outputOut, `"status": "completed"`)
+	require.Contains(t, outputOut, `"exit_code": 0`)
 
 	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","message":"review logs"}`))
 	require.NoError(t, err)

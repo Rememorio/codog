@@ -3539,11 +3539,22 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if payload.LimitBytes <= 0 {
 		payload.LimitBytes = 64 * 1024
 	}
-	output, err := taskStore(t.ConfigHome, t.Workspace).Logs(payload.ID, payload.LimitBytes)
+	store := taskStore(t.ConfigHome, t.Workspace)
+	task, err := store.Status(payload.ID)
 	if err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{"id": payload.ID, "output": output}), nil
+	output, err := store.Logs(payload.ID, payload.LimitBytes)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"id":        payload.ID,
+		"status":    task.Status,
+		"exit_code": task.ExitCode,
+		"error":     task.Error,
+		"output":    output,
+	}), nil
 }
 
 func taskStore(configHome string, workspace string) background.Store {
