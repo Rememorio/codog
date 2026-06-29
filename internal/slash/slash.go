@@ -17,6 +17,7 @@ func Specs() []Spec {
 	specs := []Spec{
 		{Name: "/help", Usage: "/help", Description: "Show slash command help."},
 		{Name: "/status", Usage: "/status", Description: "Show local workspace, session, config, git, and runtime status."},
+		{Name: "/init", Usage: "/init", Description: "Initialize Codog project config and instruction files."},
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/permissions", Usage: "/permissions [mode]", Description: "Show or switch the current permission mode."},

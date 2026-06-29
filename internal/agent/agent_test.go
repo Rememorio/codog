@@ -288,6 +288,33 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Session          source (1 messages)")
 }
 
+func TestInitCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/app\n"), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Init(nil))
+	require.Contains(t, out.String(), "Init")
+	require.Contains(t, out.String(), ".codog/instructions.md")
+	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
+	out.Reset()
+
+	require.NoError(t, app.Init([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "init"`)
+	require.Contains(t, out.String(), `"already_initialized": true`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/init", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Init")
+}
+
 func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Always run focused tests."), 0o644))

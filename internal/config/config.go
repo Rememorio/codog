@@ -171,6 +171,7 @@ func configPaths(home, explicit string) []string {
 	return []string{
 		filepath.Join(home, "config.json"),
 		".codog.json",
+		".codog.local.json",
 	}
 }
 

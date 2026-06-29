@@ -105,6 +105,24 @@ func TestLoadEditorBridgeToken(t *testing.T) {
 	require.Equal(t, "bridge-token", cfg.Future.EditorBridgeToken)
 }
 
+func TestLoadProjectLocalOverridesSharedConfig(t *testing.T) {
+	workspace := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{"model":"shared-model","permission_mode":"read-only"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{"model":"local-model"}`), 0o644))
+
+	cfg, paths, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "local-model", cfg.Model)
+	require.Equal(t, "read-only", cfg.PermissionMode)
+	require.Contains(t, paths, ".codog.json")
+	require.Contains(t, paths, ".codog.local.json")
+}
+
 func writeSignedPolicy(t *testing.T, path string, policy ManagedPolicy, privateKey ed25519.PrivateKey) ManagedPolicy {
 	t.Helper()
 	payload, err := ManagedPolicyPayload(policy)

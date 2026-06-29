@@ -37,6 +37,8 @@ Claude Code source.
   streaming server for harness tests.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
+- `codog init [--json]` initializes `.codog/instructions.md`, `.codog.json`,
+  and `.gitignore` entries for project-local setup.
 - Project memory files (`AGENTS.md`, `CLAUDE.md`, `CLAW.md`, and
   `.codog/instructions.md`) are loaded from the git root to the workspace and
   injected into the system prompt.
@@ -99,7 +101,7 @@ codog --permission-mode prompt prompt "inspect the repo"
 
 ## Config
 
-`~/.codog/config.json` or `.codog.json`:
+`~/.codog/config.json`, `.codog.json`, or `.codog.local.json`:
 
 ```json
 {

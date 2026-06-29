@@ -13,6 +13,8 @@ Codog follows a small-core layout:
   rendering, and legacy flat-session compatibility.
 - `internal/config`: config merge from user file, project file, environment, and
   flags.
+- `internal/projectinit`: idempotent project bootstrap for `.codog`
+  instructions, shared config, and local ignore entries.
 - `internal/hooks`: pre/post tool hook runner.
 - `internal/slash`: slash command registry and help rendering.
 - `internal/harness`: in-process mock-provider smoke harness.

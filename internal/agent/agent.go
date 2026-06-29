@@ -31,6 +31,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
@@ -98,6 +99,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(os.Stdout, string(data))
 		return nil
+	}
+	if command == "init" {
+		workspace, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		return initProject(os.Stdout, workspace, rest)
 	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
 		return enterpriseVerify(os.Stdout, rest)
@@ -170,6 +178,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OAuth(rest)
 	case "status":
 		return app.Status(rest, overrides)
+	case "init":
+		return app.Init(rest)
 	case "doctor":
 		return app.Doctor(rest)
 	case "sandbox":
@@ -1433,8 +1443,30 @@ func (a *App) Sandbox() error {
 	return nil
 }
 
+func (a *App) Init(args []string) error {
+	return initProject(a.Out, a.Workspace, args)
+}
+
+func initProject(out io.Writer, workspace string, args []string) error {
+	format, err := parseSimpleOutputFormat("init", args)
+	if err != nil {
+		return err
+	}
+	report, err := projectinit.Initialize(workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, projectinit.RenderText(report))
+	return nil
+}
+
 func (a *App) Status(args []string, overrides config.FlagOverrides) error {
-	format, err := parseStatusOutputFormat(args)
+	format, err := parseSimpleOutputFormat("status", args)
 	if err != nil {
 		return err
 	}
@@ -1536,7 +1568,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	})
 }
 
-func parseStatusOutputFormat(args []string) (string, error) {
+func parseSimpleOutputFormat(command string, args []string) (string, error) {
 	format := "text"
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -1546,25 +1578,25 @@ func parseStatusOutputFormat(args []string) (string, error) {
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return "", errors.New("status output format is required")
+				return "", fmt.Errorf("%s output format is required", command)
 			}
 			format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
 			format = strings.TrimPrefix(arg, "--output-format=")
 		default:
-			return "", fmt.Errorf("unknown status flag %q", arg)
+			return "", fmt.Errorf("unknown %s flag %q", command, arg)
 		}
 	}
 	switch format {
 	case "text", "json":
 		return format, nil
 	default:
-		return "", fmt.Errorf("unknown status output format %q", format)
+		return "", fmt.Errorf("unknown %s output format %q", command, format)
 	}
 }
 
 func (a *App) Doctor(args []string) error {
-	format, err := parseDoctorOutputFormat(args)
+	format, err := parseSimpleOutputFormat("doctor", args)
 	if err != nil {
 		return err
 	}
@@ -1609,33 +1641,6 @@ func (a *App) Doctor(args []string) error {
 		return errors.New("doctor found failing checks")
 	}
 	return nil
-}
-
-func parseDoctorOutputFormat(args []string) (string, error) {
-	format := "text"
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
-			format = "json"
-		case arg == "--output-format" || arg == "-o":
-			i++
-			if i >= len(args) {
-				return "", errors.New("doctor output format is required")
-			}
-			format = args[i]
-		case strings.HasPrefix(arg, "--output-format="):
-			format = strings.TrimPrefix(arg, "--output-format=")
-		default:
-			return "", fmt.Errorf("unknown doctor flag %q", arg)
-		}
-	}
-	switch format {
-	case "text", "json":
-		return format, nil
-	default:
-		return "", fmt.Errorf("unknown doctor output format %q", format)
-	}
 }
 
 func (a *App) CodeIntel(args []string) error {
@@ -1823,6 +1828,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	switch fields[0] {
 	case "/status":
 		a.renderStatus("text", sess)
+	case "/init":
+		if err := a.Init(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/config":
@@ -2476,6 +2485,7 @@ Usage:
   %s [flags] skills
   %s [flags] mcp
   %s [flags] status [--json|--output-format text|json]
+  %s [flags] init [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
@@ -2502,7 +2512,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
