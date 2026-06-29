@@ -51,7 +51,7 @@ func Surfaces() []Surface {
 			Command:     "remote",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Local HTTP control server exposes sessions, background tasks, logs, Go diagnostics, bearer-token auth, heartbeat, and last-error state; durable remote transport remains planned.",
+			Description: "Local HTTP control server exposes sessions, background tasks, logs/watch streams, Go diagnostics, bearer-token auth, heartbeat, and last-error state; durable remote transport remains planned.",
 			DependsOn:   []string{"background", "enterprise"},
 			NextSteps: []string{
 				"Support reconnect and structured failure reasons.",
@@ -77,11 +77,11 @@ func Surfaces() []Surface {
 			Command:     "background",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local background command registry supports run/list/status/stop/logs with persisted metadata and log files.",
+			Description: "Local background command registry supports run/list/status/stop/logs/watch with persisted metadata, log files, and NDJSON status/log events.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add long-lived process supervision.",
-				"Expose watch streams over bridge and remote APIs.",
+				"Expose watch streams over bridge APIs.",
 				"Attach background tasks to agent sessions.",
 			},
 		},

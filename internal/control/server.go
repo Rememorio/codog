@@ -193,9 +193,63 @@ func (s Server) backgroundByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeText(w, logs)
+	case r.Method == http.MethodGet && action == "watch":
+		options, err := parseWatchOptions(r)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		if _, err := store.Get(id); err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("content-type", "application/x-ndjson")
+		w.Header().Set("cache-control", "no-cache")
+		encoder := json.NewEncoder(w)
+		flusher, _ := w.(http.Flusher)
+		err = store.Watch(r.Context(), id, options, func(event background.WatchEvent) error {
+			if err := encoder.Encode(event); err != nil {
+				return err
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return nil
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			return
+		}
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func parseWatchOptions(r *http.Request) (background.WatchOptions, error) {
+	var options background.WatchOptions
+	if value := r.URL.Query().Get("offset"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return options, err
+		}
+		options.Offset = parsed
+	}
+	if value := r.URL.Query().Get("interval_ms"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return options, err
+		}
+		if parsed > 0 {
+			options.Interval = time.Duration(parsed) * time.Millisecond
+		}
+	}
+	if value := r.URL.Query().Get("events"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return options, err
+		}
+		options.MaxEvents = parsed
+	}
+	return options, nil
 }
 
 func (s Server) goDiagnostics(w http.ResponseWriter, r *http.Request) {

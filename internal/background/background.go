@@ -1,6 +1,7 @@
 package background
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,6 +22,22 @@ type Task struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	LogPath     string     `json:"log_path"`
 	Error       string     `json:"error,omitempty"`
+}
+
+type WatchEvent struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Offset int64  `json:"offset,omitempty"`
+	Data   string `json:"data,omitempty"`
+	Status string `json:"status,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Task   *Task  `json:"task,omitempty"`
+}
+
+type WatchOptions struct {
+	Offset    int64
+	Interval  time.Duration
+	MaxEvents int
 }
 
 type Store struct {
@@ -183,6 +200,96 @@ func (s Store) Logs(id string, limitBytes int64) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit func(WatchEvent) error) error {
+	if emit == nil {
+		return errors.New("watch emit callback is required")
+	}
+	if options.Interval <= 0 {
+		options.Interval = 500 * time.Millisecond
+	}
+	offset := options.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	task, err := s.Status(id)
+	if err != nil {
+		return err
+	}
+	events := 0
+	if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task}); err != nil {
+		return err
+	}
+	events++
+	if options.MaxEvents > 0 && events >= options.MaxEvents {
+		return nil
+	}
+	lastStatus := task.Status
+	for {
+		nextOffset, data, err := s.readLogFrom(task.LogPath, offset)
+		if err != nil {
+			return err
+		}
+		if data != "" {
+			offset = nextOffset
+			if err := emit(WatchEvent{Type: "log", ID: id, Offset: offset, Data: data}); err != nil {
+				return err
+			}
+			events++
+			if options.MaxEvents > 0 && events >= options.MaxEvents {
+				return nil
+			}
+		}
+		task, err = s.Status(id)
+		if err != nil {
+			return err
+		}
+		if task.Status != lastStatus {
+			if err := emit(WatchEvent{Type: "status", ID: id, Status: task.Status, Error: task.Error, Task: &task}); err != nil {
+				return err
+			}
+			events++
+			lastStatus = task.Status
+			if options.MaxEvents > 0 && events >= options.MaxEvents {
+				return nil
+			}
+		}
+		if task.Status != "running" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(options.Interval):
+		}
+	}
+}
+
+func (s Store) readLogFrom(path string, offset int64) (int64, string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return offset, "", nil
+		}
+		return offset, "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return offset, "", err
+	}
+	if offset > info.Size() {
+		offset = 0
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return offset, "", err
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return offset, "", err
+	}
+	return offset + int64(len(data)), string(data), nil
 }
 
 func (s Store) save(task Task) error {

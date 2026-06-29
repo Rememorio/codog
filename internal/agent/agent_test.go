@@ -13,11 +13,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/audit"
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
@@ -88,6 +90,27 @@ func TestParseAgentRunArgs(t *testing.T) {
 
 	_, err = parseAgentRunArgs([]string{"--worktree", "reviewer"})
 	require.Error(t, err)
+}
+
+func TestBackgroundWatchCommandOutputsJSONLEvents(t *testing.T) {
+	configHome := t.TempDir()
+	store := background.NewStore(configHome)
+	task, err := store.Run("echo cli-watch", t.TempDir())
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(task.ID, 100)
+		return err == nil && strings.Contains(logs, "cli-watch")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	require.NoError(t, app.Background([]string{"watch", task.ID}))
+	require.Contains(t, out.String(), `"type":"status"`)
+	require.Contains(t, out.String(), `"type":"log"`)
+	require.Contains(t, out.String(), "cli-watch")
 }
 
 func TestOAuthTokenCommands(t *testing.T) {

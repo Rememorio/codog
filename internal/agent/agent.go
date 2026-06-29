@@ -404,7 +404,7 @@ func (a *App) Background(args []string) error {
 		return nil
 	}
 	if len(args) < 2 {
-		return errors.New("usage: codog background list | run COMMAND | status ID | stop ID | logs ID [bytes]")
+		return errors.New("usage: codog background list | run COMMAND | status ID | stop ID | logs ID [bytes] | watch ID [offset]")
 	}
 	switch args[0] {
 	case "status":
@@ -438,6 +438,19 @@ func (a *App) Background(args []string) error {
 		}
 		fmt.Fprint(a.Out, logs)
 		return nil
+	case "watch":
+		offset := int64(0)
+		if len(args) > 2 {
+			parsed, err := strconv.ParseInt(args[2], 10, 64)
+			if err != nil {
+				return err
+			}
+			offset = parsed
+		}
+		encoder := json.NewEncoder(a.Out)
+		return store.Watch(context.Background(), args[1], background.WatchOptions{Offset: offset}, func(event background.WatchEvent) error {
+			return encoder.Encode(event)
+		})
 	default:
 		return fmt.Errorf("unknown background command %q", args[0])
 	}
@@ -1249,7 +1262,7 @@ Usage:
   %s self-test
   %s roadmap [--json]
   %s capabilities [--json]
-  %s background run "command" | background list | background status|stop|logs ID
+  %s background run "command" | background list | background status|stop|logs|watch ID
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete

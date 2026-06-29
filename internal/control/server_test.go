@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -111,6 +113,35 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestControlBackgroundWatchStreamsEvents(t *testing.T) {
+	root := t.TempDir()
+	configHome := filepath.Join(root, "home")
+	store := background.NewStore(configHome)
+	task, err := store.Run("echo watch-remote", root)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(task.ID, 100)
+		return err == nil && strings.Contains(logs, "watch-remote")
+	}, 2*time.Second, 50*time.Millisecond)
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: configHome,
+		Workspace:  root,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/background/" + task.ID + "/watch?interval_ms=10")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("content-type"), "application/x-ndjson")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"type":"status"`)
+	require.Contains(t, string(body), `"type":"log"`)
+	require.Contains(t, string(body), "watch-remote")
 }
 
 func TestControlGoDiagnostics(t *testing.T) {

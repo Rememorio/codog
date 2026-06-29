@@ -20,7 +20,8 @@ Codog follows a small-core layout:
 - `internal/tui`: Bubble Tea prompt composer.
 - `internal/usage`: approximate token and cost accounting.
 - `internal/future`: explicit long-horizon capability status.
-- `internal/background`: background process metadata and log registry.
+- `internal/background`: background process metadata, log registry, and watch
+  event streaming.
 - `internal/agentdefs`: local agent definition discovery.
 - `internal/worktree`: git worktree allocation for isolated local agent workers.
 - `internal/plugins`: local plugin discovery, remote marketplace index fetch,
@@ -30,7 +31,7 @@ Codog follows a small-core layout:
 - `internal/codeintel`: lightweight Go symbols, diagnostics, and notebook
   helpers.
 - `internal/control`: HTTP control API for sessions, background tasks, logs,
-  diagnostics, remote auth, and heartbeat state.
+  watch streams, diagnostics, remote auth, and heartbeat state.
 - `internal/bridge`: stdio JSON-RPC bridge.
 - `internal/updater`: release manifest check, signed manifest verification,
   verified artifact downloads, and backup-based binary installation.

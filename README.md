@@ -30,8 +30,8 @@ Claude Code source.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog capabilities --json` exposes the long-horizon capability contract.
-- `codog background run|list|status|stop|logs` manages local background
-  commands and their logs.
+- `codog background run|list|status|stop|logs|watch` manages local background
+  commands and streams status/log events.
 - `codog agents list|run|worktrees` lists `.codog/agents/*.json` definitions,
   launches named background workers, and can isolate them in git worktrees with
   `agents run --worktree`.
@@ -46,8 +46,8 @@ Claude Code source.
 - `codog code-intel symbols|diagnostics` scans Go symbols, reports Go test
   diagnostics, and `notebook-edit` updates `.ipynb` cells.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
-  background tasks, logs, Go diagnostics, bearer-token auth, and heartbeat
-  state.
+  background tasks, logs/watch streams, Go diagnostics, bearer-token auth, and
+  heartbeat state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, diagnostics, and bounded file read/write/edit operations.
 - `codog updater check|download|install|rollback` checks releases, downloads
