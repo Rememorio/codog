@@ -8,7 +8,8 @@ Claude Code source.
 
 - Single Go binary: `codog`
 - One-shot prompt mode through `codog prompt` or Claude-compatible `codog -p`
-- Interactive REPL with Tab completion for slash commands on real terminals
+- Interactive REPL with Tab completion for built-in and custom slash commands,
+  skill shortcuts, model switches, and recent sessions on real terminals
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `remote_trigger`,
@@ -39,7 +40,8 @@ Claude Code source.
   `--append-system-prompt`
 
 - `codog tui` starts a Bubble Tea prompt composer with Tab completion for
-  slash commands, common subcommands, the current model, and recent sessions.
+  built-in/custom slash commands, skill shortcuts, common subcommands, the
+  current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,

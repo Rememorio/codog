@@ -115,3 +115,8 @@ func TestCandidatesWithOptionsIncludeModelAndSessions(t *testing.T) {
 	require.Contains(t, modelValueCandidates, "/model claude-test")
 	require.NotContains(t, modelValueCandidates, "/model")
 }
+
+func TestCandidatesWithOptionsIncludeExtraCandidates(t *testing.T) {
+	candidates := CandidatesWithOptions("/team/", CandidateOptions{Extra: []string{"/team/review ", "/team/audit "}})
+	require.Equal(t, []string{"/team/audit ", "/team/review "}, candidates)
+}

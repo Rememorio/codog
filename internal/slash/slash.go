@@ -17,6 +17,7 @@ type CandidateOptions struct {
 	Model            string
 	ActiveSessionID  string
 	RecentSessionIDs []string
+	Extra            []string
 }
 
 func Specs() []Spec {
@@ -207,6 +208,9 @@ func AllCandidates(options CandidateOptions) []string {
 		}
 		add("/resume " + sessionID)
 		add("/session switch " + sessionID)
+	}
+	for _, candidate := range options.Extra {
+		add(candidate)
 	}
 	sort.Strings(candidates)
 	return candidates

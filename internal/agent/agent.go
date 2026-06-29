@@ -5315,9 +5315,35 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if a.handleCustomSlash(ctx, line, sess) {
 			return true
 		}
+		if a.handleSkillSlash(ctx, line, sess) {
+			return true
+		}
 		if _, ok := slash.Lookup(fields[0]); !ok {
 			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
 		}
+	}
+	return true
+}
+
+func (a *App) handleSkillSlash(ctx context.Context, line string, sess *session.Session) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	name := strings.TrimPrefix(fields[0], "/")
+	name = strings.ReplaceAll(name, "/", ":")
+	skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
+	if err != nil {
+		if errors.Is(err, skills.ErrNotFound) {
+			return false
+		}
+		fmt.Fprintln(a.Err, "error:", err)
+		return true
+	}
+	args := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+	rendered := skills.RenderInvocation(skill, args)
+	if err := a.runSessionTurn(ctx, "repl", sess, rendered, "idle"); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
 	}
 	return true
 }
@@ -7912,11 +7938,28 @@ func (a *App) slashCompletionCandidates(activeSessionID string) []string {
 			}
 		}
 	}
+	extra := a.customSlashCompletionCandidates()
 	return slash.AllCandidates(slash.CandidateOptions{
 		Model:            a.Config.Model,
 		ActiveSessionID:  activeSessionID,
 		RecentSessionIDs: recent,
+		Extra:            extra,
 	})
+}
+
+func (a *App) customSlashCompletionCandidates() []string {
+	candidates := []string{}
+	if commands, err := customcommands.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+		for _, command := range commands {
+			candidates = append(candidates, "/"+strings.ReplaceAll(command.Name, ":", "/")+" ")
+		}
+	}
+	if loadedSkills, err := skills.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+		for _, skill := range loadedSkills {
+			candidates = append(candidates, "/"+strings.ReplaceAll(skill.Name, ":", "/")+" ")
+		}
+	}
+	return candidates
 }
 
 type stringListFlag []string

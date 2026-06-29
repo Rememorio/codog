@@ -592,11 +592,18 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 }
 
 func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
-	store := session.NewWorkspaceStore(t.TempDir(), t.TempDir())
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands", "team"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "review.md"), []byte("Review $ARGUMENTS"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill"), 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.AppendInput("source", "hello"))
 	app := &App{
-		Config:   config.Config{Model: "claude-test"},
-		Sessions: store,
+		Config:    config.Config{ConfigHome: configHome, Model: "claude-test"},
+		Sessions:  store,
+		Workspace: workspace,
 	}
 
 	candidates := app.slashCompletionCandidates("active-session")
@@ -606,6 +613,8 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	require.Contains(t, candidates, "/resume source")
 	require.Contains(t, candidates, "/session switch source")
 	require.Contains(t, candidates, "/permissions workspace-write")
+	require.Contains(t, candidates, "/team/review ")
+	require.Contains(t, candidates, "/team/audit ")
 }
 
 func TestSlashCompleterReturnsReadlineSuffixes(t *testing.T) {
@@ -2132,6 +2141,46 @@ func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.Equal(t, "Review this target: target.go", history[0].Text)
+}
+
+func TestSkillSlashRunsRenderedPrompt(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "skill done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill body"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess, err := app.Sessions.Open("skill-slash")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/team/audit auth", sess))
+	require.Contains(t, out.String(), "skill done")
+	require.Empty(t, errOut.String())
+	require.Len(t, sess.Messages, 2)
+	require.Equal(t, "user", sess.Messages[0].Role)
+	require.Contains(t, sess.Messages[0].Content[0].Text, `<skill name="team:audit"`)
+	require.Contains(t, sess.Messages[0].Content[0].Text, "User request: auth")
 }
 
 func TestExportCommandWritesFormats(t *testing.T) {
