@@ -305,7 +305,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("testing_permission")
 	require.True(t, ok)
-	require.Equal(t, PermissionDanger, info.Permission)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("skill")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -422,12 +422,33 @@ func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
 }
 
 func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
-	out, err := TestingPermissionTool{}.Execute(context.Background(), []byte(`{"action":"write"}`))
+	registry := NewRegistry(t.TempDir())
+	prompter := &Prompter{Mode: PermissionReadOnly}
+
+	out, err := registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"pwd"}}`), prompter)
 	require.NoError(t, err)
-	require.Contains(t, out, `"action": "write"`)
-	require.Contains(t, out, `"permitted": true`)
-	require.Contains(t, out, `"required_permission": "danger-full-access"`)
-	require.Contains(t, out, `"message": "Permission gate accepted the requested action"`)
+	require.Contains(t, out, `"kind": "permission_check"`)
+	require.Contains(t, out, `"target_tool": "bash"`)
+	require.Contains(t, out, `"allowed": true`)
+	require.Contains(t, out, `"reason": "bash_validation_read_only"`)
+
+	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"pwd && touch created.txt"}}`), prompter)
+	require.NoError(t, err)
+	require.Contains(t, out, `"allowed": false`)
+	require.Contains(t, out, `"reason": "bash_validation"`)
+	require.Contains(t, out, `"message": "bash command is not read-only"`)
+
+	prompter = &Prompter{Mode: PermissionAllow, DeniedTools: []string{"write_file"}}
+	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"write_file","input":{"path":"a.txt","content":"x"}}`), prompter)
+	require.NoError(t, err)
+	require.Contains(t, out, `"known_tool": true`)
+	require.Contains(t, out, `"required_permission": "workspace-write"`)
+	require.Contains(t, out, `"allowed": false`)
+	require.Contains(t, out, `"reason": "denied_tools"`)
+
+	_, err = TestingPermissionTool{}.Execute(context.Background(), []byte(`{"target_tool":"bash"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "through the tool registry")
 }
 
 func TestNotebookEditToolUpdatesNotebook(t *testing.T) {

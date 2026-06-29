@@ -108,12 +108,14 @@ type Prompter struct {
 }
 
 type PermissionDecision struct {
-	ToolName string
-	Required Permission
-	Mode     Permission
-	Input    string
-	Allowed  bool
-	Reason   string
+	ToolName    string
+	Required    Permission
+	Mode        Permission
+	Input       string
+	Allowed     bool
+	WouldPrompt bool
+	Reason      string
+	Message     string
 }
 
 func NewRegistry(workspace string) *Registry {
@@ -261,6 +263,9 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 	if tool == nil {
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
+	if strings.EqualFold(name, "testing_permission") {
+		return r.executeTestingPermission(input, prompter)
+	}
 	if prompter != nil {
 		if err := prompter.Authorize(name, tool.Permission(), input); err != nil {
 			return "", err
@@ -270,36 +275,71 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 }
 
 func (p *Prompter) Authorize(name string, required Permission, input json.RawMessage) error {
+	decision := p.Decide(name, required, input)
+	if decision.Allowed {
+		p.emitDecision(decision)
+		return nil
+	}
+	if !decision.WouldPrompt {
+		p.emitDecision(decision)
+		return permissionDecisionError(decision)
+	}
+	if p.In == nil {
+		p.In = os.Stdin
+	}
+	if p.Err == nil {
+		p.Err = os.Stderr
+	}
+	if decision.Message != "" {
+		fmt.Fprintf(p.Err, "\nBash validation warning: %s\n", decision.Message)
+	}
+	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N] ", name, required, string(input))
+	reader := bufio.NewReader(p.In)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer == "y" || answer == "yes" {
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved"})
+		return nil
+	}
+	p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: false, Reason: "user_denied"})
+	return fmt.Errorf("permission denied for tool %s", name)
+}
+
+func (p *Prompter) Decide(name string, required Permission, input json.RawMessage) PermissionDecision {
 	mode := p.Mode
 	if mode == "" {
 		mode = PermissionWorkspace
 	}
 	inputText := string(input)
+	decision := PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText}
 	if ruleMatchesTool(p.DeniedTools, name) {
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "denied_tools"})
-		return fmt.Errorf("permission denied for tool %s by denied_tools", name)
+		decision.Reason = "denied_tools"
+		return decision
 	}
 	if ruleMatches(p.DenyRules, name, inputText) {
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "deny_rule"})
-		return fmt.Errorf("permission denied for tool %s by deny rule", name)
+		decision.Reason = "deny_rule"
+		return decision
 	}
 	if ruleMatches(p.AllowRules, name, inputText) {
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "allow_rule"})
-		return nil
+		decision.Allowed = true
+		decision.Reason = "allow_rule"
+		return decision
 	}
 	validationWarning := ""
 	if strings.EqualFold(name, "bash") {
 		result := bashvalidation.Validate(bashvalidation.CommandFromInput(input), string(mode), p.Workspace)
 		switch result.Severity {
 		case bashvalidation.SeverityBlock:
-			p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "bash_validation"})
-			return fmt.Errorf("permission denied for tool %s by bash validation: %s", name, result.Reason)
+			decision.Reason = "bash_validation"
+			decision.Message = result.Reason
+			return decision
 		case bashvalidation.SeverityConfirm:
 			validationWarning = result.Reason
 		case bashvalidation.SeverityAllow:
 			if mode == PermissionReadOnly && result.Intent == bashvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
-				p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "bash_validation_read_only"})
-				return nil
+				decision.Allowed = true
+				decision.Reason = "bash_validation_read_only"
+				return decision
 			}
 		}
 	}
@@ -308,28 +348,30 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 		ask = true
 	}
 	if !ask && (mode == PermissionAllow || permissionRank(mode) >= permissionRank(required)) {
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "permission_mode"})
-		return nil
+		decision.Allowed = true
+		decision.Reason = "permission_mode"
+		return decision
 	}
-	if p.In == nil {
-		p.In = os.Stdin
+	decision.WouldPrompt = true
+	decision.Reason = "requires_confirmation"
+	decision.Message = validationWarning
+	return decision
+}
+
+func permissionDecisionError(decision PermissionDecision) error {
+	switch decision.Reason {
+	case "denied_tools":
+		return fmt.Errorf("permission denied for tool %s by denied_tools", decision.ToolName)
+	case "deny_rule":
+		return fmt.Errorf("permission denied for tool %s by deny rule", decision.ToolName)
+	case "bash_validation":
+		if decision.Message != "" {
+			return fmt.Errorf("permission denied for tool %s by bash validation: %s", decision.ToolName, decision.Message)
+		}
+		return fmt.Errorf("permission denied for tool %s by bash validation", decision.ToolName)
+	default:
+		return fmt.Errorf("permission denied for tool %s", decision.ToolName)
 	}
-	if p.Err == nil {
-		p.Err = os.Stderr
-	}
-	if validationWarning != "" {
-		fmt.Fprintf(p.Err, "\nBash validation warning: %s\n", validationWarning)
-	}
-	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N] ", name, required, string(input))
-	reader := bufio.NewReader(p.In)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-	if answer == "y" || answer == "yes" {
-		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "user_approved"})
-		return nil
-	}
-	p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "user_denied"})
-	return fmt.Errorf("permission denied for tool %s", name)
 }
 
 func (p *Prompter) emitDecision(decision PermissionDecision) {
@@ -1971,37 +2013,111 @@ type TestingPermissionTool struct{}
 func (TestingPermissionTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "testing_permission",
-		Description: "Test-only tool for verifying permission enforcement behavior.",
+		Description: "Dry-run the current permission policy for a target tool without executing that tool.",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"action": map[string]any{"type": "string"},
+				"target_tool": map[string]any{"type": "string"},
+				"tool":        map[string]any{"type": "string"},
+				"required_permission": map[string]any{
+					"type": "string",
+					"enum": []string{string(PermissionReadOnly), string(PermissionWorkspace), string(PermissionDanger), string(PermissionPrompt), string(PermissionAllow)},
+				},
+				"input":  map[string]any{"type": "object", "additionalProperties": true},
+				"action": map[string]any{"type": "string", "description": "Deprecated compatibility alias used as the target label when target_tool is omitted."},
 			},
-			"required": []string{"action"},
 		},
 	}
 }
 
-func (TestingPermissionTool) Permission() Permission { return PermissionDanger }
+func (TestingPermissionTool) Permission() Permission { return PermissionReadOnly }
 
-func (TestingPermissionTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
-	var payload struct {
-		Action string `json:"action"`
+func (TestingPermissionTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	return "", errors.New("testing_permission must be executed through the tool registry")
+}
+
+type testingPermissionInput struct {
+	TargetTool         string          `json:"target_tool"`
+	Tool               string          `json:"tool"`
+	RequiredPermission Permission      `json:"required_permission"`
+	Input              json.RawMessage `json:"input"`
+	Action             string          `json:"action"`
+}
+
+func (r *Registry) executeTestingPermission(input json.RawMessage, prompter *Prompter) (string, error) {
+	var payload testingPermissionInput
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
 	}
-	if err := json.Unmarshal(input, &payload); err != nil {
-		return "", err
+	target := strings.TrimSpace(payload.TargetTool)
+	if target == "" {
+		target = strings.TrimSpace(payload.Tool)
 	}
-	payload.Action = strings.TrimSpace(payload.Action)
-	if payload.Action == "" {
-		return "", errors.New("action is required")
+	if target == "" {
+		target = strings.TrimSpace(payload.Action)
 	}
+	if target == "" {
+		return "", errors.New("target_tool is required")
+	}
+	targetTool, canonical, found := r.toolByName(target)
+	required := payload.RequiredPermission
+	if required != "" {
+		if !validPermission(required) {
+			return "", fmt.Errorf("unsupported required_permission %q", required)
+		}
+	} else if found {
+		required = targetTool.Permission()
+	} else {
+		required = PermissionDanger
+	}
+	targetInput := payload.Input
+	if len(targetInput) == 0 || string(targetInput) == "null" {
+		targetInput = json.RawMessage(`{}`)
+	}
+	if prompter == nil {
+		prompter = &Prompter{Mode: PermissionWorkspace}
+	}
+	decision := prompter.Decide(canonicalOrTarget(canonical, target), required, targetInput)
 	return pretty(map[string]any{
-		"action":              payload.Action,
-		"permitted":           true,
-		"required_permission": string(PermissionDanger),
-		"message":             "Permission gate accepted the requested action",
+		"kind":                "permission_check",
+		"target_tool":         canonicalOrTarget(canonical, target),
+		"known_tool":          found,
+		"required_permission": string(required),
+		"mode":                string(decision.Mode),
+		"input":               string(targetInput),
+		"allowed":             decision.Allowed,
+		"would_prompt":        decision.WouldPrompt,
+		"reason":              decision.Reason,
+		"message":             decision.Message,
 	}), nil
+}
+
+func (r *Registry) toolByName(name string) (Tool, string, bool) {
+	for currentName, tool := range r.tools {
+		if strings.EqualFold(currentName, name) {
+			return tool, currentName, true
+		}
+	}
+	return nil, "", false
+}
+
+func canonicalOrTarget(canonical string, target string) string {
+	if canonical != "" {
+		return canonical
+	}
+	return target
+}
+
+func validPermission(permission Permission) bool {
+	switch permission {
+	case PermissionReadOnly, PermissionWorkspace, PermissionDanger, PermissionPrompt, PermissionAllow:
+		return true
+	default:
+		return false
+	}
 }
 
 type NotebookEditTool struct {
