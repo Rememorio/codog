@@ -11,15 +11,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/runloop"
+	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
@@ -89,13 +96,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		future.RenderText(os.Stdout, future.Surfaces())
 		return nil
 	}
-	if surface, ok := future.Find(command); ok {
-		if hasFlag(rest, "--json") {
-			return future.RenderJSON(os.Stdout, []future.Surface{surface})
-		}
-		future.RenderText(os.Stdout, []future.Surface{surface})
-		return nil
-	}
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
@@ -146,12 +146,120 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ListMCP(ctx)
 	case "cost":
 		return app.ShowCost(overrides)
+	case "background":
+		return app.Background(rest)
+	case "agents":
+		return app.ListAgents()
+	case "marketplace":
+		return app.ListPlugins()
+	case "oauth":
+		return app.OAuth(rest)
+	case "sandbox":
+		return app.Sandbox()
+	case "code-intel":
+		return app.CodeIntel(rest)
+	case "enterprise", "bridge", "remote", "updater":
+		if surface, ok := future.Find(command); ok {
+			if hasFlag(rest, "--json") {
+				return future.RenderJSON(app.Out, []future.Surface{surface})
+			}
+			future.RenderText(app.Out, []future.Surface{surface})
+			return nil
+		}
+		return fmt.Errorf("unknown capability %q", command)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
 		}
 		return app.REPL(ctx, overrides)
 	}
+}
+
+func (a *App) Background(args []string) error {
+	store := background.NewStore(a.Config.ConfigHome)
+	if len(args) == 0 || args[0] == "list" {
+		tasks, err := store.List()
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(tasks, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if args[0] == "run" {
+		command := strings.Join(args[1:], " ")
+		task, err := store.Run(command, a.Workspace)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(task, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	return fmt.Errorf("unknown background command %q", args[0])
+}
+
+func (a *App) ListAgents() error {
+	defs, err := agentdefs.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(defs, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) ListPlugins() error {
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(manifests, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) OAuth(args []string) error {
+	if len(args) == 0 || args[0] != "pkce" {
+		return errors.New("usage: codog oauth pkce")
+	}
+	pkce, err := oauth.GeneratePKCE()
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(pkce, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) Sandbox() error {
+	status := sandbox.Detect()
+	data, _ := json.MarshalIndent(status, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) CodeIntel(args []string) error {
+	if len(args) == 0 || args[0] == "symbols" {
+		symbols, err := codeintel.GoSymbols(a.Workspace)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(symbols, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if args[0] == "notebook-edit" {
+		if len(args) < 5 {
+			return errors.New("usage: codog code-intel notebook-edit NOTEBOOK INDEX CELL_TYPE SOURCE")
+		}
+		index, err := strconv.Atoi(args[2])
+		if err != nil {
+			return err
+		}
+		return codeintel.EditNotebookCell(args[1], index, args[3], strings.Join(args[4:], " "))
+	}
+	return fmt.Errorf("unknown code-intel command %q", args[0])
 }
 
 func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOverrides) error {
@@ -403,7 +511,9 @@ Usage:
   %s self-test
   %s roadmap [--json]
   %s capabilities [--json]
-  %s bridge|remote|agents|background|code-intel|oauth|enterprise|marketplace|sandbox|updater [--json]
+  %s background run "command" | background list
+  %s agents | marketplace | oauth pkce | sandbox | code-intel symbols
+  %s bridge|remote|enterprise|updater [--json]
   %s config
 
 Flags:
@@ -418,7 +528,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

@@ -20,6 +20,12 @@ Codog follows a small-core layout:
 - `internal/tui`: Bubble Tea prompt composer.
 - `internal/usage`: approximate token and cost accounting.
 - `internal/future`: explicit long-horizon capability status.
+- `internal/background`: background process metadata and log registry.
+- `internal/agentdefs`: local agent definition discovery.
+- `internal/plugins`: local plugin manifest discovery.
+- `internal/oauth`: OAuth helper primitives such as PKCE.
+- `internal/sandbox`: local sandbox strategy detection.
+- `internal/codeintel`: lightweight code intelligence and notebook helpers.
 
 Long-horizon commands read from `internal/future` and configures future-facing
 knobs under the `future` config object. The contract is intentionally

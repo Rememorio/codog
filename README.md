@@ -33,6 +33,13 @@ Codog also includes the first practical-layer surfaces:
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog capabilities --json` exposes the long-horizon capability contract.
+- `codog background run|list` starts and lists local background commands.
+- `codog agents` lists `.codog/agents/*.json` agent definitions.
+- `codog marketplace` lists local `.codog/plugins/*/plugin.json` manifests.
+- `codog oauth pkce` generates a PKCE verifier/challenge pair.
+- `codog sandbox` reports the detected local sandbox strategy.
+- `codog code-intel symbols` scans Go symbols, and `notebook-edit` updates
+  `.ipynb` cells.
 
 ## Quick start
 
@@ -101,4 +108,5 @@ The repository is organized around three delivery horizons:
    sandboxing, and updater surfaces.
 
 See [docs/roadmap.md](docs/roadmap.md), [docs/capabilities.md](docs/capabilities.md),
-and `codog capabilities --json` for the current capability matrix.
+and [docs/claude-code-coverage.md](docs/claude-code-coverage.md) for the current
+capability matrix.

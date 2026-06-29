@@ -62,9 +62,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Multi-agent orchestration",
 			Command:     "agents",
-			Status:      StatusExperimental,
+			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Coordinator-facing agent inventory and future worker orchestration surface.",
+			Description: "Local agent spec inventory under .codog/agents, with future worker orchestration planned.",
 			DependsOn:   []string{"background", "sandbox"},
 			NextSteps: []string{
 				"Define agent spec files under .codog/agents.",
@@ -75,9 +75,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Background tasks",
 			Command:     "background",
-			Status:      StatusPlanned,
+			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Long-running task registry with logs, cancellation, and completion events.",
+			Description: "Local background command registry with persisted metadata and log files.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add process supervision.",
@@ -88,9 +88,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Notebook and LSP tools",
 			Command:     "code-intel",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Notebook editing and language-server-backed diagnostics, symbols, hover, and references.",
+			Description: "Go symbol scanning and notebook cell editing; full LSP lifecycle remains planned.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add ipynb cell edit operations.",
@@ -101,9 +101,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "OAuth",
 			Command:     "oauth",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Browser/device authorization flow for providers that support OAuth tokens.",
+			Description: "PKCE helper is available; browser/device authorization and token storage remain planned.",
 			NextSteps: []string{
 				"Add PKCE helper.",
 				"Store refresh tokens in OS keychain when available.",
@@ -126,9 +126,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Plugin marketplace",
 			Command:     "marketplace",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Installable plugin index for tools, commands, hooks, and skills.",
+			Description: "Local plugin manifest inventory under .codog/plugins; remote marketplace remains planned.",
 			DependsOn:   []string{"enterprise", "sandbox"},
 			NextSteps: []string{
 				"Define plugin manifest.",
@@ -139,9 +139,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Cross-platform sandbox",
 			Command:     "sandbox",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "OS-specific filesystem and network isolation for tool execution.",
+			Description: "OS strategy detection is available; enforced isolation remains planned.",
 			NextSteps: []string{
 				"Add macOS sandbox-exec profile generation.",
 				"Add Linux namespace/bubblewrap strategy.",

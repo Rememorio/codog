@@ -10,6 +10,16 @@ Current status values:
 - `experimental`: callable shape exists, but behavior is not complete.
 - `planned`: roadmap surface only.
 
+Implemented local foundations:
+
+- `background run|list`: background process metadata and logs.
+- `agents`: local agent definition inventory.
+- `marketplace`: local plugin manifest inventory.
+- `oauth pkce`: PKCE helper.
+- `sandbox`: OS sandbox strategy detection.
+- `code-intel symbols`: lightweight Go symbol scanner.
+- `code-intel notebook-edit`: basic notebook cell editing.
+
 Example:
 
 ```bash
