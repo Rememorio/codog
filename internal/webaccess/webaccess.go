@@ -55,8 +55,9 @@ type SearchOutput struct {
 }
 
 type SearchResult struct {
-	Title string `json:"title"`
-	URL   string `json:"url"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet,omitempty"`
 }
 
 func Fetch(ctx context.Context, input FetchInput) (FetchOutput, error) {
@@ -254,7 +255,7 @@ func extractSearchResults(body string, base *url.URL) []SearchResult {
 	preferred := make([]SearchResult, 0, len(anchors))
 	for _, anchor := range anchors {
 		if anchor.Preferred {
-			preferred = append(preferred, SearchResult{Title: anchor.Title, URL: anchor.URL})
+			preferred = append(preferred, SearchResult{Title: anchor.Title, URL: anchor.URL, Snippet: anchor.Snippet})
 		}
 	}
 	if len(preferred) != 0 {
@@ -262,7 +263,7 @@ func extractSearchResults(body string, base *url.URL) []SearchResult {
 	}
 	results := make([]SearchResult, 0, len(anchors))
 	for _, anchor := range anchors {
-		results = append(results, SearchResult{Title: anchor.Title, URL: anchor.URL})
+		results = append(results, SearchResult{Title: anchor.Title, URL: anchor.URL, Snippet: anchor.Snippet})
 	}
 	return dedupeResults(results)
 }
@@ -270,6 +271,7 @@ func extractSearchResults(body string, base *url.URL) []SearchResult {
 type anchor struct {
 	Title     string
 	URL       string
+	Snippet   string
 	Preferred bool
 }
 
@@ -277,16 +279,16 @@ func extractAnchors(body string, base *url.URL) []anchor {
 	re := regexp.MustCompile(`(?is)<a\b([^>]*)>(.*?)</a>`)
 	hrefRe := regexp.MustCompile(`(?is)\bhref\s*=\s*["']([^"']+)["']`)
 	var anchors []anchor
-	for _, match := range re.FindAllStringSubmatch(body, -1) {
-		if len(match) < 3 {
+	for _, match := range re.FindAllStringSubmatchIndex(body, -1) {
+		if len(match) < 6 || match[2] < 0 || match[4] < 0 {
 			continue
 		}
-		attrs := match[1]
+		attrs := body[match[2]:match[3]]
 		hrefMatch := hrefRe.FindStringSubmatch(attrs)
 		if len(hrefMatch) < 2 {
 			continue
 		}
-		title := collapseWhitespace(stripTags(match[2]))
+		title := collapseWhitespace(stripTags(body[match[4]:match[5]]))
 		if title == "" {
 			continue
 		}
@@ -294,13 +296,37 @@ func extractAnchors(body string, base *url.URL) []anchor {
 		if cleanURL == "" {
 			continue
 		}
+		preferred := strings.Contains(strings.ToLower(attrs), "result__a")
 		anchors = append(anchors, anchor{
 			Title:     title,
 			URL:       cleanURL,
-			Preferred: strings.Contains(strings.ToLower(attrs), "result__a"),
+			Snippet:   extractSnippetAfter(body, match[1]),
+			Preferred: preferred,
 		})
 	}
 	return anchors
+}
+
+func extractSnippetAfter(body string, offset int) string {
+	if offset < 0 || offset >= len(body) {
+		return ""
+	}
+	window := body[offset:min(len(body), offset+4000)]
+	nextResultRe := regexp.MustCompile(`(?is)<a\b[^>]*class\s*=\s*["'][^"']*result__a[^"']*["']`)
+	if next := nextResultRe.FindStringIndex(window); next != nil && next[0] > 0 {
+		window = window[:next[0]]
+	}
+	snippetRe := regexp.MustCompile(`(?is)<(?:a|div|span|p)\b[^>]*class\s*=\s*["'][^"']*(?:result__snippet|web-result__snippet|search-result-snippet|result-snippet|snippet|result__body)[^"']*["'][^>]*>(.*?)</(?:a|div|span|p)>`)
+	for _, match := range snippetRe.FindAllStringSubmatch(window, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		snippet := collapseWhitespace(stripTags(match[1]))
+		if snippet != "" {
+			return snippet
+		}
+	}
+	return ""
 }
 
 func normalizeResultURL(raw string, base *url.URL) string {
@@ -326,13 +352,16 @@ func normalizeResultURL(raw string, base *url.URL) string {
 }
 
 func dedupeResults(results []SearchResult) []SearchResult {
-	seen := map[string]struct{}{}
+	seen := map[string]int{}
 	out := make([]SearchResult, 0, len(results))
 	for _, result := range results {
-		if _, ok := seen[result.URL]; ok {
+		if index, ok := seen[result.URL]; ok {
+			if out[index].Snippet == "" && result.Snippet != "" {
+				out[index].Snippet = result.Snippet
+			}
 			continue
 		}
-		seen[result.URL] = struct{}{}
+		seen[result.URL] = len(out)
 		out = append(out, result)
 	}
 	return out

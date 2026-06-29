@@ -344,7 +344,7 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 			fmt.Fprint(w, `<html><head><title>Local</title></head><body><p>Hello web tool.</p></body></html>`)
 		case "/search":
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, `<a class="result__a" href="https://example.com/result">Example Result</a>`)
+			fmt.Fprint(w, `<a class="result__a" href="https://example.com/result">Example Result</a><div class="result__snippet">A local search summary.</div>`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -361,6 +361,7 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, searchOut, `"title": "Example Result"`)
 	require.Contains(t, searchOut, `"url": "https://example.com/result"`)
+	require.Contains(t, searchOut, `"snippet": "A local search summary."`)
 
 	registry := NewRegistry(t.TempDir())
 	info, ok := registry.Info("web_fetch")

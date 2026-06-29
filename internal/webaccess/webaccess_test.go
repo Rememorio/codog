@@ -47,7 +47,9 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 		fmt.Fprint(w, `
 			<html><body>
 			  <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.rs%2Freqwest&amp;rut=abc">Reqwest docs</a>
+			  <a class="result__snippet" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.rs%2Freqwest">Fast Rust HTTP client docs.</a>
 			  <a class="result__a" href="https://example.com/blocked">Blocked result</a>
+			  <div class="result__snippet">Blocked search snippet.</div>
 			  <a href="https://example.org/fallback">Fallback ignored</a>
 			</body></html>
 		`)
@@ -65,6 +67,7 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 	require.Len(t, out.Results, 1)
 	require.Equal(t, "Reqwest docs", out.Results[0].Title)
 	require.Equal(t, "https://docs.rs/reqwest", out.Results[0].URL)
+	require.Equal(t, "Fast Rust HTTP client docs.", out.Results[0].Snippet)
 	require.Contains(t, out.SourceURL, "/search?q=rust+web+search")
 }
 

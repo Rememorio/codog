@@ -1689,7 +1689,7 @@ type WebSearchTool struct{}
 func (WebSearchTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "web_search",
-		Description: "Search the web using the configured search endpoint and return result titles and URLs.",
+		Description: "Search the web using the configured search endpoint and return result titles, URLs, and snippets.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
