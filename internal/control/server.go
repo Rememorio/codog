@@ -16,6 +16,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
 type Server struct {
@@ -51,6 +52,13 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/state", s.state)
 	mux.HandleFunc("/sessions", s.sessions)
 	mux.HandleFunc("/sessions/", s.sessionByID)
+	mux.HandleFunc("/workspace/info", s.workspaceInfo)
+	mux.HandleFunc("/workspace/files", s.workspaceFiles)
+	mux.HandleFunc("/workspace/search", s.workspaceSearch)
+	mux.HandleFunc("/file/read", s.fileRead)
+	mux.HandleFunc("/file/write", s.fileWrite)
+	mux.HandleFunc("/file/edit", s.fileEdit)
+	mux.HandleFunc("/file/diff", s.fileDiff)
 	mux.HandleFunc("/terminal", s.terminal)
 	mux.HandleFunc("/terminal/", s.terminalByID)
 	mux.HandleFunc("/background", s.background)
@@ -349,6 +357,155 @@ func (s Server) sessionPrompt(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	writeJSON(w, task)
+}
+
+func (s Server) workspaceInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	info, err := s.workspaceOps().Info()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, info)
+}
+
+func (s Server) workspaceFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload workspaceops.FilesOptions
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		query := r.URL.Query()
+		payload.Path = query.Get("path")
+		payload.Pattern = query.Get("pattern")
+		payload.Limit = parseOptionalInt(query.Get("limit"))
+		payload.IncludeHidden = parseOptionalBool(query.Get("include_hidden"))
+	}
+	result, err := s.workspaceOps().Files(payload)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) workspaceSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload workspaceops.SearchOptions
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		query := r.URL.Query()
+		payload.Query = query.Get("query")
+		payload.Path = query.Get("path")
+		payload.Glob = query.Get("glob")
+		payload.Regex = parseOptionalBool(query.Get("regex"))
+		payload.Limit = parseOptionalInt(query.Get("limit"))
+		payload.IncludeHidden = parseOptionalBool(query.Get("include_hidden"))
+	}
+	result, err := s.workspaceOps().Search(payload)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) fileRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload workspaceops.ReadOptions
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		query := r.URL.Query()
+		payload.Path = query.Get("path")
+		payload.Offset = parseOptionalInt(query.Get("offset"))
+		payload.Limit = parseOptionalInt(query.Get("limit"))
+	}
+	result, err := s.workspaceOps().Read(payload)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) fileWrite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload workspaceops.WriteOptions
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result, err := s.workspaceOps().Write(payload)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) fileEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload workspaceops.EditOptions
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result, err := s.workspaceOps().Edit(payload)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) fileDiff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload workspaceops.DiffOptions
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		query := r.URL.Query()
+		payload.Path = query.Get("path")
+		payload.OldString = query.Get("old_string")
+		payload.NewString = query.Get("new_string")
+	}
+	result, err := s.workspaceOps().Diff(payload)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s Server) background(w http.ResponseWriter, r *http.Request) {
@@ -687,7 +844,7 @@ func (s Server) codeSymbols(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Path string `json:"path"`
 	}
-	if err := decodeCodePayload(r, &payload); err != nil {
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -730,7 +887,7 @@ func (s Server) codeReferences(w http.ResponseWriter, r *http.Request) {
 		Symbol string `json:"symbol"`
 		Limit  int    `json:"limit"`
 	}
-	if err := decodeCodePayload(r, &payload); err != nil {
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -759,7 +916,7 @@ func (s Server) codeDefinition(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Symbol string `json:"symbol"`
 	}
-	if err := decodeCodePayload(r, &payload); err != nil {
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -788,7 +945,7 @@ func (s Server) codeHover(w http.ResponseWriter, r *http.Request) {
 		Symbol       string `json:"symbol"`
 		ContextLines int    `json:"context_lines"`
 	}
-	if err := decodeCodePayload(r, &payload); err != nil {
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
@@ -809,7 +966,7 @@ func (s Server) codeHover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"kind": "hover", "symbol": strings.TrimSpace(payload.Symbol), "hover": hover})
 }
 
-func decodeCodePayload(r *http.Request, value any) error {
+func decodeOptionalJSONPayload(r *http.Request, value any) error {
 	if r.Method == http.MethodGet {
 		return nil
 	}
@@ -821,6 +978,11 @@ func parseOptionalInt(value string) int {
 		return 0
 	}
 	parsed, _ := strconv.Atoi(value)
+	return parsed
+}
+
+func parseOptionalBool(value string) bool {
+	parsed, _ := strconv.ParseBool(value)
 	return parsed
 }
 
@@ -904,41 +1066,15 @@ func (s Server) statePath() string {
 }
 
 func (s Server) workspace() (string, error) {
-	if strings.TrimSpace(s.Workspace) != "" {
-		return filepath.Abs(s.Workspace)
-	}
-	return os.Getwd()
+	return s.workspaceOps().WorkspacePath()
 }
 
 func (s Server) resolveWorkspacePath(requested string) (string, string, error) {
-	workspace, err := s.workspace()
-	if err != nil {
-		return "", "", err
-	}
-	root, err := filepath.EvalSymlinks(workspace)
-	if err != nil {
-		return "", "", err
-	}
-	candidate := requested
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(root, candidate)
-	}
-	candidate, err = filepath.Abs(candidate)
-	if err != nil {
-		return "", "", err
-	}
-	resolved, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		return "", "", err
-	}
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil {
-		return "", "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
-		return "", "", errors.New("path escapes workspace: " + requested)
-	}
-	return resolved, filepath.ToSlash(rel), nil
+	return s.workspaceOps().Resolve(requested, false)
+}
+
+func (s Server) workspaceOps() workspaceops.Service {
+	return workspaceops.Service{Workspace: s.Workspace}
 }
 
 func (s Server) now() time.Time {

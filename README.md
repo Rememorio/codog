@@ -182,7 +182,8 @@ Claude Code source.
   lifecycles.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
   session message/input mutation and rewind, background prompt turns, background
-  tasks, terminal command streams, logs/watch streams, Go diagnostics and
+  tasks, terminal command streams, logs/watch streams, workspace file
+  list/search/read/write/edit/diff operations, Go diagnostics and
   code-intelligence queries, bearer-token auth, and heartbeat lease/failure
   state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor

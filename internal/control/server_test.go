@@ -532,3 +532,80 @@ func TestControlCodeIntelligence(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
+func TestControlWorkspaceAndFileOperations(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Codog\n\nhello remote\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "internal", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret"), 0o644))
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  workspace,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workspace/info")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"name":"workspace"`)
+
+	resp, err = http.Get(server.URL + "/workspace/files?pattern=*.md")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"path":"README.md"`)
+
+	resp, err = http.Get(server.URL + "/workspace/search?query=remote&glob=*.md")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"text":"hello remote"`)
+
+	resp, err = http.Post(server.URL+"/file/write", "application/json", bytes.NewBufferString(`{"path":"notes.txt","content":"hello world"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"bytes":11`)
+
+	resp, err = http.Post(server.URL+"/file/edit", "application/json", bytes.NewBufferString(`{"path":"notes.txt","old_string":"world","new_string":"codog"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"replacements":1`)
+
+	resp, err = http.Get(server.URL + "/file/read?path=notes.txt")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"content":"hello codog"`)
+
+	resp, err = http.Post(server.URL+"/file/diff", "application/json", bytes.NewBufferString(`{"path":"README.md","old_string":"hello remote","new_string":"hello codog"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `-hello remote`)
+	require.Contains(t, string(body), `+hello codog`)
+
+	resp, err = http.Get(server.URL + "/file/read?path=../secret.txt")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
