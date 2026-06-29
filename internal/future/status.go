@@ -38,7 +38,7 @@ func Surfaces() []Surface {
 			Command:     "bridge",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Stdio JSON-RPC bridge exposes sessions, workspace info, Go diagnostics, and bounded file read/write/edit RPCs.",
+			Description: "Stdio JSON-RPC bridge exposes sessions, workspace info, Go diagnostics, background watch notifications, and bounded file read/write/edit RPCs.",
 			DependsOn:   []string{"remote", "enterprise"},
 			NextSteps: []string{
 				"Add editor identity and workspace trust checks.",
@@ -77,12 +77,12 @@ func Surfaces() []Surface {
 			Command:     "background",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local background command registry supports run/list/status/stop/logs/watch with persisted metadata, log files, and NDJSON status/log events.",
+			Description: "Local background command registry supports run/list/status/stop/logs/watch with persisted metadata, log files, HTTP streams, bridge notifications, and NDJSON status/log events.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add long-lived process supervision.",
-				"Expose watch streams over bridge APIs.",
 				"Attach background tasks to agent sessions.",
+				"Add task restart and retention policies.",
 			},
 		},
 		{

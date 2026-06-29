@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +22,7 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"sessions/list"`)
 	require.Contains(t, out.String(), `"file/read"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
+	require.Contains(t, out.String(), `"background/watch"`)
 }
 
 func TestBridgeFileReadWriteEdit(t *testing.T) {
@@ -41,6 +44,32 @@ func TestBridgeFileReadWriteEdit(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "hello codog", string(data))
+}
+
+func TestBridgeBackgroundWatchStreamsNotifications(t *testing.T) {
+	configHome := t.TempDir()
+	bg := background.NewStore(configHome)
+	task, err := bg.Run("echo bridge log", t.TempDir())
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := bg.Logs(task.ID, 100)
+		return err == nil && strings.Contains(logs, "bridge log")
+	}, 2*time.Second, 50*time.Millisecond)
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+
+	var out bytes.Buffer
+	input := `{"jsonrpc":"2.0","id":1,"method":"background/watch","params":{"id":"` + task.ID + `","max_events":2}}` + "\n"
+	err = Server{Sessions: store, Version: "test", ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 3)
+	require.Contains(t, lines[0], `"method":"background/event"`)
+	require.Contains(t, lines[0], `"type":"status"`)
+	require.Contains(t, lines[1], `"method":"background/event"`)
+	require.Contains(t, lines[1], `"type":"log"`)
+	require.Contains(t, lines[1], "bridge log")
+	require.Contains(t, lines[2], `"id":1`)
+	require.Contains(t, lines[2], `"events":2`)
 }
 
 func TestBridgeRejectsWorkspaceEscape(t *testing.T) {

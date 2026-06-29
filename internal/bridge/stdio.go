@@ -10,16 +10,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/session"
 )
 
 type Server struct {
-	Sessions  *session.Store
-	Version   string
-	Workspace string
+	Sessions   *session.Store
+	Version    string
+	Workspace  string
+	ConfigHome string
 }
 
 type Request struct {
@@ -34,6 +37,12 @@ type Response struct {
 	ID      any    `json:"id,omitempty"`
 	Result  any    `json:"result,omitempty"`
 	Error   *Error `json:"error,omitempty"`
+}
+
+type Notification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 type Error struct {
@@ -51,7 +60,13 @@ func (s Server) Serve(in io.Reader, out io.Writer) error {
 			_ = encoder.Encode(Response{JSONRPC: "2.0", Error: &Error{Code: -32700, Message: err.Error()}})
 			continue
 		}
-		result, rpcErr := s.handle(req)
+		var result any
+		var rpcErr *Error
+		if req.Method == "background/watch" {
+			result, rpcErr = s.backgroundWatch(req.Params, encoder)
+		} else {
+			result, rpcErr = s.handle(req)
+		}
 		resp := Response{JSONRPC: "2.0", ID: json.RawMessage(req.ID), Result: result, Error: rpcErr}
 		_ = encoder.Encode(resp)
 	}
@@ -72,6 +87,7 @@ func (s Server) handle(req Request) (any, *Error) {
 				"file/write",
 				"file/edit",
 				"diagnostics/go",
+				"background/watch",
 			},
 		}, nil
 	case "capabilities/list":
@@ -131,6 +147,37 @@ func (s Server) goDiagnostics(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return codeintel.GoDiagnostics(context.Background(), workspace, payload.Patterns)
+}
+
+func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (any, *Error) {
+	var payload struct {
+		ID         string `json:"id"`
+		Offset     int64  `json:"offset"`
+		IntervalMS int    `json:"interval_ms"`
+		MaxEvents  int    `json:"max_events"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, &Error{Code: -32000, Message: err.Error()}
+	}
+	if strings.TrimSpace(payload.ID) == "" {
+		return nil, &Error{Code: -32000, Message: "id is required"}
+	}
+	if strings.TrimSpace(s.ConfigHome) == "" {
+		return nil, &Error{Code: -32000, Message: "config home is required"}
+	}
+	options := background.WatchOptions{Offset: payload.Offset, MaxEvents: payload.MaxEvents}
+	if payload.IntervalMS > 0 {
+		options.Interval = time.Duration(payload.IntervalMS) * time.Millisecond
+	}
+	count := 0
+	err := background.NewStore(s.ConfigHome).Watch(context.Background(), payload.ID, options, func(event background.WatchEvent) error {
+		count++
+		return encoder.Encode(Notification{JSONRPC: "2.0", Method: "background/event", Params: event})
+	})
+	if err != nil {
+		return nil, &Error{Code: -32000, Message: err.Error()}
+	}
+	return map[string]any{"id": payload.ID, "events": count}, nil
 }
 
 func (s Server) readFile(params json.RawMessage) (any, error) {
