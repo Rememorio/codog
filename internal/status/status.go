@@ -23,6 +23,9 @@ type Options struct {
 	PreHookCount        int
 	PostHookCount       int
 	EnabledSkillCount   int
+	PlanActive          bool
+	PlanText            string
+	PlanUpdatedAt       string
 	MemoryFiles         []MemoryFileStatus
 	ToolNames           []string
 	SessionID           string
@@ -46,6 +49,7 @@ type Snapshot struct {
 	Workspace WorkspaceStatus `json:"workspace"`
 	Config    ConfigStatus    `json:"config"`
 	Session   SessionStatus   `json:"session"`
+	Plan      PlanStatus      `json:"plan"`
 	Tools     ToolsStatus     `json:"tools"`
 	Git       GitStatus       `json:"git"`
 	Sandbox   SandboxStatus   `json:"sandbox"`
@@ -88,6 +92,12 @@ type SessionStatus struct {
 	Path         string `json:"path,omitempty"`
 	MessageCount int    `json:"message_count"`
 	SavedCount   int    `json:"saved_count"`
+}
+
+type PlanStatus struct {
+	Active    bool   `json:"active"`
+	Text      string `json:"text,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type ToolsStatus struct {
@@ -159,6 +169,11 @@ func Build(opts Options) Snapshot {
 			MessageCount: opts.SessionMessages,
 			SavedCount:   opts.SessionCount,
 		},
+		Plan: PlanStatus{
+			Active:    opts.PlanActive,
+			Text:      strings.TrimSpace(opts.PlanText),
+			UpdatedAt: opts.PlanUpdatedAt,
+		},
 		Tools: ToolsStatus{
 			Count: len(opts.ToolNames),
 			Names: append([]string(nil), opts.ToolNames...),
@@ -187,6 +202,11 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintf(w, "  Memory files     %d\n", snapshot.Workspace.MemoryFileCount)
 	fmt.Fprintf(w, "  Model            %s\n", snapshot.Config.Model)
 	fmt.Fprintf(w, "  Permission       %s\n", snapshot.Config.PermissionMode)
+	if snapshot.Plan.Active {
+		fmt.Fprintln(w, "  Plan             active")
+	} else {
+		fmt.Fprintln(w, "  Plan             inactive")
+	}
 	fmt.Fprintf(w, "  Auth configured  %t\n", snapshot.Config.AuthConfigured)
 	if snapshot.Session.Active {
 		fmt.Fprintf(w, "  Session          %s (%d messages)\n", snapshot.Session.ID, snapshot.Session.MessageCount)

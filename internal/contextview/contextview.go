@@ -21,19 +21,20 @@ type Options struct {
 }
 
 type Report struct {
-	Kind          string                `json:"kind"`
-	Action        string                `json:"action"`
-	Status        string                `json:"status"`
-	Workspace     WorkspaceSummary      `json:"workspace"`
-	Config        ConfigSummary         `json:"config"`
-	Git           localstatus.GitStatus `json:"git"`
-	Session       SessionSummary        `json:"session"`
-	Tools         ToolsSummary          `json:"tools"`
-	Memory        MemorySummary         `json:"memory"`
-	Focus         FocusSummary          `json:"focus"`
-	Prompt        PromptSummary         `json:"prompt"`
-	TokenEstimate usage.Summary         `json:"token_estimate"`
-	Signals       []string              `json:"signals,omitempty"`
+	Kind          string                 `json:"kind"`
+	Action        string                 `json:"action"`
+	Status        string                 `json:"status"`
+	Workspace     WorkspaceSummary       `json:"workspace"`
+	Config        ConfigSummary          `json:"config"`
+	Git           localstatus.GitStatus  `json:"git"`
+	Session       SessionSummary         `json:"session"`
+	Plan          localstatus.PlanStatus `json:"plan"`
+	Tools         ToolsSummary           `json:"tools"`
+	Memory        MemorySummary          `json:"memory"`
+	Focus         FocusSummary           `json:"focus"`
+	Prompt        PromptSummary          `json:"prompt"`
+	TokenEstimate usage.Summary          `json:"token_estimate"`
+	Signals       []string               `json:"signals,omitempty"`
 }
 
 type WorkspaceSummary struct {
@@ -112,6 +113,9 @@ func Build(options Options) Report {
 	if !options.Status.Session.Active {
 		signals = append(signals, "no active session selected")
 	}
+	if options.Status.Plan.Active {
+		signals = append(signals, "plan mode is active; tool permissions are read-only")
+	}
 	status := options.Status.Status
 	if status == "" {
 		status = "ok"
@@ -146,6 +150,7 @@ func Build(options Options) Report {
 			Path:         options.Status.Session.Path,
 			MessageCount: options.Status.Session.MessageCount,
 		},
+		Plan: options.Status.Plan,
 		Tools: ToolsSummary{
 			Count: options.Status.Tools.Count,
 			Names: append([]string(nil), options.Status.Tools.Names...),
@@ -171,6 +176,11 @@ func RenderText(w io.Writer, report Report) {
 	fmt.Fprintf(w, "  Workspace        %s\n", report.Workspace.Path)
 	fmt.Fprintf(w, "  Model            %s\n", valueOrNone(report.Config.Model))
 	fmt.Fprintf(w, "  Permission       %s\n", valueOrNone(report.Config.PermissionMode))
+	if report.Plan.Active {
+		fmt.Fprintln(w, "  Plan             active")
+	} else {
+		fmt.Fprintln(w, "  Plan             inactive")
+	}
 	fmt.Fprintf(w, "  Tools            %d\n", report.Tools.Count)
 	if report.Git.Available {
 		fmt.Fprintf(w, "  Git              branch=%s clean=%t staged=%d unstaged=%d untracked=%d conflicts=%d\n",

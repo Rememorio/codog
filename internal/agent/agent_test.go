@@ -494,6 +494,41 @@ func TestAllowedToolsSlashMutatesRuntimeAllowRules(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestPlanCommandAndSlashEnforceReadOnlyPlanningMode(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			PermissionMode: "workspace-write",
+			PermissionRules: config.PermissionRules{
+				Allow: []string{"write_file"},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.Plan([]string{"inspect", "then", "edit"}))
+	require.Contains(t, out.String(), "Status           active")
+	require.Contains(t, out.String(), "inspect then edit")
+	require.Equal(t, "workspace-write", app.Config.PermissionMode)
+	effective := app.effectiveConfig()
+	require.Equal(t, "read-only", effective.PermissionMode)
+	require.Empty(t, effective.PermissionRules.Allow)
+	require.Contains(t, app.systemPrompt(), "<codog_plan_mode")
+	require.Contains(t, app.systemPrompt(), "inspect then edit")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/exit-plan", sess))
+	require.Contains(t, out.String(), "Status           inactive")
+	require.Empty(t, errOut.String())
+	require.Equal(t, "workspace-write", app.effectiveConfig().PermissionMode)
+	require.NotContains(t, app.systemPrompt(), "<codog_plan_mode")
+}
+
 func TestDoctorCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

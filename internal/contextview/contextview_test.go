@@ -19,6 +19,8 @@ func TestBuildAndRenderText(t *testing.T) {
 		MaxTokens:       4096,
 		MaxTurns:        8,
 		AuthConfigured:  true,
+		PlanActive:      true,
+		PlanText:        "review before edits",
 		ToolNames:       []string{"bash", "read_file"},
 		SessionID:       "session-1",
 		SessionMessages: 2,
@@ -50,11 +52,14 @@ func TestBuildAndRenderText(t *testing.T) {
 	require.Equal(t, 18, report.Memory.TotalChars)
 	require.Equal(t, 1, report.Focus.FocusedPaths)
 	require.Equal(t, 2, report.Prompt.Lines)
+	require.True(t, report.Plan.Active)
 	require.Contains(t, report.Signals, "git working tree has local changes")
+	require.Contains(t, report.Signals, "plan mode is active; tool permissions are read-only")
 
 	var out bytes.Buffer
 	RenderText(&out, report)
 	require.Contains(t, out.String(), "Context")
+	require.Contains(t, out.String(), "Plan             active")
 	require.Contains(t, out.String(), "Memory files     1")
 	require.Contains(t, out.String(), "Focused paths    1")
 	require.Contains(t, out.String(), "notes.md")

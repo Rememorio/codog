@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
+	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
@@ -239,6 +240,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "rate-limit-options":
 		return app.RateLimitOptions(rest)
+	case "plan":
+		return app.Plan(rest)
+	case "exit-plan":
+		return app.Plan(append([]string{"exit"}, rest...))
 	case "export":
 		return app.Export(rest)
 	case "git":
@@ -2923,6 +2928,44 @@ func (a *App) buildContextReport(active *session.Session) contextview.Report {
 	})
 }
 
+type planRequest struct {
+	Action string
+	Format string
+	Text   string
+}
+
+func (a *App) Plan(args []string) error {
+	req, err := parsePlanArgs(args)
+	if err != nil {
+		return err
+	}
+	var report planmode.Report
+	switch req.Action {
+	case "show":
+		report, err = planmode.Show(a.Workspace)
+	case "enter":
+		report, err = planmode.Enter(a.Workspace, req.Text)
+	case "set":
+		report, err = planmode.Set(a.Workspace, req.Text)
+	case "exit":
+		report, err = planmode.Exit(a.Workspace)
+	case "clear":
+		report, err = planmode.Clear(a.Workspace)
+	default:
+		return fmt.Errorf("unknown plan action %q", req.Action)
+	}
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	planmode.RenderText(a.Out, report)
+	return nil
+}
+
 type historyRequest struct {
 	SessionID string
 	Format    string
@@ -3093,6 +3136,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	if path, err := os.Executable(); err == nil {
 		executable = path
 	}
+	planState, _ := planmode.Load(a.Workspace)
 	return localstatus.Build(localstatus.Options{
 		Version:             version,
 		Workspace:           a.Workspace,
@@ -3108,6 +3152,9 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		PreHookCount:        len(a.Config.Hooks.PreToolUse),
 		PostHookCount:       len(a.Config.Hooks.PostToolUse),
 		EnabledSkillCount:   len(a.Config.EnabledSkills),
+		PlanActive:          planState.Active,
+		PlanText:            planState.Plan,
+		PlanUpdatedAt:       planState.UpdatedAt,
 		MemoryFiles:         memoryStatuses,
 		ToolNames:           toolNames,
 		SessionID:           sessionID,
@@ -3148,6 +3195,73 @@ func parseSimpleOutputFormat(command string, args []string) (string, error) {
 		return format, nil
 	default:
 		return "", fmt.Errorf("unknown %s output format %q", command, format)
+	}
+}
+
+func parsePlanArgs(args []string) (planRequest, error) {
+	req := planRequest{Action: "show", Format: "text"}
+	textParts := []string{}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("plan output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown plan flag %q", arg)
+		case !actionSet && isPlanAction(arg):
+			req.Action = normalizePlanAction(arg)
+			actionSet = true
+		default:
+			textParts = append(textParts, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown plan output format %q", req.Format)
+	}
+	req.Text = strings.TrimSpace(strings.Join(textParts, " "))
+	if req.Text != "" && req.Action == "show" {
+		req.Action = "enter"
+	}
+	if (req.Action == "set") && req.Text == "" {
+		return req, errors.New("plan text is required")
+	}
+	return req, nil
+}
+
+func isPlanAction(value string) bool {
+	switch normalizePlanAction(value) {
+	case "show", "enter", "set", "exit", "clear":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizePlanAction(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "show", "status", "list":
+		return "show"
+	case "enter", "start", "on":
+		return "enter"
+	case "set", "update":
+		return "set"
+	case "exit", "stop", "off", "done", "accept":
+		return "exit"
+	case "clear", "reset", "delete":
+		return "clear"
+	default:
+		return value
 	}
 }
 
@@ -4085,8 +4199,9 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 		return err
 	}
 	a.writeWorkerState("prompt", "running", sess, "")
+	effectiveConfig := a.effectiveConfig()
 	runner := runloop.Runner{
-		Config:    a.Config,
+		Config:    effectiveConfig,
 		Client:    a.Client,
 		Tools:     a.Tools,
 		Prompter:  a.prompter(sess.ID),
@@ -4146,8 +4261,9 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			return err
 		}
 		a.writeWorkerState("repl", "running", sess, "")
+		effectiveConfig := a.effectiveConfig()
 		runner := runloop.Runner{
-			Config:    a.Config,
+			Config:    effectiveConfig,
 			Client:    a.Client,
 			Tools:     a.Tools,
 			Prompter:  a.prompter(sess.ID),
@@ -4258,6 +4374,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/rate-limit-options":
 		if err := a.RateLimitOptions(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/plan":
+		if err := a.Plan(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/exit-plan", "/exit_plan_mode":
+		if err := a.Plan(append([]string{"exit"}, fields[1:]...)); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/config":
@@ -6005,6 +6129,7 @@ func (a *App) writeWorkerState(mode string, status string, sess *session.Session
 	if sess == nil {
 		return
 	}
+	cfg := a.effectiveConfig()
 	state := workerstate.New(workerstate.Options{
 		Version:        version,
 		Mode:           mode,
@@ -6012,8 +6137,8 @@ func (a *App) writeWorkerState(mode string, status string, sess *session.Session
 		Workspace:      a.Workspace,
 		SessionID:      sess.ID,
 		SessionPath:    sess.Path,
-		Model:          a.Config.Model,
-		PermissionMode: a.Config.PermissionMode,
+		Model:          cfg.Model,
+		PermissionMode: cfg.PermissionMode,
 		LastError:      lastError,
 	})
 	if err := workerstate.Save(a.Workspace, state); err != nil && a.Err != nil {
@@ -6036,16 +6161,27 @@ func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, er
 }
 
 func (a *App) prompter(sessionID string) *tools.Prompter {
+	cfg := a.effectiveConfig()
 	return &tools.Prompter{
-		Mode:        tools.Permission(a.Config.PermissionMode),
-		AllowRules:  append([]string(nil), a.Config.PermissionRules.Allow...),
-		DenyRules:   append([]string(nil), a.Config.PermissionRules.Deny...),
-		AskRules:    append([]string(nil), a.Config.PermissionRules.Ask...),
-		DeniedTools: append([]string(nil), a.Config.PermissionRules.DeniedTools...),
+		Mode:        tools.Permission(cfg.PermissionMode),
+		AllowRules:  append([]string(nil), cfg.PermissionRules.Allow...),
+		DenyRules:   append([]string(nil), cfg.PermissionRules.Deny...),
+		AskRules:    append([]string(nil), cfg.PermissionRules.Ask...),
+		DeniedTools: append([]string(nil), cfg.PermissionRules.DeniedTools...),
 		In:          a.In,
 		Err:         a.Err,
 		OnDecision:  a.auditPermissionDecision(sessionID),
 	}
+}
+
+func (a *App) effectiveConfig() config.Config {
+	cfg := a.Config
+	state, err := planmode.Load(a.Workspace)
+	if err == nil && state.Active {
+		cfg.PermissionMode = string(tools.PermissionReadOnly)
+		cfg.PermissionRules.Allow = nil
+	}
+	return cfg
 }
 
 func (a *App) auditToolUse(sessionID string) func(runloop.ToolCall) {
@@ -6102,6 +6238,12 @@ func (a *App) systemPrompt() string {
 	if rendered := outputstyle.RenderPrompt(a.Config.ConfigHome, a.Workspace); rendered != "" {
 		builder.WriteString("\n\n")
 		builder.WriteString(rendered)
+	}
+	if state, err := planmode.Load(a.Workspace); err == nil {
+		if rendered := planmode.RenderPrompt(state); rendered != "" {
+			builder.WriteString("\n\n")
+			builder.WriteString(rendered)
+		}
 	}
 	if files, err := memory.Discover(a.Workspace); err == nil {
 		if rendered := memory.Render(files); rendered != "" {
@@ -6187,6 +6329,7 @@ Usage:
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
+  %s [flags] plan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
@@ -6221,7 +6364,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

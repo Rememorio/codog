@@ -14,6 +14,9 @@ func TestBuildParsesGitStatus(t *testing.T) {
 		Model:          "claude-test",
 		PermissionMode: "workspace-write",
 		AuthConfigured: true,
+		PlanActive:     true,
+		PlanText:       "inspect first",
+		PlanUpdatedAt:  "2026-01-01T00:00:00Z",
 		MemoryFiles: []MemoryFileStatus{{
 			Path:  "/repo/codog/AGENTS.md",
 			Name:  "AGENTS.md",
@@ -44,6 +47,8 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, 1, snapshot.Git.Untracked)
 	require.Equal(t, 1, snapshot.Git.Conflicts)
 	require.Equal(t, 2, snapshot.Tools.Count)
+	require.True(t, snapshot.Plan.Active)
+	require.Equal(t, "inspect first", snapshot.Plan.Text)
 }
 
 func TestBuildMarksGitErrorDegraded(t *testing.T) {
@@ -84,6 +89,7 @@ func TestRenderText(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Version          test-version")
 	require.Contains(t, out.String(), "Memory files     0")
+	require.Contains(t, out.String(), "Plan             inactive")
 	require.Contains(t, out.String(), "Session          session-1")
 	require.Contains(t, out.String(), "Git              branch=main")
 	require.Contains(t, out.String(), "Tools            1")

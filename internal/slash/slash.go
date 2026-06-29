@@ -34,6 +34,8 @@ func Specs() []Spec {
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/usage", Usage: "/usage", Description: "Show detailed token, role, block, and tool usage for the current session."},
 		{Name: "/rate-limit-options", Usage: "/rate-limit-options", Description: "Show provider retry and backoff settings."},
+		{Name: "/plan", Usage: "/plan [TEXT|show|exit|clear]", Description: "Enter or inspect read-only planning mode."},
+		{Name: "/exit-plan", Usage: "/exit-plan", Description: "Leave read-only planning mode."},
 		{Name: "/compact", Usage: "/compact", Description: "Compact in-memory request context for long sessions."},
 		{Name: "/diff", Usage: "/diff [--staged]", Description: "Show git working tree or staged diff."},
 		{Name: "/commit", Usage: "/commit [--all] MESSAGE", Description: "Create a git commit from staged changes."},

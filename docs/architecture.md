@@ -21,6 +21,8 @@ Codog follows a small-core layout:
   flags, including provider rate-limit retry settings.
 - `internal/contextview`: prompt-context report shaping and rendering for
   memory, focus, session, token, git, and local preflight signals.
+- `internal/planmode`: workspace-local read-only planning mode state,
+  system-prompt injection, and command report rendering.
 - `internal/projectinit`: idempotent project bootstrap for `.codog`
   instructions, shared config, and local ignore entries.
 - `internal/memory`: project instruction discovery, system prompt injection,
