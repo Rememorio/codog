@@ -21,6 +21,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bashvalidation"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/cron"
@@ -99,6 +100,7 @@ type Prompter struct {
 	DenyRules   []string
 	AskRules    []string
 	DeniedTools []string
+	Workspace   string
 	In          io.Reader
 	Err         io.Writer
 	OnDecision  func(PermissionDecision)
@@ -280,7 +282,26 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "allow_rule"})
 		return nil
 	}
+	validationWarning := ""
+	if strings.EqualFold(name, "bash") {
+		result := bashvalidation.Validate(bashvalidation.CommandFromInput(input), string(mode), p.Workspace)
+		switch result.Severity {
+		case bashvalidation.SeverityBlock:
+			p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "bash_validation"})
+			return fmt.Errorf("permission denied for tool %s by bash validation: %s", name, result.Reason)
+		case bashvalidation.SeverityConfirm:
+			validationWarning = result.Reason
+		case bashvalidation.SeverityAllow:
+			if mode == PermissionReadOnly && result.Intent == bashvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
+				p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "bash_validation_read_only"})
+				return nil
+			}
+		}
+	}
 	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
+	if validationWarning != "" && mode != PermissionAllow {
+		ask = true
+	}
 	if !ask && (mode == PermissionAllow || permissionRank(mode) >= permissionRank(required)) {
 		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "permission_mode"})
 		return nil
@@ -290,6 +311,9 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 	}
 	if p.Err == nil {
 		p.Err = os.Stderr
+	}
+	if validationWarning != "" {
+		fmt.Fprintf(p.Err, "\nBash validation warning: %s\n", validationWarning)
 	}
 	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N] ", name, required, string(input))
 	reader := bufio.NewReader(p.In)

@@ -30,6 +30,8 @@ Claude Code source.
   `danger-full-access`, `prompt`, and `allow` modes; compatibility flags
   `--dangerously-skip-permissions` and `--skip-permissions` select `allow`,
   while `--allowed-tools` and `--disallowed-tools` add per-run tool rules
+- Bash execution includes preflight validation for read-only commands,
+  destructive patterns, sed in-place edits, and suspicious path targets
 - JSONL session persistence and resume
 - Workspace-scoped session storage with legacy flat-session compatibility
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags

@@ -7030,6 +7030,7 @@ func (a *App) mcpServe(ctx context.Context, args []string) error {
 	}
 	return mcpserver.Serve(ctx, in, out, registry, mcpserver.Options{
 		Version:         version,
+		Workspace:       a.Workspace,
 		PermissionMode:  a.Config.PermissionMode,
 		PermissionRules: a.Config.PermissionRules,
 	})
@@ -7433,6 +7434,7 @@ func (a *App) prompter(sessionID string) *tools.Prompter {
 		DenyRules:   append([]string(nil), cfg.PermissionRules.Deny...),
 		AskRules:    append([]string(nil), cfg.PermissionRules.Ask...),
 		DeniedTools: append([]string(nil), cfg.PermissionRules.DeniedTools...),
+		Workspace:   a.Workspace,
 		In:          a.In,
 		Err:         a.Err,
 		OnDecision:  a.auditPermissionDecision(sessionID),

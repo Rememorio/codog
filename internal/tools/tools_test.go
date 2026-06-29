@@ -154,6 +154,35 @@ func TestPrompterEmitsDecision(t *testing.T) {
 	require.Equal(t, "deny_rule", decision.Reason)
 }
 
+func TestPrompterBashValidation(t *testing.T) {
+	var decision PermissionDecision
+	p := &Prompter{
+		Mode:       PermissionReadOnly,
+		OnDecision: func(next PermissionDecision) { decision = next },
+	}
+	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"pwd"}`)))
+	require.True(t, decision.Allowed)
+	require.Equal(t, "bash_validation_read_only", decision.Reason)
+
+	p = &Prompter{Mode: PermissionReadOnly}
+	err := p.Authorize("bash", PermissionDanger, []byte(`{"command":"touch file.txt"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bash validation")
+
+	var prompt strings.Builder
+	p = &Prompter{
+		Mode: PermissionDanger,
+		In:   strings.NewReader("n\n"),
+		Err:  &prompt,
+	}
+	err = p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`))
+	require.Error(t, err)
+	require.Contains(t, prompt.String(), "Bash validation warning")
+
+	p = &Prompter{Mode: PermissionAllow}
+	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`)))
+}
+
 func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
 

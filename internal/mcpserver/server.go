@@ -14,6 +14,7 @@ import (
 
 type Options struct {
 	Version         string
+	Workspace       string
 	PermissionMode  string
 	PermissionRules config.PermissionRules
 }
@@ -135,6 +136,7 @@ func handleToolCall(ctx context.Context, out io.Writer, registry *tools.Registry
 		DenyRules:   append([]string(nil), opts.PermissionRules.Deny...),
 		AskRules:    append([]string(nil), opts.PermissionRules.Ask...),
 		DeniedTools: append([]string(nil), opts.PermissionRules.DeniedTools...),
+		Workspace:   opts.Workspace,
 		In:          strings.NewReader("\n"),
 		Err:         io.Discard,
 	}
