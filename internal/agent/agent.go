@@ -64,6 +64,7 @@ import (
 	"github.com/Rememorio/codog/internal/usage"
 	"github.com/Rememorio/codog/internal/versioninfo"
 	"github.com/Rememorio/codog/internal/workerstate"
+	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/Rememorio/codog/internal/worktree"
 )
 
@@ -322,6 +323,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Definition(rest)
 	case "hover":
 		return app.Hover(rest)
+	case "teleport":
+		return app.Teleport(rest)
 	case "code-intel":
 		return app.CodeIntel(rest)
 	case "remote":
@@ -3991,6 +3994,19 @@ type definitionReport struct {
 	Definition codeintel.Symbol `json:"definition,omitempty"`
 }
 
+type teleportReport struct {
+	Kind       string             `json:"kind"`
+	Query      string             `json:"query"`
+	Mode       string             `json:"mode"`
+	Found      bool               `json:"found"`
+	Path       string             `json:"path,omitempty"`
+	Content    string             `json:"content,omitempty"`
+	Bytes      int                `json:"bytes,omitempty"`
+	Truncated  bool               `json:"truncated,omitempty"`
+	Hover      codeintel.Hover    `json:"hover,omitempty"`
+	Candidates []codeintel.Symbol `json:"candidates,omitempty"`
+}
+
 func (a *App) Symbols(args []string) error {
 	format, rest, err := parseCodeIntelOutputArgs("symbols", args)
 	if err != nil {
@@ -4119,6 +4135,138 @@ func (a *App) Hover(args []string) error {
 	}
 	renderHover(a.Out, hover)
 	return nil
+}
+
+func (a *App) Teleport(args []string) error {
+	format, rest, limit, err := parseSymbolLimitArgs("teleport", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: codog teleport TARGET [--limit N] [--json]")
+	}
+	report, err := a.teleportReport(rest[0], limit)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTeleport(a.Out, report)
+	return nil
+}
+
+func (a *App) teleportReport(target string, limit int) (teleportReport, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return teleportReport{}, errors.New("teleport target is required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if file, err := (workspaceops.Service{Workspace: a.Workspace}).Read(workspaceops.ReadOptions{Path: target, Limit: 128 * 1024}); err == nil {
+		return teleportReport{
+			Kind:      "teleport",
+			Query:     target,
+			Mode:      "file",
+			Found:     true,
+			Path:      file.Path,
+			Content:   file.Content,
+			Bytes:     file.Bytes,
+			Truncated: file.Truncated,
+		}, nil
+	}
+	symbols, err := codeintel.GoSymbols(a.Workspace)
+	if err != nil {
+		return teleportReport{}, err
+	}
+	exact := []codeintel.Symbol{}
+	partial := []codeintel.Symbol{}
+	lowerTarget := strings.ToLower(target)
+	for _, symbol := range symbols {
+		switch {
+		case symbol.Name == target:
+			exact = append(exact, symbol)
+		case strings.Contains(strings.ToLower(symbol.Name), lowerTarget):
+			partial = append(partial, symbol)
+		}
+	}
+	candidates := exact
+	if len(candidates) == 0 {
+		candidates = partial
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Path == candidates[j].Path {
+			if candidates[i].Line == candidates[j].Line {
+				return candidates[i].Name < candidates[j].Name
+			}
+			return candidates[i].Line < candidates[j].Line
+		}
+		return candidates[i].Path < candidates[j].Path
+	})
+	if len(candidates) == 0 {
+		return teleportReport{Kind: "teleport", Query: target, Mode: "symbol", Found: false}, nil
+	}
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	if len(candidates) == 1 {
+		hover, err := codeintel.HoverInfo(a.Workspace, candidates[0].Name, 2)
+		if err != nil {
+			return teleportReport{}, err
+		}
+		return teleportReport{
+			Kind:       "teleport",
+			Query:      target,
+			Mode:       "symbol",
+			Found:      hover.Found,
+			Path:       hover.Path,
+			Hover:      hover,
+			Candidates: candidates,
+		}, nil
+	}
+	return teleportReport{Kind: "teleport", Query: target, Mode: "candidates", Found: true, Candidates: candidates}, nil
+}
+
+func renderTeleport(out io.Writer, report teleportReport) {
+	fmt.Fprintln(out, "Teleport")
+	fmt.Fprintf(out, "  Query            %s\n", report.Query)
+	fmt.Fprintf(out, "  Mode             %s\n", report.Mode)
+	if !report.Found {
+		fmt.Fprintln(out, "  Found            false")
+		return
+	}
+	fmt.Fprintln(out, "  Found            true")
+	switch report.Mode {
+	case "file":
+		fmt.Fprintf(out, "  Path             %s\n", report.Path)
+		fmt.Fprintf(out, "  Bytes            %d\n", report.Bytes)
+		if report.Truncated {
+			fmt.Fprintln(out, "  Truncated        true")
+		}
+		fmt.Fprintln(out)
+		fmt.Fprint(out, report.Content)
+		if !strings.HasSuffix(report.Content, "\n") {
+			fmt.Fprintln(out)
+		}
+	case "symbol":
+		if report.Hover.Path != "" {
+			fmt.Fprintf(out, "  Location         %s:%d\n", report.Hover.Path, report.Hover.Line)
+			fmt.Fprintf(out, "  Kind             %s\n", report.Hover.Kind)
+			fmt.Fprintln(out)
+			for _, line := range report.Hover.Snippet {
+				fmt.Fprintln(out, line)
+			}
+		}
+	default:
+		fmt.Fprintf(out, "  Candidates       %d\n", len(report.Candidates))
+		fmt.Fprintln(out)
+		for _, candidate := range report.Candidates {
+			fmt.Fprintf(out, "%s:%d:%s %s\n", candidate.Path, candidate.Line, candidate.Kind, candidate.Name)
+		}
+	}
 }
 
 func renderSymbols(out io.Writer, report symbolsReport) {
@@ -4738,6 +4886,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/hover":
 		if err := a.Hover(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/teleport":
+		if err := a.Teleport(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/export":
@@ -7502,7 +7654,7 @@ Usage:
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
-  %s [flags] symbols|diagnostics|map|references|definition|hover [ARGS...] [--json]
+  %s [flags] symbols|diagnostics|map|references|definition|hover|teleport [ARGS...] [--json]
   %s mock-server :8089
   %s self-test
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]

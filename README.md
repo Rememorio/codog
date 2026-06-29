@@ -42,7 +42,7 @@ Claude Code source.
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
-  `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/stats`.
+  `/references`, `/definition`, `/hover`, `/teleport`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/stats`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -174,8 +174,9 @@ Claude Code source.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
   wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
   `unshare`.
-- `codog symbols|diagnostics|map|references|definition|hover` provides
-  lightweight static Go code intelligence without a persistent LSP process.
+- `codog symbols|diagnostics|map|references|definition|hover|teleport`
+  provides lightweight static Go code intelligence and symbol/file navigation
+  without a persistent LSP process.
 - `codog code-intel symbols|diagnostics` remains available for compatibility,
   `notebook-edit` updates `.ipynb` cells, and
   `lsp discover|start|list|status|stop` manages local language server

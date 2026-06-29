@@ -931,6 +931,18 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "func Run()")
 	out.Reset()
 
+	require.NoError(t, app.Teleport([]string{"Run"}))
+	require.Contains(t, out.String(), "Teleport")
+	require.Contains(t, out.String(), "Location         runner.go:5")
+	require.Contains(t, out.String(), "func Run()")
+	out.Reset()
+
+	require.NoError(t, app.Teleport([]string{"Runner", "--json"}))
+	require.Contains(t, out.String(), `"kind": "teleport"`)
+	require.Contains(t, out.String(), `"mode": "symbol"`)
+	require.Contains(t, out.String(), `"found": true`)
+	out.Reset()
+
 	require.NoError(t, app.Map([]string{"--depth", "1"}))
 	require.Contains(t, out.String(), "Map")
 	require.Contains(t, out.String(), "file\tgo.mod")
@@ -951,6 +963,11 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/symbols", sess))
 	require.Contains(t, out.String(), "runner.go")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/teleport runner.go", sess))
+	require.Contains(t, out.String(), "Mode             file")
+	require.Contains(t, out.String(), "package intel")
 	require.Empty(t, errOut.String())
 }
 
