@@ -21,7 +21,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
-  `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/focus`, `/unfocus`, `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/templates`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
@@ -33,6 +33,9 @@ Claude Code source.
   messages.
 - `/search` and `codog search PATTERN [--path PATH] [--glob GLOB]` search
   workspace file contents without making a provider request.
+- `/focus` and `codog focus [PATH...]` maintain focused context paths in
+  `.codog/focus.json` and inject focused file contents into future prompts;
+  `/unfocus` and `codog unfocus [PATH...|--all]` remove them.
 - `/diff`, `/commit`, `/log`, `/changelog`, `/blame`, `/stash`, `/git`, and
   `codog git` provide local git status, diff, log, changelog, blame, stash, and
   commit workflows.

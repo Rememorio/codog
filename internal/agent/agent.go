@@ -26,6 +26,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/doctor"
+	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
@@ -196,6 +197,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SessionsCommand(rest)
 	case "history", "prompt-history":
 		return app.History(rest, overrides)
+	case "focus":
+		return app.Focus(rest)
+	case "unfocus":
+		return app.Unfocus(rest)
 	case "skills":
 		return app.ListSkills()
 	case "templates":
@@ -1725,6 +1730,78 @@ func emptyAsNone(value string) string {
 	return value
 }
 
+func (a *App) Focus(args []string) error {
+	format, paths, err := parseFocusArgs("focus", args)
+	if err != nil {
+		return err
+	}
+	var report focus.Report
+	if len(paths) == 0 {
+		report, err = focus.BuildReport(a.Workspace)
+	} else {
+		report, err = focus.Add(a.Workspace, paths)
+	}
+	if err != nil {
+		return err
+	}
+	return a.renderFocusReport(format, report)
+}
+
+func (a *App) Unfocus(args []string) error {
+	format, paths, err := parseFocusArgs("unfocus", args)
+	if err != nil {
+		return err
+	}
+	var report focus.Report
+	if len(paths) == 0 || containsFold(paths, "--all") || containsFold(paths, "all") {
+		report, err = focus.Clear(a.Workspace)
+	} else {
+		report, err = focus.Remove(a.Workspace, paths)
+	}
+	if err != nil {
+		return err
+	}
+	return a.renderFocusReport(format, report)
+}
+
+func (a *App) renderFocusReport(format string, report focus.Report) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	focus.RenderText(a.Out, report)
+	return nil
+}
+
+func parseFocusArgs(command string, args []string) (string, []string, error) {
+	format := "text"
+	var paths []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", nil, fmt.Errorf("%s output format is required", command)
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			paths = append(paths, arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, paths, nil
+	default:
+		return "", nil, fmt.Errorf("unknown %s output format %q", command, format)
+	}
+}
+
 type commandRequest struct {
 	Format    string
 	TimeoutMS int
@@ -3015,6 +3092,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Search(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/focus":
+		if err := a.Focus(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/unfocus":
+		if err := a.Unfocus(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/tokens":
@@ -4242,6 +4327,10 @@ func (a *App) systemPrompt() string {
 			builder.WriteString(rendered)
 		}
 	}
+	if rendered := focus.RenderPrompt(a.Workspace); rendered != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(rendered)
+	}
 	return builder.String()
 }
 
@@ -4297,6 +4386,8 @@ Usage:
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
+  %s [flags] focus [PATH...] [--json|--output-format text|json]
+  %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
@@ -4328,7 +4419,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

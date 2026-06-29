@@ -19,6 +19,8 @@ Codog follows a small-core layout:
   instructions, shared config, and local ignore entries.
 - `internal/memory`: project instruction discovery, system prompt injection,
   and memory report rendering.
+- `internal/focus`: focused context path persistence, report rendering, and
+  system prompt injection for selected files/directories.
 - `internal/workerstate`: file-based worker observability surface shared by
   REPL, one-shot prompts, and `codog state`.
 - `internal/versioninfo`: version, build metadata, runtime, and workspace

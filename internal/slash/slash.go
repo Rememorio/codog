@@ -56,6 +56,8 @@ func Specs() []Spec {
 		{Name: "/resume", Usage: "/resume [session-id|latest]", Description: "Load a saved session into the REPL."},
 		{Name: "/sandbox", Usage: "/sandbox", Description: "Show local sandbox isolation status."},
 		{Name: "/search", Usage: "/search PATTERN [--glob GLOB]", Description: "Search files in the workspace."},
+		{Name: "/focus", Usage: "/focus [PATH...]", Description: "Show or add focused context paths."},
+		{Name: "/unfocus", Usage: "/unfocus [PATH...|--all]", Description: "Remove focused context paths."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},
 		{Name: "/system-prompt", Usage: "/system-prompt", Description: "Show the active system prompt."},

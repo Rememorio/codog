@@ -25,6 +25,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
@@ -635,6 +636,49 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/memory", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory")
+}
+
+func TestFocusCommandAndSlashInjectsSystemPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("focus body\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "a.go"), []byte("package pkg\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Focus([]string{"notes.md"}))
+	require.Contains(t, out.String(), "Focus")
+	require.Contains(t, out.String(), "notes.md")
+	require.FileExists(t, focus.Path(workspace))
+	require.Contains(t, app.systemPrompt(), "<focused_context>")
+	require.Contains(t, app.systemPrompt(), "focus body")
+	out.Reset()
+
+	require.NoError(t, app.Focus([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "focus"`)
+	require.Contains(t, out.String(), `"path": "notes.md"`)
+	out.Reset()
+
+	require.NoError(t, app.Focus([]string{"pkg"}))
+	require.Contains(t, app.systemPrompt(), "- pkg/a.go")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/unfocus notes.md", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Focus")
+	require.NotContains(t, app.systemPrompt(), "focus body")
+	require.Contains(t, app.systemPrompt(), "- pkg/a.go")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/unfocus --all", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Entries          0")
+	require.NotContains(t, app.systemPrompt(), "<focused_context>")
+	require.Empty(t, errOut.String())
 }
 
 func TestProjectCommandAndSlash(t *testing.T) {

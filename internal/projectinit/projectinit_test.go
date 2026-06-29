@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,8 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	gitignore, err := os.ReadFile(filepath.Join(workspace, ".gitignore"))
 	require.NoError(t, err)
 	require.Contains(t, string(gitignore), ".codog.local.json")
+	require.Contains(t, string(gitignore), ".codog/worker-state.json")
+	require.Contains(t, string(gitignore), ".codog/focus.json")
 }
 
 func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
@@ -50,7 +53,7 @@ func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "instructions.md"), []byte("custom instructions\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{"model":"custom"}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte(gitignoreComment+"\n.codog.local.json\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte(gitignoreComment+"\n"+strings.Join(gitignoreEntries, "\n")+"\n"), 0o644))
 
 	report, err := Initialize(workspace)
 
@@ -93,6 +96,8 @@ func TestEnsureGitignoreEntriesUpdatesExistingFile(t *testing.T) {
 	require.Contains(t, string(data), "dist/")
 	require.Contains(t, string(data), gitignoreComment)
 	require.Contains(t, string(data), ".codog.local.json")
+	require.Contains(t, string(data), ".codog/worker-state.json")
+	require.Contains(t, string(data), ".codog/focus.json")
 }
 
 func TestRenderText(t *testing.T) {
