@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/session"
@@ -180,6 +181,18 @@ func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, background.FilterBySession(tasks, id))
 		return
 	}
+	if len(parts) > 1 && parts[1] == "messages" {
+		s.sessionMessages(w, r, id)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "input" {
+		s.sessionInput(w, r, id)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "rewind" {
+		s.sessionRewind(w, r, id)
+		return
+	}
 	if len(parts) > 1 {
 		writeError(w, http.ErrMissingFile, http.StatusNotFound)
 		return
@@ -190,6 +203,94 @@ func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, sess)
+}
+
+func (s Server) sessionMessages(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Message *anthropic.Message `json:"message"`
+		Role    string             `json:"role"`
+		Text    string             `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	var msg anthropic.Message
+	if payload.Message != nil {
+		msg = *payload.Message
+	} else {
+		role := strings.TrimSpace(payload.Role)
+		text := strings.TrimSpace(payload.Text)
+		if role == "" {
+			role = "user"
+		}
+		if text == "" {
+			writeError(w, errors.New("text is required"), http.StatusBadRequest)
+			return
+		}
+		msg = anthropic.TextMessage(role, text)
+	}
+	if msg.Role == "" || len(msg.Content) == 0 {
+		writeError(w, errors.New("message role and content are required"), http.StatusBadRequest)
+		return
+	}
+	if err := s.Sessions.Append(id, msg); err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	sess, err := s.Sessions.Open(id)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, sess)
+}
+
+func (s Server) sessionInput(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Input string `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(payload.Input) == "" {
+		writeError(w, errors.New("input is required"), http.StatusBadRequest)
+		return
+	}
+	if err := s.Sessions.AppendInput(id, payload.Input); err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"session_id": id, "input": payload.Input})
+}
+
+func (s Server) sessionRewind(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		RemoveMessages int `json:"remove_messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result, err := s.Sessions.Rewind(id, payload.RemoveMessages)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s Server) background(w http.ResponseWriter, r *http.Request) {

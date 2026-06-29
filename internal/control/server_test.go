@@ -122,6 +122,56 @@ func TestControlStateKeepsLastErrorCompatibility(t *testing.T) {
 	require.NotContains(t, string(body), `"last_error"`)
 }
 
+func TestControlSessionMutationEndpoints(t *testing.T) {
+	root := t.TempDir()
+	store := &session.Store{Dir: filepath.Join(root, "sessions")}
+	server := httptest.NewServer(Server{
+		Sessions:   store,
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  root,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/sessions/session-remote/input", "application/json", bytes.NewBufferString(`{"input":"remote prompt"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Post(server.URL+"/sessions/session-remote/messages", "application/json", bytes.NewBufferString(`{"role":"user","text":"hello remote"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "hello remote")
+
+	resp, err = http.Post(server.URL+"/sessions/session-remote/messages", "application/json", bytes.NewBufferString(`{"message":{"role":"assistant","content":[{"type":"text","text":"remote answer"}]}}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get(server.URL + "/sessions/session-remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "hello remote")
+	require.Contains(t, string(body), "remote answer")
+
+	resp, err = http.Post(server.URL+"/sessions/session-remote/rewind", "application/json", bytes.NewBufferString(`{"remove_messages":1}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"removed_messages":1`)
+
+	entries, err := store.PromptHistory("session-remote")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "remote prompt", entries[0].Text)
+}
+
 func TestControlBackgroundLifecycle(t *testing.T) {
 	root := t.TempDir()
 	server := httptest.NewServer(Server{

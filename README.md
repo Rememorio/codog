@@ -181,8 +181,9 @@ Claude Code source.
   `lsp discover|start|list|status|stop` manages local language server
   lifecycles.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
-  background tasks, terminal command streams, logs/watch streams, Go
-  diagnostics, bearer-token auth, and heartbeat lease/failure state.
+  session message/input mutation and rewind, background tasks, terminal command
+  streams, logs/watch streams, Go diagnostics, bearer-token auth, and heartbeat
+  lease/failure state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
   identity, open-file/selection state, sessions, workspace info, file
   listing/search/diff, diagnostics, background watch events, and bounded file
