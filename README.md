@@ -10,7 +10,7 @@ Claude Code source.
 - One-shot prompt mode through `codog prompt` or Claude-compatible `codog -p`
 - Interactive REPL
 - Anthropic-compatible streaming through `/v1/messages`
-- Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,
+- Built-in tools: `bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `remote_trigger`,
   `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,

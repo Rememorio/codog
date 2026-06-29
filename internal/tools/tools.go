@@ -86,6 +86,7 @@ type RegistryOptions struct {
 	AdditionalDirs  []string
 	ConfigHome      string
 	MCPServers      map[string]config.MCPServerConfig
+	PowerShell      string
 	QuestionIn      io.Reader
 	QuestionOut     io.Writer
 }
@@ -117,6 +118,7 @@ func NewRegistry(workspace string) *Registry {
 func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg := &Registry{tools: map[string]Tool{}}
 	reg.Register(BashTool{Workspace: workspace, SandboxStrategy: opts.SandboxStrategy})
+	reg.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, Executable: opts.PowerShell})
 	reg.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -609,6 +611,99 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		result["error"] = err.Error()
 	}
 	return pretty(result), nil
+}
+
+type PowerShellTool struct {
+	Workspace  string
+	ConfigHome string
+	Executable string
+}
+
+func (PowerShellTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "powershell",
+		Description: "Execute a PowerShell command in the current workspace, optionally as a background task.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command":           map[string]any{"type": "string"},
+				"timeout":           map[string]any{"type": "integer", "minimum": 1},
+				"description":       map[string]any{"type": "string"},
+				"run_in_background": map[string]any{"type": "boolean"},
+			},
+			"required":             []string{"command"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (PowerShellTool) Permission() Permission { return PermissionDanger }
+
+func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Command         string `json:"command"`
+		TimeoutSeconds  int    `json:"timeout"`
+		RunInBackground bool   `json:"run_in_background"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Command) == "" {
+		return "", errors.New("command is required")
+	}
+	executable, err := t.powerShellExecutable()
+	if err != nil {
+		return "", err
+	}
+	if payload.RunInBackground {
+		command := strings.Join([]string{shellQuoteToolArg(executable), "-NoProfile", "-Command", shellQuoteToolArg(payload.Command)}, " ")
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{Kind: "powershell"})
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"background": true, "task": task}), nil
+	}
+	timeout := time.Duration(payload.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	if timeout > 30*time.Minute {
+		return "", errors.New("timeout must be 1800 seconds or less")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-Command", payload.Command)
+	cmd.Dir = t.Workspace
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	result := map[string]any{
+		"stdout": stdout.String(),
+		"stderr": stderr.String(),
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		result["interrupted"] = true
+		result["error"] = "timeout"
+		return pretty(result), nil
+	}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	return pretty(result), nil
+}
+
+func (t PowerShellTool) powerShellExecutable() (string, error) {
+	if strings.TrimSpace(t.Executable) != "" {
+		return t.Executable, nil
+	}
+	if path, err := exec.LookPath("pwsh"); err == nil {
+		return path, nil
+	}
+	if path, err := exec.LookPath("powershell"); err == nil {
+		return path, nil
+	}
+	return "", errors.New("PowerShell executable not found (expected `pwsh` or `powershell` in PATH)")
 }
 
 type ReadFileTool struct {

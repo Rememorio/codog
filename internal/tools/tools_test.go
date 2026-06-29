@@ -34,6 +34,34 @@ func TestReadFileRejectsWorkspaceEscape(t *testing.T) {
 	require.Contains(t, err.Error(), "escapes workspace")
 }
 
+func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	script := filepath.Join(t.TempDir(), "pwsh-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ps:%s\\n' \"$*\"\n"), 0o755))
+	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
+
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":1}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `ps:-NoProfile -Command Write-Output ok`)
+
+	out, err = tool.Execute(context.Background(), []byte(`{"command":"Write-Output bg","run_in_background":true}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"background": true`)
+	var payload struct {
+		Task background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.NotEmpty(t, payload.Task.ID)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(payload.Task.ID, 4096)
+		return err == nil && strings.Contains(logs, `ps:-NoProfile -Command Write-Output bg`)
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
 func TestFileToolsAllowAdditionalDirs(t *testing.T) {
 	workspace := t.TempDir()
 	extra := filepath.Join(t.TempDir(), "extra")
@@ -138,8 +166,11 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 41)
+	require.Len(t, infos, 42)
 	info, ok = registry.Info("bash")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("powershell")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	_, ok = registry.Info("ask_user_question")
