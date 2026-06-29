@@ -110,4 +110,8 @@ func TestCandidatesWithOptionsIncludeModelAndSessions(t *testing.T) {
 	modelCandidates := CandidatesWithOptions("/model", CandidateOptions{Model: "claude-test"})
 	require.Contains(t, modelCandidates, "/model claude-test")
 	require.Contains(t, modelCandidates, "/model ")
+
+	modelValueCandidates := CandidatesWithOptions("/model ", CandidateOptions{Model: "claude-test"})
+	require.Contains(t, modelValueCandidates, "/model claude-test")
+	require.NotContains(t, modelValueCandidates, "/model")
 }

@@ -67,6 +67,7 @@ import (
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/Rememorio/codog/internal/worktree"
+	"github.com/chzyer/readline"
 )
 
 const version = "0.1.0"
@@ -4892,7 +4893,17 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		return err
 	}
 	a.writeWorkerState("repl", "idle", sess, "")
-	fmt.Fprintf(a.Err, "Codog %s (%s). Type /exit to quit.\n", version, sess.ID)
+	fmt.Fprintf(a.Err, "Codog %s (%s). Type /help for commands, Tab for completions, /exit to quit.\n", version, sess.ID)
+	if rl, ok, err := a.newLineReader(sess.ID); err != nil {
+		return err
+	} else if ok {
+		defer rl.Close()
+		return a.replReadline(ctx, sess, rl)
+	}
+	return a.replScanner(ctx, sess)
+}
+
+func (a *App) replScanner(ctx context.Context, sess *session.Session) error {
 	scanner := bufio.NewScanner(a.In)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for {
@@ -4920,6 +4931,109 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readline.Instance) error {
+	for {
+		line, err := rl.Readline()
+		if errors.Is(err, readline.ErrInterrupt) {
+			return nil
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		_ = rl.SaveHistory(line)
+		if line == "/exit" || line == "/quit" {
+			return nil
+		}
+		if line == "/help" {
+			slash.RenderHelp(a.Err)
+			continue
+		}
+		if a.handleSlash(ctx, line, sess) {
+			continue
+		}
+		if err := a.runSessionTurn(ctx, "repl", sess, line, "idle"); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			continue
+		}
+	}
+}
+
+func (a *App) newLineReader(activeSessionID string) (*readline.Instance, bool, error) {
+	input, ok := terminalInput(a.In)
+	if !ok {
+		return nil, false, nil
+	}
+	cfg := &readline.Config{
+		Prompt:                 "codog> ",
+		Stdin:                  input,
+		Stdout:                 a.Err,
+		Stderr:                 a.Err,
+		AutoComplete:           slashCompleter{candidates: a.slashCompletionCandidates(activeSessionID)},
+		HistorySearchFold:      true,
+		DisableAutoSaveHistory: true,
+		FuncIsTerminal:         func() bool { return true },
+	}
+	if historyFile := a.replHistoryFile(); historyFile != "" {
+		cfg.HistoryFile = historyFile
+	}
+	rl, err := readline.NewEx(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	return rl, true, nil
+}
+
+func (a *App) replHistoryFile() string {
+	if strings.TrimSpace(a.Config.ConfigHome) == "" {
+		return ""
+	}
+	dir := filepath.Join(a.Config.ConfigHome, "history")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "repl.txt")
+}
+
+func terminalInput(input io.Reader) (*os.File, bool) {
+	file, ok := input.(*os.File)
+	if !ok {
+		return nil, false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false
+	}
+	return file, info.Mode()&os.ModeCharDevice != 0
+}
+
+type slashCompleter struct {
+	candidates []string
+}
+
+func (c slashCompleter) Do(line []rune, pos int) ([][]rune, int) {
+	if pos < 0 || pos > len(line) {
+		return nil, 0
+	}
+	prefix := strings.Trim(string(line[:pos]), "\r\n\t")
+	if !strings.HasPrefix(prefix, "/") {
+		return nil, 0
+	}
+	matches := slash.FilterCandidates(prefix, c.candidates)
+	out := make([][]rune, 0, len(matches))
+	for _, candidate := range matches {
+		suffix := strings.TrimPrefix(candidate, prefix)
+		out = append(out, []rune(suffix))
+	}
+	return out, len([]rune(prefix))
 }
 
 func (a *App) handleSlash(ctx context.Context, line string, sess *session.Session) bool {

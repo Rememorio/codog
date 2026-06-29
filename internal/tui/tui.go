@@ -90,7 +90,7 @@ func (m model) View() string {
 }
 
 func (m model) completeSlashCommand() model {
-	value := strings.TrimSpace(m.textarea.Value())
+	value := strings.Trim(m.textarea.Value(), "\r\n\t")
 	candidates := slash.FilterCandidates(value, m.completionCandidates())
 	switch len(candidates) {
 	case 0:

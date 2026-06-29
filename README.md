@@ -8,7 +8,7 @@ Claude Code source.
 
 - Single Go binary: `codog`
 - One-shot prompt mode through `codog prompt` or Claude-compatible `codog -p`
-- Interactive REPL
+- Interactive REPL with Tab completion for slash commands on real terminals
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `remote_trigger`,

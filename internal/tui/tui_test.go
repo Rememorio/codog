@@ -46,3 +46,12 @@ func TestCompleteSlashCommandPreservesCandidateTrailingSpace(t *testing.T) {
 	m = m.completeSlashCommand()
 	require.Equal(t, "/model ", m.textarea.Value())
 }
+
+func TestCompleteSlashCommandMatchesAfterTrailingSpace(t *testing.T) {
+	ta := textarea.New()
+	ta.SetValue("/model ")
+	m := model{textarea: ta, candidates: []string{"/model claude-test"}}
+
+	m = m.completeSlashCommand()
+	require.Equal(t, "/model claude-test ", m.textarea.Value())
+}

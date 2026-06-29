@@ -608,6 +608,18 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	require.Contains(t, candidates, "/permissions workspace-write")
 }
 
+func TestSlashCompleterReturnsReadlineSuffixes(t *testing.T) {
+	completer := slashCompleter{candidates: []string{"/model claude-test", "/resume latest"}}
+
+	suffixes, length := completer.Do([]rune("/model "), len([]rune("/model ")))
+	require.Equal(t, len([]rune("/model ")), length)
+	require.Equal(t, [][]rune{[]rune("claude-test")}, suffixes)
+
+	suffixes, length = completer.Do([]rune("model"), len([]rune("model")))
+	require.Zero(t, length)
+	require.Empty(t, suffixes)
+}
+
 func TestRenderConfigInspectionSections(t *testing.T) {
 	cfg := redactedConfig(config.Config{
 		APIKey:         "secret",

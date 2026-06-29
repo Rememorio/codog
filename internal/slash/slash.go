@@ -121,7 +121,7 @@ func Candidates(prefix string) []string {
 }
 
 func CandidatesWithOptions(prefix string, options CandidateOptions) []string {
-	prefix = strings.TrimSpace(prefix)
+	prefix = strings.Trim(prefix, "\r\n\t")
 	if !strings.HasPrefix(prefix, "/") {
 		return nil
 	}
@@ -213,7 +213,7 @@ func AllCandidates(options CandidateOptions) []string {
 }
 
 func FilterCandidates(prefix string, candidates []string) []string {
-	prefix = strings.TrimSpace(prefix)
+	prefix = strings.Trim(prefix, "\r\n\t")
 	if !strings.HasPrefix(prefix, "/") {
 		return nil
 	}
