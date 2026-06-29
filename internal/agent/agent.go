@@ -115,9 +115,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 		cfg = redactedConfig(cfg)
-		data, _ := json.MarshalIndent(map[string]any{"config": cfg, "paths": paths}, "", "  ")
-		fmt.Fprintln(os.Stdout, string(data))
-		return nil
+		return renderConfigInspection(os.Stdout, cfg, paths, rest)
 	}
 	if command == "mock-server" {
 		addr := ":8089"
@@ -4880,6 +4878,36 @@ func removeRuleValues(current []string, values []string) []string {
 
 func (a *App) runtimeConfigPayload(args []string) (any, error) {
 	cfg := redactedConfig(a.Config)
+	return configSectionPayload(cfg, args)
+}
+
+func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, args []string) error {
+	if len(args) == 0 {
+		data, _ := json.MarshalIndent(map[string]any{"config": cfg, "paths": paths}, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	if strings.EqualFold(args[0], "paths") {
+		data, _ := json.MarshalIndent(map[string]any{"paths": paths}, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	if strings.EqualFold(args[0], "get") {
+		if len(args) < 2 {
+			return errors.New("usage: codog config get SECTION")
+		}
+		args = args[1:]
+	}
+	payload, err := configSectionPayload(cfg, args)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(out, string(data))
+	return nil
+}
+
+func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	if len(args) == 0 {
 		return cfg, nil
 	}
@@ -6497,6 +6525,7 @@ func printHelp(out io.Writer) {
 Usage:
   %s [flags] prompt "explain this repo"
   %s version [--json|--output-format text|json]
+  %s config [get SECTION|paths]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
@@ -6549,7 +6578,7 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
-  %s config
+  %s config [get SECTION|paths]
 
 Flags:
   --model NAME
@@ -6563,7 +6592,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

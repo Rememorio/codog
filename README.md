@@ -183,6 +183,9 @@ codog --permission-mode prompt prompt "inspect the repo"
 
 ## Config
 
+Inspect effective config with `codog config`, `codog config get SECTION`, or
+`codog config paths`.
+
 `~/.codog/config.json`, `.codog.json`, or `.codog.local.json`:
 
 ```json

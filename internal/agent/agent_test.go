@@ -464,6 +464,31 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
 }
 
+func TestRenderConfigInspectionSections(t *testing.T) {
+	cfg := redactedConfig(config.Config{
+		APIKey:         "secret",
+		AuthToken:      "token",
+		BaseURL:        "https://api.example.test",
+		Model:          "model-a",
+		MaxTokens:      100,
+		MaxTurns:       3,
+		PermissionMode: "workspace-write",
+	})
+	var out bytes.Buffer
+
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json", "project.json"}, []string{"get", "auth"}))
+	require.Contains(t, out.String(), `"base_url": "https://api.example.test"`)
+	require.NotContains(t, out.String(), "secret")
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json", "project.json"}, []string{"paths"}))
+	require.Contains(t, out.String(), "project.json")
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model"}))
+	require.Contains(t, out.String(), `"model": "model-a"`)
+}
+
 func TestAllowedToolsSlashMutatesRuntimeAllowRules(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
