@@ -4891,6 +4891,15 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		fmt.Fprintln(out, string(data))
 		return nil
 	}
+	if strings.EqualFold(args[0], "set") || strings.EqualFold(args[0], "unset") {
+		report, err := mutateConfigFile(args, paths)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
 	if strings.EqualFold(args[0], "paths") {
 		data, _ := json.MarshalIndent(map[string]any{"paths": paths}, "", "  ")
 		fmt.Fprintln(out, string(data))
@@ -4909,6 +4918,100 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(out, string(data))
 	return nil
+}
+
+type configMutationRequest struct {
+	Action string
+	Key    string
+	Value  any
+	Path   string
+	Target string
+}
+
+func mutateConfigFile(args []string, paths []string) (config.MutationReport, error) {
+	req, err := parseConfigMutationArgs(args)
+	if err != nil {
+		return config.MutationReport{}, err
+	}
+	path, err := configMutationPath(req, paths)
+	if err != nil {
+		return config.MutationReport{}, err
+	}
+	switch req.Action {
+	case "set":
+		return config.SetFileValue(path, req.Key, req.Value)
+	case "unset":
+		return config.UnsetFileValue(path, req.Key)
+	default:
+		return config.MutationReport{}, fmt.Errorf("unknown config action %q", req.Action)
+	}
+}
+
+func parseConfigMutationArgs(args []string) (configMutationRequest, error) {
+	if len(args) == 0 {
+		return configMutationRequest{}, errors.New("config action is required")
+	}
+	req := configMutationRequest{Action: strings.ToLower(args[0])}
+	var positionals []string
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--target":
+			if i+1 >= len(args) {
+				return req, errors.New("config target is required")
+			}
+			i++
+			req.Target = args[i]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			if i+1 >= len(args) {
+				return req, errors.New("config path is required")
+			}
+			i++
+			req.Path = args[i]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	switch req.Action {
+	case "set":
+		if len(positionals) < 2 {
+			return req, errors.New("usage: codog config set KEY VALUE [--target user|project|local|--path PATH]")
+		}
+		req.Key = positionals[0]
+		req.Value = config.ParseConfigValue(strings.Join(positionals[1:], " "))
+	case "unset":
+		if len(positionals) != 1 {
+			return req, errors.New("usage: codog config unset KEY [--target user|project|local|--path PATH]")
+		}
+		req.Key = positionals[0]
+	default:
+		return req, fmt.Errorf("unknown config action %q", req.Action)
+	}
+	return req, nil
+}
+
+func configMutationPath(req configMutationRequest, paths []string) (string, error) {
+	if req.Path != "" {
+		return req.Path, nil
+	}
+	target := strings.ToLower(strings.TrimSpace(req.Target))
+	switch target {
+	case "", "user":
+		if len(paths) == 0 || strings.TrimSpace(paths[0]) == "" {
+			return "", errors.New("user config path is unavailable")
+		}
+		return paths[0], nil
+	case "project":
+		return ".codog.json", nil
+	case "local":
+		return ".codog.local.json", nil
+	default:
+		return "", fmt.Errorf("unknown config target %q", req.Target)
+	}
 }
 
 func configSectionPayload(cfg config.Config, args []string) (any, error) {
@@ -6640,7 +6743,7 @@ func printHelp(out io.Writer) {
 Usage:
   %s [flags] prompt "explain this repo"
   %s version [--json|--output-format text|json]
-  %s config [get SECTION|paths]
+  %s config [get SECTION|paths|set KEY VALUE|unset KEY]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
@@ -6694,7 +6797,7 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
-  %s config [get SECTION|paths]
+  %s config [get SECTION|paths|set KEY VALUE|unset KEY]
 
 Flags:
   --model NAME

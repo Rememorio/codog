@@ -108,6 +108,14 @@ type Config struct {
 	Future              FutureConfig               `json:"future,omitempty"`
 }
 
+type MutationReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Path   string `json:"path"`
+	Key    string `json:"key"`
+}
+
 type FlagOverrides struct {
 	ConfigPath     string
 	SessionID      string
@@ -227,6 +235,137 @@ func readConfigFile(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func SetFileValue(path string, key string, value any) (MutationReport, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return MutationReport{}, fmt.Errorf("config key is required")
+	}
+	data, err := readConfigMap(path)
+	if err != nil {
+		return MutationReport{}, err
+	}
+	setNestedValue(data, strings.Split(key, "."), value)
+	if err := writeConfigMap(path, data); err != nil {
+		return MutationReport{}, err
+	}
+	return MutationReport{Kind: "config", Action: "set", Status: "ok", Path: path, Key: key}, nil
+}
+
+func UnsetFileValue(path string, key string) (MutationReport, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return MutationReport{}, fmt.Errorf("config key is required")
+	}
+	data, err := readConfigMap(path)
+	if err != nil {
+		return MutationReport{}, err
+	}
+	unsetNestedValue(data, strings.Split(key, "."))
+	if err := writeConfigMap(path, data); err != nil {
+		return MutationReport{}, err
+	}
+	return MutationReport{Kind: "config", Action: "unset", Status: "ok", Path: path, Key: key}, nil
+}
+
+func ParseConfigValue(raw string) any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err == nil {
+		return value
+	}
+	return raw
+}
+
+func readConfigMap(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return map[string]any{}, nil
+	}
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		object = map[string]any{}
+	}
+	return object, nil
+}
+
+func writeConfigMap(path string, object map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(object, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+func setNestedValue(object map[string]any, parts []string, value any) {
+	if len(parts) == 0 {
+		return
+	}
+	key := strings.TrimSpace(parts[0])
+	if key == "" {
+		return
+	}
+	if len(parts) == 1 {
+		object[key] = value
+		return
+	}
+	next, _ := object[key].(map[string]any)
+	if next == nil {
+		next = map[string]any{}
+		object[key] = next
+	}
+	setNestedValue(next, parts[1:], value)
+}
+
+func unsetNestedValue(object map[string]any, parts []string) {
+	if len(parts) == 0 {
+		return
+	}
+	key := strings.TrimSpace(parts[0])
+	if key == "" {
+		return
+	}
+	if len(parts) == 1 {
+		delete(object, key)
+		return
+	}
+	next, ok := object[key].(map[string]any)
+	if !ok {
+		return
+	}
+	unsetNestedValue(next, parts[1:])
+	if len(next) == 0 {
+		delete(object, key)
+	}
 }
 
 func hookCommands(raw map[string]json.RawMessage, keys ...string) ([]HookCommand, error) {

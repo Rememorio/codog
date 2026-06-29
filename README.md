@@ -186,7 +186,9 @@ codog --permission-mode prompt prompt "inspect the repo"
 ## Config
 
 Inspect effective config with `codog config`, `codog config get SECTION`, or
-`codog config paths`.
+`codog config paths`. Persist settings with `codog config set KEY VALUE` and
+remove them with `codog config unset KEY`; use `--target project` or
+`--target local` to write `.codog.json` or `.codog.local.json`.
 
 `~/.codog/config.json`, `.codog.json`, or `.codog.local.json`:
 

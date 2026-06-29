@@ -186,6 +186,38 @@ func TestLoadProjectLocalOverridesSharedConfig(t *testing.T) {
 	require.Contains(t, paths, ".codog.local.json")
 }
 
+func TestSetAndUnsetFileValue(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"old","future":{"sandbox_strategy":"detect"}}`), 0o644))
+
+	report, err := SetFileValue(configPath, "model", "new-model")
+	require.NoError(t, err)
+	require.Equal(t, "set", report.Action)
+	require.Equal(t, "model", report.Key)
+	report, err = SetFileValue(configPath, "rate_limit.max_retries", float64(4))
+	require.NoError(t, err)
+	require.Equal(t, "rate_limit.max_retries", report.Key)
+	report, err = UnsetFileValue(configPath, "future.sandbox_strategy")
+	require.NoError(t, err)
+	require.Equal(t, "unset", report.Action)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	require.Equal(t, "new-model", raw["model"])
+	require.Equal(t, float64(4), raw["rate_limit"].(map[string]any)["max_retries"])
+	require.NotContains(t, raw, "future")
+}
+
+func TestParseConfigValue(t *testing.T) {
+	require.Equal(t, "claude-sonnet", ParseConfigValue("claude-sonnet"))
+	require.Equal(t, true, ParseConfigValue("true"))
+	require.Equal(t, float64(42), ParseConfigValue("42"))
+	require.Equal(t, []any{"read_file"}, ParseConfigValue(`["read_file"]`))
+}
+
 func writeSignedPolicy(t *testing.T, path string, policy ManagedPolicy, privateKey ed25519.PrivateKey) ManagedPolicy {
 	t.Helper()
 	payload, err := ManagedPolicyPayload(policy)

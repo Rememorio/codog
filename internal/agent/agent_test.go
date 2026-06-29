@@ -489,6 +489,24 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"model": "model-a"`)
 }
 
+func TestRenderConfigInspectionMutatesConfigFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	var out bytes.Buffer
+
+	require.NoError(t, renderConfigInspection(&out, config.Config{}, []string{configPath}, []string{"set", "model", "model-b"}))
+	require.Contains(t, out.String(), `"action": "set"`)
+	out.Reset()
+	require.NoError(t, renderConfigInspection(&out, config.Config{}, []string{configPath}, []string{"set", "rate_limit.max_retries", "4"}))
+	out.Reset()
+	require.NoError(t, renderConfigInspection(&out, config.Config{}, []string{configPath}, []string{"unset", "model"}))
+	require.Contains(t, out.String(), `"action": "unset"`)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"model"`)
+	require.Contains(t, string(data), `"max_retries": 4`)
+}
+
 func TestAllowedToolsSlashMutatesRuntimeAllowRules(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
