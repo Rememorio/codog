@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +112,36 @@ func TestBackgroundWatchCommandOutputsJSONLEvents(t *testing.T) {
 	require.Contains(t, out.String(), `"type":"status"`)
 	require.Contains(t, out.String(), `"type":"log"`)
 	require.Contains(t, out.String(), "cli-watch")
+}
+
+func TestCodeIntelLSPCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: t.TempDir(),
+		Out:       &out,
+	}
+
+	require.NoError(t, app.CodeIntel([]string{"lsp", "discover"}))
+	require.Contains(t, out.String(), `"language": "go"`)
+	out.Reset()
+
+	require.NoError(t, app.CodeIntel([]string{"lsp", "start", "go", "sh", "-c", "sleep 30"}))
+	require.Contains(t, out.String(), `"language": "go"`)
+	require.Contains(t, out.String(), `"status": "running"`)
+	t.Cleanup(func() { _ = app.CodeIntel([]string{"lsp", "stop", "go"}) })
+	out.Reset()
+
+	require.NoError(t, app.CodeIntel([]string{"lsp", "list"}))
+	require.Contains(t, out.String(), `"language": "go"`)
+	out.Reset()
+
+	require.NoError(t, app.CodeIntel([]string{"lsp", "stop", "go"}))
+	require.Contains(t, out.String(), `"status": "stopped"`)
 }
 
 func TestOAuthTokenCommands(t *testing.T) {

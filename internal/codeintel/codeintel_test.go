@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -69,4 +71,57 @@ func TestGoDiagnosticsReportsBuildError(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected undefined symbol diagnostic: %#v", diagnostics)
+}
+
+func TestDefaultLSPCandidatesIncludesGo(t *testing.T) {
+	candidates := DefaultLSPCandidates()
+	require.NotEmpty(t, candidates)
+	var found bool
+	for _, candidate := range candidates {
+		if candidate.Language == "go" && candidate.Command == "gopls" {
+			found = true
+		}
+	}
+	require.True(t, found)
+}
+
+func TestLSPStoreLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := NewLSPStore(configHome, workspace)
+	status, err := store.Start("go", []string{"sh", "-c", "sleep 30"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = store.Stop("go") })
+	require.Equal(t, "go", status.Language)
+	require.Equal(t, "running", status.Task.Status)
+	require.Contains(t, status.Command, "sleep 30")
+
+	list, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, "go", list[0].Language)
+
+	current, err := store.Status("go")
+	require.NoError(t, err)
+	require.Equal(t, status.TaskID, current.TaskID)
+	require.Equal(t, "running", current.Task.Status)
+
+	stopped, err := store.Stop("go")
+	require.NoError(t, err)
+	require.Equal(t, "stopped", stopped.Task.Status)
+	require.NotNil(t, stopped.Task.CompletedAt)
+	require.Eventually(t, func() bool {
+		current, err := store.Status("go")
+		return err == nil && current.Task.Status != "running"
+	}, 2*time.Second, 50*time.Millisecond)
+}
+
+func TestLSPStoreRejectsUnsafeLanguage(t *testing.T) {
+	store := NewLSPStore(t.TempDir(), t.TempDir())
+	_, err := store.Start("../go", []string{"gopls"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "safe name")
 }

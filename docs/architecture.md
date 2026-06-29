@@ -28,8 +28,8 @@ Codog follows a small-core layout:
   verified zip install/update, enable/disable, and removal.
 - `internal/oauth`: PKCE and local auth token storage.
 - `internal/sandbox`: local sandbox strategy detection and bash wrapping.
-- `internal/codeintel`: lightweight Go symbols, diagnostics, and notebook
-  helpers.
+- `internal/codeintel`: lightweight Go symbols, diagnostics, notebook helpers,
+  and local LSP lifecycle metadata.
 - `internal/control`: HTTP control API for sessions, background tasks, logs,
   watch streams, diagnostics, remote auth, structured failure state, and
   heartbeat leases.

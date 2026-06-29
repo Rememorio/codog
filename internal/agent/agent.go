@@ -914,6 +914,9 @@ func (a *App) CodeIntel(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
+	if args[0] == "lsp" {
+		return a.CodeIntelLSP(args[1:])
+	}
 	if args[0] == "notebook-edit" {
 		if len(args) < 5 {
 			return errors.New("usage: codog code-intel notebook-edit NOTEBOOK INDEX CELL_TYPE SOURCE")
@@ -925,6 +928,56 @@ func (a *App) CodeIntel(args []string) error {
 		return codeintel.EditNotebookCell(args[1], index, args[3], strings.Join(args[4:], " "))
 	}
 	return fmt.Errorf("unknown code-intel command %q", args[0])
+}
+
+func (a *App) CodeIntelLSP(args []string) error {
+	store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
+	if len(args) == 0 || args[0] == "list" {
+		statuses, err := store.List()
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(statuses, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	var payload any
+	switch args[0] {
+	case "discover":
+		payload = codeintel.DefaultLSPCandidates()
+	case "start":
+		if len(args) < 2 {
+			return errors.New("usage: codog code-intel lsp start LANGUAGE [COMMAND...]")
+		}
+		status, err := store.Start(args[1], args[2:])
+		if err != nil {
+			return err
+		}
+		payload = status
+	case "status":
+		if len(args) < 2 {
+			return errors.New("usage: codog code-intel lsp status LANGUAGE")
+		}
+		status, err := store.Status(args[1])
+		if err != nil {
+			return err
+		}
+		payload = status
+	case "stop":
+		if len(args) < 2 {
+			return errors.New("usage: codog code-intel lsp stop LANGUAGE")
+		}
+		status, err := store.Stop(args[1])
+		if err != nil {
+			return err
+		}
+		payload = status
+	default:
+		return fmt.Errorf("unknown code-intel lsp command %q", args[0])
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
 }
 
 func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOverrides) error {
@@ -1267,7 +1320,7 @@ Usage:
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete
-  %s sandbox | code-intel symbols|diagnostics
+  %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config

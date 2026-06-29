@@ -44,7 +44,9 @@ Claude Code source.
   wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
   `unshare`.
 - `codog code-intel symbols|diagnostics` scans Go symbols, reports Go test
-  diagnostics, and `notebook-edit` updates `.ipynb` cells.
+  diagnostics, `notebook-edit` updates `.ipynb` cells, and
+  `lsp discover|start|list|status|stop` manages local language server
+  lifecycles.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
   background tasks, logs/watch streams, Go diagnostics, bearer-token auth, and
   heartbeat lease/failure state.
