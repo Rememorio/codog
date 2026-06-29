@@ -19,6 +19,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/sandbox"
 )
 
 type Permission string
@@ -61,6 +62,10 @@ type Registry struct {
 	tools map[string]Tool
 }
 
+type RegistryOptions struct {
+	SandboxStrategy string
+}
+
 type Prompter struct {
 	Mode        Permission
 	AllowRules  []string
@@ -82,8 +87,12 @@ type PermissionDecision struct {
 }
 
 func NewRegistry(workspace string) *Registry {
+	return NewRegistryWithOptions(workspace, RegistryOptions{})
+}
+
+func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg := &Registry{tools: map[string]Tool{}}
-	reg.Register(BashTool{Workspace: workspace})
+	reg.Register(BashTool{Workspace: workspace, SandboxStrategy: opts.SandboxStrategy})
 	reg.Register(ReadFileTool{Workspace: workspace})
 	reg.Register(WriteFileTool{Workspace: workspace})
 	reg.Register(EditFileTool{Workspace: workspace})
@@ -314,7 +323,8 @@ func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 }
 
 type BashTool struct {
-	Workspace string
+	Workspace       string
+	SandboxStrategy string
 }
 
 func (BashTool) Definition() anthropic.ToolDefinition {
@@ -353,15 +363,22 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-lc", payload.Command)
+	command, args, effectiveSandbox, err := sandbox.ShellCommand(t.SandboxStrategy, t.Workspace, payload.Command)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = t.Workspace
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	result := map[string]any{
 		"stdout": stdout.String(),
 		"stderr": stderr.String(),
+	}
+	if effectiveSandbox != "" {
+		result["sandbox"] = effectiveSandbox
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		result["interrupted"] = true

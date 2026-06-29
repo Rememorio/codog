@@ -34,7 +34,9 @@ Claude Code source.
 - `codog agents` lists `.codog/agents/*.json` agent definitions.
 - `codog marketplace` lists local `.codog/plugins/*/plugin.json` manifests.
 - `codog oauth pkce` generates a PKCE verifier/challenge pair.
-- `codog sandbox` reports the detected local sandbox strategy.
+- `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
+  wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
+  `unshare`.
 - `codog code-intel symbols` scans Go symbols, and `notebook-edit` updates
   `.ipynb` cells.
 - `codog remote serve [addr]` starts a local HTTP session-control API.

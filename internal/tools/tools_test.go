@@ -89,6 +89,15 @@ func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
 	require.Contains(t, out, `ok`)
 }
 
+func TestBashToolRejectsUnavailableSandbox(t *testing.T) {
+	_, err := BashTool{
+		Workspace:       t.TempDir(),
+		SandboxStrategy: "codog-missing-sandbox",
+	}.Execute(context.Background(), []byte(`{"command":"pwd"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not available")
+}
+
 func TestMCPToolCallsRemoteTool(t *testing.T) {
 	out, err := MCPTool{
 		Name:       NewMCPToolName("test server", "echo"),

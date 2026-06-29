@@ -114,7 +114,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	app := &App{
 		Config:    cfg,
 		Client:    anthropic.New(cfg.BaseURL, cfg.APIKey, cfg.AuthToken),
-		Tools:     tools.NewRegistry(workspace),
+		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy}),
 		Sessions:  session.NewStore(cfg.ConfigHome),
 		Workspace: workspace,
 		Out:       os.Stdout,

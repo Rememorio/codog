@@ -141,10 +141,10 @@ func Surfaces() []Surface {
 			Command:     "sandbox",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "OS strategy detection is available; enforced isolation remains planned.",
+			Description: "OS strategy detection is available; bash execution can opt into detected macOS/Linux wrappers.",
 			NextSteps: []string{
-				"Add macOS sandbox-exec profile generation.",
-				"Add Linux namespace/bubblewrap strategy.",
+				"Harden macOS sandbox-exec profiles.",
+				"Harden Linux namespace/bubblewrap mounts.",
 				"Add Windows restricted process strategy.",
 			},
 		},
