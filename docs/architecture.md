@@ -33,6 +33,8 @@ Codog follows a small-core layout:
 - `internal/skills`: Markdown skill discovery.
 - `internal/templates`: user/workspace Markdown prompt template discovery and
   variable rendering.
+- `internal/outputstyle`: built-in, user, and workspace output style discovery,
+  active-style persistence, reporting, and system prompt injection.
 - `internal/mcp`: stdio MCP discovery plus tool/resource calls.
 - `internal/tui`: Bubble Tea prompt composer.
 - `internal/usage`: approximate token and cost accounting.

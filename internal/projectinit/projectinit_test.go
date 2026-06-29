@@ -46,6 +46,7 @@ func TestInitializeCreatesExpectedArtifacts(t *testing.T) {
 	require.Contains(t, string(gitignore), ".codog.local.json")
 	require.Contains(t, string(gitignore), ".codog/worker-state.json")
 	require.Contains(t, string(gitignore), ".codog/focus.json")
+	require.Contains(t, string(gitignore), ".codog/output-style.json")
 }
 
 func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
@@ -98,6 +99,7 @@ func TestEnsureGitignoreEntriesUpdatesExistingFile(t *testing.T) {
 	require.Contains(t, string(data), ".codog.local.json")
 	require.Contains(t, string(data), ".codog/worker-state.json")
 	require.Contains(t, string(data), ".codog/focus.json")
+	require.Contains(t, string(data), ".codog/output-style.json")
 }
 
 func TestRenderText(t *testing.T) {

@@ -28,6 +28,7 @@ import (
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/tools"
@@ -722,6 +723,44 @@ func TestContextCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Context")
 	require.Contains(t, out.String(), "Session          context-session (2 messages)")
 	require.Contains(t, out.String(), "Focused paths    1")
+	require.Empty(t, errOut.String())
+}
+
+func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "output-styles"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "output-styles", "brief.md"), []byte("Answer in one compact paragraph.\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.OutputStyle(nil))
+	require.Contains(t, out.String(), "Output Style")
+	require.Contains(t, out.String(), "brief")
+	require.Contains(t, out.String(), "concise")
+	out.Reset()
+
+	require.NoError(t, app.OutputStyle([]string{"set", "brief", "--json"}))
+	require.Contains(t, out.String(), `"active": "brief"`)
+	require.FileExists(t, outputstyle.StatePath(workspace))
+	require.Contains(t, app.systemPrompt(), `<output_style name="brief" source="user">`)
+	require.Contains(t, app.systemPrompt(), "Answer in one compact paragraph.")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/output-style show brief", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Body")
+	require.Contains(t, out.String(), "Answer in one compact paragraph.")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/output-style clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Output Style")
+	require.NotContains(t, app.systemPrompt(), "<output_style")
 	require.Empty(t, errOut.String())
 }
 

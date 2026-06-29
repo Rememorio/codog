@@ -34,6 +34,7 @@ import (
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
@@ -202,6 +203,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Focus(rest)
 	case "unfocus":
 		return app.Unfocus(rest)
+	case "output-style":
+		return app.OutputStyle(rest)
 	case "skills":
 		return app.ListSkills()
 	case "templates":
@@ -1805,6 +1808,88 @@ func parseFocusArgs(command string, args []string) (string, []string, error) {
 	}
 }
 
+type outputStyleRequest struct {
+	Action string
+	Name   string
+	Format string
+}
+
+func (a *App) OutputStyle(args []string) error {
+	req, err := parseOutputStyleArgs(args)
+	if err != nil {
+		return err
+	}
+	var report outputstyle.Report
+	switch req.Action {
+	case "list":
+		report, err = outputstyle.List(a.Config.ConfigHome, a.Workspace)
+	case "show":
+		report, err = outputstyle.Show(a.Config.ConfigHome, a.Workspace, req.Name)
+	case "set":
+		report, err = outputstyle.Set(a.Config.ConfigHome, a.Workspace, req.Name)
+	case "clear":
+		report, err = outputstyle.Clear(a.Workspace)
+	default:
+		err = fmt.Errorf("unknown output-style command %q", req.Action)
+	}
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	outputstyle.RenderText(a.Out, report)
+	return nil
+}
+
+func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
+	req := outputStyleRequest{Action: "list", Format: "text"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return outputStyleRequest{}, errors.New("output-style output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return outputStyleRequest{}, fmt.Errorf("unknown output-style output format %q", req.Format)
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch rest[0] {
+	case "list":
+		req.Action = "list"
+	case "show", "set":
+		if len(rest) < 2 {
+			return outputStyleRequest{}, fmt.Errorf("output-style %s requires a name", rest[0])
+		}
+		req.Action = rest[0]
+		req.Name = rest[1]
+	case "clear", "reset":
+		req.Action = "clear"
+	default:
+		req.Action = "set"
+		req.Name = rest[0]
+	}
+	return req, nil
+}
+
 type commandRequest struct {
 	Format    string
 	TimeoutMS int
@@ -3161,6 +3246,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Unfocus(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/output-style":
+		if err := a.OutputStyle(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/tokens":
@@ -4382,6 +4471,10 @@ func (a *App) systemPrompt() string {
 		builder.WriteString(skill.Body)
 		builder.WriteString("\n</skill>")
 	}
+	if rendered := outputstyle.RenderPrompt(a.Config.ConfigHome, a.Workspace); rendered != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(rendered)
+	}
 	if files, err := memory.Discover(a.Workspace); err == nil {
 		if rendered := memory.Render(files); rendered != "" {
 			builder.WriteString("\n\n")
@@ -4439,6 +4532,7 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
   %s [flags] templates [list|show|apply]
+  %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] mcp
   %s [flags] status [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
@@ -4481,7 +4575,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
