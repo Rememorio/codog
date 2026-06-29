@@ -382,6 +382,31 @@ func TestHistoryCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestSearchCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n// TODO: search me\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("TODO: docs\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Search(context.Background(), []string{"todo", "--ignore-case", "--glob", "*.go", "--limit", "1"}))
+	require.Contains(t, out.String(), "Search")
+	require.Contains(t, out.String(), "Matches          1")
+	require.Contains(t, out.String(), "main.go:2:// TODO: search me")
+	require.NotContains(t, out.String(), "README.md")
+	out.Reset()
+
+	require.NoError(t, app.Search(context.Background(), []string{"TODO", "--json"}))
+	require.Contains(t, out.String(), `"kind": "search"`)
+	require.Contains(t, out.String(), `"total": 2`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/search TODO --glob=*.md", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "README.md:1:TODO: docs")
+	require.Empty(t, errOut.String())
+}
+
 func TestMemoryCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\nsecret body"), 0o644))

@@ -35,6 +35,7 @@ func Specs() []Spec {
 		{Name: "/prompt-history", Usage: "/prompt-history [limit]", Description: "Alias for /history."},
 		{Name: "/resume", Usage: "/resume [session-id|latest]", Description: "Load a saved session into the REPL."},
 		{Name: "/sandbox", Usage: "/sandbox", Description: "Show local sandbox isolation status."},
+		{Name: "/search", Usage: "/search PATTERN [--glob GLOB]", Description: "Search files in the workspace."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},
 		{Name: "/version", Usage: "/version", Description: "Show CLI version and build information."},

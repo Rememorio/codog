@@ -213,6 +213,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OAuth(rest)
 	case "status":
 		return app.Status(rest, overrides)
+	case "search":
+		return app.Search(ctx, rest)
 	case "init":
 		return app.Init(rest)
 	case "state":
@@ -1494,6 +1496,101 @@ func (a *App) Memory(args []string) error {
 	return renderMemoryReport(a.Out, a.Workspace, args)
 }
 
+type searchRequest struct {
+	Query      string
+	Path       string
+	Glob       string
+	IgnoreCase bool
+	Limit      int
+	Format     string
+}
+
+type searchMatch struct {
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+type searchReport struct {
+	Kind       string        `json:"kind"`
+	Query      string        `json:"query"`
+	Path       string        `json:"path,omitempty"`
+	Glob       string        `json:"glob,omitempty"`
+	IgnoreCase bool          `json:"ignore_case,omitempty"`
+	Limit      int           `json:"limit"`
+	Total      int           `json:"total"`
+	Truncated  bool          `json:"truncated"`
+	Matches    []searchMatch `json:"matches"`
+}
+
+func (a *App) Search(ctx context.Context, args []string) error {
+	req, err := parseSearchArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := a.searchReport(ctx, req)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSearchReport(a.Out, report)
+	return nil
+}
+
+func (a *App) searchReport(ctx context.Context, req searchRequest) (searchReport, error) {
+	payload, _ := json.Marshal(map[string]any{
+		"pattern":     req.Query,
+		"path":        req.Path,
+		"glob":        req.Glob,
+		"ignore_case": req.IgnoreCase,
+		"limit":       req.Limit,
+	})
+	raw, err := tools.GrepTool{Workspace: a.Workspace}.Execute(ctx, payload)
+	if err != nil {
+		return searchReport{}, err
+	}
+	var result struct {
+		Matches   []searchMatch `json:"matches"`
+		Truncated bool          `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return searchReport{}, err
+	}
+	return searchReport{
+		Kind:       "search",
+		Query:      req.Query,
+		Path:       req.Path,
+		Glob:       req.Glob,
+		IgnoreCase: req.IgnoreCase,
+		Limit:      req.Limit,
+		Total:      len(result.Matches),
+		Truncated:  result.Truncated,
+		Matches:    result.Matches,
+	}, nil
+}
+
+func renderSearchReport(out io.Writer, report searchReport) {
+	fmt.Fprintln(out, "Search")
+	fmt.Fprintf(out, "  Query            %s\n", report.Query)
+	fmt.Fprintf(out, "  Matches          %d\n", report.Total)
+	if report.Truncated {
+		fmt.Fprintf(out, "  Truncated        true\n")
+	}
+	if report.Total == 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "No matches.")
+		return
+	}
+	fmt.Fprintln(out)
+	for _, match := range report.Matches {
+		fmt.Fprintf(out, "%s:%d:%s\n", match.Path, match.Line, match.Text)
+	}
+}
+
 func renderVersion(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("version", args)
 	if err != nil {
@@ -1822,6 +1919,85 @@ func parseHistoryLimit(value string) (int, error) {
 	return limit, nil
 }
 
+func parseSearchArgs(args []string) (searchRequest, error) {
+	req := searchRequest{Format: "text", Limit: 100}
+	queryParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("search output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("search path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--glob":
+			index++
+			if index >= len(args) {
+				return req, errors.New("search glob is required")
+			}
+			req.Glob = args[index]
+		case strings.HasPrefix(arg, "--glob="):
+			req.Glob = strings.TrimPrefix(arg, "--glob=")
+		case arg == "--ignore-case" || arg == "-i":
+			req.IgnoreCase = true
+		case arg == "--limit" || arg == "-n":
+			index++
+			if index >= len(args) {
+				return req, errors.New("search limit is required")
+			}
+			limit, err := parseSearchLimit(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parseSearchLimit(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown search flag %q", arg)
+		default:
+			queryParts = append(queryParts, arg)
+		}
+	}
+	req.Query = strings.TrimSpace(strings.Join(queryParts, " "))
+	if req.Query == "" {
+		return req, errors.New("usage: codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json]")
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown search output format %q", req.Format)
+	}
+	return req, nil
+}
+
+func parseSearchLimit(value string) (int, error) {
+	limit, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		return 0, errors.New("search limit must be positive")
+	}
+	return limit, nil
+}
+
 func (a *App) Doctor(args []string) error {
 	format, err := parseSimpleOutputFormat("doctor", args)
 	if err != nil {
@@ -2087,6 +2263,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/memory":
 		if err := a.Memory(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/search":
+		if err := a.Search(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/cost":
@@ -2819,6 +2999,7 @@ Usage:
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
   %s [flags] memory [--json|--output-format text|json]
+  %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
@@ -2845,7 +3026,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
