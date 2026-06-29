@@ -25,6 +25,59 @@ func TestControlHealth(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestControlAuth(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions:  &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		AuthToken: "secret-token",
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/health")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get(server.URL + "/sessions")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/sessions", nil)
+	require.NoError(t, err)
+	req.Header.Set("authorization", "Bearer secret-token")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestControlState(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Now:        func() time.Time { return now },
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"heartbeat":true,"last_error":"lost connection"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"last_error":"lost connection"`)
+	require.Contains(t, string(body), `"heartbeat_at":"2026-06-29T12:00:00Z"`)
+
+	resp, err = http.Get(server.URL + "/state")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"last_error":"lost connection"`)
+}
+
 func TestControlBackgroundLifecycle(t *testing.T) {
 	root := t.TempDir()
 	server := httptest.NewServer(Server{

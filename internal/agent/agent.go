@@ -75,6 +75,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		cfg.APIKey = redact(cfg.APIKey)
 		cfg.AuthToken = redact(cfg.AuthToken)
+		cfg.Future.RemoteAuthToken = redact(cfg.Future.RemoteAuthToken)
 		data, _ := json.MarshalIndent(map[string]any{"config": cfg, "paths": paths}, "", "  ")
 		fmt.Fprintln(os.Stdout, string(data))
 		return nil
@@ -221,6 +222,7 @@ func (a *App) Remote(args []string) error {
 		Sessions:   a.Sessions,
 		ConfigHome: a.Config.ConfigHome,
 		Workspace:  a.Workspace,
+		AuthToken:  a.Config.Future.RemoteAuthToken,
 	}.Handler())
 }
 

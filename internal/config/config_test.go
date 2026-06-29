@@ -42,3 +42,13 @@ func TestMergeAppendsPermissionRules(t *testing.T) {
 	require.Equal(t, []string{"edit_file"}, dst.PermissionRules.Ask)
 	require.Equal(t, []string{"bash", "plugin_tool"}, dst.PermissionRules.DeniedTools)
 }
+
+func TestLoadRemoteAuthToken(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"remote_auth_token":"secret-token"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "secret-token", cfg.Future.RemoteAuthToken)
+}

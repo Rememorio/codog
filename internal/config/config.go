@@ -26,6 +26,7 @@ type MCPServerConfig struct {
 
 type FutureConfig struct {
 	RemoteEnabled       bool     `json:"remote_enabled,omitempty"`
+	RemoteAuthToken     string   `json:"remote_auth_token,omitempty"`
 	EnterprisePolicy    string   `json:"enterprise_policy,omitempty"`
 	PluginMarketplaces  []string `json:"plugin_marketplaces,omitempty"`
 	SandboxStrategy     string   `json:"sandbox_strategy,omitempty"`
@@ -235,6 +236,7 @@ func merge(dst *Config, src Config) {
 
 func futureConfigSet(cfg FutureConfig) bool {
 	return cfg.RemoteEnabled ||
+		cfg.RemoteAuthToken != "" ||
 		cfg.EnterprisePolicy != "" ||
 		len(cfg.PluginMarketplaces) != 0 ||
 		cfg.SandboxStrategy != "" ||

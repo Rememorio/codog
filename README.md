@@ -44,7 +44,8 @@ Claude Code source.
 - `codog code-intel symbols|diagnostics` scans Go symbols, reports Go test
   diagnostics, and `notebook-edit` updates `.ipynb` cells.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
-  background tasks, logs, and Go diagnostics.
+  background tasks, logs, Go diagnostics, bearer-token auth, and heartbeat
+  state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, diagnostics, and bounded file read/write/edit operations.
 - `codog updater check URL` checks a release manifest; `updater download URL`
@@ -95,6 +96,7 @@ codog --permission-mode prompt prompt "inspect the repo"
     }
   },
   "future": {
+    "remote_auth_token": "",
     "enterprise_policy": "",
     "sandbox_strategy": "detect",
     "editor_bridge_socket": "",

@@ -3,9 +3,13 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
@@ -16,21 +20,69 @@ type Server struct {
 	Sessions   *session.Store
 	ConfigHome string
 	Workspace  string
+	AuthToken  string
+	Now        func() time.Time
+}
+
+type State struct {
+	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
+	LastError   string    `json:"last_error,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty"`
 }
 
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)
+	mux.HandleFunc("/state", s.state)
 	mux.HandleFunc("/sessions", s.sessions)
 	mux.HandleFunc("/sessions/", s.sessionByID)
 	mux.HandleFunc("/background", s.background)
 	mux.HandleFunc("/background/", s.backgroundByID)
 	mux.HandleFunc("/diagnostics/go", s.goDiagnostics)
-	return mux
+	return s.withAuth(mux)
 }
 
 func (s Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s Server) state(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		state, err := s.readState()
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, state)
+	case http.MethodPost:
+		var payload struct {
+			Heartbeat bool   `json:"heartbeat"`
+			LastError string `json:"last_error"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		state, err := s.readState()
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		now := s.now()
+		if payload.Heartbeat {
+			state.HeartbeatAt = now
+		}
+		state.LastError = payload.LastError
+		state.UpdatedAt = now
+		if err := s.writeState(state); err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, state)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 func (s Server) sessions(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +222,71 @@ func (s Server) goDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, diagnostics)
+}
+
+func (s Server) withAuth(next http.Handler) http.Handler {
+	if s.AuthToken == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if authorized(r, s.AuthToken) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeError(w, errors.New("unauthorized"), http.StatusUnauthorized)
+	})
+}
+
+func authorized(r *http.Request, token string) bool {
+	if value := r.Header.Get("authorization"); value != "" {
+		scheme, credential, ok := strings.Cut(value, " ")
+		if ok && strings.EqualFold(scheme, "Bearer") && credential == token {
+			return true
+		}
+	}
+	return r.Header.Get("x-codog-token") == token
+}
+
+func (s Server) readState() (State, error) {
+	data, err := os.ReadFile(s.statePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return State{}, nil
+		}
+		return State{}, err
+	}
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
+func (s Server) writeState(state State) error {
+	path := s.statePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func (s Server) statePath() string {
+	return filepath.Join(s.ConfigHome, "remote", "state.json")
+}
+
+func (s Server) now() time.Time {
+	if s.Now != nil {
+		return s.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
