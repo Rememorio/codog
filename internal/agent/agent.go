@@ -105,6 +105,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		future.RenderText(os.Stdout, future.Surfaces())
 		return nil
 	}
+	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
+		return enterpriseVerify(os.Stdout, rest)
+	}
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
@@ -334,23 +337,48 @@ func (a *App) Enterprise(args []string) error {
 	if len(args) == 0 || (len(args) == 1 && args[0] == "--json") {
 		return a.FutureStatus("enterprise", args)
 	}
-	if args[0] != "audit" {
-		return fmt.Errorf("unknown enterprise command %q", args[0])
-	}
-	limit := audit.DefaultLimit
-	if len(args) > 1 {
-		parsed, err := strconv.Atoi(args[1])
+	var payload any
+	switch args[0] {
+	case "audit":
+		limit := audit.DefaultLimit
+		if len(args) > 1 {
+			parsed, err := strconv.Atoi(args[1])
+			if err != nil {
+				return err
+			}
+			limit = parsed
+		}
+		events, err := audit.NewStore(a.Config.ConfigHome).List(limit)
 		if err != nil {
 			return err
 		}
-		limit = parsed
+		payload = events
+	case "verify":
+		return enterpriseVerify(a.Out, args)
+	default:
+		return fmt.Errorf("unknown enterprise command %q", args[0])
 	}
-	events, err := audit.NewStore(a.Config.ConfigHome).List(limit)
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func enterpriseVerify(out io.Writer, args []string) error {
+	if len(args) < 3 {
+		return errors.New("usage: codog enterprise verify POLICY PUBLIC_KEY")
+	}
+	policy, err := config.VerifyManagedPolicyFile(args[1], args[2])
 	if err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(events, "", "  ")
-	fmt.Fprintln(a.Out, string(data))
+	policy.Signature = ""
+	payload := map[string]any{
+		"path":            args[1],
+		"signature_valid": true,
+		"policy":          policy,
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(out, string(data))
 	return nil
 }
 
@@ -1096,7 +1124,7 @@ Usage:
   %s oauth pkce | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
-  %s enterprise [--json] | enterprise audit [limit]
+  %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config
 
 Flags:

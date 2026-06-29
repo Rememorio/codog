@@ -115,10 +115,10 @@ func Surfaces() []Surface {
 			Command:     "enterprise",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Managed policy file can cap permission mode and inject permission rules; local permission and tool-use audit is available.",
+			Description: "Managed policy files can cap permission mode, inject permission rules, require Ed25519 signatures, and expose local permission/tool-use audit.",
 			DependsOn:   []string{"oauth"},
 			NextSteps: []string{
-				"Add signed managed-settings file support.",
+				"Add policy key rotation and organization trust pinning.",
 				"Forward audit events to managed collectors.",
 				"Add organization-scoped policy precedence.",
 			},

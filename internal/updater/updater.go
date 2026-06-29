@@ -2,9 +2,7 @@ package updater
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/signing"
 )
 
 type Manifest struct {
@@ -114,20 +114,15 @@ func VerifyManifest(manifest Manifest, publicKey string) error {
 	if manifest.Signature == "" {
 		return fmt.Errorf("manifest signature is required")
 	}
-	key, err := decodePublicKey(publicKey)
-	if err != nil {
-		return err
-	}
-	signature, err := decodeSignature(manifest.Signature)
-	if err != nil {
-		return err
-	}
 	payload, err := canonicalManifest(manifest)
 	if err != nil {
 		return err
 	}
-	if !ed25519.Verify(key, payload, signature) {
-		return fmt.Errorf("manifest signature verification failed")
+	if err := signing.VerifyEd25519(publicKey, manifest.Signature, payload); err != nil {
+		if strings.Contains(err.Error(), "signature verification failed") {
+			return fmt.Errorf("manifest %w", err)
+		}
+		return err
 	}
 	return nil
 }
@@ -354,43 +349,6 @@ func canonicalManifest(manifest Manifest) ([]byte, error) {
 		return nil, err
 	}
 	return data, nil
-}
-
-func decodePublicKey(value string) (ed25519.PublicKey, error) {
-	data, err := decodeBase64OrHex(value)
-	if err != nil {
-		return nil, fmt.Errorf("invalid public key: %w", err)
-	}
-	if len(data) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid public key length: got %d want %d", len(data), ed25519.PublicKeySize)
-	}
-	return ed25519.PublicKey(data), nil
-}
-
-func decodeSignature(value string) ([]byte, error) {
-	value = strings.TrimPrefix(strings.TrimSpace(value), "ed25519:")
-	data, err := decodeBase64OrHex(value)
-	if err != nil {
-		return nil, fmt.Errorf("invalid signature: %w", err)
-	}
-	if len(data) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("invalid signature length: got %d want %d", len(data), ed25519.SignatureSize)
-	}
-	return data, nil
-}
-
-func decodeBase64OrHex(value string) ([]byte, error) {
-	value = strings.TrimSpace(value)
-	if data, err := base64.StdEncoding.DecodeString(value); err == nil {
-		return data, nil
-	}
-	if data, err := base64.RawStdEncoding.DecodeString(value); err == nil {
-		return data, nil
-	}
-	if data, err := base64.RawURLEncoding.DecodeString(value); err == nil {
-		return data, nil
-	}
-	return hex.DecodeString(value)
 }
 
 func copyExecutable(source, target string, mode os.FileMode) error {

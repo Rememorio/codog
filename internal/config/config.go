@@ -2,10 +2,13 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/signing"
 )
 
 const (
@@ -25,14 +28,15 @@ type MCPServerConfig struct {
 }
 
 type FutureConfig struct {
-	RemoteEnabled       bool     `json:"remote_enabled,omitempty"`
-	RemoteAuthToken     string   `json:"remote_auth_token,omitempty"`
-	EnterprisePolicy    string   `json:"enterprise_policy,omitempty"`
-	PluginMarketplaces  []string `json:"plugin_marketplaces,omitempty"`
-	SandboxStrategy     string   `json:"sandbox_strategy,omitempty"`
-	UpdaterManifestURL  string   `json:"updater_manifest_url,omitempty"`
-	EditorBridgeSocket  string   `json:"editor_bridge_socket,omitempty"`
-	BackgroundStatePath string   `json:"background_state_path,omitempty"`
+	RemoteEnabled             bool     `json:"remote_enabled,omitempty"`
+	RemoteAuthToken           string   `json:"remote_auth_token,omitempty"`
+	EnterprisePolicy          string   `json:"enterprise_policy,omitempty"`
+	EnterprisePolicyPublicKey string   `json:"enterprise_policy_public_key,omitempty"`
+	PluginMarketplaces        []string `json:"plugin_marketplaces,omitempty"`
+	SandboxStrategy           string   `json:"sandbox_strategy,omitempty"`
+	UpdaterManifestURL        string   `json:"updater_manifest_url,omitempty"`
+	EditorBridgeSocket        string   `json:"editor_bridge_socket,omitempty"`
+	BackgroundStatePath       string   `json:"background_state_path,omitempty"`
 }
 
 type PermissionRules struct {
@@ -46,6 +50,7 @@ type ManagedPolicy struct {
 	MaxPermissionMode string          `json:"max_permission_mode,omitempty"`
 	PermissionRules   PermissionRules `json:"permission_rules,omitempty"`
 	DeniedTools       []string        `json:"denied_tools,omitempty"`
+	Signature         string          `json:"signature,omitempty"`
 }
 
 type Config struct {
@@ -238,6 +243,7 @@ func futureConfigSet(cfg FutureConfig) bool {
 	return cfg.RemoteEnabled ||
 		cfg.RemoteAuthToken != "" ||
 		cfg.EnterprisePolicy != "" ||
+		cfg.EnterprisePolicyPublicKey != "" ||
 		len(cfg.PluginMarketplaces) != 0 ||
 		cfg.SandboxStrategy != "" ||
 		cfg.UpdaterManifestURL != "" ||
@@ -310,13 +316,14 @@ func applyManagedPolicy(cfg *Config) error {
 	if cfg.Future.EnterprisePolicy == "" {
 		return nil
 	}
-	data, err := os.ReadFile(expandHome(cfg.Future.EnterprisePolicy))
+	policy, err := LoadManagedPolicyFile(cfg.Future.EnterprisePolicy)
 	if err != nil {
 		return err
 	}
-	var policy ManagedPolicy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return err
+	if cfg.Future.EnterprisePolicyPublicKey != "" {
+		if err := VerifyManagedPolicy(policy, cfg.Future.EnterprisePolicyPublicKey); err != nil {
+			return err
+		}
 	}
 	if policy.MaxPermissionMode != "" && permissionRank(policy.MaxPermissionMode) < permissionRank(cfg.PermissionMode) {
 		cfg.PermissionMode = policy.MaxPermissionMode
@@ -324,6 +331,51 @@ func applyManagedPolicy(cfg *Config) error {
 	mergePermissionRules(&cfg.PermissionRules, policy.PermissionRules)
 	cfg.PermissionRules.DeniedTools = append(cfg.PermissionRules.DeniedTools, policy.DeniedTools...)
 	return nil
+}
+
+func LoadManagedPolicyFile(path string) (ManagedPolicy, error) {
+	data, err := os.ReadFile(expandHome(path))
+	if err != nil {
+		return ManagedPolicy{}, err
+	}
+	var policy ManagedPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return ManagedPolicy{}, err
+	}
+	return policy, nil
+}
+
+func VerifyManagedPolicyFile(path, publicKey string) (ManagedPolicy, error) {
+	policy, err := LoadManagedPolicyFile(path)
+	if err != nil {
+		return ManagedPolicy{}, err
+	}
+	if err := VerifyManagedPolicy(policy, publicKey); err != nil {
+		return ManagedPolicy{}, err
+	}
+	return policy, nil
+}
+
+func VerifyManagedPolicy(policy ManagedPolicy, publicKey string) error {
+	if policy.Signature == "" {
+		return fmt.Errorf("managed policy signature is required")
+	}
+	payload, err := ManagedPolicyPayload(policy)
+	if err != nil {
+		return err
+	}
+	if err := signing.VerifyEd25519(publicKey, policy.Signature, payload); err != nil {
+		if strings.Contains(err.Error(), "signature verification failed") {
+			return fmt.Errorf("managed policy %w", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func ManagedPolicyPayload(policy ManagedPolicy) ([]byte, error) {
+	policy.Signature = ""
+	return json.Marshal(policy)
 }
 
 func permissionRank(mode string) int {

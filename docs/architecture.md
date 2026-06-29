@@ -34,6 +34,8 @@ Codog follows a small-core layout:
 - `internal/bridge`: stdio JSON-RPC bridge.
 - `internal/updater`: release manifest check, signed manifest verification,
   verified artifact downloads, and backup-based binary installation.
+- `internal/signing`: shared Ed25519 public-key and signature decoding for
+  signed manifests and managed policy files.
 
 The project deliberately keeps model-provider contracts and tool behavior
 separate from UI surfaces. That lets the one-shot CLI, REPL, TUI, bridge, and

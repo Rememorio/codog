@@ -53,7 +53,8 @@ Claude Code source.
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use
-  audit events.
+  audit events, and `enterprise verify POLICY PUBLIC_KEY` verifies signed
+  managed policy files.
 
 ## Quick start
 
@@ -100,6 +101,7 @@ codog --permission-mode prompt prompt "inspect the repo"
   "future": {
     "remote_auth_token": "",
     "enterprise_policy": "",
+    "enterprise_policy_public_key": "",
     "sandbox_strategy": "detect",
     "editor_bridge_socket": "",
     "updater_manifest_url": "",

@@ -41,6 +41,27 @@ func TestEnterpriseAuditListsEvents(t *testing.T) {
 	require.Contains(t, out.String(), `"allowed": false`)
 }
 
+func TestEnterpriseVerifyCommand(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	policy := config.ManagedPolicy{MaxPermissionMode: "read-only", DeniedTools: []string{"bash"}}
+	payload, err := config.ManagedPolicyPayload(policy)
+	require.NoError(t, err)
+	policy.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+	data, err := json.Marshal(policy)
+	require.NoError(t, err)
+	policyPath := filepath.Join(dir, "policy.json")
+	require.NoError(t, os.WriteFile(policyPath, data, 0o644))
+
+	var out bytes.Buffer
+	app := &App{Out: &out}
+	require.NoError(t, app.Enterprise([]string{"verify", policyPath, base64.StdEncoding.EncodeToString(publicKey)}))
+	require.Contains(t, out.String(), `"signature_valid": true`)
+	require.Contains(t, out.String(), `"max_permission_mode": "read-only"`)
+	require.NotContains(t, out.String(), policy.Signature)
+}
+
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	command := buildAgentCommand("/tmp/codog", agentdefs.Definition{
 		Name:   "reviewer",

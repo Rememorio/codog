@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,6 +23,44 @@ func TestLoadAppliesManagedPolicy(t *testing.T) {
 	require.Equal(t, "read-only", cfg.PermissionMode)
 	require.Contains(t, cfg.PermissionRules.DeniedTools, "bash")
 	require.Contains(t, cfg.PermissionRules.Deny, "write_file")
+}
+
+func TestLoadVerifiesSignedManagedPolicy(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.json")
+	policy := ManagedPolicy{
+		MaxPermissionMode: "read-only",
+		DeniedTools:       []string{"bash"},
+	}
+	writeSignedPolicy(t, policyPath, policy, privateKey)
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","future":{"enterprise_policy":"`+policyPath+`","enterprise_policy_public_key":"`+base64.StdEncoding.EncodeToString(publicKey)+`"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "read-only", cfg.PermissionMode)
+	require.Contains(t, cfg.PermissionRules.DeniedTools, "bash")
+}
+
+func TestLoadRejectsTamperedSignedManagedPolicy(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.json")
+	policy := ManagedPolicy{MaxPermissionMode: "read-only"}
+	signed := writeSignedPolicy(t, policyPath, policy, privateKey)
+	signed.MaxPermissionMode = "danger-full-access"
+	data, err := json.Marshal(signed)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(policyPath, data, 0o644))
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","future":{"enterprise_policy":"`+policyPath+`","enterprise_policy_public_key":"`+base64.StdEncoding.EncodeToString(publicKey)+`"}}`), 0o644))
+
+	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "managed policy signature verification failed")
 }
 
 func TestMergeAppendsPermissionRules(t *testing.T) {
@@ -51,4 +92,15 @@ func TestLoadRemoteAuthToken(t *testing.T) {
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "secret-token", cfg.Future.RemoteAuthToken)
+}
+
+func writeSignedPolicy(t *testing.T, path string, policy ManagedPolicy, privateKey ed25519.PrivateKey) ManagedPolicy {
+	t.Helper()
+	payload, err := ManagedPolicyPayload(policy)
+	require.NoError(t, err)
+	policy.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+	data, err := json.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+	return policy
 }
