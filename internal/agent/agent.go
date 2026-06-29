@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
@@ -107,6 +108,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return err
 	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
 	workspace, err := os.Getwd()
 	if err != nil {
 		return err
@@ -193,6 +195,17 @@ func (a *App) FutureStatus(command string, args []string) error {
 	}
 	future.RenderText(a.Out, []future.Surface{surface})
 	return nil
+}
+
+func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
+	if cfg.AuthToken != "" {
+		return
+	}
+	token, err := oauth.LoadToken(cfg.ConfigHome)
+	if err != nil || token.Expired(now) {
+		return
+	}
+	cfg.AuthToken = token.AccessToken
 }
 
 func (a *App) Remote(args []string) error {
@@ -467,16 +480,61 @@ func (a *App) ListPlugins() error {
 }
 
 func (a *App) OAuth(args []string) error {
-	if len(args) == 0 || args[0] != "pkce" {
-		return errors.New("usage: codog oauth pkce")
+	if len(args) == 0 || args[0] == "pkce" {
+		pkce, err := oauth.GeneratePKCE()
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(pkce, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
-	pkce, err := oauth.GeneratePKCE()
-	if err != nil {
-		return err
+	if args[0] != "token" {
+		return errors.New("usage: codog oauth pkce | oauth token save|show|delete")
 	}
-	data, _ := json.MarshalIndent(pkce, "", "  ")
-	fmt.Fprintln(a.Out, string(data))
-	return nil
+	if len(args) < 2 {
+		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | delete")
+	}
+	switch args[1] {
+	case "save":
+		if len(args) < 3 {
+			return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT]")
+		}
+		token := oauth.Token{AccessToken: args[2]}
+		if len(args) > 3 {
+			token.RefreshToken = args[3]
+		}
+		if len(args) > 4 {
+			expiresAt, err := time.Parse(time.RFC3339, args[4])
+			if err != nil {
+				return err
+			}
+			token.ExpiresAt = expiresAt
+		}
+		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(saved.View(time.Now().UTC()), "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "show":
+		token, err := oauth.LoadToken(a.Config.ConfigHome)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "delete":
+		if err := oauth.DeleteToken(a.Config.ConfigHome); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, `{"deleted":true}`)
+		return nil
+	default:
+		return fmt.Errorf("unknown oauth token command %q", args[1])
+	}
 }
 
 func (a *App) Sandbox() error {
@@ -855,7 +913,8 @@ Usage:
   %s roadmap [--json]
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
-  %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | sandbox | code-intel symbols|diagnostics
+  %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | oauth token save|show|delete
+  %s sandbox | code-intel symbols|diagnostics
   %s remote serve [addr] | bridge serve | updater check|download URL
   %s enterprise [--json] | enterprise audit [limit]
   %s config
@@ -872,7 +931,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
