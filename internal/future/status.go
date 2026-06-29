@@ -113,9 +113,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Enterprise policy",
 			Command:     "enterprise",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Managed settings, policy checks, audit records, and organization guardrails.",
+			Description: "Managed policy file can cap permission mode and inject permission rules; audit pipeline remains planned.",
 			DependsOn:   []string{"oauth"},
 			NextSteps: []string{
 				"Define policy schema.",

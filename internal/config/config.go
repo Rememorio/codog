@@ -41,6 +41,12 @@ type PermissionRules struct {
 	DeniedTools []string `json:"denied_tools,omitempty"`
 }
 
+type ManagedPolicy struct {
+	MaxPermissionMode string          `json:"max_permission_mode,omitempty"`
+	PermissionRules   PermissionRules `json:"permission_rules,omitempty"`
+	DeniedTools       []string        `json:"denied_tools,omitempty"`
+}
+
 type Config struct {
 	APIKey              string                     `json:"api_key,omitempty"`
 	AuthToken           string                     `json:"auth_token,omitempty"`
@@ -99,6 +105,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
+	if err := applyManagedPolicy(&cfg); err != nil {
+		return Config{}, err
+	}
 
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = 4096
@@ -140,6 +149,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	}
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
+	if err := applyManagedPolicy(&cfg); err != nil {
+		return Config{}, paths, err
+	}
 	return cfg, paths, nil
 }
 
@@ -191,7 +203,7 @@ func merge(dst *Config, src Config) {
 		dst.PermissionMode = src.PermissionMode
 	}
 	if permissionRulesSet(src.PermissionRules) {
-		dst.PermissionRules = src.PermissionRules
+		mergePermissionRules(&dst.PermissionRules, src.PermissionRules)
 	}
 	if src.ConfigHome != "" {
 		dst.ConfigHome = expandHome(src.ConfigHome)
@@ -238,6 +250,13 @@ func permissionRulesSet(rules PermissionRules) bool {
 		len(rules.DeniedTools) != 0
 }
 
+func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
+	dst.Allow = append(dst.Allow, src.Allow...)
+	dst.Deny = append(dst.Deny, src.Deny...)
+	dst.Ask = append(dst.Ask, src.Ask...)
+	dst.DeniedTools = append(dst.DeniedTools, src.DeniedTools...)
+}
+
 func applyEnv(cfg *Config) {
 	if value := os.Getenv("ANTHROPIC_API_KEY"); value != "" {
 		cfg.APIKey = value
@@ -282,6 +301,41 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.MaxTokens != 0 {
 		cfg.MaxTokens = overrides.MaxTokens
+	}
+}
+
+func applyManagedPolicy(cfg *Config) error {
+	if cfg.Future.EnterprisePolicy == "" {
+		return nil
+	}
+	data, err := os.ReadFile(expandHome(cfg.Future.EnterprisePolicy))
+	if err != nil {
+		return err
+	}
+	var policy ManagedPolicy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		return err
+	}
+	if policy.MaxPermissionMode != "" && permissionRank(policy.MaxPermissionMode) < permissionRank(cfg.PermissionMode) {
+		cfg.PermissionMode = policy.MaxPermissionMode
+	}
+	mergePermissionRules(&cfg.PermissionRules, policy.PermissionRules)
+	cfg.PermissionRules.DeniedTools = append(cfg.PermissionRules.DeniedTools, policy.DeniedTools...)
+	return nil
+}
+
+func permissionRank(mode string) int {
+	switch mode {
+	case "read-only":
+		return 1
+	case "workspace-write":
+		return 2
+	case "danger-full-access":
+		return 3
+	case "allow":
+		return 4
+	default:
+		return 0
 	}
 }
 

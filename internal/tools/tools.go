@@ -35,6 +35,16 @@ type Tool interface {
 	Execute(context.Context, json.RawMessage) (string, error)
 }
 
+type CommandTool struct {
+	Name        string
+	Description string
+	Schema      map[string]any
+	Required    Permission
+	Command     string
+	Args        []string
+	Workspace   string
+}
+
 type Registry struct {
 	tools map[string]Tool
 }
@@ -62,6 +72,10 @@ func NewRegistry(workspace string) *Registry {
 
 func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Definition().Name] = tool
+}
+
+func (r *Registry) Has(name string) bool {
+	return r.tools[name] != nil
 }
 
 func (r *Registry) Definitions() []anthropic.ToolDefinition {
@@ -156,6 +170,49 @@ func permissionRank(p Permission) int {
 	default:
 		return 0
 	}
+}
+
+func (t CommandTool) Definition() anthropic.ToolDefinition {
+	schema := t.Schema
+	if schema == nil {
+		schema = map[string]any{
+			"type":                 "object",
+			"additionalProperties": true,
+		}
+	}
+	return anthropic.ToolDefinition{
+		Name:        t.Name,
+		Description: t.Description,
+		InputSchema: schema,
+	}
+}
+
+func (t CommandTool) Permission() Permission {
+	if t.Required == "" {
+		return PermissionWorkspace
+	}
+	return t.Required
+}
+
+func (t CommandTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	if strings.TrimSpace(t.Command) == "" {
+		return "", fmt.Errorf("plugin tool %s has no command", t.Name)
+	}
+	cmd := exec.CommandContext(ctx, t.Command, t.Args...)
+	cmd.Dir = t.Workspace
+	cmd.Stdin = bytes.NewReader(input)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	result := map[string]any{
+		"stdout": stdout.String(),
+		"stderr": stderr.String(),
+	}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	return pretty(result), nil
 }
 
 type BashTool struct {

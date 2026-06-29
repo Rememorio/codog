@@ -118,6 +118,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		Err:       os.Stderr,
 		In:        os.Stdin,
 	}
+	if err := app.RegisterPluginTools(); err != nil {
+		return err
+	}
 
 	switch command {
 	case "", "repl":
@@ -243,6 +246,37 @@ func (a *App) Background(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown background command %q", args[0])
+}
+
+func (a *App) RegisterPluginTools() error {
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	for _, manifest := range manifests {
+		for _, tool := range manifest.Tools {
+			if tool.Command == "" {
+				continue
+			}
+			name := tool.Name
+			if name == "" {
+				continue
+			}
+			if a.Tools.Has(name) {
+				return fmt.Errorf("plugin tool %q conflicts with an existing tool", name)
+			}
+			a.Tools.Register(tools.CommandTool{
+				Name:        name,
+				Description: tool.Description,
+				Schema:      tool.InputSchema,
+				Required:    tools.Permission(tool.Permission),
+				Command:     tool.Command,
+				Args:        tool.Args,
+				Workspace:   manifest.Root,
+			})
+		}
+	}
+	return nil
 }
 
 func (a *App) ListAgents() error {

@@ -65,6 +65,10 @@ codog --permission-mode prompt prompt "inspect the repo"
 {
   "model": "claude-sonnet-4-5",
   "permission_mode": "workspace-write",
+  "permission_rules": {
+    "deny": ["bash:rm -rf"],
+    "denied_tools": []
+  },
   "max_turns": 8,
   "max_tokens": 4096,
   "enabled_skills": ["go-review"],
@@ -79,6 +83,7 @@ codog --permission-mode prompt prompt "inspect the repo"
     }
   },
   "future": {
+    "enterprise_policy": "",
     "sandbox_strategy": "detect",
     "editor_bridge_socket": "",
     "updater_manifest_url": "",

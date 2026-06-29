@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,17 @@ func TestPrompterRules(t *testing.T) {
 		DeniedTools: []string{"bash"},
 	}
 	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"pwd"}`)))
+}
+
+func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX cat")
+	}
+	out, err := CommandTool{
+		Name:      "echo_json",
+		Command:   "cat",
+		Workspace: t.TempDir(),
+	}.Execute(context.Background(), []byte(`{"ok":true}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `ok`)
 }
