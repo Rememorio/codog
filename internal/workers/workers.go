@@ -37,6 +37,7 @@ type Worker struct {
 	ReadyForPrompt               bool         `json:"ready_for_prompt"`
 	TrustResolved                bool         `json:"trust_resolved"`
 	TaskID                       string       `json:"task_id,omitempty"`
+	TaskStatus                   string       `json:"task_status,omitempty"`
 	TaskReceipt                  *TaskReceipt `json:"task_receipt,omitempty"`
 	LastError                    string       `json:"last_error,omitempty"`
 	Events                       []Event      `json:"events,omitempty"`
@@ -48,6 +49,8 @@ type ReadySnapshot struct {
 	WorkerID       string `json:"worker_id"`
 	Status         string `json:"status"`
 	ReadyForPrompt bool   `json:"ready_for_prompt"`
+	TaskID         string `json:"task_id,omitempty"`
+	TaskStatus     string `json:"task_status,omitempty"`
 	LastError      string `json:"last_error,omitempty"`
 }
 
@@ -152,7 +155,7 @@ func (s Store) AwaitReady(id string) (ReadySnapshot, error) {
 	if err != nil {
 		return ReadySnapshot{}, err
 	}
-	return ReadySnapshot{WorkerID: worker.ID, Status: worker.Status, ReadyForPrompt: worker.ReadyForPrompt, LastError: worker.LastError}, nil
+	return ReadySnapshot{WorkerID: worker.ID, Status: worker.Status, ReadyForPrompt: worker.ReadyForPrompt, TaskID: worker.TaskID, TaskStatus: worker.TaskStatus, LastError: worker.LastError}, nil
 }
 
 func (s Store) SendPrompt(id string, prompt string, receipt *TaskReceipt, taskID string) (Worker, error) {
@@ -166,6 +169,9 @@ func (s Store) SendPrompt(id string, prompt string, receipt *TaskReceipt, taskID
 	worker.Status = "running"
 	worker.ReadyForPrompt = false
 	worker.TaskID = strings.TrimSpace(taskID)
+	if worker.TaskID != "" {
+		worker.TaskStatus = "running"
+	}
 	worker.TaskReceipt = receipt
 	worker.Events = append(worker.Events, Event{Type: "prompt_sent", Message: strings.TrimSpace(prompt), CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
@@ -179,6 +185,9 @@ func (s Store) Restart(id string, taskID string) (Worker, error) {
 	worker.Status = "running"
 	worker.ReadyForPrompt = false
 	worker.TaskID = strings.TrimSpace(taskID)
+	if worker.TaskID != "" {
+		worker.TaskStatus = "running"
+	}
 	worker.LastError = ""
 	worker.Events = append(worker.Events, Event{Type: "restarted", CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
@@ -191,6 +200,9 @@ func (s Store) Terminate(id string) (Worker, error) {
 	}
 	worker.Status = "terminated"
 	worker.ReadyForPrompt = false
+	if worker.TaskID != "" {
+		worker.TaskStatus = "stopped"
+	}
 	worker.Events = append(worker.Events, Event{Type: "terminated", CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
 }

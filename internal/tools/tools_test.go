@@ -361,11 +361,13 @@ func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
 	require.Contains(t, out, `"X-Result": [`)
 }
 
-func TestTestingPermissionToolReturnsStub(t *testing.T) {
+func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 	out, err := TestingPermissionTool{}.Execute(context.Background(), []byte(`{"action":"write"}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"action": "write"`)
 	require.Contains(t, out, `"permitted": true`)
+	require.Contains(t, out, `"required_permission": "danger-full-access"`)
+	require.Contains(t, out, `"message": "Permission gate accepted the requested action"`)
 }
 
 func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
@@ -863,6 +865,7 @@ func TestWorkerToolsManagePromptWorker(t *testing.T) {
 	getOut, err := WorkerGetTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, getOut, sent.TaskID)
+	require.Contains(t, getOut, `"task_status":`)
 
 	restartOut, err := WorkerRestartTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
 	require.NoError(t, err)

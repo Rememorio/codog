@@ -144,14 +144,14 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
-	reg.Register(WorkerGetTool{ConfigHome: opts.ConfigHome})
-	reg.Register(WorkerObserveTool{ConfigHome: opts.ConfigHome})
-	reg.Register(WorkerResolveTrustTool{ConfigHome: opts.ConfigHome})
-	reg.Register(WorkerAwaitReadyTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerObserveTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerResolveTrustTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerAwaitReadyTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerSendPromptTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerRestartTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerTerminateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
-	reg.Register(WorkerObserveCompletionTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerObserveCompletionTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1805,9 +1805,10 @@ func (TestingPermissionTool) Execute(_ context.Context, input json.RawMessage) (
 		return "", errors.New("action is required")
 	}
 	return pretty(map[string]any{
-		"action":    payload.Action,
-		"permitted": true,
-		"message":   "Testing permission tool stub",
+		"action":              payload.Action,
+		"permitted":           true,
+		"required_permission": string(PermissionDanger),
+		"message":             "Permission gate accepted the requested action",
 	}), nil
 }
 
@@ -2647,6 +2648,7 @@ func (t WorkerCreateTool) Execute(_ context.Context, input json.RawMessage) (str
 }
 
 type WorkerGetTool struct {
+	Workspace  string
 	ConfigHome string
 }
 
@@ -2661,14 +2663,16 @@ func (t WorkerGetTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
-	worker, err := workers.NewStore(t.ConfigHome).Get(id)
+	worker, err := workerStore(t.ConfigHome, t.Workspace).Get(id)
 	if err != nil {
 		return "", err
 	}
+	worker = t.withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
 type WorkerObserveTool struct {
+	Workspace  string
 	ConfigHome string
 }
 
@@ -2698,14 +2702,16 @@ func (t WorkerObserveTool) Execute(_ context.Context, input json.RawMessage) (st
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	worker, err := workers.NewStore(t.ConfigHome).Observe(payload.WorkerID, payload.ScreenText)
+	worker, err := workerStore(t.ConfigHome, t.Workspace).Observe(payload.WorkerID, payload.ScreenText)
 	if err != nil {
 		return "", err
 	}
+	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
 type WorkerResolveTrustTool struct {
+	Workspace  string
 	ConfigHome string
 }
 
@@ -2720,14 +2726,16 @@ func (t WorkerResolveTrustTool) Execute(_ context.Context, input json.RawMessage
 	if err != nil {
 		return "", err
 	}
-	worker, err := workers.NewStore(t.ConfigHome).ResolveTrust(id)
+	worker, err := workerStore(t.ConfigHome, t.Workspace).ResolveTrust(id)
 	if err != nil {
 		return "", err
 	}
+	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
 	return pretty(worker), nil
 }
 
 type WorkerAwaitReadyTool struct {
+	Workspace  string
 	ConfigHome string
 }
 
@@ -2742,9 +2750,14 @@ func (t WorkerAwaitReadyTool) Execute(_ context.Context, input json.RawMessage) 
 	if err != nil {
 		return "", err
 	}
-	snapshot, err := workers.NewStore(t.ConfigHome).AwaitReady(id)
+	snapshot, err := workerStore(t.ConfigHome, t.Workspace).AwaitReady(id)
 	if err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(snapshot.TaskID) != "" {
+		if task, err := taskStore(t.ConfigHome, t.Workspace).Status(snapshot.TaskID); err == nil {
+			snapshot.TaskStatus = task.Status
+		}
 	}
 	return pretty(snapshot), nil
 }
@@ -2881,7 +2894,7 @@ func (t WorkerTerminateTool) Execute(_ context.Context, input json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
-	store := workers.NewStore(t.ConfigHome)
+	store := workerStore(t.ConfigHome, t.Workspace)
 	worker, err := store.Get(id)
 	if err != nil {
 		return "", err
@@ -2897,6 +2910,7 @@ func (t WorkerTerminateTool) Execute(_ context.Context, input json.RawMessage) (
 }
 
 type WorkerObserveCompletionTool struct {
+	Workspace  string
 	ConfigHome string
 }
 
@@ -2931,11 +2945,28 @@ func (t WorkerObserveCompletionTool) Execute(_ context.Context, input json.RawMe
 	if payload.TokensOutput < 0 {
 		return "", errors.New("tokens_output must be non-negative")
 	}
-	worker, err := workers.NewStore(t.ConfigHome).Complete(payload.WorkerID, payload.FinishReason, payload.TokensOutput)
+	worker, err := workerStore(t.ConfigHome, t.Workspace).Complete(payload.WorkerID, payload.FinishReason, payload.TokensOutput)
 	if err != nil {
 		return "", err
 	}
+	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
 	return pretty(worker), nil
+}
+
+func (t WorkerGetTool) withTaskStatus(worker workers.Worker) workers.Worker {
+	if strings.TrimSpace(worker.TaskID) == "" {
+		return worker
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Status(worker.TaskID)
+	if err != nil {
+		worker.TaskStatus = "unknown"
+		if worker.LastError == "" {
+			worker.LastError = err.Error()
+		}
+		return worker
+	}
+	worker.TaskStatus = task.Status
+	return worker
 }
 
 func workerIDToolDefinition(name string, description string) anthropic.ToolDefinition {
