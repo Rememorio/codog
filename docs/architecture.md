@@ -46,6 +46,8 @@ Codog follows a small-core layout:
 - `internal/hooks`: pre/post tool hook runner.
 - `internal/slash`: slash command registry and help rendering.
 - `internal/harness`: in-process mock-provider smoke harness.
+- `internal/manifests`: local resolver inventory for slash commands, tools,
+  agents, skills, and bootstrap phases.
 - `internal/skills`: Markdown skill discovery, directory-style `SKILL.md`
   loading, and prompt invocation rendering.
 - `internal/customcommands`: user, workspace, and Claude-compatible Markdown

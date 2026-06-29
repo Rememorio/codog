@@ -33,6 +33,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
+	"github.com/Rememorio/codog/internal/manifests"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -330,6 +331,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Updater(ctx, rest)
 	case "enterprise":
 		return app.Enterprise(rest)
+	case "dump-manifests":
+		return app.DumpManifests(rest)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
@@ -542,6 +545,106 @@ func enterpriseVerify(out io.Writer, args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(out, string(data))
 	return nil
+}
+
+type dumpManifestsRequest struct {
+	Format       string
+	ManifestsDir string
+}
+
+func (a *App) DumpManifests(args []string) error {
+	req, err := parseDumpManifestsArgs(args)
+	if err != nil {
+		return err
+	}
+	workspace := a.Workspace
+	registry := a.Tools
+	if req.ManifestsDir != "" {
+		workspace, err = resolveManifestDiscoveryRoot(req.ManifestsDir)
+		if err != nil {
+			return err
+		}
+		registry = tools.NewRegistry(workspace)
+	}
+	report, err := manifests.Build(workspace, a.Config.ConfigHome, registry)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderManifestDump(a.Out, report)
+	return nil
+}
+
+func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
+	req := dumpManifestsRequest{Format: "text"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("dump-manifests output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--manifests-dir":
+			index++
+			if index >= len(args) || strings.TrimSpace(args[index]) == "" {
+				return req, errors.New("missing_flag_value: --manifests-dir requires a path")
+			}
+			req.ManifestsDir = args[index]
+		case strings.HasPrefix(arg, "--manifests-dir="):
+			value := strings.TrimPrefix(arg, "--manifests-dir=")
+			if strings.TrimSpace(value) == "" {
+				return req, errors.New("missing_flag_value: --manifests-dir requires a path")
+			}
+			req.ManifestsDir = value
+		default:
+			return req, fmt.Errorf("unknown dump-manifests option %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return req, fmt.Errorf("unknown dump-manifests output format %q", req.Format)
+	}
+}
+
+func resolveManifestDiscoveryRoot(path string) (string, error) {
+	root, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("missing_manifests: manifest discovery directory does not exist: %s", root)
+		}
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("missing_manifests: manifest discovery path is not a directory: %s", root)
+	}
+	return root, nil
+}
+
+func renderManifestDump(out io.Writer, report manifests.Report) {
+	fmt.Fprintln(out, "Manifest Dump")
+	fmt.Fprintf(out, "  Source           %s\n", report.Source)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	fmt.Fprintf(out, "  Commands         %d\n", report.Commands)
+	fmt.Fprintf(out, "  Tools            %d\n", report.Tools)
+	fmt.Fprintf(out, "  Agents           %d\n", report.Agents)
+	fmt.Fprintf(out, "  Skills           %d\n", report.Skills)
+	fmt.Fprintf(out, "  Bootstrap phases %d\n", report.BootstrapPhases)
 }
 
 func (a *App) Background(args []string) error {
@@ -7063,6 +7166,7 @@ Usage:
   %s [flags] symbols|diagnostics|map|references|definition|hover [ARGS...] [--json]
   %s mock-server :8089
   %s self-test
+  %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
@@ -7085,7 +7189,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

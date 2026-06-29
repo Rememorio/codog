@@ -99,6 +99,42 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
 }
 
+func TestDumpManifestsCommand(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review body"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "helper.json"), []byte(`{"prompt":"help"}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.DumpManifests([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "dump-manifests"`)
+	require.Contains(t, out.String(), `"source": "go-resolver"`)
+	require.Contains(t, out.String(), `"name": "review"`)
+	out.Reset()
+
+	require.NoError(t, app.DumpManifests(nil))
+	require.Contains(t, out.String(), "Manifest Dump")
+	require.Contains(t, out.String(), "Bootstrap phases")
+	out.Reset()
+
+	otherWorkspace := t.TempDir()
+	require.NoError(t, app.DumpManifests([]string{"--manifests-dir", otherWorkspace, "--json"}))
+	require.Contains(t, out.String(), otherWorkspace)
+
+	err := app.DumpManifests([]string{"--manifests-dir", filepath.Join(t.TempDir(), "missing")})
+	require.ErrorContains(t, err, "missing_manifests")
+}
+
 func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	configHome := t.TempDir()
 	store := session.NewStore(configHome)

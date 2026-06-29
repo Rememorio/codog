@@ -108,6 +108,8 @@ Claude Code source.
 - `codog mock-server :8089` starts a deterministic Anthropic-compatible
   streaming server for harness tests.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
+- `codog dump-manifests [--json]` emits the Go resolver inventory for slash
+  commands, tools, agents, skills, and bootstrap phases.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog init [--json]` initializes `.codog/instructions.md`, `.codog.json`,
   and `.gitignore` entries for project-local setup.
