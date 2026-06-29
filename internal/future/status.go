@@ -21,7 +21,14 @@ type Surface struct {
 	Status      Status   `json:"status"`
 	Horizon     string   `json:"horizon"`
 	Description string   `json:"description"`
+	DependsOn   []string `json:"depends_on,omitempty"`
 	NextSteps   []string `json:"next_steps"`
+}
+
+type Report struct {
+	Project  string    `json:"project"`
+	Version  string    `json:"version"`
+	Surfaces []Surface `json:"surfaces"`
 }
 
 func Surfaces() []Surface {
@@ -32,6 +39,7 @@ func Surfaces() []Surface {
 			Status:      StatusPlanned,
 			Horizon:     "6-12 months",
 			Description: "Editor protocol bridge for VS Code, JetBrains, and other clients.",
+			DependsOn:   []string{"remote", "enterprise"},
 			NextSteps: []string{
 				"Define a local JSON-RPC control plane.",
 				"Add editor identity and workspace trust checks.",
@@ -44,6 +52,7 @@ func Surfaces() []Surface {
 			Status:      StatusPlanned,
 			Horizon:     "6-12 months",
 			Description: "Durable remote agent sessions with resumable transport and explicit lifecycle state.",
+			DependsOn:   []string{"background", "enterprise"},
 			NextSteps: []string{
 				"Add session control API above terminal transport.",
 				"Persist heartbeat and last-error state.",
@@ -56,6 +65,7 @@ func Surfaces() []Surface {
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
 			Description: "Coordinator-facing agent inventory and future worker orchestration surface.",
+			DependsOn:   []string{"background", "sandbox"},
 			NextSteps: []string{
 				"Define agent spec files under .codog/agents.",
 				"Add local worker lifecycle registry.",
@@ -68,6 +78,7 @@ func Surfaces() []Surface {
 			Status:      StatusPlanned,
 			Horizon:     "6-12 months",
 			Description: "Long-running task registry with logs, cancellation, and completion events.",
+			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add process supervision.",
 				"Persist task output and exit status.",
@@ -80,6 +91,7 @@ func Surfaces() []Surface {
 			Status:      StatusPlanned,
 			Horizon:     "6-12 months",
 			Description: "Notebook editing and language-server-backed diagnostics, symbols, hover, and references.",
+			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add ipynb cell edit operations.",
 				"Define LSP server discovery and lifecycle.",
@@ -104,6 +116,7 @@ func Surfaces() []Surface {
 			Status:      StatusPlanned,
 			Horizon:     "6-12 months",
 			Description: "Managed settings, policy checks, audit records, and organization guardrails.",
+			DependsOn:   []string{"oauth"},
 			NextSteps: []string{
 				"Define policy schema.",
 				"Add signed managed-settings file support.",
@@ -116,6 +129,7 @@ func Surfaces() []Surface {
 			Status:      StatusPlanned,
 			Horizon:     "6-12 months",
 			Description: "Installable plugin index for tools, commands, hooks, and skills.",
+			DependsOn:   []string{"enterprise", "sandbox"},
 			NextSteps: []string{
 				"Define plugin manifest.",
 				"Add local install/enable/disable flows.",
@@ -149,6 +163,14 @@ func Surfaces() []Surface {
 	}
 }
 
+func NewReport(version string) Report {
+	return Report{
+		Project:  "codog",
+		Version:  version,
+		Surfaces: Surfaces(),
+	}
+}
+
 func Find(command string) (Surface, bool) {
 	for _, surface := range Surfaces() {
 		if strings.EqualFold(surface.Command, command) {
@@ -169,6 +191,15 @@ func RenderText(w io.Writer, surfaces []Surface) {
 
 func RenderJSON(w io.Writer, surfaces []Surface) error {
 	data, err := json.MarshalIndent(surfaces, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(w, string(data))
+	return err
+}
+
+func RenderReportJSON(w io.Writer, report Report) error {
+	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
 	}

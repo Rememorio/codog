@@ -32,6 +32,7 @@ Codog also includes the first practical-layer surfaces:
   streaming server for harness tests.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
+- `codog capabilities --json` exposes the long-horizon capability contract.
 
 ## Quick start
 
@@ -70,6 +71,10 @@ codog --permission-mode prompt prompt "inspect the repo"
       "command": "example-mcp-server",
       "args": []
     }
+  },
+  "future": {
+    "sandbox_strategy": "detect",
+    "plugin_marketplaces": []
   }
 }
 ```
@@ -95,5 +100,5 @@ The repository is organized around three delivery horizons:
    background tasks, notebook/LSP, OAuth, enterprise policy, plugin marketplace,
    sandboxing, and updater surfaces.
 
-See [docs/roadmap.md](docs/roadmap.md) and `codog roadmap` for the current
-capability matrix.
+See [docs/roadmap.md](docs/roadmap.md), [docs/capabilities.md](docs/capabilities.md),
+and `codog capabilities --json` for the current capability matrix.

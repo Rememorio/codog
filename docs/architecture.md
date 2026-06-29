@@ -21,6 +21,10 @@ Codog follows a small-core layout:
 - `internal/usage`: approximate token and cost accounting.
 - `internal/future`: explicit long-horizon capability status.
 
+Long-horizon commands read from `internal/future` and configures future-facing
+knobs under the `future` config object. The contract is intentionally
+machine-readable before the production implementations land.
+
 The project deliberately keeps model-provider contracts and tool behavior
 separate from UI surfaces. That lets the one-shot CLI, REPL, TUI, future IDE
 bridge, and remote session transport share the same runtime loop.

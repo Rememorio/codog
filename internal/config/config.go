@@ -24,6 +24,16 @@ type MCPServerConfig struct {
 	Env     []string `json:"env,omitempty"`
 }
 
+type FutureConfig struct {
+	RemoteEnabled       bool     `json:"remote_enabled,omitempty"`
+	EnterprisePolicy    string   `json:"enterprise_policy,omitempty"`
+	PluginMarketplaces  []string `json:"plugin_marketplaces,omitempty"`
+	SandboxStrategy     string   `json:"sandbox_strategy,omitempty"`
+	UpdaterManifestURL  string   `json:"updater_manifest_url,omitempty"`
+	EditorBridgeSocket  string   `json:"editor_bridge_socket,omitempty"`
+	BackgroundStatePath string   `json:"background_state_path,omitempty"`
+}
+
 type Config struct {
 	APIKey              string                     `json:"api_key,omitempty"`
 	AuthToken           string                     `json:"auth_token,omitempty"`
@@ -37,6 +47,7 @@ type Config struct {
 	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
 	Hooks               HookConfig                 `json:"hooks,omitempty"`
 	MCPServers          map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+	Future              FutureConfig               `json:"future,omitempty"`
 }
 
 type FlagOverrides struct {
@@ -194,6 +205,19 @@ func merge(dst *Config, src Config) {
 			dst.MCPServers[name] = server
 		}
 	}
+	if futureConfigSet(src.Future) {
+		dst.Future = src.Future
+	}
+}
+
+func futureConfigSet(cfg FutureConfig) bool {
+	return cfg.RemoteEnabled ||
+		cfg.EnterprisePolicy != "" ||
+		len(cfg.PluginMarketplaces) != 0 ||
+		cfg.SandboxStrategy != "" ||
+		cfg.UpdaterManifestURL != "" ||
+		cfg.EditorBridgeSocket != "" ||
+		cfg.BackgroundStatePath != ""
 }
 
 func applyEnv(cfg *Config) {

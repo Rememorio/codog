@@ -82,11 +82,17 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		fmt.Fprintln(os.Stdout, string(data))
 		return nil
 	}
-	if command == "roadmap" {
+	if command == "roadmap" || command == "capabilities" {
+		if hasFlag(rest, "--json") {
+			return future.RenderReportJSON(os.Stdout, future.NewReport(version))
+		}
 		future.RenderText(os.Stdout, future.Surfaces())
 		return nil
 	}
 	if surface, ok := future.Find(command); ok {
+		if hasFlag(rest, "--json") {
+			return future.RenderJSON(os.Stdout, []future.Surface{surface})
+		}
 		future.RenderText(os.Stdout, []future.Surface{surface})
 		return nil
 	}
@@ -351,6 +357,15 @@ func containsFold(values []string, target string) bool {
 	return false
 }
 
+func hasFlag(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -386,8 +401,9 @@ Usage:
   %s [flags] cost --resume latest
   %s mock-server :8089
   %s self-test
-  %s roadmap
-  %s bridge|remote|agents|background|code-intel|oauth|enterprise|marketplace|sandbox|updater
+  %s roadmap [--json]
+  %s capabilities [--json]
+  %s bridge|remote|agents|background|code-intel|oauth|enterprise|marketplace|sandbox|updater [--json]
   %s config
 
 Flags:
@@ -402,7 +418,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

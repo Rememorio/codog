@@ -69,3 +69,9 @@ These commands report current status and next steps for:
 - Plugin marketplace.
 - Cross-platform sandboxing.
 - Updater and release provenance.
+
+For automation, use:
+
+```bash
+codog capabilities --json
+```
