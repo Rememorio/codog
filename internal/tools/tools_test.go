@@ -63,6 +63,19 @@ func TestPrompterRules(t *testing.T) {
 	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"pwd"}`)))
 }
 
+func TestPrompterEmitsDecision(t *testing.T) {
+	var decision PermissionDecision
+	p := &Prompter{
+		Mode:       PermissionAllow,
+		DenyRules:  []string{"bash:rm -rf"},
+		OnDecision: func(next PermissionDecision) { decision = next },
+	}
+	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`)))
+	require.Equal(t, "bash", decision.ToolName)
+	require.False(t, decision.Allowed)
+	require.Equal(t, "deny_rule", decision.Reason)
+}
+
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX cat")

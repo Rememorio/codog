@@ -16,6 +16,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
@@ -173,7 +174,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "updater":
 		return app.Updater(ctx, rest)
 	case "enterprise":
-		return app.FutureStatus(command, rest)
+		return app.Enterprise(rest)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
@@ -222,6 +223,30 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		return err
 	}
 	data, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) Enterprise(args []string) error {
+	if len(args) == 0 || (len(args) == 1 && args[0] == "--json") {
+		return a.FutureStatus("enterprise", args)
+	}
+	if args[0] != "audit" {
+		return fmt.Errorf("unknown enterprise command %q", args[0])
+	}
+	limit := audit.DefaultLimit
+	if len(args) > 1 {
+		parsed, err := strconv.Atoi(args[1])
+		if err != nil {
+			return err
+		}
+		limit = parsed
+	}
+	events, err := audit.NewStore(a.Config.ConfigHome).List(limit)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(events, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
@@ -388,10 +413,11 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 		Config:    a.Config,
 		Client:    a.Client,
 		Tools:     a.Tools,
-		Prompter:  a.prompter(),
+		Prompter:  a.prompter(sess.ID),
 		Workspace: a.Workspace,
 		Out:       a.Out,
 		System:    a.systemPrompt(),
+		OnToolUse: a.auditToolUse(sess.ID),
 	}
 	result, err := runner.Run(ctx, sess.Messages, input)
 	if err != nil {
@@ -440,10 +466,11 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			Config:    a.Config,
 			Client:    a.Client,
 			Tools:     a.Tools,
-			Prompter:  a.prompter(),
+			Prompter:  a.prompter(sess.ID),
 			Workspace: a.Workspace,
 			Out:       a.Out,
 			System:    a.systemPrompt(),
+			OnToolUse: a.auditToolUse(sess.ID),
 		}
 		result, err := runner.Run(ctx, sess.Messages, line)
 		if err != nil {
@@ -582,7 +609,7 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 	return a.Sessions.Open(id)
 }
 
-func (a *App) prompter() *tools.Prompter {
+func (a *App) prompter(sessionID string) *tools.Prompter {
 	return &tools.Prompter{
 		Mode:        tools.Permission(a.Config.PermissionMode),
 		AllowRules:  append([]string(nil), a.Config.PermissionRules.Allow...),
@@ -591,6 +618,43 @@ func (a *App) prompter() *tools.Prompter {
 		DeniedTools: append([]string(nil), a.Config.PermissionRules.DeniedTools...),
 		In:          a.In,
 		Err:         a.Err,
+		OnDecision:  a.auditPermissionDecision(sessionID),
+	}
+}
+
+func (a *App) auditToolUse(sessionID string) func(runloop.ToolCall) {
+	store := audit.NewStore(a.Config.ConfigHome)
+	return func(call runloop.ToolCall) {
+		if err := store.Append(audit.Event{
+			Type:      "tool_use",
+			SessionID: sessionID,
+			Workspace: a.Workspace,
+			ToolName:  call.Name,
+			Input:     audit.Clip(call.Input, 16*1024),
+			Output:    audit.Clip(call.Output, 16*1024),
+			IsError:   call.IsError,
+		}); err != nil && a.Err != nil {
+			fmt.Fprintln(a.Err, "audit:", err)
+		}
+	}
+}
+
+func (a *App) auditPermissionDecision(sessionID string) func(tools.PermissionDecision) {
+	store := audit.NewStore(a.Config.ConfigHome)
+	return func(decision tools.PermissionDecision) {
+		if err := store.Append(audit.Event{
+			Type:               "permission",
+			SessionID:          sessionID,
+			Workspace:          a.Workspace,
+			ToolName:           decision.ToolName,
+			Input:              audit.Clip(decision.Input, 16*1024),
+			PermissionMode:     string(decision.Mode),
+			RequiredPermission: string(decision.Required),
+			Allowed:            audit.Bool(decision.Allowed),
+			Reason:             decision.Reason,
+		}); err != nil && a.Err != nil {
+			fmt.Fprintln(a.Err, "audit:", err)
+		}
 	}
 }
 
@@ -673,7 +737,7 @@ Usage:
   %s background run "command" | background list
   %s agents | marketplace | oauth pkce | sandbox | code-intel symbols
   %s remote serve [addr] | bridge serve | updater check URL
-  %s enterprise [--json]
+  %s enterprise [--json] | enterprise audit [limit]
   %s config
 
 Flags:

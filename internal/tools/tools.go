@@ -69,6 +69,16 @@ type Prompter struct {
 	DeniedTools []string
 	In          io.Reader
 	Err         io.Writer
+	OnDecision  func(PermissionDecision)
+}
+
+type PermissionDecision struct {
+	ToolName string
+	Required Permission
+	Mode     Permission
+	Input    string
+	Allowed  bool
+	Reason   string
 }
 
 func NewRegistry(workspace string) *Registry {
@@ -119,16 +129,20 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 	}
 	inputText := string(input)
 	if ruleMatchesTool(p.DeniedTools, name) {
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "denied_tools"})
 		return fmt.Errorf("permission denied for tool %s by denied_tools", name)
 	}
 	if ruleMatches(p.DenyRules, name, inputText) {
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "deny_rule"})
 		return fmt.Errorf("permission denied for tool %s by deny rule", name)
 	}
 	if ruleMatches(p.AllowRules, name, inputText) {
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "allow_rule"})
 		return nil
 	}
 	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
 	if !ask && (mode == PermissionAllow || permissionRank(mode) >= permissionRank(required)) {
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "permission_mode"})
 		return nil
 	}
 	if p.In == nil {
@@ -142,9 +156,17 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	if answer == "y" || answer == "yes" {
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: true, Reason: "user_approved"})
 		return nil
 	}
+	p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: mode, Input: inputText, Allowed: false, Reason: "user_denied"})
 	return fmt.Errorf("permission denied for tool %s", name)
+}
+
+func (p *Prompter) emitDecision(decision PermissionDecision) {
+	if p.OnDecision != nil {
+		p.OnDecision(decision)
+	}
 }
 
 func ruleMatches(rules []string, toolName, input string) bool {
