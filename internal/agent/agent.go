@@ -407,12 +407,16 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		return nil
 	}
 	if args[0] == "run" {
-		command := strings.Join(args[1:], " ")
+		command, options, err := parseBackgroundRunArgs(args[1:])
+		if err != nil {
+			return err
+		}
 		sessionID, err := a.sessionIDFromOverrides(overrides)
 		if err != nil {
 			return err
 		}
-		task, err := store.RunWithOptions(command, a.Workspace, background.RunOptions{SessionID: sessionID})
+		options.SessionID = sessionID
+		task, err := store.RunWithOptions(command, a.Workspace, options)
 		if err != nil {
 			return err
 		}
@@ -420,8 +424,8 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	if len(args) < 2 && args[0] != "prune" {
-		return errors.New("usage: codog background list [session-id] | run COMMAND | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep]")
+	if len(args) < 2 && args[0] != "prune" && args[0] != "supervise" {
+		return errors.New("usage: codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep] | supervise")
 	}
 	switch args[0] {
 	case "status":
@@ -488,9 +492,90 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
+	case "supervise":
+		result, err := store.SuperviseOnce(time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	default:
 		return fmt.Errorf("unknown background command %q", args[0])
 	}
+}
+
+func parseBackgroundRunArgs(args []string) (string, background.RunOptions, error) {
+	var options background.RunOptions
+	var policy *background.RestartPolicy
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			args = args[1:]
+			break
+		}
+		if arg == "--restart" {
+			policy = ensureRestartPolicy(policy)
+			args = args[1:]
+			continue
+		}
+		if strings.HasPrefix(arg, "--restart=") {
+			policy = ensureRestartPolicy(policy)
+			mode := strings.TrimPrefix(arg, "--restart=")
+			if mode != "on-failure" && mode != "always" {
+				return "", options, errors.New("restart mode must be on-failure or always")
+			}
+			policy.Mode = mode
+			args = args[1:]
+			continue
+		}
+		if arg == "--restart-limit" {
+			if len(args) < 2 {
+				return "", options, errors.New("missing value for --restart-limit")
+			}
+			limit, err := strconv.Atoi(args[1])
+			if err != nil {
+				return "", options, err
+			}
+			if limit < 0 {
+				return "", options, errors.New("restart limit must be non-negative")
+			}
+			policy = ensureRestartPolicy(policy)
+			policy.MaxAttempts = limit
+			args = args[2:]
+			continue
+		}
+		if arg == "--restart-delay" {
+			if len(args) < 2 {
+				return "", options, errors.New("missing value for --restart-delay")
+			}
+			delay, err := strconv.Atoi(args[1])
+			if err != nil {
+				return "", options, err
+			}
+			if delay < 0 {
+				return "", options, errors.New("restart delay must be non-negative")
+			}
+			policy = ensureRestartPolicy(policy)
+			policy.DelaySeconds = delay
+			args = args[2:]
+			continue
+		}
+		break
+	}
+	command := strings.Join(args, " ")
+	if strings.TrimSpace(command) == "" {
+		return "", options, errors.New("background command is required")
+	}
+	options.RestartPolicy = policy
+	return command, options, nil
+}
+
+func ensureRestartPolicy(policy *background.RestartPolicy) *background.RestartPolicy {
+	if policy != nil {
+		return policy
+	}
+	return &background.RestartPolicy{Enabled: true, Mode: "on-failure"}
 }
 
 func parseBackgroundPruneArgs(args []string) (background.PruneOptions, error) {

@@ -21,7 +21,8 @@ Codog follows a small-core layout:
 - `internal/usage`: approximate token and cost accounting.
 - `internal/future`: explicit long-horizon capability status.
 - `internal/background`: background process metadata, session attachment, log
-  registry, restart, retention pruning, and watch event streaming.
+  registry, restart policy supervision, retention pruning, and watch event
+  streaming.
 - `internal/agentdefs`: local agent definition discovery.
 - `internal/worktree`: git worktree allocation for isolated local agent workers.
 - `internal/plugins`: local plugin discovery, remote marketplace index fetch,
@@ -31,8 +32,8 @@ Codog follows a small-core layout:
 - `internal/codeintel`: lightweight Go symbols, diagnostics, notebook helpers,
   and local LSP lifecycle metadata.
 - `internal/control`: HTTP control API for sessions, session-scoped background
-  tasks, logs, restart/prune operations, watch streams, diagnostics, remote
-  auth, structured failure state, and heartbeat leases.
+  tasks, logs, restart/prune/supervise operations, watch streams, diagnostics,
+  remote auth, structured failure state, and heartbeat leases.
 - `internal/bridge`: stdio JSON-RPC bridge with workspace, diagnostics, files,
   sessions, and background watch notifications.
 - `internal/updater`: release manifest check, signed manifest verification,

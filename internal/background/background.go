@@ -14,17 +14,20 @@ import (
 )
 
 type Task struct {
-	ID            string     `json:"id"`
-	Command       string     `json:"command"`
-	Workspace     string     `json:"workspace,omitempty"`
-	SessionID     string     `json:"session_id,omitempty"`
-	PID           int        `json:"pid"`
-	Status        string     `json:"status"`
-	StartedAt     time.Time  `json:"started_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	LogPath       string     `json:"log_path"`
-	Error         string     `json:"error,omitempty"`
-	RestartedFrom string     `json:"restarted_from,omitempty"`
+	ID            string         `json:"id"`
+	Command       string         `json:"command"`
+	Workspace     string         `json:"workspace,omitempty"`
+	SessionID     string         `json:"session_id,omitempty"`
+	RestartPolicy *RestartPolicy `json:"restart_policy,omitempty"`
+	RestartCount  int            `json:"restart_count,omitempty"`
+	PID           int            `json:"pid"`
+	Status        string         `json:"status"`
+	StartedAt     time.Time      `json:"started_at"`
+	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
+	LogPath       string         `json:"log_path"`
+	Error         string         `json:"error,omitempty"`
+	RestartedFrom string         `json:"restarted_from,omitempty"`
+	RestartedBy   string         `json:"restarted_by,omitempty"`
 }
 
 type WatchEvent struct {
@@ -46,11 +49,30 @@ type WatchOptions struct {
 type RunOptions struct {
 	SessionID     string
 	RestartedFrom string
+	RestartPolicy *RestartPolicy
+	RestartCount  int
+}
+
+type RestartPolicy struct {
+	Enabled      bool   `json:"enabled"`
+	Mode         string `json:"mode,omitempty"`
+	MaxAttempts  int    `json:"max_attempts,omitempty"`
+	DelaySeconds int    `json:"delay_seconds,omitempty"`
 }
 
 type PruneOptions struct {
 	OlderThan time.Duration
 	Keep      int
+}
+
+type SuperviseResult struct {
+	Restarted []Task          `json:"restarted"`
+	Skipped   []SuperviseSkip `json:"skipped,omitempty"`
+}
+
+type SuperviseSkip struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 type PruneResult struct {
@@ -97,19 +119,32 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
+	source := task
 	if task.Status == "running" {
-		if _, err := s.Stop(id); err != nil {
+		stopped, err := s.Stop(id)
+		if err != nil {
 			return Task{}, err
 		}
+		source = stopped
 	}
 	workspace := task.Workspace
 	if workspace == "" {
 		workspace = cwd
 	}
-	return s.run(task.Command, workspace, RunOptions{
+	restarted, err := s.run(task.Command, workspace, RunOptions{
 		SessionID:     task.SessionID,
 		RestartedFrom: task.ID,
+		RestartPolicy: task.RestartPolicy,
+		RestartCount:  task.RestartCount,
 	})
+	if err != nil {
+		return Task{}, err
+	}
+	source.RestartedBy = restarted.ID
+	if err := s.save(source); err != nil {
+		return Task{}, err
+	}
+	return restarted, nil
 }
 
 func (s Store) Prune(options PruneOptions) (PruneResult, error) {
@@ -149,9 +184,71 @@ func (s Store) Prune(options PruneOptions) (PruneResult, error) {
 	return result, nil
 }
 
+func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	tasks, err := s.List()
+	if err != nil {
+		return SuperviseResult{}, err
+	}
+	result := SuperviseResult{}
+	for _, task := range tasks {
+		policy, err := normalizeRestartPolicy(task.RestartPolicy)
+		if err != nil {
+			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "policy"})
+			continue
+		}
+		if policy == nil || !policy.Enabled {
+			continue
+		}
+		if task.Status == "running" {
+			continue
+		}
+		if task.RestartedBy != "" {
+			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "restarted"})
+			continue
+		}
+		if !shouldRestart(task, *policy) {
+			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "status"})
+			continue
+		}
+		if policy.MaxAttempts > 0 && task.RestartCount >= policy.MaxAttempts {
+			result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "max_attempts"})
+			continue
+		}
+		if task.CompletedAt != nil && policy.DelaySeconds > 0 {
+			next := task.CompletedAt.Add(time.Duration(policy.DelaySeconds) * time.Second)
+			if now.Before(next) {
+				result.Skipped = append(result.Skipped, SuperviseSkip{ID: task.ID, Reason: "delay"})
+				continue
+			}
+		}
+		restarted, err := s.run(task.Command, task.Workspace, RunOptions{
+			SessionID:     task.SessionID,
+			RestartedFrom: task.ID,
+			RestartPolicy: policy,
+			RestartCount:  task.RestartCount + 1,
+		})
+		if err != nil {
+			return result, err
+		}
+		task.RestartedBy = restarted.ID
+		if err := s.save(task); err != nil {
+			return result, err
+		}
+		result.Restarted = append(result.Restarted, restarted)
+	}
+	return result, nil
+}
+
 func (s Store) run(command string, cwd string, options RunOptions) (Task, error) {
 	if strings.TrimSpace(command) == "" {
 		return Task{}, errors.New("background command is required")
+	}
+	policy, err := normalizeRestartPolicy(options.RestartPolicy)
+	if err != nil {
+		return Task{}, err
 	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return Task{}, err
@@ -176,6 +273,8 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		Command:       command,
 		Workspace:     cwd,
 		SessionID:     options.SessionID,
+		RestartPolicy: policy,
+		RestartCount:  options.RestartCount,
 		PID:           cmd.Process.Pid,
 		Status:        "running",
 		StartedAt:     time.Now().UTC(),
@@ -444,4 +543,35 @@ func isPathInsideDir(path string, dir string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
+
+func normalizeRestartPolicy(policy *RestartPolicy) (*RestartPolicy, error) {
+	if policy == nil {
+		return nil, nil
+	}
+	next := *policy
+	if next.Mode == "" {
+		next.Mode = "on-failure"
+	}
+	if next.Mode != "on-failure" && next.Mode != "always" {
+		return nil, errors.New("restart mode must be on-failure or always")
+	}
+	if next.MaxAttempts < 0 {
+		return nil, errors.New("restart max attempts must be non-negative")
+	}
+	if next.DelaySeconds < 0 {
+		return nil, errors.New("restart delay must be non-negative")
+	}
+	return &next, nil
+}
+
+func shouldRestart(task Task, policy RestartPolicy) bool {
+	switch policy.Mode {
+	case "", "on-failure":
+		return task.Status == "failed" || task.Status == "exited"
+	case "always":
+		return task.Status != "stopped"
+	default:
+		return false
+	}
 }

@@ -136,6 +136,20 @@ func TestBackgroundRunAttachesSessionFromOverrides(t *testing.T) {
 	require.Contains(t, out.String(), `"session_id": "session-1"`)
 }
 
+func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
+	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
+	require.NoError(t, err)
+	require.Equal(t, "echo restart", command)
+	require.NotNil(t, options.RestartPolicy)
+	require.True(t, options.RestartPolicy.Enabled)
+	require.Equal(t, "always", options.RestartPolicy.Mode)
+	require.Equal(t, 2, options.RestartPolicy.MaxAttempts)
+	require.Equal(t, 5, options.RestartPolicy.DelaySeconds)
+
+	_, _, err = parseBackgroundRunArgs([]string{"--restart=never", "echo"})
+	require.Error(t, err)
+}
+
 func TestCodeIntelLSPCommands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")

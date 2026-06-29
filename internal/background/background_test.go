@@ -64,7 +64,8 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	}
 	store := Store{Dir: t.TempDir()}
 	workspace := t.TempDir()
-	task, err := store.RunWithOptions("pwd", workspace, RunOptions{SessionID: "session-1"})
+	policy := &RestartPolicy{Enabled: true, Mode: "on-failure", MaxAttempts: 3}
+	task, err := store.RunWithOptions("pwd", workspace, RunOptions{SessionID: "session-1", RestartPolicy: policy})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		status, err := store.Status(task.ID)
@@ -78,6 +79,10 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	require.Equal(t, task.Command, restarted.Command)
 	require.Equal(t, workspace, restarted.Workspace)
 	require.Equal(t, "session-1", restarted.SessionID)
+	require.Equal(t, policy, restarted.RestartPolicy)
+	source, err := store.Get(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, restarted.ID, source.RestartedBy)
 
 	require.Eventually(t, func() bool {
 		logs, err := store.Logs(restarted.ID, 1024)
@@ -184,4 +189,81 @@ func TestFilterBySession(t *testing.T) {
 
 	require.Equal(t, tasks, FilterBySession(tasks, ""))
 	require.Equal(t, []Task{{ID: "one", SessionID: "session-1"}}, FilterBySession(tasks, "session-1"))
+}
+
+func TestSuperviseOnceRestartsFailedTaskWithPolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	store := Store{Dir: t.TempDir()}
+	workspace := t.TempDir()
+	completed := time.Now().UTC().Add(-time.Minute)
+	logPath := filepath.Join(store.Dir, "failed.log")
+	policy := &RestartPolicy{Enabled: true, Mode: "on-failure", MaxAttempts: 2}
+	require.NoError(t, os.WriteFile(logPath, []byte("failed"), 0o644))
+	require.NoError(t, store.save(Task{
+		ID:            "failed",
+		Command:       "echo supervised",
+		Workspace:     workspace,
+		SessionID:     "session-1",
+		RestartPolicy: policy,
+		Status:        "failed",
+		StartedAt:     completed.Add(-time.Minute),
+		CompletedAt:   &completed,
+		LogPath:       logPath,
+	}))
+
+	result, err := store.SuperviseOnce(time.Now().UTC())
+	require.NoError(t, err)
+	require.Len(t, result.Restarted, 1)
+	restarted := result.Restarted[0]
+	require.Equal(t, "failed", restarted.RestartedFrom)
+	require.Equal(t, "session-1", restarted.SessionID)
+	require.Equal(t, 1, restarted.RestartCount)
+	require.Equal(t, policy, restarted.RestartPolicy)
+	source, err := store.Get("failed")
+	require.NoError(t, err)
+	require.Equal(t, restarted.ID, source.RestartedBy)
+
+	again, err := store.SuperviseOnce(time.Now().UTC())
+	require.NoError(t, err)
+	require.Empty(t, again.Restarted)
+	require.Contains(t, again.Skipped, SuperviseSkip{ID: "failed", Reason: "restarted"})
+}
+
+func TestSuperviseOnceHonorsDelayAndMaxAttempts(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Now().UTC()
+	for _, task := range []Task{
+		{
+			ID:            "maxed",
+			Command:       "echo maxed",
+			Status:        "failed",
+			StartedAt:     now.Add(-time.Hour),
+			CompletedAt:   &now,
+			LogPath:       filepath.Join(store.Dir, "maxed.log"),
+			RestartPolicy: &RestartPolicy{Enabled: true, MaxAttempts: 1},
+			RestartCount:  1,
+		},
+		{
+			ID:            "delayed",
+			Command:       "echo delayed",
+			Status:        "failed",
+			StartedAt:     now.Add(-time.Hour),
+			CompletedAt:   &now,
+			LogPath:       filepath.Join(store.Dir, "delayed.log"),
+			RestartPolicy: &RestartPolicy{Enabled: true, DelaySeconds: 60},
+		},
+	} {
+		require.NoError(t, os.WriteFile(task.LogPath, []byte(task.ID), 0o644))
+		require.NoError(t, store.save(task))
+	}
+
+	result, err := store.SuperviseOnce(now)
+	require.NoError(t, err)
+	require.Empty(t, result.Restarted)
+	require.ElementsMatch(t, []SuperviseSkip{
+		{ID: "maxed", Reason: "max_attempts"},
+		{ID: "delayed", Reason: "delay"},
+	}, result.Skipped)
 }

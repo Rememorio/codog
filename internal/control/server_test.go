@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -130,7 +131,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	}.Handler())
 	defer server.Close()
 
-	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"echo remote","session_id":"session-remote"}`))
+	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"echo remote","session_id":"session-remote","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":2}}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -138,6 +139,8 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
 	require.NotEmpty(t, task.ID)
 	require.Equal(t, "session-remote", task.SessionID)
+	require.NotNil(t, task.RestartPolicy)
+	require.Equal(t, 2, task.RestartPolicy.MaxAttempts)
 
 	require.Eventually(t, func() bool {
 		resp, err := http.Get(server.URL + "/background/" + task.ID + "/logs?limit=100")
@@ -211,6 +214,52 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&pruned))
 	require.Contains(t, pruned.Removed, task.ID)
 	require.Contains(t, pruned.Removed, restarted.ID)
+}
+
+func TestControlBackgroundSupervise(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	root := t.TempDir()
+	configHome := filepath.Join(root, "home")
+	store := background.NewStore(configHome)
+	now := time.Now().UTC()
+	failed := background.Task{
+		ID:            "failed",
+		Command:       "echo supervised-http",
+		Workspace:     root,
+		SessionID:     "session-remote",
+		RestartPolicy: &background.RestartPolicy{Enabled: true, Mode: "on-failure", MaxAttempts: 2},
+		Status:        "failed",
+		StartedAt:     now.Add(-time.Minute),
+		CompletedAt:   &now,
+		LogPath:       filepath.Join(store.Dir, "failed.log"),
+	}
+	require.NoError(t, os.MkdirAll(store.Dir, 0o755))
+	require.NoError(t, os.WriteFile(failed.LogPath, []byte("failed"), 0o644))
+	data, err := json.Marshal(failed)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(store.Dir, "failed.json"), data, 0o644))
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: configHome,
+		Workspace:  root,
+		Now:        func() time.Time { return now },
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/background/supervise", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result background.SuperviseResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	require.Len(t, result.Restarted, 1)
+	require.Equal(t, "failed", result.Restarted[0].RestartedFrom)
+	require.Equal(t, "session-remote", result.Restarted[0].SessionID)
+	source, err := store.Get("failed")
+	require.NoError(t, err)
+	require.Equal(t, result.Restarted[0].ID, source.RestartedBy)
 }
 
 func TestControlBackgroundWatchStreamsEvents(t *testing.T) {

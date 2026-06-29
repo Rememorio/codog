@@ -51,6 +51,7 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/sessions/", s.sessionByID)
 	mux.HandleFunc("/background", s.background)
 	mux.HandleFunc("/background/prune", s.backgroundPrune)
+	mux.HandleFunc("/background/supervise", s.backgroundSupervise)
 	mux.HandleFunc("/background/", s.backgroundByID)
 	mux.HandleFunc("/diagnostics/go", s.goDiagnostics)
 	return s.withAuth(mux)
@@ -202,14 +203,18 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, tasks)
 	case http.MethodPost:
 		var payload struct {
-			Command   string `json:"command"`
-			SessionID string `json:"session_id"`
+			Command       string                    `json:"command"`
+			SessionID     string                    `json:"session_id"`
+			RestartPolicy *background.RestartPolicy `json:"restart_policy"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeError(w, err, http.StatusBadRequest)
 			return
 		}
-		task, err := store.RunWithOptions(payload.Command, s.Workspace, background.RunOptions{SessionID: payload.SessionID})
+		task, err := store.RunWithOptions(payload.Command, s.Workspace, background.RunOptions{
+			SessionID:     payload.SessionID,
+			RestartPolicy: payload.RestartPolicy,
+		})
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
 			return
@@ -218,6 +223,19 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (s Server) backgroundSupervise(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := background.NewStore(s.ConfigHome).SuperviseOnce(s.now())
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s Server) backgroundPrune(w http.ResponseWriter, r *http.Request) {
