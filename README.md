@@ -24,7 +24,7 @@ Claude Code source.
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
-  `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
+  `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/hooks`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -69,7 +69,9 @@ Claude Code source.
   injects it into future prompts.
 - `codog mcp` inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls.
-- Hook commands can run before and after tool use.
+- Hook commands can run before and after tool use; `codog hooks list|run`
+  inspects and test-runs configured hooks with the same JSON payload shape used
+  by model tool calls.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
 - `codog rate-limit-options` reports provider retry/backoff settings; Anthropic

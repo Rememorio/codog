@@ -70,6 +70,7 @@ func Specs() []Spec {
 		{Name: "/add-dir", Usage: "/add-dir [PATH...|remove PATH|clear]", Description: "Allow tools to access additional directories."},
 		{Name: "/output-style", Usage: "/output-style [list|show|set|clear]", Description: "Show or change the active output style."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
+		{Name: "/hooks", Usage: "/hooks [list|run pre|post]", Description: "Inspect or test configured tool hooks."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},
 		{Name: "/system-prompt", Usage: "/system-prompt", Description: "Show the active system prompt."},
 		{Name: "/tool-details", Usage: "/tool-details TOOL", Description: "Show detailed information for a tool."},

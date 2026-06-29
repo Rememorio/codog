@@ -30,6 +30,7 @@ import (
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
+	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -222,6 +223,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ListSkills()
 	case "templates":
 		return app.Templates(rest)
+	case "hooks":
+		return app.Hooks(ctx, rest)
 	case "mcp":
 		return app.MCP(ctx, rest)
 	case "cost":
@@ -1738,6 +1741,203 @@ func isSensitiveEnvName(name string) bool {
 		}
 	}
 	return false
+}
+
+type hooksRequest struct {
+	Format    string
+	Action    string
+	Event     string
+	Tool      string
+	Input     string
+	Output    string
+	IsError   bool
+	TimeoutMS int
+}
+
+type hooksListReport struct {
+	Kind        string   `json:"kind"`
+	Action      string   `json:"action"`
+	Status      string   `json:"status"`
+	PreToolUse  []string `json:"pre_tool_use"`
+	PostToolUse []string `json:"post_tool_use"`
+}
+
+func (a *App) Hooks(ctx context.Context, args []string) error {
+	req, err := parseHooksArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list":
+		report := hooksListReport{
+			Kind:        "hooks",
+			Action:      "list",
+			Status:      "ok",
+			PreToolUse:  append([]string(nil), a.Config.Hooks.PreToolUse...),
+			PostToolUse: append([]string(nil), a.Config.Hooks.PostToolUse...),
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderHooksList(a.Out, report)
+		return nil
+	case "run":
+		payload := hooks.Payload{
+			Event:   req.Event,
+			Tool:    req.Tool,
+			Input:   req.Input,
+			Output:  req.Output,
+			IsError: req.IsError,
+		}
+		commands := a.Config.Hooks.PreToolUse
+		if req.Event == "post_tool_use" {
+			commands = a.Config.Hooks.PostToolUse
+		}
+		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+		report, runErr := hooks.Runner{Config: a.Config.Hooks, Workspace: a.Workspace, Timeout: timeout}.RunPayload(ctx, commands, payload)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			renderHooksRun(a.Out, report)
+		}
+		return runErr
+	default:
+		return fmt.Errorf("unknown hooks action %q", req.Action)
+	}
+}
+
+func parseHooksArgs(args []string) (hooksRequest, error) {
+	req := hooksRequest{Format: "text", Action: "list", Event: "pre_tool_use", Tool: "bash", Input: `{}`, TimeoutMS: 30000}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--tool":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks tool is required")
+			}
+			req.Tool = args[i]
+		case strings.HasPrefix(arg, "--tool="):
+			req.Tool = strings.TrimPrefix(arg, "--tool=")
+		case arg == "--input":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks input is required")
+			}
+			req.Input = args[i]
+		case strings.HasPrefix(arg, "--input="):
+			req.Input = strings.TrimPrefix(arg, "--input=")
+		case arg == "--output":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks output is required")
+			}
+			req.Output = args[i]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--error":
+			req.IsError = true
+		case arg == "--timeout-ms":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks timeout is required")
+			}
+			timeout, err := strconv.Atoi(args[i])
+			if err != nil || timeout < 0 {
+				return req, errors.New("hooks timeout must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
+			if err != nil || timeout < 0 {
+				return req, errors.New("hooks timeout must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown hooks output format %q", req.Format)
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	action := strings.ToLower(positionals[0])
+	switch action {
+	case "list", "show":
+		req.Action = "list"
+	case "run", "test":
+		req.Action = "run"
+		if len(positionals) > 1 {
+			event, err := normalizeHookEvent(positionals[1])
+			if err != nil {
+				return req, err
+			}
+			req.Event = event
+		}
+	default:
+		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
+	}
+	return req, nil
+}
+
+func normalizeHookEvent(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pre", "pre_tool_use", "pre-tool-use":
+		return "pre_tool_use", nil
+	case "post", "post_tool_use", "post-tool-use":
+		return "post_tool_use", nil
+	default:
+		return "", fmt.Errorf("unknown hook event %q", value)
+	}
+}
+
+func renderHooksList(out io.Writer, report hooksListReport) {
+	fmt.Fprintln(out, "Hooks")
+	fmt.Fprintf(out, "  Pre tool use     %d\n", len(report.PreToolUse))
+	for _, command := range report.PreToolUse {
+		fmt.Fprintf(out, "    %s\n", command)
+	}
+	fmt.Fprintf(out, "  Post tool use    %d\n", len(report.PostToolUse))
+	for _, command := range report.PostToolUse {
+		fmt.Fprintf(out, "    %s\n", command)
+	}
+}
+
+func renderHooksRun(out io.Writer, report hooks.RunReport) {
+	fmt.Fprintln(out, "Hook Run")
+	fmt.Fprintf(out, "  Event            %s\n", report.Event)
+	fmt.Fprintf(out, "  Tool             %s\n", report.Tool)
+	fmt.Fprintf(out, "  Commands         %d\n", report.Count)
+	for _, result := range report.Results {
+		fmt.Fprintf(out, "  %s success=%t duration_ms=%d\n", result.Command, result.Success, result.DurationMS)
+		if strings.TrimSpace(result.Stdout) != "" {
+			fmt.Fprintf(out, "    stdout: %s\n", strings.ReplaceAll(strings.TrimSpace(result.Stdout), "\n", "\n            "))
+		}
+		if strings.TrimSpace(result.Stderr) != "" {
+			fmt.Fprintf(out, "    stderr: %s\n", strings.ReplaceAll(strings.TrimSpace(result.Stderr), "\n", "\n            "))
+		}
+		if result.Error != "" {
+			fmt.Fprintf(out, "    error: %s\n", result.Error)
+		}
+	}
 }
 
 func findUp(start string, name string) string {
@@ -3791,6 +3991,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Templates(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/hooks":
+		if err := a.Hooks(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/mcp":
 		_ = a.MCP(ctx, nil)
 	case "/session":
@@ -5547,6 +5751,7 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
   %s [flags] templates [list|show|apply]
+  %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] mcp
   %s [flags] status [--json|--output-format text|json]
@@ -5598,7 +5803,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

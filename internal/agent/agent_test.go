@@ -1146,6 +1146,49 @@ func TestStateCommandAndREPLWritesWorkerState(t *testing.T) {
 	require.Contains(t, out.String(), "State")
 }
 
+func TestHooksCommandAndSlash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	prePath := filepath.Join(workspace, "pre.json")
+	postPath := filepath.Join(workspace, "post.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			Hooks: config.HookConfig{
+				PreToolUse:  []string{"cat > " + shellQuote(prePath)},
+				PostToolUse: []string{"cat > " + shellQuote(postPath)},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"list", "--json"}))
+	require.Contains(t, out.String(), `"pre_tool_use"`)
+	require.Contains(t, out.String(), `"post_tool_use"`)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "pre", "--tool", "read_file", "--input", `{"path":"README.md"}`}))
+	require.Contains(t, out.String(), "Hook Run")
+	data, err := os.ReadFile(prePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"pre_tool_use"`)
+	require.Contains(t, string(data), `"tool":"read_file"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run post --tool=bash --output=done --error", sess))
+	data, err = os.ReadFile(postPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"post_tool_use"`)
+	require.Contains(t, string(data), `"is_error":true`)
+	require.Empty(t, errOut.String())
+}
+
 func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
 	defer server.Close()
