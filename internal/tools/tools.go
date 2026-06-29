@@ -20,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/sandbox"
+	"github.com/Rememorio/codog/internal/todos"
 )
 
 type Permission string
@@ -105,6 +106,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(EditFileTool{Workspace: workspace})
 	reg.Register(GrepTool{Workspace: workspace})
 	reg.Register(GlobTool{Workspace: workspace})
+	reg.Register(TodoReadTool{Workspace: workspace})
+	reg.Register(TodoWriteTool{Workspace: workspace})
 	return reg
 }
 
@@ -770,6 +773,80 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	sort.Strings(files)
 	return pretty(map[string]any{"files": files, "truncated": len(files) >= limit}), nil
+}
+
+type TodoReadTool struct {
+	Workspace string
+}
+
+func (TodoReadTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "todo_read",
+		Description: "Read the workspace todo list for the current task.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TodoReadTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TodoReadTool) Execute(_ context.Context, _ json.RawMessage) (string, error) {
+	report, err := todos.List(t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	return pretty(report), nil
+}
+
+type TodoWriteTool struct {
+	Workspace string
+}
+
+func (TodoWriteTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "todo_write",
+		Description: "Replace the workspace todo list. Use pending, in_progress, or completed status.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"todos": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"id":       map[string]any{"type": "string"},
+							"content":  map[string]any{"type": "string"},
+							"status":   map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed"}},
+							"priority": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}},
+						},
+						"required":             []string{"content"},
+						"additionalProperties": false,
+					},
+				},
+			},
+			"required":             []string{"todos"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TodoWriteTool) Permission() Permission { return PermissionWorkspace }
+
+func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Todos []todos.Item `json:"todos"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	report, err := todos.Replace(t.Workspace, payload.Todos)
+	if err != nil {
+		return "", err
+	}
+	return pretty(report), nil
 }
 
 func safePath(workspace, requested string, allowMissing bool) (string, error) {

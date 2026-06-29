@@ -46,6 +46,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/hover")
 	require.Contains(t, out.String(), "/export")
 	require.Contains(t, out.String(), "/history")
+	require.Contains(t, out.String(), "/todos")
 	require.Contains(t, out.String(), "/prompt-history")
 	require.Contains(t, out.String(), "/resume")
 	require.Contains(t, out.String(), "/search")

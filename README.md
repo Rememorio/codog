@@ -20,7 +20,7 @@ Claude Code source.
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/context`, `/focus`, `/unfocus`, `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/templates`, `/output-style`, `/skills`, `/mcp`.
@@ -31,6 +31,9 @@ Claude Code source.
 - `/history` and `codog history [--session ID] [--limit N] [--json]` show
   prompts recorded for a session, with legacy fallback to user transcript
   messages.
+- `/todos` and `codog todos list|add|start|done|pending|clear` maintain the
+  workspace todo state used by the built-in `todo_read` and `todo_write` model
+  tools.
 - `/search` and `codog search PATTERN [--path PATH] [--glob GLOB]` search
   workspace file contents without making a provider request.
 - `/context` and `codog context [--resume latest]` summarize prompt context,

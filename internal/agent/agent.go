@@ -45,6 +45,7 @@ import (
 	"github.com/Rememorio/codog/internal/slash"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
+	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
@@ -199,6 +200,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SessionsCommand(rest)
 	case "history", "prompt-history":
 		return app.History(rest, overrides)
+	case "todos":
+		return app.Todos(rest)
 	case "focus":
 		return app.Focus(rest)
 	case "unfocus":
@@ -1890,6 +1893,103 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 	return req, nil
 }
 
+type todosRequest struct {
+	Action   string
+	ID       string
+	Content  string
+	Priority string
+	Format   string
+}
+
+func (a *App) Todos(args []string) error {
+	req, err := parseTodosArgs(args)
+	if err != nil {
+		return err
+	}
+	var report todos.Report
+	switch req.Action {
+	case "list":
+		report, err = todos.List(a.Workspace)
+	case "add":
+		report, err = todos.Add(a.Workspace, req.Content, req.Priority)
+	case "start":
+		report, err = todos.UpdateStatus(a.Workspace, req.ID, "in_progress")
+	case "done":
+		report, err = todos.UpdateStatus(a.Workspace, req.ID, "completed")
+	case "pending":
+		report, err = todos.UpdateStatus(a.Workspace, req.ID, "pending")
+	case "clear":
+		report, err = todos.Clear(a.Workspace)
+	default:
+		err = fmt.Errorf("unknown todos command %q", req.Action)
+	}
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	todos.RenderText(a.Out, report)
+	return nil
+}
+
+func parseTodosArgs(args []string) (todosRequest, error) {
+	req := todosRequest{Action: "list", Format: "text", Priority: "medium"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return todosRequest{}, errors.New("todos output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--priority":
+			index++
+			if index >= len(args) {
+				return todosRequest{}, errors.New("todo priority is required")
+			}
+			req.Priority = args[index]
+		case strings.HasPrefix(arg, "--priority="):
+			req.Priority = strings.TrimPrefix(arg, "--priority=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return todosRequest{}, fmt.Errorf("unknown todos output format %q", req.Format)
+	}
+	if len(rest) == 0 || rest[0] == "list" {
+		return req, nil
+	}
+	req.Action = rest[0]
+	switch req.Action {
+	case "add":
+		if len(rest) < 2 {
+			return todosRequest{}, errors.New("todo content is required")
+		}
+		req.Content = strings.Join(rest[1:], " ")
+	case "start", "done", "pending":
+		if len(rest) < 2 {
+			return todosRequest{}, fmt.Errorf("todo id is required for %s", req.Action)
+		}
+		req.ID = rest[1]
+	case "clear":
+	default:
+		return todosRequest{}, fmt.Errorf("unknown todos command %q", req.Action)
+	}
+	return req, nil
+}
+
 type commandRequest struct {
 	Format    string
 	TimeoutMS int
@@ -3340,6 +3440,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleExportSlash(fields[1:], sess)
 	case "/history", "/prompt-history":
 		a.handleHistorySlash(fields[1:], sess)
+	case "/todos":
+		if err := a.Todos(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/skills":
 		_ = a.ListSkills()
 	case "/templates":
@@ -4529,6 +4633,7 @@ Usage:
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
+  %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
   %s [flags] templates [list|show|apply]
@@ -4575,7 +4680,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

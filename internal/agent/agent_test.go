@@ -31,6 +31,7 @@ import (
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/workerstate"
@@ -448,7 +449,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
-	require.Contains(t, out.String(), "Tools            6")
+	require.Contains(t, out.String(), "Tools            8")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
@@ -761,6 +762,33 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/output-style clear", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Output Style")
 	require.NotContains(t, app.systemPrompt(), "<output_style")
+	require.Empty(t, errOut.String())
+}
+
+func TestTodosCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Todos([]string{"add", "write", "tests", "--priority", "high", "--json"}))
+	require.Contains(t, out.String(), `"kind": "todos"`)
+	require.Contains(t, out.String(), `"priority": "high"`)
+	require.FileExists(t, todos.Path(workspace))
+	out.Reset()
+
+	require.NoError(t, app.Todos([]string{"done", "todo-1"}))
+	require.Contains(t, out.String(), "completed")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/todos list", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Todos")
+	require.Contains(t, out.String(), "write tests")
 	require.Empty(t, errOut.String())
 }
 

@@ -88,8 +88,28 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 6)
+	require.Len(t, infos, 8)
 	require.Equal(t, "bash", infos[0].Name)
+}
+
+func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
+	workspace := t.TempDir()
+	writeOut, err := TodoWriteTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"todos":[{"content":"write tests","status":"pending","priority":"high"}]}`))
+	require.NoError(t, err)
+	require.Contains(t, writeOut, `"kind": "todos"`)
+	require.Contains(t, writeOut, `"total": 1`)
+
+	readOut, err := TodoReadTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, readOut, "write tests")
+
+	registry := NewRegistry(workspace)
+	info, ok := registry.Info("todo_write")
+	require.True(t, ok)
+	require.Equal(t, PermissionWorkspace, info.Permission)
+	info, ok = registry.Info("todo_read")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

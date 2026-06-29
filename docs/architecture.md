@@ -23,6 +23,8 @@ Codog follows a small-core layout:
   and memory report rendering.
 - `internal/focus`: focused context path persistence, report rendering, and
   system prompt injection for selected files/directories.
+- `internal/todos`: workspace todo persistence shared by CLI, slash commands,
+  and model-facing todo tools.
 - `internal/workerstate`: file-based worker observability surface shared by
   REPL, one-shot prompts, and `codog state`.
 - `internal/versioninfo`: version, build metadata, runtime, and workspace
