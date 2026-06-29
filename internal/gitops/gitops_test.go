@@ -107,6 +107,49 @@ func TestStashWorkflows(t *testing.T) {
 	require.Equal(t, "changed\n", string(data))
 }
 
+func TestBranchWorkflows(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "add notes")
+
+	list, err := ListBranches(workspace)
+	require.NoError(t, err)
+	require.NotEmpty(t, list.Current)
+	require.NotEmpty(t, list.Branches)
+
+	output, err := CreateBranch(workspace, "feature/test", "", false)
+	require.NoError(t, err)
+	require.Empty(t, output)
+	list, err = ListBranches(workspace)
+	require.NoError(t, err)
+	require.Contains(t, branchNames(list.Branches), "feature/test")
+
+	_, err = SwitchBranch(workspace, "feature/test")
+	require.NoError(t, err)
+	current, err := Branch(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "feature/test", current)
+
+	_, err = RenameBranch(workspace, "", "feature/renamed")
+	require.NoError(t, err)
+	current, err = Branch(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "feature/renamed", current)
+
+	_, err = SwitchBranch(workspace, list.Current)
+	require.NoError(t, err)
+	output, err = DeleteBranch(workspace, "feature/renamed", false)
+	require.NoError(t, err)
+	require.Contains(t, output, "Deleted branch")
+}
+
 func TestCommitRequiresStagedChanges(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")
@@ -119,6 +162,14 @@ func TestCommitRequiresStagedChanges(t *testing.T) {
 	_, err := Commit(workspace, CommitOptions{Message: "empty"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no staged changes")
+}
+
+func branchNames(branches []BranchInfo) []string {
+	names := make([]string, 0, len(branches))
+	for _, branch := range branches {
+		names = append(names, branch.Name)
+	}
+	return names
 }
 
 func runGit(t *testing.T, workspace string, args ...string) {

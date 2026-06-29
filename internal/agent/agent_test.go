@@ -26,6 +26,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/focus"
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
@@ -309,6 +310,41 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/stash list", sess))
 	require.Contains(t, out.String(), "slash stash")
+}
+
+func TestBranchCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello branch\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "add branch notes")
+	base, err := gitops.Branch(workspace)
+	require.NoError(t, err)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.Branch([]string{"create", "feature/one", "--switch", "--json"}))
+	require.Contains(t, out.String(), `"kind": "branch"`)
+	require.Contains(t, out.String(), `"current": "feature/one"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/branch rename feature/two", sess))
+	require.Contains(t, out.String(), "feature/two")
+	out.Reset()
+
+	require.NoError(t, app.Git([]string{"branch", "current"}))
+	require.Contains(t, out.String(), "feature/two")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/branch switch "+base, sess))
+	require.Contains(t, out.String(), base)
+	out.Reset()
+
+	require.NoError(t, app.Branch([]string{"delete", "feature/two", "--force"}))
+	require.Contains(t, out.String(), "delete")
+	require.Contains(t, out.String(), "Deleted branch")
+	require.Empty(t, errOut.String())
 }
 
 func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {

@@ -234,6 +234,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Export(rest)
 	case "git":
 		return app.Git(rest)
+	case "branch":
+		return app.Branch(rest)
 	case "stash":
 		return app.Stash(rest)
 	case "changelog":
@@ -3707,6 +3709,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleDiffSlash(fields[1:])
 	case "/commit":
 		a.handleCommitSlash(fields[1:])
+	case "/branch":
+		if err := a.Branch(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/log":
 		a.handleLogSlash(fields[1:])
 	case "/changelog":
@@ -4066,7 +4072,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -4113,10 +4119,219 @@ func (a *App) Git(args []string) error {
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+	case "branch":
+		return a.Branch(args[1:])
 	default:
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
 	return nil
+}
+
+type branchRequest struct {
+	Format     string
+	Action     string
+	Name       string
+	NewName    string
+	StartPoint string
+	Switch     bool
+	Force      bool
+}
+
+type branchReport struct {
+	Kind     string              `json:"kind"`
+	Action   string              `json:"action"`
+	Status   string              `json:"status"`
+	Current  string              `json:"current"`
+	Branches []gitops.BranchInfo `json:"branches,omitempty"`
+	Output   string              `json:"output,omitempty"`
+}
+
+func (a *App) Branch(args []string) error {
+	req, err := parseBranchArgs(args)
+	if err != nil {
+		return err
+	}
+	report := branchReport{Kind: "branch", Action: req.Action, Status: "ok"}
+	switch req.Action {
+	case "list":
+		list, err := gitops.ListBranches(a.Workspace)
+		if err != nil {
+			return err
+		}
+		report.Current = list.Current
+		report.Branches = list.Branches
+	case "current":
+		current, err := gitops.Branch(a.Workspace)
+		if err != nil {
+			return err
+		}
+		report.Current = current
+	case "create":
+		output, err := gitops.CreateBranch(a.Workspace, req.Name, req.StartPoint, req.Switch)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+		list, err := gitops.ListBranches(a.Workspace)
+		if err != nil {
+			return err
+		}
+		report.Current = list.Current
+		report.Branches = list.Branches
+	case "switch":
+		output, err := gitops.SwitchBranch(a.Workspace, req.Name)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+		list, err := gitops.ListBranches(a.Workspace)
+		if err != nil {
+			return err
+		}
+		report.Current = list.Current
+		report.Branches = list.Branches
+	case "delete":
+		output, err := gitops.DeleteBranch(a.Workspace, req.Name, req.Force)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+		list, err := gitops.ListBranches(a.Workspace)
+		if err != nil {
+			return err
+		}
+		report.Current = list.Current
+		report.Branches = list.Branches
+	case "rename":
+		output, err := gitops.RenameBranch(a.Workspace, req.Name, req.NewName)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+		list, err := gitops.ListBranches(a.Workspace)
+		if err != nil {
+			return err
+		}
+		report.Current = list.Current
+		report.Branches = list.Branches
+	default:
+		return fmt.Errorf("unknown branch action %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBranchReport(a.Out, report)
+	return nil
+}
+
+func parseBranchArgs(args []string) (branchRequest, error) {
+	req := branchRequest{Format: "text", Action: "list"}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("branch output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--switch" || arg == "--checkout":
+			req.Switch = true
+		case arg == "--force" || arg == "-f":
+			req.Force = true
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown branch output format %q", req.Format)
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	req.Action = strings.ToLower(positionals[0])
+	rest := positionals[1:]
+	switch req.Action {
+	case "list", "show":
+		req.Action = "list"
+	case "current":
+	case "create", "new":
+		req.Action = "create"
+		if len(rest) == 0 {
+			return req, errors.New("branch create requires a name")
+		}
+		req.Name = rest[0]
+		if len(rest) > 1 {
+			req.StartPoint = rest[1]
+		}
+	case "switch", "checkout":
+		req.Action = "switch"
+		if len(rest) == 0 {
+			return req, errors.New("branch switch requires a name")
+		}
+		req.Name = rest[0]
+	case "delete", "del", "remove", "rm":
+		req.Action = "delete"
+		if len(rest) == 0 {
+			return req, errors.New("branch delete requires a name")
+		}
+		req.Name = rest[0]
+	case "rename", "mv":
+		req.Action = "rename"
+		switch len(rest) {
+		case 0:
+			return req, errors.New("branch rename requires a new name")
+		case 1:
+			req.NewName = rest[0]
+		default:
+			req.Name = rest[0]
+			req.NewName = rest[1]
+		}
+	default:
+		return req, fmt.Errorf("unknown branch action %q", positionals[0])
+	}
+	return req, nil
+}
+
+func renderBranchReport(out io.Writer, report branchReport) {
+	fmt.Fprintln(out, "Branches")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Current          %s\n", report.Current)
+	if strings.TrimSpace(report.Output) != "" {
+		fmt.Fprintf(out, "  Output           %s\n", strings.ReplaceAll(strings.TrimSpace(report.Output), "\n", "\n                   "))
+	}
+	if len(report.Branches) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  Count            %d\n", len(report.Branches))
+	fmt.Fprintln(out)
+	for _, branch := range report.Branches {
+		marker := " "
+		if branch.Current {
+			marker = "*"
+		}
+		detail := branch.Commit
+		if branch.Subject != "" {
+			detail = strings.TrimSpace(detail + " " + branch.Subject)
+		}
+		if branch.Upstream != "" {
+			detail = strings.TrimSpace(detail + " upstream=" + branch.Upstream)
+		}
+		fmt.Fprintf(out, "  %s %s", marker, branch.Name)
+		if detail != "" {
+			fmt.Fprintf(out, "  %s", detail)
+		}
+		fmt.Fprintln(out)
+	}
 }
 
 func (a *App) Changelog(args []string) error {
@@ -5164,7 +5379,8 @@ Usage:
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
-  %s [flags] git status | git diff [--staged] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]
+  %s [flags] git status | git diff [--staged] | git branch [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
@@ -5194,7 +5410,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
