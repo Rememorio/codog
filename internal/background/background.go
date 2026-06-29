@@ -313,7 +313,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	go func() {
 		err := cmd.Wait()
 		current, getErr := s.Get(task.ID)
-		if getErr == nil && current.Status != "running" {
+		if getErr == nil && current.Status != "running" && current.Status != "exited" {
 			return
 		}
 		if getErr == nil {

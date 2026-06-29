@@ -213,7 +213,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 62)
+	require.Len(t, infos, 65)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -333,6 +333,15 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("read_mcp_resource")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("list_mcp_resource_templates")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("list_mcp_prompts")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("get_mcp_prompt")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 }
@@ -844,7 +853,7 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 		if err := json.Unmarshal([]byte(statusOut), &completed); err != nil {
 			return false
 		}
-		return completed.Status != "running"
+		return completed.Status != "running" && completed.ExitCode != nil
 	}, 2*time.Second, 20*time.Millisecond)
 	require.NotNil(t, completed.ExitCode)
 	require.Equal(t, 0, *completed.ExitCode)
@@ -1086,6 +1095,30 @@ func TestMCPResourceToolsListAndReadRemoteResources(t *testing.T) {
 	require.Contains(t, err.Error(), "unknown MCP server")
 }
 
+func TestMCPPromptAndTemplateTools(t *testing.T) {
+	servers := map[string]config.MCPServerConfig{
+		"test": {
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestMCPToolHelperProcess"},
+			Env:     []string{"CODOG_MCP_TOOL_HELPER=1"},
+		},
+	}
+
+	templatesOut, err := ListMCPResourceTemplatesTool{Servers: servers}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, templatesOut, `"kind": "mcp_resource_templates"`)
+	require.Contains(t, templatesOut, `"uriTemplate": "codog://{name}"`)
+
+	promptsOut, err := ListMCPPromptsTool{Servers: servers}.Execute(context.Background(), []byte(`{"server":"test"}`))
+	require.NoError(t, err)
+	require.Contains(t, promptsOut, `"name": "review"`)
+
+	promptOut, err := GetMCPPromptTool{Servers: servers}.Execute(context.Background(), []byte(`{"server":"test","prompt":"review","arguments":{"topic":"tools"}}`))
+	require.NoError(t, err)
+	require.Contains(t, promptOut, `"prompt": "review"`)
+	require.Contains(t, promptOut, `"Review tools"`)
+}
+
 func TestMCPToolHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_TOOL_HELPER") != "1" {
 		return
@@ -1117,10 +1150,28 @@ func TestMCPToolHelperProcess(t *testing.T) {
 			writeMCPResponse(id, map[string]any{"content": []map[string]any{{"type": "text", "text": name}}})
 		case "resources/list":
 			writeMCPResponse(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note", "mimeType": "text/plain"}}})
+		case "resources/templates/list":
+			writeMCPResponse(id, map[string]any{"resourceTemplates": []map[string]any{{
+				"uriTemplate": "codog://{name}",
+				"name":        "named note",
+			}}})
 		case "resources/read":
 			params, _ := req["params"].(map[string]any)
 			uri, _ := params["uri"].(string)
 			writeMCPResponse(id, map[string]any{"contents": []map[string]any{{"uri": uri, "mimeType": "text/plain", "text": "note body"}}})
+		case "prompts/list":
+			writeMCPResponse(id, map[string]any{"prompts": []map[string]any{{
+				"name":        "review",
+				"description": "Review a topic.",
+			}}})
+		case "prompts/get":
+			params, _ := req["params"].(map[string]any)
+			args, _ := params["arguments"].(map[string]any)
+			topic, _ := args["topic"].(string)
+			writeMCPResponse(id, map[string]any{"messages": []map[string]any{{
+				"role":    "user",
+				"content": map[string]any{"type": "text", "text": "Review " + topic},
+			}}})
 		}
 	}
 	os.Exit(0)

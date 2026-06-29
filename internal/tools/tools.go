@@ -177,6 +177,9 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(MCPAuthTool{Servers: opts.MCPServers})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
+	reg.Register(ListMCPResourceTemplatesTool{Servers: opts.MCPServers})
+	reg.Register(ListMCPPromptsTool{Servers: opts.MCPServers})
+	reg.Register(GetMCPPromptTool{Servers: opts.MCPServers})
 	reg.Register(GitStatusTool{Workspace: workspace})
 	reg.Register(GitDiffTool{Workspace: workspace})
 	reg.Register(GitLogTool{Workspace: workspace})
@@ -645,11 +648,7 @@ func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage
 		return pretty(result), nil
 	}
 
-	names := make([]string, 0, len(t.Servers))
-	for name := range t.Servers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := sortedMCPServerNames(t.Servers)
 	results := make([]mcp.ResourceListResult, 0, len(names))
 	for _, name := range names {
 		results = append(results, mcp.ListResources(ctx, name, t.Servers[name]))
@@ -716,6 +715,162 @@ func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage)
 		return "", errors.New(result.Error)
 	}
 	return pretty(result), nil
+}
+
+type ListMCPResourceTemplatesTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+func (t ListMCPResourceTemplatesTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "list_mcp_resource_templates",
+		Description: "List resource templates exposed by configured MCP servers. Pass server to query one server, or omit it to query all configured servers.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server": map[string]any{
+					"type":        "string",
+					"description": "Optional MCP server name. When omitted, all configured servers are queried.",
+				},
+			},
+		},
+	}
+}
+
+func (ListMCPResourceTemplatesTool) Permission() Permission { return PermissionReadOnly }
+
+func (t ListMCPResourceTemplatesTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload listMCPResourcesInput
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	if payload.Server != "" {
+		server, ok := t.Servers[payload.Server]
+		if !ok {
+			return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+		}
+		result := mcp.ListResourceTemplates(ctx, payload.Server, server)
+		if result.Error != "" {
+			return "", errors.New(result.Error)
+		}
+		return pretty(result), nil
+	}
+	names := sortedMCPServerNames(t.Servers)
+	results := make([]mcp.ResourceTemplateListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListResourceTemplates(ctx, name, t.Servers[name]))
+	}
+	return pretty(map[string]any{"kind": "mcp_resource_templates", "servers": results, "total": len(results)}), nil
+}
+
+type ListMCPPromptsTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+func (t ListMCPPromptsTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "list_mcp_prompts",
+		Description: "List prompts exposed by configured MCP servers. Pass server to query one server, or omit it to query all configured servers.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server": map[string]any{
+					"type":        "string",
+					"description": "Optional MCP server name. When omitted, all configured servers are queried.",
+				},
+			},
+		},
+	}
+}
+
+func (ListMCPPromptsTool) Permission() Permission { return PermissionReadOnly }
+
+func (t ListMCPPromptsTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload listMCPResourcesInput
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	if payload.Server != "" {
+		server, ok := t.Servers[payload.Server]
+		if !ok {
+			return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+		}
+		result := mcp.ListPrompts(ctx, payload.Server, server)
+		if result.Error != "" {
+			return "", errors.New(result.Error)
+		}
+		return pretty(result), nil
+	}
+	names := sortedMCPServerNames(t.Servers)
+	results := make([]mcp.PromptListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListPrompts(ctx, name, t.Servers[name]))
+	}
+	return pretty(map[string]any{"kind": "mcp_prompts", "servers": results, "total": len(results)}), nil
+}
+
+type GetMCPPromptTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+func (t GetMCPPromptTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "get_mcp_prompt",
+		Description: "Read a prompt exposed by a configured MCP server.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server":    map[string]any{"type": "string"},
+				"prompt":    map[string]any{"type": "string"},
+				"arguments": map[string]any{"type": "object", "additionalProperties": true},
+			},
+			"required": []string{"server", "prompt"},
+		},
+	}
+}
+
+func (GetMCPPromptTool) Permission() Permission { return PermissionReadOnly }
+
+func (t GetMCPPromptTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Server    string          `json:"server"`
+		Prompt    string          `json:"prompt"`
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Server) == "" {
+		return "", errors.New("server is required")
+	}
+	if strings.TrimSpace(payload.Prompt) == "" {
+		return "", errors.New("prompt is required")
+	}
+	server, ok := t.Servers[payload.Server]
+	if !ok {
+		return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+	}
+	result := mcp.GetPrompt(ctx, payload.Server, server, payload.Prompt, payload.Arguments)
+	if result.Error != "" {
+		return "", errors.New(result.Error)
+	}
+	return pretty(result), nil
+}
+
+func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type GitStatusTool struct {
