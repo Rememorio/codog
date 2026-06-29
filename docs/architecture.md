@@ -6,7 +6,7 @@ Codog follows a small-core layout:
 - `internal/agent`: CLI, REPL, prompt loop, slash commands, and model/tool
   orchestration.
 - `internal/runloop`: provider-agnostic model/tool turn loop shared by CLI,
-  REPL, TUI, and future transports.
+  REPL, TUI, and remote transports.
 - `internal/anthropic`: Anthropic-compatible streaming client and event parser.
 - `internal/tools`: built-in tool registry and permission gate.
 - `internal/session`: JSONL session persistence.
@@ -19,7 +19,6 @@ Codog follows a small-core layout:
 - `internal/mcp`: stdio MCP discovery plus tool/resource calls.
 - `internal/tui`: Bubble Tea prompt composer.
 - `internal/usage`: approximate token and cost accounting.
-- `internal/future`: explicit long-horizon capability status.
 - `internal/background`: background process metadata, session attachment, log
   registry, restart policy supervision, retention pruning, and watch event
   streaming.
@@ -34,8 +33,9 @@ Codog follows a small-core layout:
 - `internal/codeintel`: lightweight Go symbols, diagnostics, notebook helpers,
   and local LSP lifecycle metadata.
 - `internal/control`: HTTP control API for sessions, session-scoped background
-  tasks, logs, restart/prune/supervise operations, watch streams, diagnostics,
-  remote auth, structured failure state, and heartbeat leases.
+  tasks, terminal command transport, logs, restart/prune/supervise operations,
+  watch streams, diagnostics, remote auth, structured failure state, and
+  heartbeat leases.
 - `internal/bridge`: stdio JSON-RPC bridge with trusted editor identity,
   open-file/selection state, workspace info, file list/search/diff/read/write/edit
   actions, diagnostics, sessions, and background watch notifications.

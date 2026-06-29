@@ -65,7 +65,7 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	workspace := t.TempDir()
 	policy := &RestartPolicy{Enabled: true, Mode: "on-failure", MaxAttempts: 3}
-	task, err := store.RunWithOptions("pwd", workspace, RunOptions{SessionID: "session-1", RestartPolicy: policy})
+	task, err := store.RunWithOptions("pwd", workspace, RunOptions{Kind: "terminal", SessionID: "session-1", RestartPolicy: policy})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		status, err := store.Status(task.ID)
@@ -77,6 +77,7 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	require.NotEqual(t, task.ID, restarted.ID)
 	require.Equal(t, task.ID, restarted.RestartedFrom)
 	require.Equal(t, task.Command, restarted.Command)
+	require.Equal(t, "terminal", restarted.Kind)
 	require.Equal(t, workspace, restarted.Workspace)
 	require.Equal(t, "session-1", restarted.SessionID)
 	require.Equal(t, policy, restarted.RestartPolicy)
@@ -189,6 +190,17 @@ func TestFilterBySession(t *testing.T) {
 
 	require.Equal(t, tasks, FilterBySession(tasks, ""))
 	require.Equal(t, []Task{{ID: "one", SessionID: "session-1"}}, FilterBySession(tasks, "session-1"))
+}
+
+func TestFilterByKind(t *testing.T) {
+	tasks := []Task{
+		{ID: "one", Kind: "terminal"},
+		{ID: "two", Kind: "agent"},
+		{ID: "three"},
+	}
+
+	require.Equal(t, tasks, FilterByKind(tasks, ""))
+	require.Equal(t, []Task{{ID: "one", Kind: "terminal"}}, FilterByKind(tasks, "terminal"))
 }
 
 func TestSuperviseOnceRestartsFailedTaskWithPolicy(t *testing.T) {

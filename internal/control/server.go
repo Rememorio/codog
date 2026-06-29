@@ -49,6 +49,8 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/state", s.state)
 	mux.HandleFunc("/sessions", s.sessions)
 	mux.HandleFunc("/sessions/", s.sessionByID)
+	mux.HandleFunc("/terminal", s.terminal)
+	mux.HandleFunc("/terminal/", s.terminalByID)
 	mux.HandleFunc("/background", s.background)
 	mux.HandleFunc("/background/prune", s.backgroundPrune)
 	mux.HandleFunc("/background/supervise", s.backgroundSupervise)
@@ -225,6 +227,105 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s Server) terminal(w http.ResponseWriter, r *http.Request) {
+	store := background.NewStore(s.ConfigHome)
+	switch r.Method {
+	case http.MethodGet:
+		tasks, err := store.List()
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		tasks = background.FilterByKind(tasks, "terminal")
+		tasks = background.FilterBySession(tasks, r.URL.Query().Get("session_id"))
+		writeJSON(w, tasks)
+	case http.MethodPost:
+		var payload struct {
+			Command       string                    `json:"command"`
+			SessionID     string                    `json:"session_id"`
+			RestartPolicy *background.RestartPolicy `json:"restart_policy"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		task, err := store.RunWithOptions(payload.Command, s.Workspace, background.RunOptions{
+			Kind:          "terminal",
+			SessionID:     payload.SessionID,
+			RestartPolicy: payload.RestartPolicy,
+		})
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, task)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s Server) terminalByID(w http.ResponseWriter, r *http.Request) {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/terminal/"), "/")
+	if rest == "" {
+		writeError(w, http.ErrMissingFile, http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(rest, "/")
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+	store := background.NewStore(s.ConfigHome)
+	task, err := store.Status(id)
+	if err != nil {
+		writeError(w, err, http.StatusNotFound)
+		return
+	}
+	if task.Kind != "terminal" {
+		writeError(w, http.ErrMissingFile, http.StatusNotFound)
+		return
+	}
+	switch {
+	case r.Method == http.MethodGet && action == "":
+		writeJSON(w, task)
+	case r.Method == http.MethodPost && action == "restart":
+		restarted, err := store.Restart(id, s.Workspace)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		writeJSON(w, restarted)
+	case r.Method == http.MethodPost && action == "stop":
+		stopped, err := store.Stop(id)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		writeJSON(w, stopped)
+	case r.Method == http.MethodGet && action == "logs":
+		limit := int64(64 * 1024)
+		if value := r.URL.Query().Get("limit"); value != "" {
+			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				writeError(w, err, http.StatusBadRequest)
+				return
+			}
+			limit = parsed
+		}
+		logs, err := store.Logs(id, limit)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		writeText(w, logs)
+	case r.Method == http.MethodGet && (action == "stream" || action == "watch"):
+		s.streamBackgroundWatch(w, r, store, id)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
 func (s Server) backgroundSupervise(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -326,33 +427,37 @@ func (s Server) backgroundByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeText(w, logs)
 	case r.Method == http.MethodGet && action == "watch":
-		options, err := parseWatchOptions(r)
-		if err != nil {
-			writeError(w, err, http.StatusBadRequest)
-			return
-		}
-		if _, err := store.Get(id); err != nil {
-			writeError(w, err, http.StatusNotFound)
-			return
-		}
-		w.Header().Set("content-type", "application/x-ndjson")
-		w.Header().Set("cache-control", "no-cache")
-		encoder := json.NewEncoder(w)
-		flusher, _ := w.(http.Flusher)
-		err = store.Watch(r.Context(), id, options, func(event background.WatchEvent) error {
-			if err := encoder.Encode(event); err != nil {
-				return err
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-			return nil
-		})
-		if err != nil && !errors.Is(err, context.Canceled) {
-			return
-		}
+		s.streamBackgroundWatch(w, r, store, id)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s Server) streamBackgroundWatch(w http.ResponseWriter, r *http.Request, store background.Store, id string) {
+	options, err := parseWatchOptions(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if _, err := store.Get(id); err != nil {
+		writeError(w, err, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("content-type", "application/x-ndjson")
+	w.Header().Set("cache-control", "no-cache")
+	encoder := json.NewEncoder(w)
+	flusher, _ := w.(http.Flusher)
+	err = store.Watch(r.Context(), id, options, func(event background.WatchEvent) error {
+		if err := encoder.Encode(event); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return
 	}
 }
 

@@ -17,7 +17,6 @@ import (
 
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
-	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/session"
 )
 
@@ -85,7 +84,6 @@ func (s Server) handle(req Request) (any, *Error) {
 			"version": s.Version,
 			"capabilities": []string{
 				"sessions/list",
-				"capabilities/list",
 				"workspace/info",
 				"workspace/files",
 				"workspace/search",
@@ -101,8 +99,6 @@ func (s Server) handle(req Request) (any, *Error) {
 				"background/watch",
 			},
 		}, nil
-	case "capabilities/list":
-		return future.NewReport(s.Version), nil
 	case "workspace/info":
 		workspace, err := s.workspace()
 		if err != nil {

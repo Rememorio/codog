@@ -15,6 +15,7 @@ import (
 
 type Task struct {
 	ID            string         `json:"id"`
+	Kind          string         `json:"kind,omitempty"`
 	Command       string         `json:"command"`
 	Workspace     string         `json:"workspace,omitempty"`
 	SessionID     string         `json:"session_id,omitempty"`
@@ -47,6 +48,7 @@ type WatchOptions struct {
 }
 
 type RunOptions struct {
+	Kind          string
 	SessionID     string
 	RestartedFrom string
 	RestartPolicy *RestartPolicy
@@ -106,6 +108,19 @@ func FilterBySession(tasks []Task, sessionID string) []Task {
 	return filtered
 }
 
+func FilterByKind(tasks []Task, kind string) []Task {
+	if kind == "" {
+		return tasks
+	}
+	filtered := make([]Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Kind == kind {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
 func (s Store) Run(command string, cwd string) (Task, error) {
 	return s.RunWithOptions(command, cwd, RunOptions{})
 }
@@ -132,6 +147,7 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 		workspace = cwd
 	}
 	restarted, err := s.run(task.Command, workspace, RunOptions{
+		Kind:          task.Kind,
 		SessionID:     task.SessionID,
 		RestartedFrom: task.ID,
 		RestartPolicy: task.RestartPolicy,
@@ -225,6 +241,7 @@ func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
 			}
 		}
 		restarted, err := s.run(task.Command, task.Workspace, RunOptions{
+			Kind:          task.Kind,
 			SessionID:     task.SessionID,
 			RestartedFrom: task.ID,
 			RestartPolicy: policy,
@@ -270,6 +287,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	}
 	task := Task{
 		ID:            id,
+		Kind:          options.Kind,
 		Command:       command,
 		Workspace:     cwd,
 		SessionID:     options.SessionID,

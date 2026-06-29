@@ -29,7 +29,6 @@ Claude Code source.
   streaming server for harness tests.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
-- `codog capabilities --json` exposes the long-horizon capability contract.
 - `codog background run|list|status|stop|restart|logs|watch|prune` manages local
   background commands, attaches them to sessions, supervises restart policies,
   restarts tasks, prunes retained records, and streams status/log events.
@@ -52,8 +51,8 @@ Claude Code source.
   `lsp discover|start|list|status|stop` manages local language server
   lifecycles.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
-  background tasks, logs/watch streams, Go diagnostics, bearer-token auth, and
-  heartbeat lease/failure state.
+  background tasks, terminal command streams, logs/watch streams, Go
+  diagnostics, bearer-token auth, and heartbeat lease/failure state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
   identity, open-file/selection state, sessions, workspace info, file
   listing/search/diff, diagnostics, background watch events, and bounded file

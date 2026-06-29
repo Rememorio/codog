@@ -23,7 +23,6 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
-	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -97,13 +96,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(os.Stdout, string(data))
-		return nil
-	}
-	if command == "roadmap" || command == "capabilities" {
-		if hasFlag(rest, "--json") {
-			return future.RenderReportJSON(os.Stdout, future.NewReport(version))
-		}
-		future.RenderText(os.Stdout, future.Surfaces())
 		return nil
 	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
@@ -191,18 +183,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 }
 
-func (a *App) FutureStatus(command string, args []string) error {
-	surface, ok := future.Find(command)
-	if !ok {
-		return fmt.Errorf("unknown capability %q", command)
-	}
-	if hasFlag(args, "--json") {
-		return future.RenderJSON(a.Out, []future.Surface{surface})
-	}
-	future.RenderText(a.Out, []future.Surface{surface})
-	return nil
-}
-
 func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 	if cfg.AuthToken != "" {
 		return
@@ -226,7 +206,7 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 
 func (a *App) Remote(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return a.FutureStatus("remote", args)
+		return errors.New("usage: codog remote serve [addr]")
 	}
 	addr := "127.0.0.1:8791"
 	if len(args) > 1 {
@@ -244,7 +224,7 @@ func (a *App) Remote(args []string) error {
 
 func (a *App) Bridge(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return a.FutureStatus("bridge", args)
+		return errors.New("usage: codog bridge serve")
 	}
 	return bridge.Server{
 		Sessions:   a.Sessions,
@@ -257,7 +237,7 @@ func (a *App) Bridge(args []string) error {
 
 func (a *App) Updater(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return a.FutureStatus("updater", args)
+		return errors.New("usage: codog updater check|verify|download|install|rollback")
 	}
 	var payload any
 	switch args[0] {
@@ -353,7 +333,7 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 
 func (a *App) Enterprise(args []string) error {
 	if len(args) == 0 || (len(args) == 1 && args[0] == "--json") {
-		return a.FutureStatus("enterprise", args)
+		return errors.New("usage: codog enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY")
 	}
 	var payload any
 	switch args[0] {
@@ -1833,15 +1813,6 @@ func containsFold(values []string, target string) bool {
 	return false
 }
 
-func hasFlag(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}
-
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -1877,8 +1848,6 @@ Usage:
   %s [flags] cost --resume latest
   %s mock-server :8089
   %s self-test
-  %s roadmap [--json]
-  %s capabilities [--json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
@@ -1900,7 +1869,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

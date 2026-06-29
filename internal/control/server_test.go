@@ -291,6 +291,78 @@ func TestControlBackgroundWatchStreamsEvents(t *testing.T) {
 	require.Contains(t, string(body), "watch-remote")
 }
 
+func TestControlTerminalLifecycleStreamsEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	root := t.TempDir()
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  root,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/terminal", "application/json", bytes.NewBufferString(`{"command":"echo terminal-remote","session_id":"session-terminal"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var task background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
+	require.NotEmpty(t, task.ID)
+	require.Equal(t, "terminal", task.Kind)
+	require.Equal(t, "session-terminal", task.SessionID)
+
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(server.URL + "/terminal/" + task.ID + "/stream?interval_ms=10")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode == http.StatusOK &&
+			strings.Contains(resp.Header.Get("content-type"), "application/x-ndjson") &&
+			strings.Contains(string(body), `"type":"status"`) &&
+			strings.Contains(string(body), `"type":"log"`) &&
+			strings.Contains(string(body), "terminal-remote")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	resp, err = http.Get(server.URL + "/terminal?session_id=session-terminal")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var tasks []background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&tasks))
+	require.Len(t, tasks, 1)
+	require.Equal(t, task.ID, tasks[0].ID)
+	require.Equal(t, "terminal", tasks[0].Kind)
+
+	resp, err = http.Get(server.URL + "/terminal/" + task.ID)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var current background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&current))
+	require.Equal(t, "terminal", current.Kind)
+
+	resp, err = http.Get(server.URL + "/terminal/" + task.ID + "/logs?limit=100")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "terminal-remote")
+
+	resp, err = http.Post(server.URL+"/terminal/"+task.ID+"/restart", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var restarted background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&restarted))
+	require.Equal(t, "terminal", restarted.Kind)
+	require.Equal(t, task.ID, restarted.RestartedFrom)
+}
+
 func TestControlGoDiagnostics(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/remote\n\ngo 1.22\n"), 0o644))
