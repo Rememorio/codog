@@ -11,6 +11,8 @@ Codog follows a small-core layout:
 - `internal/tools`: built-in tool registry and permission gate.
 - `internal/session`: workspace-scoped JSONL session persistence, export
   rendering, and legacy flat-session compatibility.
+- `internal/prompthistory`: prompt-history report shaping and text rendering for
+  CLI and REPL slash surfaces.
 - `internal/config`: config merge from user file, project file, environment, and
   flags.
 - `internal/projectinit`: idempotent project bootstrap for `.codog`

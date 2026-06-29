@@ -307,6 +307,40 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Session          source (1 messages)")
 }
 
+func TestHistoryCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.AppendInput("source", "first prompt"))
+	require.NoError(t, store.AppendInput("source", "second prompt"))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.History([]string{"--session", "source", "--limit", "1"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), "Prompt history")
+	require.Contains(t, out.String(), "Showing          1 most recent")
+	require.Contains(t, out.String(), "second prompt")
+	require.NotContains(t, out.String(), "first prompt")
+	out.Reset()
+
+	require.NoError(t, app.History([]string{"--session=source", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "prompt_history"`)
+	require.Contains(t, out.String(), `"total": 2`)
+	require.Contains(t, out.String(), `"text": "first prompt"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/history 1", &session.Session{ID: "source"}))
+	require.Contains(t, out.String(), "second prompt")
+	require.Empty(t, errOut.String())
+}
+
 func TestMemoryCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\nsecret body"), 0o644))
@@ -440,6 +474,10 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	require.Equal(t, "completed", loaded.Status)
 	require.Equal(t, "prompt-session", loaded.SessionID)
 	require.Contains(t, out.String(), "done")
+	history, err := app.Sessions.PromptHistory("prompt-session")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, "hello", history[0].Text)
 }
 
 func TestSystemPromptIncludesProjectMemory(t *testing.T) {

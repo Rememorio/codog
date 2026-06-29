@@ -30,6 +30,13 @@ type Session struct {
 	Path     string
 }
 
+type PromptEntry struct {
+	Index     int       `json:"index"`
+	Time      time.Time `json:"time"`
+	Text      string    `json:"text"`
+	SessionID string    `json:"session_id"`
+}
+
 type Store struct {
 	Dir       string
 	LegacyDir string
@@ -91,6 +98,28 @@ func (s *Store) Append(id string, msg anthropic.Message) error {
 		SessionID: id,
 	}
 	return writeRecord(file, record)
+}
+
+func (s *Store) AppendInput(id string, input string) error {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return err
+	}
+	path := s.pathFor(id)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return writeRecord(file, Record{
+		Type:      "input",
+		Time:      time.Now().UTC(),
+		Input:     input,
+		SessionID: id,
+	})
 }
 
 func (s *Store) Exists(id string) (bool, error) {
@@ -229,6 +258,55 @@ func (s *Store) LatestID() (string, error) {
 	return sessions[0].ID, nil
 }
 
+func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("session id is required")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return nil, err
+		}
+		id = latest
+	}
+	records, err := s.readRecords(s.pathFor(id))
+	if err != nil {
+		return nil, err
+	}
+	var entries []PromptEntry
+	for _, record := range records {
+		if record.Type == "input" && strings.TrimSpace(record.Input) != "" {
+			entries = append(entries, PromptEntry{
+				Index:     len(entries) + 1,
+				Time:      record.Time,
+				Text:      record.Input,
+				SessionID: id,
+			})
+		}
+	}
+	if len(entries) != 0 {
+		return entries, nil
+	}
+	for _, record := range records {
+		if record.Message == nil || record.Message.Role != "user" {
+			continue
+		}
+		for _, block := range record.Message.Content {
+			if block.Type != "text" || strings.TrimSpace(block.Text) == "" {
+				continue
+			}
+			entries = append(entries, PromptEntry{
+				Index:     len(entries) + 1,
+				Time:      record.Time,
+				Text:      block.Text,
+				SessionID: id,
+			})
+			break
+		}
+	}
+	return entries, nil
+}
+
 func (s *Store) pathFor(id string) string {
 	path := filepath.Join(s.Dir, id+".jsonl")
 	if s.LegacyDir == "" || sameDir(s.Dir, s.LegacyDir) {
@@ -245,6 +323,20 @@ func (s *Store) pathFor(id string) string {
 }
 
 func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
+	records, err := s.readRecords(path)
+	if err != nil {
+		return nil, err
+	}
+	var messages []anthropic.Message
+	for _, record := range records {
+		if record.Message != nil {
+			messages = append(messages, *record.Message)
+		}
+	}
+	return messages, nil
+}
+
+func (s *Store) readRecords(path string) ([]Record, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -253,7 +345,7 @@ func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 		return nil, err
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	var messages []anthropic.Message
+	var records []Record
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -262,11 +354,9 @@ func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			return nil, err
 		}
-		if record.Message != nil {
-			messages = append(messages, *record.Message)
-		}
+		records = append(records, record)
 	}
-	return messages, nil
+	return records, nil
 }
 
 func writeRecord(file *os.File, record Record) error {

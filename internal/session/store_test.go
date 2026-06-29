@@ -98,6 +98,48 @@ func TestForkExistsAndDeleteSession(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestPromptHistoryUsesInputRecords(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.AppendInput("source", "first prompt"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "message fallback should be ignored")))
+	require.NoError(t, store.AppendInput("source", "second prompt\nwith detail"))
+
+	entries, err := store.PromptHistory("source")
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, 1, entries[0].Index)
+	require.Equal(t, "first prompt", entries[0].Text)
+	require.Equal(t, 2, entries[1].Index)
+	require.Equal(t, "second prompt\nwith detail", entries[1].Text)
+	require.Equal(t, "source", entries[1].SessionID)
+
+	data, err := os.ReadFile(filepath.Join(store.Dir, "source.jsonl"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"type":"input"`)
+	require.Contains(t, string(data), `"input":"first prompt"`)
+}
+
+func TestPromptHistoryFallsBackToUserMessages(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "ignored")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "legacy prompt")))
+
+	entries, err := store.PromptHistory("source")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, 1, entries[0].Index)
+	require.Equal(t, "legacy prompt", entries[0].Text)
+}
+
+func TestAppendInputIgnoresBlankInput(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.AppendInput("source", "  \n\t"))
+
+	entries, err := store.PromptHistory("source")
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
 func TestExportMarkdownJSONAndJSONL(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize this repo")))

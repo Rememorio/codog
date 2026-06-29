@@ -32,6 +32,7 @@ import (
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
+	"github.com/Rememorio/codog/internal/prompthistory"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
@@ -190,6 +191,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Prompt(ctx, input, overrides)
 	case "sessions":
 		return app.SessionsCommand(rest)
+	case "history", "prompt-history":
+		return app.History(rest, overrides)
 	case "skills":
 		return app.ListSkills()
 	case "mcp":
@@ -1581,6 +1584,46 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type historyRequest struct {
+	SessionID string
+	Format    string
+	Limit     int
+}
+
+func (a *App) History(args []string, overrides config.FlagOverrides) error {
+	req, err := parseHistoryArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	sessionID := req.SessionID
+	if sessionID == "latest" {
+		latest, err := a.Sessions.LatestID()
+		if errors.Is(err, session.ErrNoSessions) {
+			return a.renderPromptHistory(req.Format, "", nil, req.Limit)
+		}
+		if err != nil {
+			return err
+		}
+		sessionID = latest
+	}
+	entries, err := a.Sessions.PromptHistory(sessionID)
+	if err != nil {
+		return err
+	}
+	return a.renderPromptHistory(req.Format, sessionID, entries, req.Limit)
+}
+
+func (a *App) renderPromptHistory(format string, sessionID string, entries []session.PromptEntry, limit int) error {
+	report := prompthistory.Build(sessionID, entries, limit)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	prompthistory.RenderText(a.Out, report)
+	return nil
+}
+
 func (a *App) renderStatus(format string, active *session.Session) {
 	snapshot := a.statusSnapshot(active)
 	if format == "json" {
@@ -1689,6 +1732,94 @@ func parseSimpleOutputFormat(command string, args []string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown %s output format %q", command, format)
 	}
+}
+
+func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyRequest, error) {
+	req := historyRequest{Format: "text", Limit: prompthistory.DefaultLimit}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+		if req.SessionID == "true" {
+			req.SessionID = "latest"
+		}
+	}
+	if req.SessionID == "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("history output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit" || arg == "-n":
+			index++
+			if index >= len(args) {
+				return req, errors.New("history limit is required")
+			}
+			limit, err := parseHistoryLimit(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parseHistoryLimit(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("history session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown history flag %q", arg)
+		default:
+			limit, err := strconv.Atoi(arg)
+			if err == nil {
+				if limit <= 0 {
+					return req, errors.New("history limit must be positive")
+				}
+				req.Limit = limit
+				continue
+			}
+			if req.SessionID == "" || req.SessionID == "latest" {
+				req.SessionID = arg
+				continue
+			}
+			return req, fmt.Errorf("unexpected history argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown history output format %q", req.Format)
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func parseHistoryLimit(value string) (int, error) {
+	limit, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		return 0, errors.New("history limit must be positive")
+	}
+	return limit, nil
 }
 
 func (a *App) Doctor(args []string) error {
@@ -1835,6 +1966,9 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err != nil {
 		return err
 	}
+	if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
+		return err
+	}
 	a.writeWorkerState("prompt", "running", sess, "")
 	runner := runloop.Runner{
 		Config:    a.Config,
@@ -1892,6 +2026,9 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		}
 		if a.handleSlash(ctx, line, sess) {
 			continue
+		}
+		if err := a.Sessions.AppendInput(sess.ID, line); err != nil {
+			return err
 		}
 		a.writeWorkerState("repl", "running", sess, "")
 		runner := runloop.Runner{
@@ -1966,6 +2103,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleCommitSlash(fields[1:])
 	case "/export":
 		a.handleExportSlash(fields[1:], sess)
+	case "/history", "/prompt-history":
+		a.handleHistorySlash(fields[1:], sess)
 	case "/skills":
 		_ = a.ListSkills()
 	case "/mcp":
@@ -1978,6 +2117,16 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	}
 	return true
+}
+
+func (a *App) handleHistorySlash(args []string, sess *session.Session) {
+	overrides := config.FlagOverrides{}
+	if sess != nil {
+		overrides.SessionID = sess.ID
+	}
+	if err := a.History(args, overrides); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+	}
 }
 
 func (a *App) handleConfigSlash(args []string) {
@@ -2614,6 +2763,7 @@ Usage:
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
+  %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
   %s [flags] mcp
@@ -2647,7 +2797,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

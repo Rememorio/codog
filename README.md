@@ -19,11 +19,14 @@ Claude Code source.
 
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
-  `/permissions`, `/cost`, `/compact`, `/skills`, `/mcp`.
+  `/permissions`, `/history`, `/cost`, `/compact`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
   raw JSONL.
+- `/history` and `codog history [--session ID] [--limit N] [--json]` show
+  prompts recorded for a session, with legacy fallback to user transcript
+  messages.
 - `/diff`, `/commit`, and `codog git` provide local git status, diff, and
   commit workflows.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and
