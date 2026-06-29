@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -67,4 +70,49 @@ func TestDownloadRejectsChecksumMismatch(t *testing.T) {
 	_, err := Download(context.Background(), server.URL+"/manifest.json", "test", t.TempDir())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "checksum mismatch")
+}
+
+func TestInstallAndRollback(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "codog")
+	artifact := filepath.Join(dir, "codog-new")
+	require.NoError(t, os.WriteFile(target, []byte("old"), 0o755))
+	require.NoError(t, os.WriteFile(artifact, []byte("new"), 0o644))
+
+	result, err := Install(artifact, target)
+	require.NoError(t, err)
+	require.True(t, result.Installed)
+	require.Equal(t, target+".bak", result.BackupPath)
+	require.FileExists(t, target+".bak")
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "new", string(data))
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(target)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+	}
+
+	rollback, err := Rollback(target)
+	require.NoError(t, err)
+	require.True(t, rollback.RolledBack)
+	data, err = os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "old", string(data))
+}
+
+func TestInstallNewTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "bin", "codog")
+	artifact := filepath.Join(dir, "codog-new")
+	require.NoError(t, os.WriteFile(artifact, []byte("new"), 0o755))
+
+	result, err := Install(artifact, target)
+	require.NoError(t, err)
+	require.True(t, result.Installed)
+	require.Empty(t, result.BackupPath)
+	require.FileExists(t, target)
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "new", string(data))
 }

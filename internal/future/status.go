@@ -153,10 +153,10 @@ func Surfaces() []Surface {
 			Command:     "updater",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Manifest check and SHA-256 verified artifact download are available; binary replacement remains planned.",
+			Description: "Manifest check, SHA-256 verified artifact download, and backup-based binary install/rollback are available.",
 			NextSteps: []string{
-				"Add atomic self-replacement with rollback.",
 				"Support signed manifests.",
+				"Add platform-specific package manager handoff.",
 				"Keep package-manager installs out of self-update.",
 			},
 		},

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,4 +115,27 @@ func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
 
 	require.NoError(t, app.RegisterPluginTools())
 	require.False(t, app.Tools.Has("demo_tool"))
+}
+
+func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
+	dir := t.TempDir()
+	artifact := filepath.Join(dir, "codog-new")
+	target := filepath.Join(dir, "codog")
+	require.NoError(t, os.WriteFile(artifact, []byte("new"), 0o755))
+	require.NoError(t, os.WriteFile(target, []byte("old"), 0o755))
+
+	var out bytes.Buffer
+	app := &App{Out: &out}
+	require.NoError(t, app.Updater(context.Background(), []string{"install", artifact, target}))
+	require.Contains(t, out.String(), `"installed": true`)
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "new", string(data))
+
+	out.Reset()
+	require.NoError(t, app.Updater(context.Background(), []string{"rollback", target}))
+	require.Contains(t, out.String(), `"rolled_back": true`)
+	data, err = os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, "old", string(data))
 }

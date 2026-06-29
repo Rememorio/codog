@@ -38,6 +38,20 @@ type DownloadResult struct {
 	Verified bool   `json:"verified"`
 }
 
+type InstallResult struct {
+	Source     string `json:"source"`
+	Target     string `json:"target"`
+	BackupPath string `json:"backup_path,omitempty"`
+	Installed  bool   `json:"installed"`
+	RolledBack bool   `json:"rolled_back,omitempty"`
+}
+
+type RollbackResult struct {
+	Target     string `json:"target"`
+	BackupPath string `json:"backup_path"`
+	RolledBack bool   `json:"rolled_back"`
+}
+
 func Check(ctx context.Context, currentVersion, manifestURL string) (CheckResult, error) {
 	manifest, err := FetchManifest(ctx, manifestURL)
 	if err != nil {
@@ -139,6 +153,98 @@ func Download(ctx context.Context, manifestURL, platform, destDir string) (Downl
 	}, nil
 }
 
+func Install(artifactPath, targetPath string) (InstallResult, error) {
+	if artifactPath == "" {
+		return InstallResult{}, fmt.Errorf("artifact path is required")
+	}
+	if targetPath == "" {
+		return InstallResult{}, fmt.Errorf("target path is required")
+	}
+	artifactPath = filepath.Clean(artifactPath)
+	targetPath = filepath.Clean(targetPath)
+	sourceInfo, err := os.Stat(artifactPath)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	if sourceInfo.IsDir() {
+		return InstallResult{}, fmt.Errorf("artifact must be a file")
+	}
+	targetInfo, targetErr := os.Stat(targetPath)
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		return InstallResult{}, targetErr
+	}
+	mode := sourceInfo.Mode().Perm()
+	hadTarget := targetErr == nil
+	if hadTarget {
+		if targetInfo.IsDir() {
+			return InstallResult{}, fmt.Errorf("target must be a file")
+		}
+		mode = targetInfo.Mode().Perm()
+	}
+	targetDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return InstallResult{}, err
+	}
+	tmpPath := targetPath + ".new"
+	backupPath := targetPath + ".bak"
+	if err := copyExecutable(artifactPath, tmpPath, mode); err != nil {
+		return InstallResult{}, err
+	}
+	_ = os.Remove(backupPath)
+	result := InstallResult{Source: artifactPath, Target: targetPath}
+	if hadTarget {
+		if err := os.Rename(targetPath, backupPath); err != nil {
+			_ = os.Remove(tmpPath)
+			return result, err
+		}
+		result.BackupPath = backupPath
+	}
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		result.RolledBack = true
+		_ = os.Remove(tmpPath)
+		if hadTarget {
+			_ = os.Rename(backupPath, targetPath)
+		}
+		return result, err
+	}
+	if err := os.Chmod(targetPath, mode); err != nil {
+		result.RolledBack = true
+		if hadTarget {
+			_ = os.Remove(targetPath)
+			_ = os.Rename(backupPath, targetPath)
+		}
+		return result, err
+	}
+	result.Installed = true
+	return result, nil
+}
+
+func Rollback(targetPath string) (RollbackResult, error) {
+	if targetPath == "" {
+		return RollbackResult{}, fmt.Errorf("target path is required")
+	}
+	targetPath = filepath.Clean(targetPath)
+	backupPath := targetPath + ".bak"
+	if _, err := os.Stat(backupPath); err != nil {
+		return RollbackResult{}, err
+	}
+	tmpPath := targetPath + ".rollback"
+	_ = os.Remove(tmpPath)
+	if _, err := os.Stat(targetPath); err == nil {
+		if err := os.Rename(targetPath, tmpPath); err != nil {
+			return RollbackResult{}, err
+		}
+	}
+	if err := os.Rename(backupPath, targetPath); err != nil {
+		if _, tmpErr := os.Stat(tmpPath); tmpErr == nil {
+			_ = os.Rename(tmpPath, targetPath)
+		}
+		return RollbackResult{}, err
+	}
+	_ = os.Remove(tmpPath)
+	return RollbackResult{Target: targetPath, BackupPath: backupPath, RolledBack: true}, nil
+}
+
 func PlatformKey() string {
 	return runtime.GOOS + "-" + runtime.GOARCH
 }
@@ -181,4 +287,27 @@ func safeName(value string) string {
 		return "unknown"
 	}
 	return name
+}
+
+func copyExecutable(source, target string, mode os.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(target)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(target)
+		return closeErr
+	}
+	return os.Chmod(target, mode)
 }

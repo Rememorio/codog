@@ -49,8 +49,8 @@ Claude Code source.
   state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, diagnostics, and bounded file read/write/edit operations.
-- `codog updater check URL` checks a release manifest; `updater download URL`
-  downloads a platform artifact with optional SHA-256 verification.
+- `codog updater check|download|install|rollback` checks releases, downloads
+  verified artifacts, and installs with a backup rollback path.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use
   audit events.
 

@@ -235,18 +235,24 @@ func (a *App) Bridge(args []string) error {
 }
 
 func (a *App) Updater(ctx context.Context, args []string) error {
-	if len(args) < 2 {
+	if len(args) == 0 {
 		return a.FutureStatus("updater", args)
 	}
 	var payload any
 	switch args[0] {
 	case "check":
+		if len(args) < 2 {
+			return errors.New("usage: codog updater check URL")
+		}
 		result, err := updater.Check(ctx, version, args[1])
 		if err != nil {
 			return err
 		}
 		payload = result
 	case "download":
+		if len(args) < 2 {
+			return errors.New("usage: codog updater download URL [PLATFORM] [DEST]")
+		}
 		platform := ""
 		if len(args) > 2 {
 			platform = args[2]
@@ -256,6 +262,41 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 			dest = args[3]
 		}
 		result, err := updater.Download(ctx, args[1], platform, dest)
+		if err != nil {
+			return err
+		}
+		payload = result
+	case "install":
+		if len(args) < 2 {
+			return errors.New("usage: codog updater install ARTIFACT [TARGET]")
+		}
+		target := ""
+		if len(args) > 2 {
+			target = args[2]
+		} else {
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			target = exe
+		}
+		result, err := updater.Install(args[1], target)
+		if err != nil {
+			return err
+		}
+		payload = result
+	case "rollback":
+		target := ""
+		if len(args) > 1 {
+			target = args[1]
+		} else {
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			target = exe
+		}
+		result, err := updater.Rollback(target)
 		if err != nil {
 			return err
 		}
@@ -1033,7 +1074,7 @@ Usage:
   %s marketplace list|install|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics
-  %s remote serve [addr] | bridge serve | updater check|download URL
+  %s remote serve [addr] | bridge serve | updater check|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit]
   %s config
 
