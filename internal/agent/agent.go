@@ -1019,8 +1019,11 @@ func (a *App) OAuth(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
+	if args[0] == "device" {
+		return a.oauthDevice(args[1:])
+	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth token save|show|delete")
+		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth device start|poll|login | oauth token save|show|delete")
 	}
 	if len(args) < 2 {
 		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | delete")
@@ -1064,6 +1067,84 @@ func (a *App) OAuth(args []string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown oauth token command %q", args[1])
+	}
+}
+
+func (a *App) oauthDevice(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] | poll ISSUER_URL CLIENT_ID DEVICE_CODE | login ISSUER_URL CLIENT_ID [SCOPE...]")
+	}
+	switch args[0] {
+	case "start":
+		if len(args) < 3 {
+			return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...]")
+		}
+		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		if err != nil {
+			return err
+		}
+		auth, err := oauth.StartDeviceAuthorization(context.Background(), metadata, args[2], args[3:])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(auth, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "poll":
+		if len(args) < 4 {
+			return errors.New("usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE")
+		}
+		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		if err != nil {
+			return err
+		}
+		token, err := oauth.PollDeviceToken(context.Background(), metadata, args[3], oauth.DevicePollOptions{ClientID: args[2]})
+		if err != nil {
+			return err
+		}
+		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(saved.View(time.Now().UTC()), "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "login":
+		if len(args) < 3 {
+			return errors.New("usage: codog oauth device login ISSUER_URL CLIENT_ID [SCOPE...]")
+		}
+		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		if err != nil {
+			return err
+		}
+		auth, err := oauth.StartDeviceAuthorization(context.Background(), metadata, args[2], args[3:])
+		if err != nil {
+			return err
+		}
+		if a.Err != nil {
+			target := auth.VerificationURI
+			if auth.VerificationURIComplete != "" {
+				target = auth.VerificationURIComplete
+			}
+			fmt.Fprintf(a.Err, "Open %s and enter code %s\n", target, auth.UserCode)
+		}
+		token, err := oauth.PollDeviceToken(context.Background(), metadata, auth.DeviceCode, oauth.DevicePollOptions{
+			ClientID:  args[2],
+			Interval:  time.Duration(auth.Interval) * time.Second,
+			ExpiresAt: auth.ExpiresAt,
+		})
+		if err != nil {
+			return err
+		}
+		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(map[string]any{"device": auth, "token": saved.View(time.Now().UTC())}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	default:
+		return fmt.Errorf("unknown oauth device command %q", args[0])
 	}
 }
 
@@ -1512,7 +1593,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth discover ISSUER_URL | oauth token save|show|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth device start|poll|login | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY

@@ -216,6 +216,45 @@ func TestOAuthDiscoverCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"token_endpoint": "https://auth.example/token"`)
 }
 
+func TestOAuthDeviceCommands(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"device_authorization_endpoint":"` + server.URL + `/device","token_endpoint":"` + server.URL + `/token"}`))
+		case "/device":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "client-1", r.Form.Get("client_id"))
+			_, _ = w.Write([]byte(`{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"` + server.URL + `/verify","expires_in":600,"interval":1}`))
+		case "/token":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, oauth.DeviceCodeGrantType, r.Form.Get("grant_type"))
+			require.Equal(t, "device-1", r.Form.Get("device_code"))
+			_, _ = w.Write([]byte(`{"access_token":"device-access-1234","refresh_token":"device-refresh-1234","expires_in":3600}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	require.NoError(t, app.OAuth([]string{"device", "start", server.URL, "client-1", "profile"}))
+	require.Contains(t, out.String(), `"user_code": "ABCD-EFGH"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"device", "poll", server.URL, "client-1", "device-1"}))
+	require.Contains(t, out.String(), `"access_token": "devi...1234"`)
+	loaded, err := oauth.LoadToken(configHome)
+	require.NoError(t, err)
+	require.Equal(t, "device-access-1234", loaded.AccessToken)
+}
+
 func TestApplyStoredOAuthToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()
