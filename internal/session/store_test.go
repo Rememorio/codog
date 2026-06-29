@@ -174,6 +174,31 @@ func TestWorkspaceStoreRewindsLegacySession(t *testing.T) {
 	require.Equal(t, "legacy prompt", opened.Messages[0].Content[0].Text)
 }
 
+func TestReplaceMessagesRewritesSessionMessages(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.AppendInput("source", "first prompt"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "first answer")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+
+	result, err := store.ReplaceMessages(sess, []anthropic.Message{anthropic.TextMessage("user", "compacted")})
+
+	require.NoError(t, err)
+	require.Equal(t, "source", result.SessionID)
+	require.Equal(t, 2, result.OriginalMessages)
+	require.Equal(t, 1, result.RemainingMessages)
+	require.Equal(t, 1, result.RemovedMessages)
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "compacted", opened.Messages[0].Content[0].Text)
+	entries, err := store.PromptHistory("source")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "compacted", entries[0].Text)
+}
+
 func TestAppendInputIgnoresBlankInput(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.AppendInput("source", "  \n\t"))

@@ -1028,6 +1028,34 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestCompactCommandPersistsCompactedSession(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("user", "three")))
+	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("assistant", "four")))
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, AutoCompactMessages: 2},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Compact([]string{"--session", "compact-session", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"original_messages": 4`)
+	require.Contains(t, out.String(), `"remaining_messages": 3`)
+	opened, err := store.Open("compact-session")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 3)
+	require.Contains(t, opened.Messages[0].Content[0].Text, "auto-compacted")
+	require.Equal(t, "three", opened.Messages[1].Content[0].Text)
+	require.Equal(t, "four", opened.Messages[2].Content[0].Text)
+}
+
 func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer

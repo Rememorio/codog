@@ -45,6 +45,14 @@ type RewindResult struct {
 	RemovedMessages   int    `json:"removed_messages"`
 }
 
+type ReplaceResult struct {
+	SessionID         string `json:"session_id"`
+	Path              string `json:"path"`
+	OriginalMessages  int    `json:"original_messages"`
+	RemainingMessages int    `json:"remaining_messages"`
+	RemovedMessages   int    `json:"removed_messages"`
+}
+
 type Store struct {
 	Dir       string
 	LegacyDir string
@@ -367,6 +375,41 @@ func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 		OriginalMessages:  totalMessages,
 		RemainingMessages: remainingMessages,
 		RemovedMessages:   totalMessages - remainingMessages,
+	}, nil
+}
+
+func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (ReplaceResult, error) {
+	if sess == nil {
+		return ReplaceResult{}, errors.New("session is required")
+	}
+	if strings.TrimSpace(sess.ID) == "" {
+		return ReplaceResult{}, errors.New("session id is required")
+	}
+	path := sess.Path
+	if path == "" {
+		path = s.pathFor(sess.ID)
+	}
+	records := make([]Record, 0, len(messages))
+	for _, msg := range messages {
+		next := msg
+		records = append(records, Record{
+			Type:      "message",
+			Time:      time.Now().UTC(),
+			Message:   &next,
+			SessionID: sess.ID,
+		})
+	}
+	if err := s.writeRecords(path, records); err != nil {
+		return ReplaceResult{}, err
+	}
+	original := len(sess.Messages)
+	sess.Messages = append([]anthropic.Message(nil), messages...)
+	return ReplaceResult{
+		SessionID:         sess.ID,
+		Path:              path,
+		OriginalMessages:  original,
+		RemainingMessages: len(messages),
+		RemovedMessages:   original - len(messages),
 	}, nil
 }
 

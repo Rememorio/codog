@@ -240,6 +240,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ShowCost(overrides)
 	case "usage":
 		return app.Usage(rest, overrides)
+	case "compact":
+		return app.Compact(rest, overrides)
 	case "rate-limit-options":
 		return app.RateLimitOptions(rest)
 	case "plan":
@@ -4471,9 +4473,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/compact":
-		before := len(sess.Messages)
-		sess.Messages = runloop.CompactMessages(sess.Messages, a.Config.AutoCompactMessages)
-		fmt.Fprintf(a.Err, "compacted request context from %d to %d messages\n", before, len(sess.Messages))
+		if err := a.Compact(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		} else if current, err := a.Sessions.Open(sess.ID); err == nil {
+			*sess = *current
+		}
 	case "/diff":
 		a.handleDiffSlash(fields[1:])
 	case "/commit":
@@ -6286,6 +6290,117 @@ func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type compactRequest struct {
+	Format  string
+	Session string
+	Keep    int
+}
+
+func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
+	req, err := parseCompactArgs(args, overrides, a.Config.AutoCompactMessages)
+	if err != nil {
+		return err
+	}
+	sess, err := a.Sessions.Open(req.Session)
+	if err != nil {
+		return err
+	}
+	compacted := runloop.CompactMessages(sess.Messages, req.Keep)
+	var result session.ReplaceResult
+	if len(compacted) == len(sess.Messages) {
+		result = session.ReplaceResult{
+			SessionID:         sess.ID,
+			Path:              sess.Path,
+			OriginalMessages:  len(sess.Messages),
+			RemainingMessages: len(sess.Messages),
+			RemovedMessages:   0,
+		}
+	} else {
+		result, err = a.Sessions.ReplaceMessages(sess, compacted)
+		if err != nil {
+			return err
+		}
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Session Compacted")
+	fmt.Fprintf(a.Out, "  Session          %s\n", result.SessionID)
+	fmt.Fprintf(a.Out, "  Original         %d\n", result.OriginalMessages)
+	fmt.Fprintf(a.Out, "  Remaining        %d\n", result.RemainingMessages)
+	fmt.Fprintf(a.Out, "  Removed          %d\n", result.RemovedMessages)
+	return nil
+}
+
+func parseCompactArgs(args []string, overrides config.FlagOverrides, defaultKeep int) (compactRequest, error) {
+	req := compactRequest{Format: "text", Keep: defaultKeep}
+	req.Session = overrides.Resume
+	if req.Session == "" {
+		req.Session = overrides.SessionID
+	}
+	if req.Session == "" {
+		req.Session = "latest"
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			if i+1 >= len(args) {
+				return req, errors.New("compact output format is required")
+			}
+			i++
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--keep":
+			if i+1 >= len(args) {
+				return req, errors.New("compact keep count is required")
+			}
+			i++
+			value, err := strconv.Atoi(args[i])
+			if err != nil || value <= 0 {
+				return req, errors.New("compact keep count must be a positive integer")
+			}
+			req.Keep = value
+		case strings.HasPrefix(arg, "--keep="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--keep="))
+			if err != nil || value <= 0 {
+				return req, errors.New("compact keep count must be a positive integer")
+			}
+			req.Keep = value
+		case arg == "--session":
+			if i+1 >= len(args) {
+				return req, errors.New("compact session id is required")
+			}
+			i++
+			req.Session = args[i]
+		case strings.HasPrefix(arg, "--session="):
+			req.Session = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			if i+1 >= len(args) {
+				return req, errors.New("compact resume id is required")
+			}
+			i++
+			req.Session = args[i]
+		case strings.HasPrefix(arg, "--resume="):
+			req.Session = strings.TrimPrefix(arg, "--resume=")
+		default:
+			return req, fmt.Errorf("unknown compact argument %q", arg)
+		}
+	}
+	if req.Format != "text" && req.Format != "json" {
+		return req, fmt.Errorf("unknown compact output format %q", req.Format)
+	}
+	if req.Keep <= 0 {
+		req.Keep = 40
+	}
+	return req, nil
+}
+
 type rateLimitOptionsReport struct {
 	Kind              string `json:"kind"`
 	Action            string `json:"action"`
@@ -6556,6 +6671,7 @@ Usage:
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] plan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
@@ -6592,7 +6708,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

@@ -96,6 +96,8 @@ Claude Code source.
   filtering.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
+- `codog compact --resume latest --keep N` persists a compacted session context
+  using the same message compaction logic as long prompt turns.
 - `codog rate-limit-options` reports provider retry/backoff settings; Anthropic
   streaming retries transport errors, 429, and selected 5xx responses according
   to `rate_limit`.
