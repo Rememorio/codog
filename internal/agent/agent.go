@@ -227,7 +227,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "output-style":
 		return app.OutputStyle(rest)
 	case "skills":
-		return app.ListSkills()
+		return app.Skills(rest)
 	case "commands":
 		return app.Commands(rest)
 	case "templates":
@@ -4282,7 +4282,8 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 	if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
 		return err
 	}
-	modelInput := a.expandPromptReferences(input)
+	modelInput := a.expandSkillInvocation(input)
+	modelInput = a.expandPromptReferences(modelInput)
 	a.writeWorkerState(mode, "running", sess, "")
 	effectiveConfig := a.effectiveConfig()
 	runner := runloop.Runner{
@@ -4316,6 +4317,23 @@ func (a *App) expandPromptReferences(input string) string {
 		additionalDirs = nil
 	}
 	return promptrefs.Expand(input, a.Workspace, additionalDirs)
+}
+
+func (a *App) expandSkillInvocation(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || strings.HasPrefix(trimmed, "/") {
+		return input
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return input
+	}
+	skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, fields[0])
+	if err != nil {
+		return input
+	}
+	args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+	return skills.RenderInvocation(skill, args)
 }
 
 func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
@@ -4561,7 +4579,9 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/skills":
-		_ = a.ListSkills()
+		if err := a.Skills(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/commands":
 		if err := a.Commands(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -6027,9 +6047,84 @@ func (a *App) ListSessions() error {
 }
 
 func (a *App) ListSkills() error {
+	return a.Skills(nil)
+}
+
+func (a *App) Skills(args []string) error {
+	action := "list"
+	rest := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		action = strings.ToLower(args[0])
+		rest = args[1:]
+	}
+	switch action {
+	case "list":
+		return a.listSkills(rest)
+	case "show":
+		format, remaining, err := parseTemplateOutputArgs("skills show", rest)
+		if err != nil {
+			return err
+		}
+		if len(remaining) != 1 {
+			return errors.New("usage: codog skills show NAME [--json]")
+		}
+		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			data, _ := json.MarshalIndent(skill, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprint(a.Out, skill.Body)
+		if !strings.HasSuffix(skill.Body, "\n") {
+			fmt.Fprintln(a.Out)
+		}
+	case "invoke", "run":
+		format, remaining, err := parseTemplateOutputArgs("skills invoke", rest)
+		if err != nil {
+			return err
+		}
+		if len(remaining) < 1 {
+			return errors.New("usage: codog skills invoke NAME [ARGS...] [--json]")
+		}
+		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		if err != nil {
+			return err
+		}
+		rendered := skills.RenderInvocation(skill, strings.Join(remaining[1:], " "))
+		if format == "json" {
+			data, _ := json.MarshalIndent(map[string]any{
+				"kind":     "skill_invocation",
+				"name":     skill.Name,
+				"source":   skill.Source,
+				"path":     skill.Path,
+				"rendered": rendered,
+			}, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, rendered)
+	default:
+		return fmt.Errorf("unknown skills action %q", action)
+	}
+	return nil
+}
+
+func (a *App) listSkills(args []string) error {
+	format, err := parseSimpleOutputFormat("skills", args)
+	if err != nil {
+		return err
+	}
 	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
 	if err != nil {
 		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{"kind": "skills", "action": "list", "skills": all}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
 	if len(all) == 0 {
 		fmt.Fprintln(a.Out, "No skills found.")
@@ -6752,7 +6847,7 @@ Usage:
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
-  %s [flags] skills
+  %s [flags] skills [list|show|invoke]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]

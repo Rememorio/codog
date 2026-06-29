@@ -1588,6 +1588,65 @@ func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	require.Contains(t, prompt, "Always run focused tests.")
 }
 
+func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "skill done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review skill body"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill body"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Skills([]string{"list", "--json"}))
+	require.Contains(t, out.String(), `"name": "team:audit"`)
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"show", "review"}))
+	require.Equal(t, "Review skill body\n", out.String())
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"invoke", "team:audit", "auth"}))
+	require.Contains(t, out.String(), `<skill name="team:audit"`)
+	require.Contains(t, out.String(), "User request: auth")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/skills show team:audit", &session.Session{ID: "session"}))
+	require.Equal(t, "Audit skill body\n", out.String())
+	out.Reset()
+
+	require.NoError(t, app.Prompt(context.Background(), "review auth flow", config.FlagOverrides{SessionID: "skill-session"}))
+	require.Contains(t, out.String(), "skill done")
+	loaded, err := app.Sessions.Open("skill-session")
+	require.NoError(t, err)
+	require.Len(t, loaded.Messages, 2)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, `<skill name="review"`)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "Review skill body")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "User request: auth flow")
+	require.Contains(t, errOut.String(), "session: skill-session")
+}
+
 func TestTemplatesCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
