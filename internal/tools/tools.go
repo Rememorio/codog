@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mcp"
@@ -76,6 +77,7 @@ type ToolInfo struct {
 type RegistryOptions struct {
 	SandboxStrategy string
 	AdditionalDirs  []string
+	ConfigHome      string
 	QuestionIn      io.Reader
 	QuestionOut     io.Writer
 }
@@ -116,6 +118,11 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskStopTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
@@ -1010,6 +1017,214 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+type TaskCreateTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskCreateTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_create",
+		Description: "Start a background shell task in the workspace and return its task metadata.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"command":    map[string]any{"type": "string"},
+				"kind":       map[string]any{"type": "string"},
+				"session_id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"command"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskCreateTool) Permission() Permission { return PermissionDanger }
+
+func (t TaskCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Command   string `json:"command"`
+		Kind      string `json:"kind"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(payload.Command, t.Workspace, background.RunOptions{
+		Kind:      payload.Kind,
+		SessionID: payload.SessionID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return pretty(task), nil
+}
+
+type TaskListTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskListTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_list",
+		Description: "List background tasks, optionally filtered by session or kind.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session_id": map[string]any{"type": "string"},
+				"kind":       map[string]any{"type": "string"},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskListTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TaskListTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		SessionID string `json:"session_id"`
+		Kind      string `json:"kind"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	tasks, err := taskStore(t.ConfigHome, t.Workspace).List()
+	if err != nil {
+		return "", err
+	}
+	tasks = background.FilterBySession(tasks, payload.SessionID)
+	tasks = background.FilterByKind(tasks, payload.Kind)
+	return pretty(map[string]any{"tasks": tasks, "total": len(tasks)}), nil
+}
+
+type TaskStatusTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskStatusTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_status",
+		Description: "Get background task metadata by task id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskStatusTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TaskStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Status(payload.ID)
+	if err != nil {
+		return "", err
+	}
+	return pretty(task), nil
+}
+
+type TaskStopTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskStopTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_stop",
+		Description: "Stop a running background task by task id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskStopTool) Permission() Permission { return PermissionWorkspace }
+
+func (t TaskStopTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Stop(payload.ID)
+	if err != nil {
+		return "", err
+	}
+	return pretty(task), nil
+}
+
+type TaskOutputTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskOutputTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_output",
+		Description: "Read recent background task log output by task id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":          map[string]any{"type": "string"},
+				"limit_bytes": map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required":             []string{"id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskOutputTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		ID         string `json:"id"`
+		LimitBytes int64  `json:"limit_bytes"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if payload.LimitBytes <= 0 {
+		payload.LimitBytes = 64 * 1024
+	}
+	output, err := taskStore(t.ConfigHome, t.Workspace).Logs(payload.ID, payload.LimitBytes)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"id": payload.ID, "output": output}), nil
+}
+
+func taskStore(configHome string, workspace string) background.Store {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" {
+		if workspace == "" {
+			workspace = "."
+		}
+		configHome = filepath.Join(workspace, ".codog")
+	}
+	return background.NewStore(configHome)
 }
 
 type AskUserQuestionTool struct {

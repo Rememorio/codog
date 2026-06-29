@@ -12,7 +12,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/stretchr/testify/require"
 )
@@ -133,7 +135,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 14)
+	require.Len(t, infos, 19)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -142,6 +144,10 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	_, ok = registry.Info("notebook_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("multi_edit")
+	require.True(t, ok)
+	_, ok = registry.Info("task_create")
+	require.True(t, ok)
+	_, ok = registry.Info("task_output")
 	require.True(t, ok)
 	_, ok = registry.Info("web_fetch")
 	require.True(t, ok)
@@ -257,6 +263,39 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	result, err = tool.Execute(context.Background(), []byte(`{"question":"Continue?","default":"yes"}`))
 	require.NoError(t, err)
 	require.Contains(t, result, `"answer": "yes"`)
+}
+
+func TestTaskToolsManageBackgroundTasks(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	createOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"printf task-output","kind":"test","session_id":"session-1"}`))
+	require.NoError(t, err)
+	var task background.Task
+	require.NoError(t, json.Unmarshal([]byte(createOut), &task))
+	require.NotEmpty(t, task.ID)
+
+	require.Eventually(t, func() bool {
+		statusOut, err := TaskStatusTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
+		return err == nil && !strings.Contains(statusOut, `"status": "running"`)
+	}, 2*time.Second, 20*time.Millisecond)
+
+	outputOut, err := TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, outputOut, "task-output")
+
+	listOut, err := TaskListTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"session_id":"session-1","kind":"test"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, task.ID)
+	require.Contains(t, listOut, `"total": 1`)
+
+	stopOut, err := TaskStopTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, stopOut, task.ID)
+
+	registry := NewRegistryWithOptions(workspace, RegistryOptions{ConfigHome: configHome})
+	info, ok := registry.Info("task_create")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
