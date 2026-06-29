@@ -145,6 +145,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
+	reg.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(StructuredOutputTool{})
 	reg.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
@@ -2323,6 +2325,120 @@ func resolveQuestionChoice(answer string, choices []string) string {
 		}
 	}
 	return answer
+}
+
+type BriefTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+type briefAttachment struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	IsImage bool   `json:"is_image"`
+}
+
+func (BriefTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "brief",
+		Description: "Return a user-facing brief message with optional workspace attachment metadata.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"message": map[string]any{"type": "string"},
+				"attachments": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"status": map[string]any{"type": "string", "enum": []string{"normal", "proactive"}},
+			},
+			"required":             []string{"message", "status"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (BriefTool) Permission() Permission { return PermissionReadOnly }
+
+func (t BriefTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Message     string   `json:"message"`
+		Attachments []string `json:"attachments"`
+		Status      string   `json:"status"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	payload.Message = strings.TrimSpace(payload.Message)
+	if payload.Message == "" {
+		return "", errors.New("message is required")
+	}
+	status := strings.ToLower(strings.TrimSpace(payload.Status))
+	switch status {
+	case "normal", "proactive":
+	default:
+		return "", fmt.Errorf("unknown brief status %q", payload.Status)
+	}
+	attachments := make([]briefAttachment, 0, len(payload.Attachments))
+	for _, attachment := range payload.Attachments {
+		path, err := safePathInScope(t.Workspace, t.AdditionalDirs, attachment, false)
+		if err != nil {
+			return "", err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		attachments = append(attachments, briefAttachment{
+			Path:    path,
+			Size:    info.Size(),
+			IsImage: isImageAttachment(path),
+		})
+	}
+	return pretty(map[string]any{
+		"message":     payload.Message,
+		"status":      status,
+		"attachments": attachments,
+		"sent_at":     time.Now().UTC().Format(time.RFC3339),
+	}), nil
+}
+
+func isImageAttachment(path string) bool {
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(path), ".")) {
+	case "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg":
+		return true
+	default:
+		return false
+	}
+}
+
+type StructuredOutputTool struct{}
+
+func (StructuredOutputTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "structured_output",
+		Description: "Return the provided non-empty JSON object as structured output.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": true,
+		},
+	}
+}
+
+func (StructuredOutputTool) Permission() Permission { return PermissionReadOnly }
+
+func (StructuredOutputTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if len(payload) == 0 {
+		return "", errors.New("structured output payload must not be empty")
+	}
+	return pretty(map[string]any{
+		"data":              "Structured output provided successfully",
+		"structured_output": payload,
+	}), nil
 }
 
 type SkillTool struct {

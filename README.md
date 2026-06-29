@@ -16,7 +16,8 @@ Claude Code source.
   `team_create`, `team_delete`,
   `enter_worktree`, `exit_worktree`,
   `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
-  `tool_search`, `skill`, `config`, `list_mcp_resources`,
+  `brief`, `structured_output`, `tool_search`, `skill`, `config`,
+  `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
   `todo_read`, `todo_write`

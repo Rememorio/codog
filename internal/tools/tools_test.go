@@ -137,7 +137,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 36)
+	require.Len(t, infos, 38)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -190,6 +190,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	_, ok = registry.Info("tool_search")
 	require.True(t, ok)
+	info, ok = registry.Info("brief")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("structured_output")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("skill")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -506,6 +512,28 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	result, err = tool.Execute(context.Background(), []byte(`{"question":"Continue?","default":"yes"}`))
 	require.NoError(t, err)
 	require.Contains(t, result, `"answer": "yes"`)
+}
+
+func TestBriefToolReturnsAttachmentMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "image.png"), []byte("png"), 0o644))
+
+	out, err := BriefTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"message":"Review ready","status":"normal","attachments":["image.png"]}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"message": "Review ready"`)
+	require.Contains(t, out, `"status": "normal"`)
+	require.Contains(t, out, `"is_image": true`)
+	require.Contains(t, out, `"size": 3`)
+}
+
+func TestStructuredOutputToolReturnsPayload(t *testing.T) {
+	out, err := StructuredOutputTool{}.Execute(context.Background(), []byte(`{"ok":true,"items":[1,2,3]}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"data": "Structured output provided successfully"`)
+	require.Contains(t, out, `"ok": true`)
+
+	_, err = StructuredOutputTool{}.Execute(context.Background(), []byte(`{}`))
+	require.Error(t, err)
 }
 
 func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
