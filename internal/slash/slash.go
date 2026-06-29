@@ -20,6 +20,7 @@ func Specs() []Spec {
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/permissions", Usage: "/permissions [mode]", Description: "Show or switch the current permission mode."},
+		{Name: "/doctor", Usage: "/doctor", Description: "Run local auth, config, workspace, and runtime diagnostics."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/compact", Usage: "/compact", Description: "Compact in-memory request context for long sessions."},
 		{Name: "/diff", Usage: "/diff [--staged]", Description: "Show git working tree or staged diff."},

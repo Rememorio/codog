@@ -205,6 +205,43 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
 }
 
+func TestDoctorCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			BaseURL:        "https://api.example.test",
+			APIKey:         "secret",
+			PermissionMode: "workspace-write",
+		},
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.Doctor(nil))
+	require.Contains(t, out.String(), "Doctor")
+	require.Contains(t, out.String(), "Auth")
+	require.Contains(t, out.String(), "Permissions")
+	out.Reset()
+
+	require.NoError(t, app.Doctor([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "doctor"`)
+	require.Contains(t, out.String(), `"name": "Auth"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/doctor", sess))
+	require.Contains(t, out.String(), "Doctor")
+	require.NotContains(t, errOut.String(), "unknown slash command")
+}
+
 func TestExportCommandWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -23,6 +23,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
+	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
@@ -165,6 +166,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Marketplace(rest)
 	case "oauth":
 		return app.OAuth(rest)
+	case "doctor":
+		return app.Doctor(rest)
 	case "sandbox":
 		return app.Sandbox()
 	case "code-intel":
@@ -1426,6 +1429,75 @@ func (a *App) Sandbox() error {
 	return nil
 }
 
+func (a *App) Doctor(args []string) error {
+	format, err := parseDoctorOutputFormat(args)
+	if err != nil {
+		return err
+	}
+	toolCount := 0
+	if a.Tools != nil {
+		toolCount = len(a.Tools.Definitions())
+	}
+	sessionCount := -1
+	if a.Sessions != nil {
+		sessions, err := a.Sessions.List()
+		if err == nil {
+			sessionCount = len(sessions)
+		}
+	}
+	sandboxStatus := sandbox.Detect()
+	report := doctor.Run(doctor.Options{
+		Workspace:      a.Workspace,
+		ConfigHome:     a.Config.ConfigHome,
+		Model:          a.Config.Model,
+		BaseURL:        a.Config.BaseURL,
+		APIKey:         a.Config.APIKey,
+		AuthToken:      a.Config.AuthToken,
+		PermissionMode: a.Config.PermissionMode,
+		ToolCount:      toolCount,
+		SessionCount:   sessionCount,
+		SandboxDefault: sandboxStatus.Default,
+		SandboxOK:      sandboxStatus.Available,
+	})
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	} else {
+		doctor.RenderText(a.Out, report)
+	}
+	if report.HasFailures {
+		return errors.New("doctor found failing checks")
+	}
+	return nil
+}
+
+func parseDoctorOutputFormat(args []string) (string, error) {
+	format := "text"
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return "", errors.New("doctor output format is required")
+			}
+			format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			return "", fmt.Errorf("unknown doctor flag %q", arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, nil
+	default:
+		return "", fmt.Errorf("unknown doctor output format %q", format)
+	}
+}
+
 func (a *App) CodeIntel(args []string) error {
 	if len(args) == 0 || args[0] == "symbols" {
 		symbols, err := codeintel.GoSymbols(a.Workspace)
@@ -1619,6 +1691,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleModelSlash(fields[1:])
 	case "/permissions":
 		a.handlePermissionsSlash(fields[1:])
+	case "/doctor":
+		if err := a.Doctor(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/compact":
 		before := len(sess.Messages)
 		sess.Messages = runloop.CompactMessages(sess.Messages, a.Config.AutoCompactMessages)
@@ -2257,6 +2333,7 @@ Usage:
   %s [flags] skills
   %s [flags] mcp
   %s [flags] cost --resume latest
+  %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
   %s mock-server :8089
   %s self-test
@@ -2281,7 +2358,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
