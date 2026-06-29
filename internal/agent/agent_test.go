@@ -225,6 +225,11 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "add notes")
 	out.Reset()
 
+	require.NoError(t, app.Changelog([]string{"1"}))
+	require.Contains(t, out.String(), "add notes")
+	require.Contains(t, out.String(), "notes.txt")
+	out.Reset()
+
 	require.NoError(t, app.Git([]string{"blame", "notes.txt", "1"}))
 	require.Contains(t, out.String(), "hello")
 	out.Reset()
@@ -232,6 +237,14 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\nagain\n"), 0o644))
 	require.NoError(t, app.Git([]string{"diff"}))
 	require.Contains(t, out.String(), "+again")
+	out.Reset()
+
+	require.NoError(t, app.Stash([]string{"push", "agent stash"}))
+	require.Contains(t, out.String(), "Saved working directory")
+	out.Reset()
+
+	require.NoError(t, app.Git([]string{"stash", "list"}))
+	require.Contains(t, out.String(), "agent stash")
 }
 
 func TestGitSlashDiffAndCommit(t *testing.T) {
@@ -250,6 +263,10 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "slash commit")
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/changelog 1", sess))
+	require.Contains(t, out.String(), "slash commit")
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/blame notes.txt 1", sess))
 	require.Contains(t, out.String(), "hello slash")
 	out.Reset()
@@ -261,6 +278,14 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\nchanged\n"), 0o644))
 	require.True(t, app.handleSlash(context.Background(), "/diff", sess))
 	require.Contains(t, out.String(), "+changed")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/stash push slash stash", sess))
+	require.Contains(t, out.String(), "Saved working directory")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/stash list", sess))
+	require.Contains(t, out.String(), "slash stash")
 }
 
 func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {

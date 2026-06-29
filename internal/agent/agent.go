@@ -205,6 +205,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Export(rest)
 	case "git":
 		return app.Git(rest)
+	case "stash":
+		return app.Stash(rest)
+	case "changelog":
+		return app.Changelog(rest)
 	case "run":
 		return app.RunCommand(ctx, rest)
 	case "test":
@@ -3042,8 +3046,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleCommitSlash(fields[1:])
 	case "/log":
 		a.handleLogSlash(fields[1:])
+	case "/changelog":
+		a.handleChangelogSlash(fields[1:])
 	case "/blame":
 		a.handleBlameSlash(fields[1:])
+	case "/stash":
+		if err := a.Stash(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/git":
 		if err := a.Git(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -3381,7 +3391,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git blame FILE [line] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -3406,6 +3416,8 @@ func (a *App) Git(args []string) error {
 			return err
 		}
 		fmt.Fprintln(a.Out, log)
+	case "changelog":
+		return a.Changelog(args[1:])
 	case "blame":
 		path, line, err := parseGitBlameArgs(args[1:])
 		if err != nil {
@@ -3416,6 +3428,8 @@ func (a *App) Git(args []string) error {
 			return err
 		}
 		fmt.Fprintln(a.Out, blame)
+	case "stash":
+		return a.Stash(args[1:])
 	case "commit":
 		options := parseGitCommitArgs(args[1:])
 		result, err := gitops.Commit(a.Workspace, options)
@@ -3428,6 +3442,83 @@ func (a *App) Git(args []string) error {
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
 	return nil
+}
+
+func (a *App) Changelog(args []string) error {
+	limit, err := parseOptionalPositiveInt(args, 10, "changelog count")
+	if err != nil {
+		return err
+	}
+	log, err := gitops.Changelog(a.Workspace, limit)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(a.Out, log)
+	return nil
+}
+
+func (a *App) Stash(args []string) error {
+	action := "list"
+	rest := args
+	if len(args) > 0 {
+		action = strings.ToLower(args[0])
+		rest = args[1:]
+	}
+	var output string
+	var err error
+	switch action {
+	case "list", "show":
+		if len(rest) != 0 {
+			return errors.New("usage: codog stash list")
+		}
+		output, err = gitops.StashList(a.Workspace)
+	case "push", "save":
+		options := parseStashPushArgs(rest)
+		output, err = gitops.StashPush(a.Workspace, options)
+	case "apply":
+		if len(rest) > 1 {
+			return errors.New("usage: codog stash apply [stash-ref]")
+		}
+		ref := ""
+		if len(rest) == 1 {
+			ref = rest[0]
+		}
+		output, err = gitops.StashApply(a.Workspace, ref)
+	case "pop":
+		if len(rest) > 1 {
+			return errors.New("usage: codog stash pop [stash-ref]")
+		}
+		ref := ""
+		if len(rest) == 1 {
+			ref = rest[0]
+		}
+		output, err = gitops.StashPop(a.Workspace, ref)
+	default:
+		return fmt.Errorf("unknown stash action %q", action)
+	}
+	if err != nil {
+		return err
+	}
+	if output == "" {
+		output = "No output."
+	}
+	fmt.Fprintln(a.Out, output)
+	return nil
+}
+
+func parseStashPushArgs(args []string) gitops.StashPushOptions {
+	options := gitops.StashPushOptions{}
+	message := []string{}
+	for _, arg := range args {
+		switch arg {
+		case "--include-untracked", "-u":
+			options.IncludeUntracked = true
+		default:
+			message = append(message, arg)
+		}
+	}
+	options.Message = strings.Join(message, " ")
+	return options
 }
 
 func parseOptionalPositiveInt(args []string, defaultValue int, label string) (int, error) {
@@ -3485,6 +3576,12 @@ func (a *App) handleLogSlash(args []string) {
 		return
 	}
 	fmt.Fprintln(a.Out, log)
+}
+
+func (a *App) handleChangelogSlash(args []string) {
+	if err := a.Changelog(args); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+	}
 }
 
 func (a *App) handleBlameSlash(args []string) {
@@ -4015,7 +4112,9 @@ Usage:
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
-  %s [flags] git status | git diff [--staged] | git log [count] | git blame FILE [line] | git commit [--all] MESSAGE
+  %s [flags] git status | git diff [--staged] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] stash [list|push|apply|pop] [ARGS...]
+  %s [flags] changelog [count]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
   %s [flags] symbols|diagnostics|map|references|definition|hover [ARGS...] [--json]
@@ -4042,7 +4141,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

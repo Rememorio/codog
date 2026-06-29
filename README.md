@@ -33,8 +33,9 @@ Claude Code source.
   messages.
 - `/search` and `codog search PATTERN [--path PATH] [--glob GLOB]` search
   workspace file contents without making a provider request.
-- `/diff`, `/commit`, `/log`, `/blame`, `/git`, and `codog git` provide local
-  git status, diff, log, blame, and commit workflows.
+- `/diff`, `/commit`, `/log`, `/changelog`, `/blame`, `/stash`, `/git`, and
+  `codog git` provide local git status, diff, log, changelog, blame, stash, and
+  commit workflows.
 - `/run`, `/test`, `/build`, `/lint`, and matching CLI commands run workspace
   commands with captured stdout/stderr and text or JSON reports.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and

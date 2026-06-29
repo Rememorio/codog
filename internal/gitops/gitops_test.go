@@ -37,6 +37,11 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, log, "add notes")
 
+	changelog, err := Changelog(workspace, 1)
+	require.NoError(t, err)
+	require.Contains(t, changelog, "add notes")
+	require.Contains(t, changelog, "notes.txt")
+
 	root, err := Root(workspace)
 	require.NoError(t, err)
 	expectedRoot, err := filepath.EvalSymlinks(workspace)
@@ -59,6 +64,47 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	status, err = Status(workspace)
 	require.NoError(t, err)
 	require.True(t, strings.Contains(status, "## main") || strings.Contains(status, "## master"))
+}
+
+func TestStashWorkflows(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	path := filepath.Join(workspace, "notes.txt")
+	require.NoError(t, os.WriteFile(path, []byte("hello\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "add notes")
+
+	require.NoError(t, os.WriteFile(path, []byte("changed\n"), 0o644))
+	output, err := StashPush(workspace, StashPushOptions{Message: "wip notes"})
+	require.NoError(t, err)
+	require.Contains(t, output, "Saved working directory")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "hello\n", string(data))
+
+	list, err := StashList(workspace)
+	require.NoError(t, err)
+	require.Contains(t, list, "wip notes")
+
+	output, err = StashApply(workspace, "stash@{0}")
+	require.NoError(t, err)
+	require.Contains(t, output, "modified:")
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "changed\n", string(data))
+
+	runGit(t, workspace, "checkout", "--", "notes.txt")
+	output, err = StashPop(workspace, "stash@{0}")
+	require.NoError(t, err)
+	require.Contains(t, output, "Dropped")
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "changed\n", string(data))
 }
 
 func TestCommitRequiresStagedChanges(t *testing.T) {

@@ -36,6 +36,8 @@ func Specs() []Spec {
 		{Name: "/commit", Usage: "/commit [--all] MESSAGE", Description: "Create a git commit from staged changes."},
 		{Name: "/git", Usage: "/git status|diff|log|blame", Description: "Run a supported git workflow."},
 		{Name: "/log", Usage: "/log [count]", Description: "Show recent git commits."},
+		{Name: "/changelog", Usage: "/changelog [count]", Description: "Show recent git changes with stats."},
+		{Name: "/stash", Usage: "/stash [list|push|apply|pop]", Description: "Manage git stashes."},
 		{Name: "/blame", Usage: "/blame FILE [line]", Description: "Show git blame for a file."},
 		{Name: "/run", Usage: "/run COMMAND [ARG...]", Description: "Run a command in the workspace."},
 		{Name: "/test", Usage: "/test [ARGS...]", Description: "Run go test for the workspace."},

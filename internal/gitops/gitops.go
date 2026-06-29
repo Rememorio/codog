@@ -18,6 +18,11 @@ type CommitResult struct {
 	Output  string `json:"output,omitempty"`
 }
 
+type StashPushOptions struct {
+	Message          string
+	IncludeUntracked bool
+}
+
 func Status(workspace string) (string, error) {
 	return git(workspace, "status", "--short", "--branch")
 }
@@ -35,6 +40,44 @@ func Log(workspace string, limit int) (string, error) {
 		limit = 20
 	}
 	return git(workspace, "log", "--oneline", "--decorate", fmt.Sprintf("--max-count=%d", limit))
+}
+
+func Changelog(workspace string, limit int) (string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	return git(workspace, "log", "--stat", "--decorate", fmt.Sprintf("--max-count=%d", limit))
+}
+
+func StashList(workspace string) (string, error) {
+	return git(workspace, "stash", "list")
+}
+
+func StashPush(workspace string, options StashPushOptions) (string, error) {
+	args := []string{"stash", "push"}
+	if options.IncludeUntracked {
+		args = append(args, "--include-untracked")
+	}
+	if strings.TrimSpace(options.Message) != "" {
+		args = append(args, "-m", strings.TrimSpace(options.Message))
+	}
+	return git(workspace, args...)
+}
+
+func StashApply(workspace string, ref string) (string, error) {
+	args := []string{"stash", "apply"}
+	if strings.TrimSpace(ref) != "" {
+		args = append(args, strings.TrimSpace(ref))
+	}
+	return git(workspace, args...)
+}
+
+func StashPop(workspace string, ref string) (string, error) {
+	args := []string{"stash", "pop"}
+	if strings.TrimSpace(ref) != "" {
+		args = append(args, strings.TrimSpace(ref))
+	}
+	return git(workspace, args...)
 }
 
 func Root(workspace string) (string, error) {
