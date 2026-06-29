@@ -215,14 +215,35 @@ func (a *App) Bridge(args []string) error {
 }
 
 func (a *App) Updater(ctx context.Context, args []string) error {
-	if len(args) < 2 || args[0] != "check" {
+	if len(args) < 2 {
 		return a.FutureStatus("updater", args)
 	}
-	result, err := updater.Check(ctx, version, args[1])
-	if err != nil {
-		return err
+	var payload any
+	switch args[0] {
+	case "check":
+		result, err := updater.Check(ctx, version, args[1])
+		if err != nil {
+			return err
+		}
+		payload = result
+	case "download":
+		platform := ""
+		if len(args) > 2 {
+			platform = args[2]
+		}
+		dest := filepath.Join(a.Config.ConfigHome, "updater")
+		if len(args) > 3 {
+			dest = args[3]
+		}
+		result, err := updater.Download(ctx, args[1], platform, dest)
+		if err != nil {
+			return err
+		}
+		payload = result
+	default:
+		return fmt.Errorf("unknown updater command %q", args[0])
 	}
-	data, _ := json.MarshalIndent(result, "", "  ")
+	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
@@ -826,7 +847,7 @@ Usage:
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
   %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | sandbox | code-intel symbols
-  %s remote serve [addr] | bridge serve | updater check URL
+  %s remote serve [addr] | bridge serve | updater check|download URL
   %s enterprise [--json] | enterprise audit [limit]
   %s config
 

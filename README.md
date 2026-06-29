@@ -44,7 +44,8 @@ Claude Code source.
 - `codog remote serve [addr]` starts a local HTTP session-control API.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, and bounded file read/write/edit operations.
-- `codog updater check URL` checks a release manifest.
+- `codog updater check URL` checks a release manifest; `updater download URL`
+  downloads a platform artifact with optional SHA-256 verification.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use
   audit events.
 
