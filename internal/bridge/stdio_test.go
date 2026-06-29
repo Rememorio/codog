@@ -19,6 +19,7 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"name":"codog"`)
 	require.Contains(t, out.String(), `"sessions/list"`)
 	require.Contains(t, out.String(), `"file/read"`)
+	require.Contains(t, out.String(), `"diagnostics/go"`)
 }
 
 func TestBridgeFileReadWriteEdit(t *testing.T) {

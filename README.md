@@ -39,11 +39,11 @@ Claude Code source.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
   wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
   `unshare`.
-- `codog code-intel symbols` scans Go symbols, and `notebook-edit` updates
-  `.ipynb` cells.
+- `codog code-intel symbols|diagnostics` scans Go symbols, reports Go test
+  diagnostics, and `notebook-edit` updates `.ipynb` cells.
 - `codog remote serve [addr]` starts a local HTTP session-control API.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
-  workspace info, and bounded file read/write/edit operations.
+  workspace info, diagnostics, and bounded file read/write/edit operations.
 - `codog updater check URL` checks a release manifest; `updater download URL`
   downloads a platform artifact with optional SHA-256 verification.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use

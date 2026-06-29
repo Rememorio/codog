@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/session"
 )
@@ -69,6 +71,7 @@ func (s Server) handle(req Request) (any, *Error) {
 				"file/read",
 				"file/write",
 				"file/edit",
+				"diagnostics/go",
 			},
 		}, nil
 	case "capabilities/list":
@@ -103,9 +106,31 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return result, nil
+	case "diagnostics/go":
+		result, err := s.goDiagnostics(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	default:
 		return nil, &Error{Code: -32601, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
+}
+
+func (s Server) goDiagnostics(params json.RawMessage) (any, error) {
+	var payload struct {
+		Patterns []string `json:"patterns"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	return codeintel.GoDiagnostics(context.Background(), workspace, payload.Patterns)
 }
 
 func (s Server) readFile(params json.RawMessage) (any, error) {

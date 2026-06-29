@@ -38,7 +38,7 @@ func Surfaces() []Surface {
 			Command:     "bridge",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Stdio JSON-RPC bridge exposes sessions, workspace info, and bounded file read/write/edit RPCs.",
+			Description: "Stdio JSON-RPC bridge exposes sessions, workspace info, Go diagnostics, and bounded file read/write/edit RPCs.",
 			DependsOn:   []string{"remote", "enterprise"},
 			NextSteps: []string{
 				"Add editor identity and workspace trust checks.",
@@ -90,12 +90,12 @@ func Surfaces() []Surface {
 			Command:     "code-intel",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Go symbol scanning and notebook cell editing; full LSP lifecycle remains planned.",
+			Description: "Go symbol scanning, Go test diagnostics, and notebook cell editing are available; full LSP lifecycle remains planned.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
-				"Add ipynb cell edit operations.",
 				"Define LSP server discovery and lifecycle.",
 				"Normalize diagnostics into tool results.",
+				"Stream diagnostics through IDE bridges.",
 			},
 		},
 		{

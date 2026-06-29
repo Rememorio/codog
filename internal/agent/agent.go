@@ -496,6 +496,15 @@ func (a *App) CodeIntel(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
+	if args[0] == "diagnostics" {
+		diagnostics, err := codeintel.GoDiagnostics(context.Background(), a.Workspace, args[1:])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(diagnostics, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	if args[0] == "notebook-edit" {
 		if len(args) < 5 {
 			return errors.New("usage: codog code-intel notebook-edit NOTEBOOK INDEX CELL_TYPE SOURCE")
@@ -846,7 +855,7 @@ Usage:
   %s roadmap [--json]
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
-  %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | sandbox | code-intel symbols
+  %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | sandbox | code-intel symbols|diagnostics
   %s remote serve [addr] | bridge serve | updater check|download URL
   %s enterprise [--json] | enterprise audit [limit]
   %s config
