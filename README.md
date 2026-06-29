@@ -25,6 +25,7 @@ Claude Code source.
   `mcp`, `mcp_auth`, `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `run_task_packet`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
+  `task_supervise`,
   `todo_read`, `todo_write`, `testing_permission`, `git_status`, `git_diff`, `git_log`,
   `git_show`, `git_blame`
 - Permission confirmation with `read-only`, `workspace-write`,

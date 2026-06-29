@@ -162,6 +162,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TaskUpdateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStopTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TaskSuperviseTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	reg.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -3127,6 +3128,16 @@ func (TaskCreateTool) Definition() anthropic.ToolDefinition {
 				"command":    map[string]any{"type": "string"},
 				"kind":       map[string]any{"type": "string"},
 				"session_id": map[string]any{"type": "string"},
+				"restart_policy": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"enabled":       map[string]any{"type": "boolean"},
+						"mode":          map[string]any{"type": "string", "enum": []string{"on-failure", "always"}},
+						"max_attempts":  map[string]any{"type": "integer", "minimum": 0},
+						"delay_seconds": map[string]any{"type": "integer", "minimum": 0},
+					},
+				},
 			},
 			"required":             []string{"command"},
 			"additionalProperties": false,
@@ -3138,16 +3149,18 @@ func (TaskCreateTool) Permission() Permission { return PermissionDanger }
 
 func (t TaskCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Command   string `json:"command"`
-		Kind      string `json:"kind"`
-		SessionID string `json:"session_id"`
+		Command   string                    `json:"command"`
+		Kind      string                    `json:"kind"`
+		SessionID string                    `json:"session_id"`
+		Restart   *background.RestartPolicy `json:"restart_policy"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
 	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(payload.Command, t.Workspace, background.RunOptions{
-		Kind:      payload.Kind,
-		SessionID: payload.SessionID,
+		Kind:          payload.Kind,
+		SessionID:     payload.SessionID,
+		RestartPolicy: payload.Restart,
 	})
 	if err != nil {
 		return "", err
@@ -3555,6 +3568,41 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		"error":     task.Error,
 		"output":    output,
 	}), nil
+}
+
+type TaskSuperviseTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskSuperviseTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_supervise",
+		Description: "Run one background task supervisor pass and restart eligible tasks with restart policies.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskSuperviseTool) Permission() Permission { return PermissionDanger }
+
+func (t TaskSuperviseTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	if len(input) != 0 && string(input) != "null" {
+		var payload map[string]any
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+		if len(payload) != 0 {
+			return "", errors.New("task_supervise does not accept input fields")
+		}
+	}
+	result, err := taskStore(t.ConfigHome, t.Workspace).SuperviseOnce(time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
+	return pretty(result), nil
 }
 
 func taskStore(configHome string, workspace string) background.Store {

@@ -195,7 +195,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 61)
+	require.Len(t, infos, 62)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -255,6 +255,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Equal(t, PermissionReadOnly, info.Permission)
 	_, ok = registry.Info("task_output")
 	require.True(t, ok)
+	info, ok = registry.Info("task_supervise")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("task_update")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -857,6 +860,34 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	info, ok := registry.Info("task_create")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+}
+
+func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	createOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"printf failed && exit 2","kind":"test","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":1}}`))
+	require.NoError(t, err)
+	var task background.Task
+	require.NoError(t, json.Unmarshal([]byte(createOut), &task))
+	require.NotNil(t, task.RestartPolicy)
+	require.True(t, task.RestartPolicy.Enabled)
+
+	store := background.NewStore(configHome)
+	require.Eventually(t, func() bool {
+		status, err := store.Status(task.ID)
+		return err == nil && status.Status == "failed"
+	}, 2*time.Second, 20*time.Millisecond)
+
+	superviseOut, err := TaskSuperviseTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	var result background.SuperviseResult
+	require.NoError(t, json.Unmarshal([]byte(superviseOut), &result))
+	require.Len(t, result.Restarted, 1)
+	require.Equal(t, task.ID, result.Restarted[0].RestartedFrom)
+	require.Equal(t, 1, result.Restarted[0].RestartCount)
 }
 
 func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
