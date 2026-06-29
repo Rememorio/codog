@@ -95,6 +95,16 @@ func TestLoadRemoteAuthToken(t *testing.T) {
 	require.Equal(t, 30, cfg.Future.RemoteLeaseSeconds)
 }
 
+func TestLoadEditorBridgeToken(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"editor_bridge_token":"bridge-token"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "bridge-token", cfg.Future.EditorBridgeToken)
+}
+
 func writeSignedPolicy(t *testing.T, path string, policy ManagedPolicy, privateKey ed25519.PrivateKey) ManagedPolicy {
 	t.Helper()
 	payload, err := ManagedPolicyPayload(policy)

@@ -51,9 +51,10 @@ Claude Code source.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
   background tasks, logs/watch streams, Go diagnostics, bearer-token auth, and
   heartbeat lease/failure state.
-- `codog bridge serve` starts a stdio JSON-RPC bridge for sessions, workspace
-  info, file listing/search/diff, diagnostics, background watch events, and
-  bounded file read/write/edit operations.
+- `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
+  identity, open-file/selection state, sessions, workspace info, file
+  listing/search/diff, diagnostics, background watch events, and bounded file
+  read/write/edit operations.
 - `codog updater check|download|install|rollback` checks releases, downloads
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.

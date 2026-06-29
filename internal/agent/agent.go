@@ -77,6 +77,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		cfg.APIKey = redact(cfg.APIKey)
 		cfg.AuthToken = redact(cfg.AuthToken)
 		cfg.Future.RemoteAuthToken = redact(cfg.Future.RemoteAuthToken)
+		cfg.Future.EditorBridgeToken = redact(cfg.Future.EditorBridgeToken)
 		data, _ := json.MarshalIndent(map[string]any{"config": cfg, "paths": paths}, "", "  ")
 		fmt.Fprintln(os.Stdout, string(data))
 		return nil
@@ -235,7 +236,13 @@ func (a *App) Bridge(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
 		return a.FutureStatus("bridge", args)
 	}
-	return bridge.Server{Sessions: a.Sessions, Version: version, Workspace: a.Workspace, ConfigHome: a.Config.ConfigHome}.Serve(a.In, a.Out)
+	return bridge.Server{
+		Sessions:   a.Sessions,
+		Version:    version,
+		Workspace:  a.Workspace,
+		ConfigHome: a.Config.ConfigHome,
+		TrustToken: a.Config.Future.EditorBridgeToken,
+	}.Serve(a.In, a.Out)
 }
 
 func (a *App) Updater(ctx context.Context, args []string) error {

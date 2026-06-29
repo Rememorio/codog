@@ -24,6 +24,8 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"workspace/search"`)
 	require.Contains(t, out.String(), `"file/read"`)
 	require.Contains(t, out.String(), `"file/diff"`)
+	require.Contains(t, out.String(), `"editor/identify"`)
+	require.Contains(t, out.String(), `"editor/selection"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
 	require.Contains(t, out.String(), `"background/watch"`)
 }
@@ -68,6 +70,47 @@ func TestBridgeWorkspaceFilesSearchAndDiff(t *testing.T) {
 	require.Contains(t, out.String(), `"text":"hello bridge"`)
 	require.Contains(t, out.String(), `-hello bridge`)
 	require.Contains(t, out.String(), `+hello codog`)
+}
+
+func TestBridgeEditorIdentifyOpenSelectionState(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"editor/identify","params":{"editor":"VS Code","version":"1.0","workspace":"` + filepath.ToSlash(workspace) + `","token":"secret"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"editor/open","params":{"path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"editor/selection","params":{"start_line":1,"start_column":1,"end_line":1,"end_column":8}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"editor/state"}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome, TrustToken: "secret"}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"editor":"VS Code"`)
+	require.Contains(t, out.String(), `"trusted":true`)
+	require.Contains(t, out.String(), `"open_file":{"path":"main.go"`)
+	require.Contains(t, out.String(), `"selection":{"path":"main.go","start_line":1`)
+	require.Contains(t, out.String(), `"text":"package"`)
+	require.FileExists(t, filepath.Join(configHome, "bridge", "editor-state.json"))
+}
+
+func TestBridgeEditorTrustRejectsInvalidTokenAndWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	other := t.TempDir()
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: t.TempDir(), TrustToken: "secret"}.Serve(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"editor/identify","params":{"editor":"Bad","token":"wrong"}}`+"\n"), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"error"`)
+	require.Contains(t, out.String(), "token is invalid")
+
+	out.Reset()
+	err = Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: t.TempDir()}.Serve(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"editor/identify","params":{"editor":"Bad","workspace":"`+filepath.ToSlash(other)+`"}}`+"\n"), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"error"`)
+	require.Contains(t, out.String(), "workspace is not trusted")
 }
 
 func TestBridgeBackgroundWatchStreamsNotifications(t *testing.T) {

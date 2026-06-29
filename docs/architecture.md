@@ -34,9 +34,9 @@ Codog follows a small-core layout:
 - `internal/control`: HTTP control API for sessions, session-scoped background
   tasks, logs, restart/prune/supervise operations, watch streams, diagnostics,
   remote auth, structured failure state, and heartbeat leases.
-- `internal/bridge`: stdio JSON-RPC bridge with workspace info, file
-  list/search/diff/read/write/edit actions, diagnostics, sessions, and
-  background watch notifications.
+- `internal/bridge`: stdio JSON-RPC bridge with trusted editor identity,
+  open-file/selection state, workspace info, file list/search/diff/read/write/edit
+  actions, diagnostics, sessions, and background watch notifications.
 - `internal/updater`: release manifest check, signed manifest verification,
   verified artifact downloads, and backup-based binary installation.
 - `internal/signing`: shared Ed25519 public-key and signature decoding for

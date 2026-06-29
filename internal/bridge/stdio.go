@@ -26,6 +26,7 @@ type Server struct {
 	Version    string
 	Workspace  string
 	ConfigHome string
+	TrustToken string
 }
 
 type Request struct {
@@ -92,6 +93,10 @@ func (s Server) handle(req Request) (any, *Error) {
 				"file/write",
 				"file/edit",
 				"file/diff",
+				"editor/identify",
+				"editor/state",
+				"editor/open",
+				"editor/selection",
 				"diagnostics/go",
 				"background/watch",
 			},
@@ -142,6 +147,30 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "file/diff":
 		result, err := s.diffFile(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "editor/identify":
+		result, err := s.editorIdentify(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "editor/state":
+		result, err := s.editorState()
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "editor/open":
+		result, err := s.editorOpen(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "editor/selection":
+		result, err := s.editorSelection(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}

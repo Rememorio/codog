@@ -38,6 +38,7 @@ type FutureConfig struct {
 	SandboxStrategy           string            `json:"sandbox_strategy,omitempty"`
 	UpdaterManifestURL        string            `json:"updater_manifest_url,omitempty"`
 	EditorBridgeSocket        string            `json:"editor_bridge_socket,omitempty"`
+	EditorBridgeToken         string            `json:"editor_bridge_token,omitempty"`
 	BackgroundStatePath       string            `json:"background_state_path,omitempty"`
 }
 
@@ -252,6 +253,7 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.SandboxStrategy != "" ||
 		cfg.UpdaterManifestURL != "" ||
 		cfg.EditorBridgeSocket != "" ||
+		cfg.EditorBridgeToken != "" ||
 		cfg.BackgroundStatePath != ""
 }
 
