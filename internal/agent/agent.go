@@ -35,6 +35,7 @@ import (
 	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/manifests"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/mcpserver"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
@@ -6787,6 +6788,8 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "serve":
+		return a.mcpServe(ctx, args[1:])
 	case "show":
 		return a.mcpShow(args[1:])
 	case "add":
@@ -6843,7 +6846,34 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	return nil
 }
 
-const mcpUsage = "usage: codog mcp list | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+
+func (a *App) mcpServe(ctx context.Context, args []string) error {
+	if len(args) != 0 {
+		return errors.New("usage: codog mcp serve")
+	}
+	registry := a.Tools
+	if registry == nil {
+		registry = tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
+			SandboxStrategy: a.Config.Future.SandboxStrategy,
+			AdditionalDirs:  a.Config.AdditionalDirs,
+			ConfigHome:      a.Config.ConfigHome,
+		})
+	}
+	in := a.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := a.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	return mcpserver.Serve(ctx, in, out, registry, mcpserver.Options{
+		Version:         version,
+		PermissionMode:  a.Config.PermissionMode,
+		PermissionRules: a.Config.PermissionRules,
+	})
+}
 
 func (a *App) mcpShow(args []string) error {
 	if len(args) != 1 {
@@ -7429,7 +7459,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] mcp [list|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
+  %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]

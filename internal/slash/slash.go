@@ -78,7 +78,7 @@ func Specs() []Spec {
 		{Name: "/skills", Usage: "/skills [list|show|invoke|install|uninstall]", Description: "List, show, install, remove, or render Markdown skills."},
 		{Name: "/commands", Usage: "/commands [list|show|run]", Description: "List, show, or render custom Markdown slash commands."},
 		{Name: "/hooks", Usage: "/hooks [list|run pre|post]", Description: "Inspect or test configured tool hooks."},
-		{Name: "/mcp", Usage: "/mcp [list|show|add|remove|tools]", Description: "Manage or inspect configured stdio MCP servers."},
+		{Name: "/mcp", Usage: "/mcp [list|serve|show|add|remove|tools]", Description: "Serve, manage, or inspect stdio MCP servers."},
 		{Name: "/system-prompt", Usage: "/system-prompt", Description: "Show the active system prompt."},
 		{Name: "/tool-details", Usage: "/tool-details TOOL", Description: "Show detailed information for a tool."},
 		{Name: "/tokens", Usage: "/tokens", Description: "Alias for /cost."},

@@ -1589,6 +1589,24 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.ErrorContains(t, err, "invalid MCP server name")
 }
 
+func TestMCPServeCommand(t *testing.T) {
+	workspace := t.TempDir()
+	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{PermissionMode: "workspace-write"},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		In:        input,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"serve"}))
+	require.Contains(t, out.String(), `"tools"`)
+	require.Contains(t, out.String(), `"read_file"`)
+}
+
 func TestSlashAliasesForExistingSurfaces(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

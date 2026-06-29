@@ -93,9 +93,10 @@ Claude Code source.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
-- `codog mcp list|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt`
+- `codog mcp list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt`
   manages and inspects configured stdio MCP servers, and configured MCP tools
-  are exposed to the model as `mcp__server__tool` tool calls.
+  are exposed to the model as `mcp__server__tool` tool calls; `mcp serve`
+  exposes Codog's local tools over stdio MCP.
 - Hook commands can run before and after tool use; `codog hooks list|run`
   inspects and test-runs configured hooks with the same JSON payload shape used
   by model tool calls. Hook config accepts simple string arrays and the
