@@ -24,6 +24,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/commandrun"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
@@ -235,6 +236,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OAuth(rest)
 	case "status":
 		return app.Status(rest, overrides)
+	case "context":
+		return app.Context(rest, overrides)
 	case "search":
 		return app.Search(ctx, rest)
 	case "init":
@@ -2109,6 +2112,60 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+func (a *App) Context(args []string, overrides config.FlagOverrides) error {
+	format, err := parseSimpleOutputFormat("context", args)
+	if err != nil {
+		return err
+	}
+	active, err := a.contextSession(overrides)
+	if err != nil {
+		return err
+	}
+	report := a.buildContextReport(active)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	contextview.RenderText(a.Out, report)
+	return nil
+}
+
+func (a *App) contextSession(overrides config.FlagOverrides) (*session.Session, error) {
+	sessionRef := overrides.Resume
+	if sessionRef == "" {
+		sessionRef = overrides.SessionID
+	}
+	if sessionRef == "" || a.Sessions == nil {
+		return nil, nil
+	}
+	return a.Sessions.Open(sessionRef)
+}
+
+func (a *App) buildContextReport(active *session.Session) contextview.Report {
+	var warnings []string
+	memoryReport, err := memory.BuildReport(a.Workspace)
+	if err != nil {
+		warnings = append(warnings, "memory: "+err.Error())
+	}
+	focusReport, err := focus.BuildReport(a.Workspace)
+	if err != nil {
+		warnings = append(warnings, "focus: "+err.Error())
+	}
+	var tokenEstimate usage.Summary
+	if active != nil {
+		tokenEstimate = usage.Estimate(active.Messages, a.Config.Model)
+	}
+	return contextview.Build(contextview.Options{
+		Status:       a.statusSnapshot(active),
+		Memory:       memoryReport,
+		Focus:        focusReport,
+		TokenUsage:   tokenEstimate,
+		SystemPrompt: a.systemPrompt(),
+		Warnings:     warnings,
+	})
+}
+
 type historyRequest struct {
 	SessionID string
 	Format    string
@@ -3060,6 +3117,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	switch fields[0] {
 	case "/status":
 		a.renderStatus("text", sess)
+	case "/context":
+		if err := a.Context(nil, config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/sandbox":
 		if err := a.Sandbox(); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -4380,6 +4441,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] mcp
   %s [flags] status [--json|--output-format text|json]
+  %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
   %s [flags] memory [--json|--output-format text|json]
@@ -4419,7 +4481,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

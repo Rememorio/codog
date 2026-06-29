@@ -681,6 +681,50 @@ func TestFocusCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestContextCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use focused tests.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("context body\n"), 0o644))
+	_, err := focus.Add(workspace, []string{"notes.md"})
+	require.NoError(t, err)
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("context-session", anthropic.TextMessage("user", "hello")))
+	require.NoError(t, store.Append("context-session", anthropic.TextMessage("assistant", "done")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+			MaxTokens:      4096,
+			MaxTurns:       8,
+			APIKey:         "test-key",
+		},
+		Sessions:  store,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Context([]string{"--json"}, config.FlagOverrides{SessionID: "context-session"}))
+	require.Contains(t, out.String(), `"kind": "context"`)
+	require.Contains(t, out.String(), `"focused_paths": 1`)
+	require.Contains(t, out.String(), `"message_count": 2`)
+	require.Contains(t, out.String(), `"total_tokens":`)
+	out.Reset()
+
+	sess, err := store.Open("context-session")
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/context", sess))
+	require.Contains(t, out.String(), "Context")
+	require.Contains(t, out.String(), "Session          context-session (2 messages)")
+	require.Contains(t, out.String(), "Focused paths    1")
+	require.Empty(t, errOut.String())
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))

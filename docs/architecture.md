@@ -15,6 +15,8 @@ Codog follows a small-core layout:
   CLI and REPL slash surfaces.
 - `internal/config`: config merge from user file, project file, environment, and
   flags.
+- `internal/contextview`: prompt-context report shaping and rendering for
+  memory, focus, session, token, git, and local preflight signals.
 - `internal/projectinit`: idempotent project bootstrap for `.codog`
   instructions, shared config, and local ignore entries.
 - `internal/memory`: project instruction discovery, system prompt injection,

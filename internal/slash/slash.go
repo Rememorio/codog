@@ -22,6 +22,7 @@ func Specs() []Spec {
 		{Name: "/memory", Usage: "/memory", Description: "List loaded project memory files."},
 		{Name: "/project", Usage: "/project", Description: "Show project detection info."},
 		{Name: "/env", Usage: "/env", Description: "Show environment variables visible to tools with sensitive values redacted."},
+		{Name: "/context", Usage: "/context", Description: "Show prompt context, memory, focus, session, and token preflight."},
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/max-tokens", Usage: "/max-tokens [count]", Description: "Show or switch max output tokens."},
