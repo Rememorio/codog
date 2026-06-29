@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/session"
@@ -84,6 +85,11 @@ func (s Server) handle(req Request) (any, *Error) {
 			"version": s.Version,
 			"capabilities": []string{
 				"sessions/list",
+				"sessions/open",
+				"sessions/get",
+				"sessions/append_message",
+				"sessions/append_input",
+				"sessions/rewind",
 				"workspace/info",
 				"workspace/files",
 				"workspace/search",
@@ -123,6 +129,36 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return sessions, nil
+	case "sessions/open":
+		result, err := s.sessionOpen(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/get":
+		result, err := s.sessionGet(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/append_message":
+		result, err := s.sessionAppendMessage(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/append_input":
+		result, err := s.sessionAppendInput(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/rewind":
+		result, err := s.sessionRewind(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	case "file/read":
 		result, err := s.readFile(req.Params)
 		if err != nil {
@@ -241,6 +277,104 @@ func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (
 		return nil, &Error{Code: -32000, Message: err.Error()}
 	}
 	return map[string]any{"id": payload.ID, "events": count}, nil
+}
+
+func (s Server) sessionOpen(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	return s.Sessions.Open(strings.TrimSpace(payload.ID))
+}
+
+func (s Server) sessionGet(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(payload.ID) == "" {
+		return nil, errors.New("id is required")
+	}
+	return s.Sessions.Open(strings.TrimSpace(payload.ID))
+}
+
+func (s Server) sessionAppendMessage(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID      string             `json:"id"`
+		Message *anthropic.Message `json:"message"`
+		Role    string             `json:"role"`
+		Text    string             `json:"text"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	var msg anthropic.Message
+	if payload.Message != nil {
+		msg = *payload.Message
+	} else {
+		role := strings.TrimSpace(payload.Role)
+		text := strings.TrimSpace(payload.Text)
+		if role == "" {
+			role = "user"
+		}
+		if text == "" {
+			return nil, errors.New("text is required")
+		}
+		msg = anthropic.TextMessage(role, text)
+	}
+	if msg.Role == "" || len(msg.Content) == 0 {
+		return nil, errors.New("message role and content are required")
+	}
+	if err := s.Sessions.Append(id, msg); err != nil {
+		return nil, err
+	}
+	return s.Sessions.Open(id)
+}
+
+func (s Server) sessionAppendInput(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID    string `json:"id"`
+		Input string `json:"input"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	if strings.TrimSpace(payload.Input) == "" {
+		return nil, errors.New("input is required")
+	}
+	if err := s.Sessions.AppendInput(id, payload.Input); err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "input": payload.Input}, nil
+}
+
+func (s Server) sessionRewind(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID             string `json:"id"`
+		RemoveMessages int    `json:"remove_messages"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	return s.Sessions.Rewind(id, payload.RemoveMessages)
 }
 
 func (s Server) workspaceFiles(params json.RawMessage) (any, error) {

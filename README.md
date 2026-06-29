@@ -185,9 +185,9 @@ Claude Code source.
   streams, logs/watch streams, Go diagnostics, bearer-token auth, and heartbeat
   lease/failure state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
-  identity, open-file/selection state, sessions, workspace info, file
-  listing/search/diff, diagnostics, background watch events, and bounded file
-  read/write/edit operations.
+  identity, open-file/selection state, session mutation/rewind, workspace info,
+  file listing/search/diff, diagnostics, background watch events, and bounded
+  file read/write/edit operations.
 - `codog updater check|download|install|rollback` checks releases, downloads
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.

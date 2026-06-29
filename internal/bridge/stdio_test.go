@@ -20,6 +20,10 @@ func TestBridgeInitialize(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"name":"codog"`)
 	require.Contains(t, out.String(), `"sessions/list"`)
+	require.Contains(t, out.String(), `"sessions/open"`)
+	require.Contains(t, out.String(), `"sessions/append_message"`)
+	require.Contains(t, out.String(), `"sessions/append_input"`)
+	require.Contains(t, out.String(), `"sessions/rewind"`)
 	require.Contains(t, out.String(), `"workspace/files"`)
 	require.Contains(t, out.String(), `"workspace/search"`)
 	require.Contains(t, out.String(), `"file/read"`)
@@ -28,6 +32,32 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"editor/selection"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
 	require.Contains(t, out.String(), `"background/watch"`)
+}
+
+func TestBridgeSessionMutations(t *testing.T) {
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"sessions/open","params":{"id":"ide-session"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"sessions/append_input","params":{"id":"ide-session","input":"bridge prompt"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"sessions/append_message","params":{"id":"ide-session","role":"user","text":"hello from bridge"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"sessions/append_message","params":{"id":"ide-session","message":{"role":"assistant","content":[{"type":"text","text":"bridge answer"}]}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"sessions/get","params":{"id":"ide-session"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"sessions/rewind","params":{"id":"ide-session","remove_messages":1}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test"}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"id":"ide-session"`)
+	require.Contains(t, out.String(), `"input":"bridge prompt"`)
+	require.Contains(t, out.String(), "hello from bridge")
+	require.Contains(t, out.String(), "bridge answer")
+	require.Contains(t, out.String(), `"removed_messages":1`)
+
+	entries, err := store.PromptHistory("ide-session")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "bridge prompt", entries[0].Text)
 }
 
 func TestBridgeFileReadWriteEdit(t *testing.T) {
