@@ -36,6 +36,38 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.True(t, errors.Is(err, ErrNotFound))
 }
 
+func TestInstallAndUninstallSkills(t *testing.T) {
+	root := t.TempDir()
+	sourceFile := filepath.Join(root, "review.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review body"), 0o644))
+	sourceDir := filepath.Join(root, "audit")
+	require.NoError(t, os.MkdirAll(sourceDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("Audit body"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "notes.txt"), []byte("extra"), 0o644))
+	targetRoot := filepath.Join(root, "target")
+
+	fileReport, err := Install(sourceFile, targetRoot, "", "user")
+	require.NoError(t, err)
+	require.Equal(t, "review", fileReport.Name)
+	require.FileExists(t, filepath.Join(targetRoot, "review.md"))
+
+	dirReport, err := Install(sourceDir, targetRoot, "team:audit-copy", "workspace")
+	require.NoError(t, err)
+	require.Equal(t, "team:audit-copy", dirReport.Name)
+	require.FileExists(t, filepath.Join(targetRoot, "team", "audit-copy", "SKILL.md"))
+	require.FileExists(t, filepath.Join(targetRoot, "team", "audit-copy", "notes.txt"))
+
+	uninstalled, err := Uninstall("review", []string{targetRoot})
+	require.NoError(t, err)
+	require.True(t, uninstalled.Removed)
+	require.NoFileExists(t, filepath.Join(targetRoot, "review.md"))
+
+	uninstalled, err = Uninstall("team:audit-copy", []string{targetRoot})
+	require.NoError(t, err)
+	require.True(t, uninstalled.Removed)
+	require.NoDirExists(t, filepath.Join(targetRoot, "team", "audit-copy"))
+}
+
 func skillNames(all []Skill) []string {
 	names := make([]string, 0, len(all))
 	for _, skill := range all {

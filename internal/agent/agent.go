@@ -6106,10 +6106,189 @@ func (a *App) Skills(args []string) error {
 			return nil
 		}
 		fmt.Fprintln(a.Out, rendered)
+	case "install":
+		req, err := parseSkillInstallArgs(rest)
+		if err != nil {
+			return err
+		}
+		targetRoot, targetLabel, err := a.skillTargetRoot(req.Target)
+		if err != nil {
+			return err
+		}
+		report, err := skills.Install(req.Source, targetRoot, req.Name, targetLabel)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, "Skill Installed")
+		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+		fmt.Fprintf(a.Out, "  Target           %s\n", report.Target)
+		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+	case "uninstall", "remove", "delete":
+		req, err := parseSkillUninstallArgs(rest)
+		if err != nil {
+			return err
+		}
+		roots := a.skillUninstallRoots(req.Target)
+		report, err := skills.Uninstall(req.Name, roots)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, "Skill Uninstalled")
+		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
+		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	default:
 		return fmt.Errorf("unknown skills action %q", action)
 	}
 	return nil
+}
+
+type skillInstallRequest struct {
+	Format string
+	Target string
+	Name   string
+	Source string
+}
+
+type skillUninstallRequest struct {
+	Format string
+	Target string
+	Name   string
+}
+
+func parseSkillInstallArgs(args []string) (skillInstallRequest, error) {
+	req := skillInstallRequest{Format: "text", Target: "user"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("skills install output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--project":
+			req.Target = "project"
+		case arg == "--user":
+			req.Target = "user"
+		case arg == "--claude":
+			req.Target = "claude"
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("skills install target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--name":
+			index++
+			if index >= len(args) {
+				return req, errors.New("skills install name is required")
+			}
+			req.Name = args[index]
+		case strings.HasPrefix(arg, "--name="):
+			req.Name = strings.TrimPrefix(arg, "--name=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if req.Format != "text" && req.Format != "json" {
+		return req, fmt.Errorf("unknown skills install output format %q", req.Format)
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog skills install [--project|--user|--claude] [--name NAME] SOURCE [--json]")
+	}
+	req.Source = positionals[0]
+	return req, nil
+}
+
+func parseSkillUninstallArgs(args []string) (skillUninstallRequest, error) {
+	req := skillUninstallRequest{Format: "text"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("skills uninstall output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--project":
+			req.Target = "project"
+		case arg == "--user":
+			req.Target = "user"
+		case arg == "--claude":
+			req.Target = "claude"
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("skills uninstall target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if req.Format != "text" && req.Format != "json" {
+		return req, fmt.Errorf("unknown skills uninstall output format %q", req.Format)
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog skills uninstall NAME [--project|--user|--claude] [--json]")
+	}
+	req.Name = positionals[0]
+	return req, nil
+}
+
+func (a *App) skillTargetRoot(target string) (string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "user":
+		return filepath.Join(a.Config.ConfigHome, "skills"), "user", nil
+	case "project", "workspace":
+		return filepath.Join(a.Workspace, ".codog", "skills"), "workspace", nil
+	case "claude":
+		return filepath.Join(a.Workspace, ".claude", "skills"), "claude", nil
+	default:
+		return "", "", fmt.Errorf("unknown skills target %q", target)
+	}
+}
+
+func (a *App) skillUninstallRoots(target string) []string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "user":
+		return []string{filepath.Join(a.Config.ConfigHome, "skills")}
+	case "project", "workspace":
+		return []string{filepath.Join(a.Workspace, ".codog", "skills")}
+	case "claude":
+		return []string{filepath.Join(a.Workspace, ".claude", "skills")}
+	default:
+		return []string{
+			filepath.Join(a.Config.ConfigHome, "skills"),
+			filepath.Join(a.Workspace, ".codog", "skills"),
+			filepath.Join(a.Workspace, ".claude", "skills"),
+		}
+	}
 }
 
 func (a *App) listSkills(args []string) error {
@@ -6847,7 +7026,7 @@ Usage:
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
-  %s [flags] skills [list|show|invoke]
+  %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]

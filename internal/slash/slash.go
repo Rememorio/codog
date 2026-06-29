@@ -74,7 +74,7 @@ func Specs() []Spec {
 		{Name: "/unfocus", Usage: "/unfocus [PATH...|--all]", Description: "Remove focused context paths."},
 		{Name: "/add-dir", Usage: "/add-dir [PATH...|remove PATH|clear]", Description: "Allow tools to access additional directories."},
 		{Name: "/output-style", Usage: "/output-style [list|show|set|clear]", Description: "Show or change the active output style."},
-		{Name: "/skills", Usage: "/skills [list|show|invoke]", Description: "List, show, or render Markdown skills."},
+		{Name: "/skills", Usage: "/skills [list|show|invoke|install|uninstall]", Description: "List, show, install, remove, or render Markdown skills."},
 		{Name: "/commands", Usage: "/commands [list|show|run]", Description: "List, show, or render custom Markdown slash commands."},
 		{Name: "/hooks", Usage: "/hooks [list|run pre|post]", Description: "Inspect or test configured tool hooks."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},

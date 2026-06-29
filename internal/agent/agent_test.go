@@ -1647,6 +1647,50 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.Contains(t, errOut.String(), "session: skill-session")
 }
 
+func TestSkillsInstallAndUninstallCommands(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	sourceRoot := t.TempDir()
+	sourceFile := filepath.Join(sourceRoot, "review.md")
+	sourceDir := filepath.Join(sourceRoot, "audit")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review body"), 0o644))
+	require.NoError(t, os.MkdirAll(sourceDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("Audit body"), 0o644))
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Skills([]string{"install", sourceFile, "--json"}))
+	require.Contains(t, out.String(), `"action": "install"`)
+	require.Contains(t, out.String(), `"target": "user"`)
+	require.FileExists(t, filepath.Join(configHome, "skills", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"install", "--claude", "--name", "team:audit-copy", sourceDir}))
+	require.Contains(t, out.String(), "Skill Installed")
+	require.FileExists(t, filepath.Join(workspace, ".claude", "skills", "team", "audit-copy", "SKILL.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/skills install --project "+sourceFile+" --json", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"target": "workspace"`)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "skills", "review.md"))
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"uninstall", "review", "--project", "--json"}))
+	require.Contains(t, out.String(), `"removed": true`)
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "skills", "review.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/skills uninstall team:audit-copy --claude", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Skill Uninstalled")
+	require.NoDirExists(t, filepath.Join(workspace, ".claude", "skills", "team", "audit-copy"))
+}
+
 func TestTemplatesCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

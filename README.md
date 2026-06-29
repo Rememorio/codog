@@ -74,7 +74,7 @@ Claude Code source.
   when a tag exists.
 - `/run`, `/test`, `/build`, `/lint`, and matching CLI commands run workspace
   commands with captured stdout/stderr and text or JSON reports.
-- `codog skills list|show|invoke` discovers Markdown skills from
+- `codog skills list|show|invoke|install|uninstall` discovers and manages Markdown skills from
   `~/.codog/skills`, `.codog/skills`, and `.claude/skills`, including
   directory skills with `SKILL.md`; prompt turns can also invoke a discovered
   skill by starting input with the skill name.
