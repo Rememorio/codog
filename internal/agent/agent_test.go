@@ -242,6 +242,47 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.NotContains(t, errOut.String(), "unknown slash command")
 }
 
+func TestStatusCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "status me")))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "claude-test",
+			BaseURL:             "https://api.example.test",
+			APIKey:              "secret",
+			PermissionMode:      "workspace-write",
+			MaxTokens:           1000,
+			MaxTurns:            4,
+			AutoCompactMessages: 20,
+		},
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Status(nil, config.FlagOverrides{}))
+	require.Contains(t, out.String(), "Status")
+	require.Contains(t, out.String(), "Model            claude-test")
+	require.Contains(t, out.String(), "Tools            6")
+	out.Reset()
+
+	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
+	require.Contains(t, out.String(), `"kind": "status"`)
+	require.Contains(t, out.String(), `"id": "source"`)
+	require.Contains(t, out.String(), `"message_count": 1`)
+	out.Reset()
+
+	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}
+	require.True(t, app.handleSlash(context.Background(), "/status", sess))
+	require.Contains(t, out.String(), "Session          source (1 messages)")
+}
+
 func TestExportCommandWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -1,0 +1,92 @@
+package status
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestBuildParsesGitStatus(t *testing.T) {
+	snapshot := Build(Options{
+		Version:        "test-version",
+		Workspace:      "/repo/codog",
+		Model:          "claude-test",
+		PermissionMode: "workspace-write",
+		AuthConfigured: true,
+		ToolNames:      []string{"bash", "read_file"},
+		GitStatus: stringsJoinLines(
+			"## main...origin/main [ahead 1]",
+			" M README.md",
+			"A  internal/status/status.go",
+			"?? notes.txt",
+			"UU conflict.txt",
+		),
+		SandboxOS:        "darwin",
+		SandboxDefault:   "sandbox-exec",
+		SandboxAvailable: true,
+	})
+
+	require.Equal(t, "ok", snapshot.Status)
+	require.Equal(t, "codog", snapshot.Workspace.Name)
+	require.Equal(t, "main", snapshot.Git.Branch)
+	require.False(t, snapshot.Git.Clean)
+	require.Equal(t, 1, snapshot.Git.Staged)
+	require.Equal(t, 1, snapshot.Git.Unstaged)
+	require.Equal(t, 1, snapshot.Git.Untracked)
+	require.Equal(t, 1, snapshot.Git.Conflicts)
+	require.Equal(t, 2, snapshot.Tools.Count)
+}
+
+func TestBuildMarksGitErrorDegraded(t *testing.T) {
+	snapshot := Build(Options{
+		Version:  "test-version",
+		GitError: "not a git repository",
+	})
+
+	require.Equal(t, "degraded", snapshot.Status)
+	require.False(t, snapshot.Git.Available)
+	require.Contains(t, snapshot.Git.Error, "not a git repository")
+}
+
+func TestBuildParsesInitialBranch(t *testing.T) {
+	snapshot := Build(Options{GitStatus: "## No commits yet on main"})
+
+	require.Equal(t, "main", snapshot.Git.Branch)
+	require.True(t, snapshot.Git.Clean)
+}
+
+func TestRenderText(t *testing.T) {
+	snapshot := Build(Options{
+		Version:         "test-version",
+		Workspace:       "/repo/codog",
+		Model:           "claude-test",
+		PermissionMode:  "read-only",
+		AuthConfigured:  true,
+		SessionID:       "session-1",
+		SessionMessages: 3,
+		ToolNames:       []string{"bash"},
+		GitStatus:       "## main",
+		SandboxDefault:  "sandbox-exec",
+	})
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+
+	require.Contains(t, out.String(), "Status")
+	require.Contains(t, out.String(), "Version          test-version")
+	require.Contains(t, out.String(), "Session          session-1")
+	require.Contains(t, out.String(), "Git              branch=main")
+	require.Contains(t, out.String(), "Tools            1")
+}
+
+func stringsJoinLines(lines ...string) string {
+	var out string
+	for i, line := range lines {
+		if i != 0 {
+			out += "\n"
+		}
+		out += line
+	}
+	return out
+}

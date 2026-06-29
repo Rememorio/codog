@@ -35,6 +35,7 @@ import (
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
+	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
@@ -166,6 +167,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Marketplace(rest)
 	case "oauth":
 		return app.OAuth(rest)
+	case "status":
+		return app.Status(rest, overrides)
 	case "doctor":
 		return app.Doctor(rest)
 	case "sandbox":
@@ -1429,6 +1432,124 @@ func (a *App) Sandbox() error {
 	return nil
 }
 
+func (a *App) Status(args []string, overrides config.FlagOverrides) error {
+	format, err := parseStatusOutputFormat(args)
+	if err != nil {
+		return err
+	}
+	var active *session.Session
+	sessionRef := overrides.Resume
+	if sessionRef == "" {
+		sessionRef = overrides.SessionID
+	}
+	if sessionRef != "" && a.Sessions != nil {
+		active, err = a.Sessions.Open(sessionRef)
+		if err != nil {
+			return err
+		}
+	}
+	a.renderStatus(format, active)
+	return nil
+}
+
+func (a *App) renderStatus(format string, active *session.Session) {
+	snapshot := a.statusSnapshot(active)
+	if format == "json" {
+		data, _ := json.MarshalIndent(snapshot, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return
+	}
+	localstatus.RenderText(a.Out, snapshot)
+}
+
+func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
+	sessionCount := -1
+	if a.Sessions != nil {
+		sessions, err := a.Sessions.List()
+		if err == nil {
+			sessionCount = len(sessions)
+		}
+	}
+	var sessionID, sessionPath string
+	var sessionMessages int
+	if active != nil {
+		sessionID = active.ID
+		sessionPath = active.Path
+		sessionMessages = len(active.Messages)
+	}
+	var toolNames []string
+	if a.Tools != nil {
+		for _, def := range a.Tools.Definitions() {
+			toolNames = append(toolNames, def.Name)
+		}
+	}
+	gitRaw, gitErr := gitops.Status(a.Workspace)
+	gitError := ""
+	if gitErr != nil {
+		gitError = gitErr.Error()
+	}
+	sandboxStatus := sandbox.Detect()
+	executable := ""
+	if path, err := os.Executable(); err == nil {
+		executable = path
+	}
+	return localstatus.Build(localstatus.Options{
+		Version:             version,
+		Workspace:           a.Workspace,
+		ConfigHome:          a.Config.ConfigHome,
+		Model:               a.Config.Model,
+		BaseURL:             a.Config.BaseURL,
+		PermissionMode:      a.Config.PermissionMode,
+		MaxTokens:           a.Config.MaxTokens,
+		MaxTurns:            a.Config.MaxTurns,
+		AutoCompactMessages: a.Config.AutoCompactMessages,
+		AuthConfigured:      a.Config.APIKey != "" || a.Config.AuthToken != "",
+		MCPServerCount:      len(a.Config.MCPServers),
+		PreHookCount:        len(a.Config.Hooks.PreToolUse),
+		PostHookCount:       len(a.Config.Hooks.PostToolUse),
+		EnabledSkillCount:   len(a.Config.EnabledSkills),
+		ToolNames:           toolNames,
+		SessionID:           sessionID,
+		SessionPath:         sessionPath,
+		SessionMessages:     sessionMessages,
+		SessionCount:        sessionCount,
+		GitStatus:           gitRaw,
+		GitError:            gitError,
+		SandboxOS:           sandboxStatus.OS,
+		SandboxDefault:      sandboxStatus.Default,
+		SandboxStrategies:   sandboxStatus.Strategies,
+		SandboxAvailable:    sandboxStatus.Available,
+		Executable:          executable,
+	})
+}
+
+func parseStatusOutputFormat(args []string) (string, error) {
+	format := "text"
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return "", errors.New("status output format is required")
+			}
+			format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			return "", fmt.Errorf("unknown status flag %q", arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, nil
+	default:
+		return "", fmt.Errorf("unknown status output format %q", format)
+	}
+}
+
 func (a *App) Doctor(args []string) error {
 	format, err := parseDoctorOutputFormat(args)
 	if err != nil {
@@ -1682,7 +1803,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	}
 	switch fields[0] {
 	case "/status":
-		fmt.Fprintf(a.Err, "session=%s messages=%d model=%s permission=%s\n", sess.ID, len(sess.Messages), a.Config.Model, a.Config.PermissionMode)
+		a.renderStatus("text", sess)
 	case "/cost":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/config":
@@ -2332,6 +2453,7 @@ Usage:
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
   %s [flags] mcp
+  %s [flags] status [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
@@ -2358,7 +2480,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

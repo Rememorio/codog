@@ -51,6 +51,8 @@ Claude Code source.
   browser authorization; `oauth status` inspects local auth readiness; `oauth
   logout` revokes and deletes local auth; `oauth token save|show|refresh|revoke|delete`
   manages and refreshes a keychain-backed auth token store with a local file fallback.
+- `codog status [--json]` prints a local workspace/config/session/git/sandbox
+  runtime snapshot for humans or scripts.
 - `codog doctor [--json]` runs local auth, config, workspace, permission,
   sandbox, git, session, tool registry, and runtime diagnostics without making
   a provider request.
