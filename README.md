@@ -40,7 +40,8 @@ Claude Code source.
   manages local plugins, checks marketplace updates, and can install or update
   SHA-256 verified zip bundles from signed remote marketplace indexes.
 - `codog oauth pkce` generates a PKCE verifier/challenge pair, and
-  `oauth token save|show|delete` manages a local auth token store.
+  `oauth token save|show|delete` manages a keychain-backed auth token store
+  with a local file fallback.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
   wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
   `unshare`.
