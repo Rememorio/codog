@@ -28,8 +28,8 @@ Codog follows a small-core layout:
 - `internal/plugins`: local plugin discovery, remote marketplace index fetch,
   verified zip install/update, enable/disable, and removal.
 - `internal/oauth`: PKCE, provider metadata discovery/profile storage, device
-  authorization, refresh-token renewal, and keychain-backed auth token storage
-  with file fallback.
+  authorization, refresh-token renewal, auth status inspection, and
+  keychain-backed auth token storage with file fallback.
 - `internal/sandbox`: local sandbox strategy detection and bash wrapping.
 - `internal/codeintel`: lightweight Go symbols, diagnostics, notebook helpers,
   and local LSP lifecycle metadata.

@@ -321,6 +321,32 @@ func TestOAuthTokenRefreshCommand(t *testing.T) {
 	require.Equal(t, "refreshed-access", loaded.AccessToken)
 }
 
+func TestOAuthStatusCommand(t *testing.T) {
+	server := oauthRefreshTestServer(t)
+	defer server.Close()
+	configHome := t.TempDir()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "status-access-1234",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	require.NoError(t, app.OAuth([]string{"status"}))
+	require.Contains(t, out.String(), `"profile_name": "default"`)
+	require.Contains(t, out.String(), `"access_token": "stat...1234"`)
+	require.Contains(t, out.String(), `"can_refresh": true`)
+	require.Contains(t, out.String(), `"ready": true`)
+	require.NotContains(t, out.String(), "status-access-1234")
+}
+
 func TestApplyStoredOAuthToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()

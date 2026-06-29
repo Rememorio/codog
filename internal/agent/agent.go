@@ -1035,8 +1035,18 @@ func (a *App) OAuth(args []string) error {
 	if args[0] == "provider" {
 		return a.oauthProvider(args[1:])
 	}
+	if args[0] == "status" {
+		profile := ""
+		if len(args) > 1 {
+			profile = args[1]
+		}
+		status := oauth.InspectStatus(a.Config.ConfigHome, profile, time.Now().UTC())
+		data, _ := json.MarshalIndent(status, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|delete")
+		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth status [PROFILE] | oauth token save|show|refresh|delete")
 	}
 	if len(args) < 2 {
 		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | refresh [PROFILE] | delete")
@@ -1712,7 +1722,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|refresh|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth status [PROFILE] | oauth token save|show|refresh|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY

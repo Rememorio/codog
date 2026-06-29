@@ -41,8 +41,9 @@ Claude Code source.
   SHA-256 verified zip bundles from signed remote marketplace indexes.
 - `codog oauth pkce|discover|provider|device` generates PKCE material, discovers
   and stores provider profiles, and runs profile-backed device authorization;
-  `oauth token save|show|refresh|delete` manages and refreshes a keychain-backed
-  auth token store with a local file fallback.
+  `oauth status` inspects local auth readiness; `oauth token
+  save|show|refresh|delete` manages and refreshes a keychain-backed auth token
+  store with a local file fallback.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
   wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
   `unshare`.
