@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -20,10 +21,18 @@ type Report struct {
 	Output       string `json:"output"`
 	Iterations   int    `json:"iterations"`
 	MessageCount int    `json:"message_count"`
+	ToolCalls    int    `json:"tool_calls"`
 }
 
 func Run(ctx context.Context) (Report, error) {
-	server := httptest.NewServer(mockanthropic.Server{Text: "codog harness ok"}.Handler())
+	server := httptest.NewServer(mockanthropic.Server{Turns: []mockanthropic.Turn{
+		{ToolUses: []mockanthropic.ToolUse{{
+			ID:    "tool-1",
+			Name:  "read_file",
+			Input: json.RawMessage(`{"path":"README.md"}`),
+		}}},
+		{Text: "codog harness ok"},
+	}}.Handler())
 	defer server.Close()
 
 	workspace, err := os.MkdirTemp("", "codog-harness-*")
@@ -41,7 +50,7 @@ func Run(ctx context.Context) (Report, error) {
 		Config: config.Config{
 			Model:               "mock",
 			MaxTokens:           128,
-			MaxTurns:            2,
+			MaxTurns:            3,
 			AutoCompactMessages: 20,
 		},
 		Client:    client,
@@ -58,5 +67,6 @@ func Run(ctx context.Context) (Report, error) {
 		Output:       out.String(),
 		Iterations:   result.Iterations,
 		MessageCount: len(result.Messages),
+		ToolCalls:    len(result.ToolCalls),
 	}, nil
 }
