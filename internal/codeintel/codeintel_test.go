@@ -220,7 +220,7 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	}
 	configHome := t.TempDir()
 	workspace := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main(){ }\n"), 0o644))
 	store := NewLSPStore(configHome, workspace)
 	command := "CODOG_FAKE_LSP=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
 	require.NoError(t, store.save(LSPServer{Language: "go", Command: command, Workspace: workspace, StartedAt: time.Now()}))
@@ -233,6 +233,26 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, "textDocument/hover", result.Method)
 	require.Equal(t, "main.go", result.Path)
 	require.NotNil(t, result.Result)
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "format", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "format", result.Action)
+	require.Equal(t, "textDocument/formatting", result.Method)
+	require.Equal(t, 1, result.TextEdits)
+	require.True(t, result.Changed)
+	require.Contains(t, result.Content, "func main() {}")
+}
+
+func TestApplyLSPTextEdits(t *testing.T) {
+	source := "alpha\nbeta\n"
+	var edit lspTextEdit
+	edit.Range.Start = lspPosition{Line: 1, Character: 0}
+	edit.Range.End = lspPosition{Line: 1, Character: 4}
+	edit.NewText = "gamma"
+
+	out, err := applyLSPTextEdits(source, []lspTextEdit{edit})
+	require.NoError(t, err)
+	require.Equal(t, "alpha\ngamma\n", out)
 }
 
 func TestNormalizeLSPActionAliases(t *testing.T) {
@@ -278,6 +298,14 @@ func TestFakeLSPServer(t *testing.T) {
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
 		case "textDocument/hover":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
+		case "textDocument/formatting":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON([]map[string]any{{
+				"range": map[string]any{
+					"start": map[string]any{"line": 2, "character": 0},
+					"end":   map[string]any{"line": 2, "character": 14},
+				},
+				"newText": "func main() {}\n",
+			}})})
 		case "shutdown":
 			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
 		default:

@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type LSPQueryRequest struct {
@@ -25,12 +27,15 @@ type LSPQueryRequest struct {
 }
 
 type LSPQueryResult struct {
-	Kind     string `json:"kind"`
-	Language string `json:"language"`
-	Action   string `json:"action"`
-	Method   string `json:"method"`
-	Path     string `json:"path"`
-	Result   any    `json:"result,omitempty"`
+	Kind      string `json:"kind"`
+	Language  string `json:"language"`
+	Action    string `json:"action"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Result    any    `json:"result,omitempty"`
+	TextEdits int    `json:"text_edits,omitempty"`
+	Changed   bool   `json:"changed,omitempty"`
+	Content   string `json:"content,omitempty"`
 }
 
 type lspClient struct {
@@ -51,6 +56,19 @@ type lspRPCMessage struct {
 type lspRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type lspTextEdit struct {
+	Range struct {
+		Start lspPosition `json:"start"`
+		End   lspPosition `json:"end"`
+	} `json:"range"`
+	NewText string `json:"newText"`
+}
+
+type lspPosition struct {
+	Line      int `json:"line"`
+	Character int `json:"character"`
 }
 
 func NormalizeLSPAction(action string) (string, error) {
@@ -189,14 +207,28 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 			return LSPQueryResult{}, err
 		}
 	}
-	return LSPQueryResult{
+	result := LSPQueryResult{
 		Kind:     "lsp_query",
 		Language: language,
 		Action:   action,
 		Method:   method,
 		Path:     rel,
 		Result:   decoded,
-	}, nil
+	}
+	if action == "format" && len(raw) > 0 && string(raw) != "null" {
+		var edits []lspTextEdit
+		if err := json.Unmarshal(raw, &edits); err != nil {
+			return LSPQueryResult{}, err
+		}
+		formatted, err := applyLSPTextEdits(string(data), edits)
+		if err != nil {
+			return LSPQueryResult{}, err
+		}
+		result.TextEdits = len(edits)
+		result.Content = formatted
+		result.Changed = formatted != string(data)
+	}
+	return result, nil
 }
 
 func (c *lspClient) request(method string, params any) (json.RawMessage, error) {
@@ -305,6 +337,73 @@ func sameLSPID(value any, id int) bool {
 	default:
 		return false
 	}
+}
+
+func applyLSPTextEdits(source string, edits []lspTextEdit) (string, error) {
+	type offsetEdit struct {
+		start   int
+		end     int
+		newText string
+	}
+	offsets := make([]offsetEdit, 0, len(edits))
+	for _, edit := range edits {
+		start, err := lspOffset(source, edit.Range.Start.Line, edit.Range.Start.Character)
+		if err != nil {
+			return "", err
+		}
+		end, err := lspOffset(source, edit.Range.End.Line, edit.Range.End.Character)
+		if err != nil {
+			return "", err
+		}
+		if start > end {
+			return "", errors.New("lsp text edit range is inverted")
+		}
+		offsets = append(offsets, offsetEdit{start: start, end: end, newText: edit.NewText})
+	}
+	sort.Slice(offsets, func(i, j int) bool {
+		return offsets[i].start > offsets[j].start
+	})
+	out := source
+	lastStart := len(out) + 1
+	for _, edit := range offsets {
+		if edit.end > lastStart {
+			return "", errors.New("overlapping lsp text edits are not supported")
+		}
+		out = out[:edit.start] + edit.newText + out[edit.end:]
+		lastStart = edit.start
+	}
+	return out, nil
+}
+
+func lspOffset(source string, line int, character int) (int, error) {
+	if line < 0 || character < 0 {
+		return 0, errors.New("lsp position cannot be negative")
+	}
+	offset := 0
+	for currentLine := 0; currentLine < line; currentLine++ {
+		next := strings.IndexByte(source[offset:], '\n')
+		if next < 0 {
+			return 0, fmt.Errorf("lsp line %d is out of range", line)
+		}
+		offset += next + 1
+	}
+	lineEnd := len(source)
+	if next := strings.IndexByte(source[offset:], '\n'); next >= 0 {
+		lineEnd = offset + next
+	}
+	currentCharacter := 0
+	for byteOffset := offset; byteOffset < lineEnd; {
+		if currentCharacter == character {
+			return byteOffset, nil
+		}
+		_, size := utf8.DecodeRuneInString(source[byteOffset:lineEnd])
+		byteOffset += size
+		currentCharacter++
+	}
+	if currentCharacter == character {
+		return lineEnd, nil
+	}
+	return 0, fmt.Errorf("lsp character %d is out of range", character)
 }
 
 func lspShellCommand(ctx context.Context, command string) *exec.Cmd {
