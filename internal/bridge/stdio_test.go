@@ -20,7 +20,10 @@ func TestBridgeInitialize(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"name":"codog"`)
 	require.Contains(t, out.String(), `"sessions/list"`)
+	require.Contains(t, out.String(), `"workspace/files"`)
+	require.Contains(t, out.String(), `"workspace/search"`)
 	require.Contains(t, out.String(), `"file/read"`)
+	require.Contains(t, out.String(), `"file/diff"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
 	require.Contains(t, out.String(), `"background/watch"`)
 }
@@ -44,6 +47,27 @@ func TestBridgeFileReadWriteEdit(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "hello codog", string(data))
+}
+
+func TestBridgeWorkspaceFilesSearchAndDiff(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Codog\n\nhello bridge\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "internal", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"workspace/files","params":{"pattern":"*.md"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"workspace/search","params":{"query":"bridge","glob":"*.md"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"file/diff","params":{"path":"README.md","old_string":"hello bridge","new_string":"hello codog"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"path":"README.md"`)
+	require.Contains(t, out.String(), `"text":"hello bridge"`)
+	require.Contains(t, out.String(), `-hello bridge`)
+	require.Contains(t, out.String(), `+hello codog`)
 }
 
 func TestBridgeBackgroundWatchStreamsNotifications(t *testing.T) {

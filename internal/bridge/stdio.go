@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -83,9 +86,12 @@ func (s Server) handle(req Request) (any, *Error) {
 				"sessions/list",
 				"capabilities/list",
 				"workspace/info",
+				"workspace/files",
+				"workspace/search",
 				"file/read",
 				"file/write",
 				"file/edit",
+				"file/diff",
 				"diagnostics/go",
 				"background/watch",
 			},
@@ -98,6 +104,18 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return map[string]any{"path": workspace, "name": filepath.Base(workspace)}, nil
+	case "workspace/files":
+		result, err := s.workspaceFiles(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "workspace/search":
+		result, err := s.workspaceSearch(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	case "sessions/list":
 		sessions, err := s.Sessions.List()
 		if err != nil {
@@ -122,6 +140,12 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return result, nil
+	case "file/diff":
+		result, err := s.diffFile(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	case "diagnostics/go":
 		result, err := s.goDiagnostics(req.Params)
 		if err != nil {
@@ -131,6 +155,20 @@ func (s Server) handle(req Request) (any, *Error) {
 	default:
 		return nil, &Error{Code: -32601, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
+}
+
+type fileEntry struct {
+	Path    string    `json:"path"`
+	IsDir   bool      `json:"is_dir"`
+	Size    int64     `json:"size,omitempty"`
+	ModTime time.Time `json:"mod_time,omitempty"`
+}
+
+type searchMatch struct {
+	Path   string `json:"path"`
+	Line   int    `json:"line"`
+	Text   string `json:"text"`
+	Column int    `json:"column,omitempty"`
 }
 
 func (s Server) goDiagnostics(params json.RawMessage) (any, error) {
@@ -178,6 +216,159 @@ func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (
 		return nil, &Error{Code: -32000, Message: err.Error()}
 	}
 	return map[string]any{"id": payload.ID, "events": count}, nil
+}
+
+func (s Server) workspaceFiles(params json.RawMessage) (any, error) {
+	var payload struct {
+		Path          string `json:"path"`
+		Pattern       string `json:"pattern"`
+		Limit         int    `json:"limit"`
+		IncludeHidden bool   `json:"include_hidden"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	root, relRoot, err := s.resolveWorkspacePath(payload.Path)
+	if err != nil {
+		return nil, err
+	}
+	pattern := payload.Pattern
+	if pattern == "" {
+		pattern = "*"
+	}
+	limit := boundedLimit(payload.Limit, 500, 5000)
+	entries := []fileEntry{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := s.rel(path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if shouldSkipBridgePath(rel, entry, payload.IncludeHidden) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		ok, err := bridgePatternMatch(pattern, rel, entry.Name())
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		entries = append(entries, fileEntry{Path: rel, IsDir: entry.IsDir(), Size: info.Size(), ModTime: info.ModTime().UTC()})
+		if len(entries) >= limit {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return map[string]any{"root": relRoot, "files": entries, "truncated": len(entries) >= limit}, nil
+}
+
+func (s Server) workspaceSearch(params json.RawMessage) (any, error) {
+	var payload struct {
+		Query         string `json:"query"`
+		Path          string `json:"path"`
+		Glob          string `json:"glob"`
+		Regex         bool   `json:"regex"`
+		Limit         int    `json:"limit"`
+		IncludeHidden bool   `json:"include_hidden"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Query == "" {
+		return nil, errors.New("query is required")
+	}
+	root, _, err := s.resolveWorkspacePath(payload.Path)
+	if err != nil {
+		return nil, err
+	}
+	limit := boundedLimit(payload.Limit, 100, 1000)
+	var expr *regexp.Regexp
+	if payload.Regex {
+		expr, err = regexp.Compile(payload.Query)
+		if err != nil {
+			return nil, err
+		}
+	}
+	matches := []searchMatch{}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := s.rel(path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if shouldSkipBridgePath(rel, entry, payload.IncludeHidden) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if payload.Glob != "" {
+			ok, err := bridgePatternMatch(payload.Glob, rel, entry.Name())
+			if err != nil || !ok {
+				return err
+			}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if len(data) > 1024*1024 || bytes.IndexByte(data, 0) >= 0 {
+			return nil
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			column := 0
+			found := false
+			if expr != nil {
+				loc := expr.FindStringIndex(line)
+				if loc != nil {
+					found = true
+					column = loc[0] + 1
+				}
+			} else if idx := strings.Index(line, payload.Query); idx >= 0 {
+				found = true
+				column = idx + 1
+			}
+			if !found {
+				continue
+			}
+			matches = append(matches, searchMatch{Path: rel, Line: i + 1, Text: line, Column: column})
+			if len(matches) >= limit {
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"matches": matches, "truncated": len(matches) >= limit}, nil
 }
 
 func (s Server) readFile(params json.RawMessage) (any, error) {
@@ -284,6 +475,42 @@ func (s Server) editFile(params json.RawMessage) (any, error) {
 	return map[string]any{"path": rel, "replacements": replacements}, nil
 }
 
+func (s Server) diffFile(params json.RawMessage) (any, error) {
+	var payload struct {
+		Path      string `json:"path"`
+		Original  string `json:"original"`
+		Updated   string `json:"updated"`
+		OldString string `json:"old_string"`
+		NewString string `json:"new_string"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	path, rel, err := s.resolve(payload.Path, false)
+	if err != nil {
+		return nil, err
+	}
+	original := payload.Original
+	if original == "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		original = string(data)
+	}
+	updated := payload.Updated
+	if updated == "" {
+		if payload.OldString == "" {
+			return nil, errors.New("updated or old_string is required")
+		}
+		if !strings.Contains(original, payload.OldString) {
+			return nil, errors.New("old_string was not found")
+		}
+		updated = strings.Replace(original, payload.OldString, payload.NewString, 1)
+	}
+	return map[string]any{"path": rel, "diff": unifiedDiff(rel, original, updated)}, nil
+}
+
 func (s Server) resolve(requested string, allowMissing bool) (string, string, error) {
 	if strings.TrimSpace(requested) == "" {
 		return "", "", errors.New("path is required")
@@ -324,9 +551,94 @@ func (s Server) resolve(requested string, allowMissing bool) (string, string, er
 	return resolved, rel, nil
 }
 
+func (s Server) resolveWorkspacePath(requested string) (string, string, error) {
+	if strings.TrimSpace(requested) == "" {
+		workspace, err := s.workspace()
+		if err != nil {
+			return "", "", err
+		}
+		root, err := filepath.EvalSymlinks(workspace)
+		if err != nil {
+			return "", "", err
+		}
+		return root, ".", nil
+	}
+	return s.resolve(requested, false)
+}
+
+func (s Server) rel(path string) (string, error) {
+	workspace, err := s.workspace()
+	if err != nil {
+		return "", err
+	}
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", err
+	}
+	return rel, nil
+}
+
 func (s Server) workspace() (string, error) {
 	if s.Workspace != "" {
 		return filepath.Abs(s.Workspace)
 	}
 	return os.Getwd()
+}
+
+func boundedLimit(value, defaultValue, maxValue int) int {
+	if value <= 0 {
+		return defaultValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
+}
+
+func shouldSkipBridgePath(rel string, entry os.DirEntry, includeHidden bool) bool {
+	base := entry.Name()
+	if entry.IsDir() && (base == ".git" || base == ".codog" || base == "node_modules") {
+		return true
+	}
+	return !includeHidden && strings.HasPrefix(base, ".")
+}
+
+func bridgePatternMatch(pattern string, rel string, base string) (bool, error) {
+	target := base
+	if strings.Contains(pattern, "/") {
+		target = filepath.ToSlash(rel)
+		pattern = filepath.ToSlash(pattern)
+	}
+	return filepath.Match(pattern, target)
+}
+
+func unifiedDiff(path string, original string, updated string) string {
+	if original == updated {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("--- a/" + path + "\n")
+	builder.WriteString("+++ b/" + path + "\n")
+	builder.WriteString("@@\n")
+	oldLines := splitDiffLines(original)
+	newLines := splitDiffLines(updated)
+	for _, line := range oldLines {
+		builder.WriteString("-" + line + "\n")
+	}
+	for _, line := range newLines {
+		builder.WriteString("+" + line + "\n")
+	}
+	return builder.String()
+}
+
+func splitDiffLines(value string) []string {
+	value = strings.TrimSuffix(value, "\n")
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, "\n")
 }

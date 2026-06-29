@@ -38,11 +38,11 @@ func Surfaces() []Surface {
 			Command:     "bridge",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Stdio JSON-RPC bridge exposes sessions, workspace info, Go diagnostics, background watch notifications, and bounded file read/write/edit RPCs.",
+			Description: "Stdio JSON-RPC bridge exposes sessions, workspace info, file listing/search/diff/read/write/edit RPCs, Go diagnostics, and background watch notifications.",
 			DependsOn:   []string{"remote", "enterprise"},
 			NextSteps: []string{
 				"Add editor identity and workspace trust checks.",
-				"Map file open, selection, diagnostics, and diff actions.",
+				"Map editor file-open and selection actions.",
 				"Package VS Code and JetBrains extensions.",
 			},
 		},
