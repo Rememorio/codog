@@ -94,6 +94,8 @@ type Config struct {
 	AuthToken           string                     `json:"auth_token,omitempty"`
 	BaseURL             string                     `json:"base_url,omitempty"`
 	Model               string                     `json:"model,omitempty"`
+	SystemPrompt        string                     `json:"system_prompt,omitempty"`
+	AppendSystemPrompt  string                     `json:"append_system_prompt,omitempty"`
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
@@ -122,6 +124,8 @@ type FlagOverrides struct {
 	Resume          string
 	Model           string
 	BaseURL         string
+	SystemPrompt    string
+	AppendPrompt    string
 	PermissionMode  string
 	SkipPermissions bool
 	AllowedTools    []string
@@ -476,6 +480,12 @@ func merge(dst *Config, src Config) {
 	if src.Model != "" {
 		dst.Model = src.Model
 	}
+	if src.SystemPrompt != "" {
+		dst.SystemPrompt = src.SystemPrompt
+	}
+	if src.AppendSystemPrompt != "" {
+		dst.AppendSystemPrompt = joinPromptAppend(dst.AppendSystemPrompt, src.AppendSystemPrompt)
+	}
 	if src.MaxTokens != 0 {
 		dst.MaxTokens = src.MaxTokens
 	}
@@ -601,6 +611,18 @@ func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
 	dst.DeniedTools = append(dst.DeniedTools, src.DeniedTools...)
 }
 
+func joinPromptAppend(existing string, next string) string {
+	existing = strings.TrimSpace(existing)
+	next = strings.TrimSpace(next)
+	if existing == "" {
+		return next
+	}
+	if next == "" {
+		return existing
+	}
+	return existing + "\n\n" + next
+}
+
 func applyEnv(cfg *Config) {
 	if value := os.Getenv("ANTHROPIC_API_KEY"); value != "" {
 		cfg.APIKey = value
@@ -616,6 +638,12 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_MODEL"); value != "" {
 		cfg.Model = value
+	}
+	if value := os.Getenv("CODOG_SYSTEM_PROMPT"); value != "" {
+		cfg.SystemPrompt = value
+	}
+	if value := os.Getenv("CODOG_APPEND_SYSTEM_PROMPT"); value != "" {
+		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, value)
 	}
 	if value := os.Getenv("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value
@@ -654,6 +682,12 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL
+	}
+	if overrides.SystemPrompt != "" {
+		cfg.SystemPrompt = overrides.SystemPrompt
+	}
+	if overrides.AppendPrompt != "" {
+		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, overrides.AppendPrompt)
 	}
 	if overrides.PermissionMode != "" {
 		cfg.PermissionMode = overrides.PermissionMode

@@ -7073,8 +7073,15 @@ func (a *App) auditPermissionDecision(sessionID string) func(tools.PermissionDec
 
 func (a *App) systemPrompt() string {
 	base := "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
+	if strings.TrimSpace(a.Config.SystemPrompt) != "" {
+		base = strings.TrimSpace(a.Config.SystemPrompt)
+	}
 	var builder strings.Builder
 	builder.WriteString(base)
+	if strings.TrimSpace(a.Config.AppendSystemPrompt) != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(strings.TrimSpace(a.Config.AppendSystemPrompt))
+	}
 	for _, name := range a.Config.EnabledSkills {
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
 		if err != nil {
@@ -7150,6 +7157,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
+	flags.StringVar(&base.SystemPrompt, "system-prompt", base.SystemPrompt, "override the base system prompt")
+	flags.StringVar(&base.AppendPrompt, "append-system-prompt", base.AppendPrompt, "append text to the system prompt")
 	flags.StringVar(&base.SessionID, "session", base.SessionID, "session id")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
@@ -7248,6 +7257,8 @@ Usage:
 Flags:
   --model NAME
   --base-url URL
+  --system-prompt TEXT
+  --append-system-prompt TEXT
   --session ID
   --resume ID|latest
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
@@ -7260,7 +7271,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
 `, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 

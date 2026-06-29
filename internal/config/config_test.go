@@ -144,6 +144,23 @@ func TestLoadPermissionRuleFlagOverrides(t *testing.T) {
 	require.Equal(t, []string{"bash", "write_file"}, cfg.PermissionRules.DeniedTools)
 }
 
+func TestLoadSystemPromptConfigEnvAndFlags(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"system_prompt":"config base","append_system_prompt":"config extra"}`), 0o644))
+	t.Setenv("CODOG_SYSTEM_PROMPT", "env base")
+	t.Setenv("CODOG_APPEND_SYSTEM_PROMPT", "env extra")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath:   configPath,
+		SystemPrompt: "flag base",
+		AppendPrompt: "flag extra",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "flag base", cfg.SystemPrompt)
+	require.Equal(t, "config extra\n\nenv extra\n\nflag extra", cfg.AppendSystemPrompt)
+}
+
 func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

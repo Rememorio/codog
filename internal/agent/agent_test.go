@@ -142,6 +142,19 @@ func TestParseFlagsSupportsToolRuleOverrides(t *testing.T) {
 	require.Equal(t, []string{"hello"}, rest)
 }
 
+func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{
+		"--system-prompt", "base",
+		"--append-system-prompt", "extra",
+		"prompt", "hello",
+	}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "base", overrides.SystemPrompt)
+	require.Equal(t, "extra", overrides.AppendPrompt)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+}
+
 func TestDumpManifestsCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -1696,6 +1709,21 @@ func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	require.Contains(t, prompt, "<project_memory>")
 	require.Contains(t, prompt, "AGENTS.md")
 	require.Contains(t, prompt, "Always run focused tests.")
+}
+
+func TestSystemPromptSupportsOverrideAndAppend(t *testing.T) {
+	app := &App{
+		Config: config.Config{
+			SystemPrompt:       "Custom base.",
+			AppendSystemPrompt: "Extra instructions.",
+		},
+		Workspace: t.TempDir(),
+	}
+
+	prompt := app.systemPrompt()
+	require.True(t, strings.HasPrefix(prompt, "Custom base."))
+	require.Contains(t, prompt, "Extra instructions.")
+	require.NotContains(t, prompt, "You are Codog")
 }
 
 func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {

@@ -21,6 +21,8 @@ Claude Code source.
 - JSONL session persistence and resume
 - Workspace-scoped session storage with legacy flat-session compatibility
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags
+- System prompt override and append support with `--system-prompt` and
+  `--append-system-prompt`
 
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
