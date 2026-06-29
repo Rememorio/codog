@@ -134,7 +134,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(RemoteTriggerTool{})
 	reg.Register(TestingPermissionTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
-	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, ConfigHome: opts.ConfigHome})
 	reg.Register(EnterWorktreeTool{Workspace: workspace})
 	reg.Register(ExitWorktreeTool{Workspace: workspace})
 	reg.Register(EnterPlanModeTool{Workspace: workspace})
@@ -200,7 +200,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(SendUserMessageTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
-	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, ConfigHome: opts.ConfigHome})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
 	r.Register(MCPDispatchTool{Servers: opts.MCPServers})
@@ -1895,6 +1895,7 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 type LSPTool struct {
 	Workspace      string
 	AdditionalDirs []string
+	ConfigHome     string
 }
 
 func (LSPTool) Definition() anthropic.ToolDefinition {
@@ -1913,6 +1914,11 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 				"character": map[string]any{"type": "integer", "minimum": 0},
 				"query":     map[string]any{"type": "string"},
 				"limit":     map[string]any{"type": "integer", "minimum": 1},
+				"language":  map[string]any{"type": "string"},
+				"use_server": map[string]any{
+					"type":        "boolean",
+					"description": "Use a configured stdio LSP server from codog code-intel lsp start/query metadata instead of the static fallback.",
+				},
 			},
 			"required":             []string{"action"},
 			"additionalProperties": false,
@@ -1932,6 +1938,8 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		Character int    `json:"character"`
 		Query     string `json:"query"`
 		Limit     int    `json:"limit"`
+		Language  string `json:"language"`
+		UseServer bool   `json:"use_server"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -1939,6 +1947,15 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	action, err := codeintel.NormalizeLSPAction(payload.Action)
 	if err != nil {
 		return "", err
+	}
+	if payload.UseServer || strings.TrimSpace(payload.Language) != "" {
+		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Line, payload.Character)
+		if err == nil {
+			return pretty(map[string]any{"action": action, "source": "lsp", "lsp": result}), nil
+		}
+		if payload.UseServer {
+			return "", err
+		}
 	}
 	switch action {
 	case "symbols":
@@ -2039,6 +2056,25 @@ func (t LSPTool) lspQuery(query string, path string, line int, character int) (s
 		return "", errors.New("query or path position is required")
 	}
 	return symbolAtPosition(t.Workspace, t.AdditionalDirs, path, line, character)
+}
+
+func (t LSPTool) executeServerLSP(ctx context.Context, action string, language string, path string, line int, character int) (codeintel.LSPQueryResult, error) {
+	if strings.TrimSpace(t.ConfigHome) == "" {
+		return codeintel.LSPQueryResult{}, errors.New("config home is required for lsp server queries")
+	}
+	if strings.TrimSpace(path) == "" {
+		return codeintel.LSPQueryResult{}, errors.New("path is required for lsp server queries")
+	}
+	language = strings.TrimSpace(language)
+	if language == "" {
+		language = codeintel.InferLanguageID(path)
+	}
+	return codeintel.NewLSPStore(t.ConfigHome, t.Workspace).Query(ctx, language, codeintel.LSPQueryRequest{
+		Action:    action,
+		Path:      path,
+		Line:      line,
+		Character: character,
+	})
 }
 
 func scopedRelativePath(workspace string, additionalDirs []string, requested string) (string, error) {

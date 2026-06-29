@@ -326,6 +326,10 @@ func fileURI(path string) string {
 	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
 }
 
+func InferLanguageID(path string) string {
+	return languageID("", path)
+}
+
 func languageID(language string, path string) string {
 	if strings.TrimSpace(language) != "" {
 		return language

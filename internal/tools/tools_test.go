@@ -456,6 +456,15 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, gotoDefinitionOut, `"action": "definition"`)
 	require.Contains(t, gotoDefinitionOut, `"found": true`)
 
+	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
+	require.NoError(t, err)
+	require.Contains(t, languageFallbackOut, `"action": "definition"`)
+	require.Contains(t, languageFallbackOut, `"found": true`)
+
+	_, err = tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6,"use_server":true}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config home is required")
+
 	hoverOut, err := tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6}`))
 	require.NoError(t, err)
 	require.Contains(t, hoverOut, `"query": "BuildWidget"`)
