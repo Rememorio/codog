@@ -1,0 +1,4 @@
+/codog
+*.test
+coverage.out
+.codog/
