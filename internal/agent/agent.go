@@ -27,6 +27,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
@@ -1483,6 +1484,17 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 			toolNames = append(toolNames, def.Name)
 		}
 	}
+	memoryFiles, _ := memory.Discover(a.Workspace)
+	memoryStatuses := make([]localstatus.MemoryFileStatus, 0, len(memoryFiles))
+	for _, file := range memoryFiles {
+		memoryStatuses = append(memoryStatuses, localstatus.MemoryFileStatus{
+			Path:      file.Path,
+			Name:      file.Name,
+			Scope:     file.Scope,
+			Chars:     file.Chars,
+			Truncated: file.Truncated,
+		})
+	}
 	gitRaw, gitErr := gitops.Status(a.Workspace)
 	gitError := ""
 	if gitErr != nil {
@@ -1508,6 +1520,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		PreHookCount:        len(a.Config.Hooks.PreToolUse),
 		PostHookCount:       len(a.Config.Hooks.PostToolUse),
 		EnabledSkillCount:   len(a.Config.EnabledSkills),
+		MemoryFiles:         memoryStatuses,
 		ToolNames:           toolNames,
 		SessionID:           sessionID,
 		SessionPath:         sessionPath,
@@ -1566,6 +1579,11 @@ func (a *App) Doctor(args []string) error {
 			sessionCount = len(sessions)
 		}
 	}
+	memoryFiles, _ := memory.Discover(a.Workspace)
+	memoryPaths := make([]string, 0, len(memoryFiles))
+	for _, file := range memoryFiles {
+		memoryPaths = append(memoryPaths, file.Path)
+	}
 	sandboxStatus := sandbox.Detect()
 	report := doctor.Run(doctor.Options{
 		Workspace:      a.Workspace,
@@ -1577,6 +1595,7 @@ func (a *App) Doctor(args []string) error {
 		PermissionMode: a.Config.PermissionMode,
 		ToolCount:      toolCount,
 		SessionCount:   sessionCount,
+		MemoryFiles:    memoryPaths,
 		SandboxDefault: sandboxStatus.Default,
 		SandboxOK:      sandboxStatus.Available,
 	})
@@ -2392,9 +2411,6 @@ func (a *App) auditPermissionDecision(sessionID string) func(tools.PermissionDec
 
 func (a *App) systemPrompt() string {
 	base := "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
-	if len(a.Config.EnabledSkills) == 0 {
-		return base
-	}
 	var builder strings.Builder
 	builder.WriteString(base)
 	for _, name := range a.Config.EnabledSkills {
@@ -2407,6 +2423,12 @@ func (a *App) systemPrompt() string {
 		builder.WriteString("\">\n")
 		builder.WriteString(skill.Body)
 		builder.WriteString("\n</skill>")
+	}
+	if files, err := memory.Discover(a.Workspace); err == nil {
+		if rendered := memory.Render(files); rendered != "" {
+			builder.WriteString("\n\n")
+			builder.WriteString(rendered)
+		}
 	}
 	return builder.String()
 }

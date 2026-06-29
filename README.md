@@ -37,6 +37,9 @@ Claude Code source.
   streaming server for harness tests.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
+- Project memory files (`AGENTS.md`, `CLAUDE.md`, `CLAW.md`, and
+  `.codog/instructions.md`) are loaded from the git root to the workspace and
+  injected into the system prompt.
 - `codog background run|list|status|stop|restart|logs|watch|prune` manages local
   background commands, attaches them to sessions, supervises restart policies,
   restarts tasks, prunes retained records, and streams status/log events.

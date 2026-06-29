@@ -29,6 +29,7 @@ type Options struct {
 	PermissionMode string
 	ToolCount      int
 	SessionCount   int
+	MemoryFiles    []string
 	SandboxDefault string
 	SandboxOK      bool
 }
@@ -63,6 +64,7 @@ func Run(opts Options) Report {
 		checkBaseURL(opts.BaseURL),
 		checkConfigHome(opts.ConfigHome),
 		checkWorkspace(opts.Workspace),
+		checkMemory(opts.MemoryFiles),
 		checkModel(opts.Model),
 		checkPermissions(opts.PermissionMode),
 		checkTools(opts.ToolCount),
@@ -183,6 +185,14 @@ func checkWorkspace(path string) Check {
 		return Check{Name: "Workspace", Status: StatusFail, Summary: "Workspace is not a directory.", Details: []string{path}}
 	}
 	return Check{Name: "Workspace", Status: StatusOK, Summary: "Workspace directory is available.", Details: []string{path}}
+}
+
+func checkMemory(files []string) Check {
+	details := []string{fmt.Sprintf("Loaded files: %d", len(files))}
+	for _, path := range files {
+		details = append(details, "Loaded: "+path)
+	}
+	return Check{Name: "Memory", Status: StatusOK, Summary: fmt.Sprintf("%d workspace memory files loaded.", len(files)), Details: details}
 }
 
 func checkModel(model string) Check {

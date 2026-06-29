@@ -14,7 +14,13 @@ func TestBuildParsesGitStatus(t *testing.T) {
 		Model:          "claude-test",
 		PermissionMode: "workspace-write",
 		AuthConfigured: true,
-		ToolNames:      []string{"bash", "read_file"},
+		MemoryFiles: []MemoryFileStatus{{
+			Path:  "/repo/codog/AGENTS.md",
+			Name:  "AGENTS.md",
+			Scope: "/repo/codog",
+			Chars: 18,
+		}},
+		ToolNames: []string{"bash", "read_file"},
 		GitStatus: stringsJoinLines(
 			"## main...origin/main [ahead 1]",
 			" M README.md",
@@ -29,6 +35,8 @@ func TestBuildParsesGitStatus(t *testing.T) {
 
 	require.Equal(t, "ok", snapshot.Status)
 	require.Equal(t, "codog", snapshot.Workspace.Name)
+	require.Equal(t, 1, snapshot.Workspace.MemoryFileCount)
+	require.Equal(t, "AGENTS.md", snapshot.Workspace.MemoryFiles[0].Name)
 	require.Equal(t, "main", snapshot.Git.Branch)
 	require.False(t, snapshot.Git.Clean)
 	require.Equal(t, 1, snapshot.Git.Staged)
@@ -75,6 +83,7 @@ func TestRenderText(t *testing.T) {
 
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Version          test-version")
+	require.Contains(t, out.String(), "Memory files     0")
 	require.Contains(t, out.String(), "Session          session-1")
 	require.Contains(t, out.String(), "Git              branch=main")
 	require.Contains(t, out.String(), "Tools            1")

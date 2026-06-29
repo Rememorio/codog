@@ -208,6 +208,7 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 func TestDoctorCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Prefer focused changes."), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -229,6 +230,7 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.Doctor(nil))
 	require.Contains(t, out.String(), "Doctor")
 	require.Contains(t, out.String(), "Auth")
+	require.Contains(t, out.String(), "Memory")
 	require.Contains(t, out.String(), "Permissions")
 	out.Reset()
 
@@ -245,6 +247,7 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 func TestStatusCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Status memory."), 0o644))
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "status me")))
 	var out bytes.Buffer
@@ -269,11 +272,13 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.Status(nil, config.FlagOverrides{}))
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
+	require.Contains(t, out.String(), "Memory files     1")
 	require.Contains(t, out.String(), "Tools            6")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
 	require.Contains(t, out.String(), `"kind": "status"`)
+	require.Contains(t, out.String(), `"memory_file_count": 1`)
 	require.Contains(t, out.String(), `"id": "source"`)
 	require.Contains(t, out.String(), `"message_count": 1`)
 	out.Reset()
@@ -281,6 +286,21 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}
 	require.True(t, app.handleSlash(context.Background(), "/status", sess))
 	require.Contains(t, out.String(), "Session          source (1 messages)")
+}
+
+func TestSystemPromptIncludesProjectMemory(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Always run focused tests."), 0o644))
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+	}
+
+	prompt := app.systemPrompt()
+
+	require.Contains(t, prompt, "<project_memory>")
+	require.Contains(t, prompt, "AGENTS.md")
+	require.Contains(t, prompt, "Always run focused tests.")
 }
 
 func TestExportCommandWritesFormats(t *testing.T) {

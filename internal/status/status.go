@@ -23,6 +23,7 @@ type Options struct {
 	PreHookCount        int
 	PostHookCount       int
 	EnabledSkillCount   int
+	MemoryFiles         []MemoryFileStatus
 	ToolNames           []string
 	SessionID           string
 	SessionPath         string
@@ -52,8 +53,18 @@ type Snapshot struct {
 }
 
 type WorkspaceStatus struct {
-	Path string `json:"path"`
-	Name string `json:"name"`
+	Path            string             `json:"path"`
+	Name            string             `json:"name"`
+	MemoryFileCount int                `json:"memory_file_count"`
+	MemoryFiles     []MemoryFileStatus `json:"memory_files,omitempty"`
+}
+
+type MemoryFileStatus struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Scope     string `json:"scope"`
+	Chars     int    `json:"chars"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type ConfigStatus struct {
@@ -122,8 +133,10 @@ func Build(opts Options) Snapshot {
 		Status:  status,
 		Version: opts.Version,
 		Workspace: WorkspaceStatus{
-			Path: opts.Workspace,
-			Name: filepath.Base(opts.Workspace),
+			Path:            opts.Workspace,
+			Name:            filepath.Base(opts.Workspace),
+			MemoryFileCount: len(opts.MemoryFiles),
+			MemoryFiles:     append([]MemoryFileStatus(nil), opts.MemoryFiles...),
 		},
 		Config: ConfigStatus{
 			ConfigHome:          opts.ConfigHome,
@@ -171,6 +184,7 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintf(w, "  Version          %s\n", snapshot.Version)
 	fmt.Fprintf(w, "  Status           %s\n", snapshot.Status)
 	fmt.Fprintf(w, "  Workspace        %s\n", snapshot.Workspace.Path)
+	fmt.Fprintf(w, "  Memory files     %d\n", snapshot.Workspace.MemoryFileCount)
 	fmt.Fprintf(w, "  Model            %s\n", snapshot.Config.Model)
 	fmt.Fprintf(w, "  Permission       %s\n", snapshot.Config.PermissionMode)
 	fmt.Fprintf(w, "  Auth configured  %t\n", snapshot.Config.AuthConfigured)
