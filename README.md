@@ -91,3 +91,6 @@ The repository is organized around three delivery horizons:
 3. Long-term: IDE bridge, remote sessions, multi-agent orchestration,
    background tasks, notebook/LSP, OAuth, enterprise policy, plugin marketplace,
    sandboxing, and updater surfaces.
+
+See [docs/roadmap.md](docs/roadmap.md) and `codog roadmap` for the current
+capability matrix.

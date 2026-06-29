@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -69,6 +70,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		fmt.Fprintf(os.Stderr, "mock Anthropic-compatible server listening on %s\n", addr)
 		return http.ListenAndServe(addr, mockanthropic.Server{Text: "mock response from codog"}.Handler())
+	}
+	if command == "roadmap" {
+		future.RenderText(os.Stdout, future.Surfaces())
+		return nil
+	}
+	if surface, ok := future.Find(command); ok {
+		future.RenderText(os.Stdout, []future.Surface{surface})
+		return nil
 	}
 
 	cfg, err := config.Load(overrides)
@@ -406,6 +415,8 @@ Usage:
   %s [flags] mcp
   %s [flags] cost --resume latest
   %s mock-server :8089
+  %s roadmap
+  %s bridge|remote|agents|background|code-intel|oauth|enterprise|marketplace|sandbox|updater
   %s config
 
 Flags:
@@ -420,7 +431,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
