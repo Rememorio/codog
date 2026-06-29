@@ -136,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 32)
+	require.Len(t, infos, 34)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -159,6 +159,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("cron_list")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("team_create")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("team_delete")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	_, ok = registry.Info("multi_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("task_create")
@@ -389,6 +395,39 @@ func TestCronToolsCreateListAndDeleteEntries(t *testing.T) {
 	listOut, err = CronListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{}`))
 	require.NoError(t, err)
 	require.Contains(t, listOut, `"count": 0`)
+}
+
+func TestTeamToolsCreateAndDeleteBackgroundTasks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	script := filepath.Join(t.TempDir(), "team-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o755))
+
+	createOut, err := TeamCreateTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"name":"review","session_id":"session-1","tasks":[{"description":"auth","prompt":"check auth"},{"prompt":"check tests"}]}`))
+	require.NoError(t, err)
+	require.Contains(t, createOut, `"name": "review"`)
+	require.Contains(t, createOut, `"task_count": 2`)
+	var created struct {
+		ID      string   `json:"team_id"`
+		TaskIDs []string `json:"task_ids"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(createOut), &created))
+	require.NotEmpty(t, created.ID)
+	require.Len(t, created.TaskIDs, 2)
+
+	store := background.NewStore(configHome)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(created.TaskIDs[0], 4096)
+		return err == nil && strings.Contains(logs, "Task: auth") && strings.Contains(logs, "check auth")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	deleteOut, err := TeamDeleteTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"team_id":"`+created.ID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, deleteOut, `"status": "deleted"`)
+	require.Contains(t, deleteOut, `"message": "Team deleted"`)
 }
 
 func TestToolSearchToolFindsRegisteredTools(t *testing.T) {

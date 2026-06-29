@@ -27,6 +27,7 @@ import (
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/skills"
+	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/webaccess"
 )
@@ -130,6 +131,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(CronCreateTool{ConfigHome: opts.ConfigHome})
 	reg.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(CronListTool{ConfigHome: opts.ConfigHome})
+	reg.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1664,6 +1667,156 @@ func (t CronListTool) Execute(_ context.Context, input json.RawMessage) (string,
 		return "", err
 	}
 	return pretty(map[string]any{"crons": entries, "count": len(entries)}), nil
+}
+
+type TeamCreateTool struct {
+	Workspace  string
+	ConfigHome string
+	Executable string
+}
+
+func (TeamCreateTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "team_create",
+		Description: "Create a team of background Codog sub-agent tasks for parallel execution.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+				"tasks": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"prompt":      map[string]any{"type": "string"},
+							"description": map[string]any{"type": "string"},
+						},
+						"required":             []string{"prompt"},
+						"additionalProperties": false,
+					},
+				},
+				"session_id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"name", "tasks"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TeamCreateTool) Permission() Permission { return PermissionDanger }
+
+func (t TeamCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Name      string          `json:"name"`
+		Tasks     []team.TaskSpec `json:"tasks"`
+		SessionID string          `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Name) == "" {
+		return "", errors.New("name is required")
+	}
+	if len(payload.Tasks) == 0 {
+		return "", errors.New("tasks are required")
+	}
+	executable := strings.TrimSpace(t.Executable)
+	var err error
+	if executable == "" {
+		executable, err = os.Executable()
+		if err != nil {
+			return "", err
+		}
+	}
+	store := taskStore(t.ConfigHome, t.Workspace)
+	taskIDs := make([]string, 0, len(payload.Tasks))
+	for _, task := range payload.Tasks {
+		prompt := strings.TrimSpace(task.Prompt)
+		if prompt == "" {
+			return "", errors.New("task prompt is required")
+		}
+		description := strings.TrimSpace(task.Description)
+		if description != "" {
+			prompt = "Task: " + description + "\n\n" + prompt
+		}
+		started, err := store.RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{
+			Kind:      "team",
+			SessionID: payload.SessionID,
+		})
+		if err != nil {
+			return "", err
+		}
+		taskIDs = append(taskIDs, started.ID)
+	}
+	created, err := team.NewStore(t.ConfigHome).Create(payload.Name, payload.Tasks, taskIDs)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"team_id":    created.ID,
+		"name":       created.Name,
+		"task_count": len(created.TaskIDs),
+		"task_ids":   created.TaskIDs,
+		"status":     created.Status,
+		"created_at": created.CreatedAt,
+	}), nil
+}
+
+type TeamDeleteTool struct {
+	ConfigHome string
+}
+
+func (TeamDeleteTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "team_delete",
+		Description: "Delete a team and stop all background tasks associated with it.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"team_id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"team_id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TeamDeleteTool) Permission() Permission { return PermissionDanger }
+
+func (t TeamDeleteTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		TeamID string `json:"team_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	teamStore := team.NewStore(t.ConfigHome)
+	existing, err := teamStore.Get(payload.TeamID)
+	if err != nil {
+		return "", err
+	}
+	stopped := []string{}
+	taskStore := background.NewStore(t.ConfigHome)
+	for _, id := range existing.TaskIDs {
+		if task, err := taskStore.Stop(id); err == nil {
+			stopped = append(stopped, task.ID)
+		}
+	}
+	deleted, err := teamStore.MarkDeleted(payload.TeamID)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"team_id":       deleted.ID,
+		"name":          deleted.Name,
+		"status":        deleted.Status,
+		"stopped_tasks": stopped,
+		"message":       "Team deleted",
+	}), nil
+}
+
+func buildTeamTaskCommand(executable string, prompt string) string {
+	return strings.Join([]string{shellQuoteToolArg(executable), "prompt", shellQuoteToolArg(prompt)}, " ")
 }
 
 type TaskCreateTool struct {
