@@ -147,6 +147,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	reg.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(StructuredOutputTool{})
+	reg.Register(SleepTool{})
+	reg.Register(REPLTool{Workspace: workspace})
 	reg.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
@@ -2439,6 +2441,138 @@ func (StructuredOutputTool) Execute(_ context.Context, input json.RawMessage) (s
 		"data":              "Structured output provided successfully",
 		"structured_output": payload,
 	}), nil
+}
+
+type SleepTool struct{}
+
+func (SleepTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "sleep",
+		Description: "Sleep for a bounded duration in milliseconds.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"duration_ms": map[string]any{"type": "integer", "minimum": 0},
+			},
+			"required":             []string{"duration_ms"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (SleepTool) Permission() Permission { return PermissionReadOnly }
+
+func (SleepTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		DurationMS int `json:"duration_ms"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if payload.DurationMS < 0 {
+		return "", errors.New("duration_ms must be non-negative")
+	}
+	if payload.DurationMS > 300000 {
+		return "", errors.New("duration_ms must be 300000 or less")
+	}
+	timer := time.NewTimer(time.Duration(payload.DurationMS) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-timer.C:
+	}
+	return pretty(map[string]any{
+		"duration_ms": payload.DurationMS,
+		"message":     fmt.Sprintf("Slept for %dms", payload.DurationMS),
+	}), nil
+}
+
+type REPLTool struct {
+	Workspace string
+}
+
+func (REPLTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "repl",
+		Description: "Execute code in a REPL-like subprocess for shell, python, or node.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code":       map[string]any{"type": "string"},
+				"language":   map[string]any{"type": "string"},
+				"timeout_ms": map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required":             []string{"code", "language"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (REPLTool) Permission() Permission { return PermissionDanger }
+
+func (t REPLTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Code      string `json:"code"`
+		Language  string `json:"language"`
+		TimeoutMS int    `json:"timeout_ms"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	payload.Code = strings.TrimSpace(payload.Code)
+	if payload.Code == "" {
+		return "", errors.New("code is required")
+	}
+	args, err := replCommand(payload.Language, payload.Code)
+	if err != nil {
+		return "", err
+	}
+	timeout := time.Duration(payload.TimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if timeout > 5*time.Minute {
+		return "", errors.New("timeout_ms must be 300000 or less")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = t.Workspace
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	exitCode := 0
+	if err != nil {
+		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	return pretty(map[string]any{
+		"language":    strings.ToLower(strings.TrimSpace(payload.Language)),
+		"stdout":      stdout.String(),
+		"stderr":      stderr.String(),
+		"exit_code":   exitCode,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"timed_out":   ctx.Err() == context.DeadlineExceeded,
+	}), nil
+}
+
+func replCommand(language string, code string) ([]string, error) {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "sh", "shell", "bash":
+		return []string{"sh", "-c", code}, nil
+	case "python", "python3", "py":
+		return []string{"python3", "-c", code}, nil
+	case "javascript", "js", "node":
+		return []string{"node", "-e", code}, nil
+	default:
+		return nil, fmt.Errorf("unsupported repl language %q", language)
+	}
 }
 
 type SkillTool struct {

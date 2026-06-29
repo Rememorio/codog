@@ -137,7 +137,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 38)
+	require.Len(t, infos, 40)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -196,6 +196,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("structured_output")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("sleep")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("repl")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("skill")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -533,6 +539,23 @@ func TestStructuredOutputToolReturnsPayload(t *testing.T) {
 	require.Contains(t, out, `"ok": true`)
 
 	_, err = StructuredOutputTool{}.Execute(context.Background(), []byte(`{}`))
+	require.Error(t, err)
+}
+
+func TestSleepToolWaitsAndReportsDuration(t *testing.T) {
+	out, err := SleepTool{}.Execute(context.Background(), []byte(`{"duration_ms":1}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"duration_ms": 1`)
+	require.Contains(t, out, "Slept for 1ms")
+}
+
+func TestREPLToolExecutesShellCode(t *testing.T) {
+	out, err := REPLTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"language":"sh","code":"printf repl-ok","timeout_ms":1000}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "repl-ok"`)
+	require.Contains(t, out, `"exit_code": 0`)
+
+	_, err = REPLTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"language":"unknown","code":"x"}`))
 	require.Error(t, err)
 }
 
