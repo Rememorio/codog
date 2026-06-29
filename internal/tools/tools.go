@@ -21,6 +21,7 @@ import (
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/todos"
+	"github.com/Rememorio/codog/internal/webaccess"
 )
 
 type Permission string
@@ -107,6 +108,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(WebFetchTool{})
+	reg.Register(WebSearchTool{})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	return reg
@@ -786,6 +789,75 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	sort.Strings(files)
 	return pretty(map[string]any{"files": files, "truncated": len(files) >= limit}), nil
+}
+
+type WebFetchTool struct{}
+
+func (WebFetchTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "web_fetch",
+		Description: "Fetch an HTTP or HTTPS URL and return extracted text, metadata, and a bounded summary.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"url":        map[string]any{"type": "string"},
+				"prompt":     map[string]any{"type": "string"},
+				"timeout_ms": map[string]any{"type": "integer", "minimum": 1},
+				"max_bytes":  map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required":             []string{"url"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (WebFetchTool) Permission() Permission { return PermissionReadOnly }
+
+func (WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload webaccess.FetchInput
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	result, err := webaccess.Fetch(ctx, payload)
+	if err != nil {
+		return "", err
+	}
+	return pretty(result), nil
+}
+
+type WebSearchTool struct{}
+
+func (WebSearchTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "web_search",
+		Description: "Search the web using the configured search endpoint and return result titles and URLs.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query":           map[string]any{"type": "string"},
+				"max_results":     map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+				"allowed_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"blocked_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"timeout_ms":      map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required":             []string{"query"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (WebSearchTool) Permission() Permission { return PermissionReadOnly }
+
+func (WebSearchTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload webaccess.SearchInput
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	result, err := webaccess.Search(ctx, payload)
+	if err != nil {
+		return "", err
+	}
+	return pretty(result), nil
 }
 
 type TodoReadTool struct {

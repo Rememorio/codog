@@ -11,7 +11,7 @@ Claude Code source.
 - Interactive REPL
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`, `grep`,
-  `glob`, `todo_read`, `todo_write`
+  `glob`, `web_fetch`, `web_search`, `todo_read`, `todo_write`
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes
 - JSONL session persistence and resume

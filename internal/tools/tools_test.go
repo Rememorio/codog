@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -112,8 +114,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 8)
+	require.Len(t, infos, 10)
 	require.Equal(t, "bash", infos[0].Name)
+	_, ok = registry.Info("web_fetch")
+	require.True(t, ok)
+	_, ok = registry.Info("web_search")
+	require.True(t, ok)
 }
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
@@ -132,6 +138,41 @@ func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
 	info, ok = registry.Info("todo_read")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+}
+
+func TestWebToolsFetchAndSearch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<html><head><title>Local</title></head><body><p>Hello web tool.</p></body></html>`)
+		case "/search":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<a class="result__a" href="https://example.com/result">Example Result</a>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("CODOG_WEB_SEARCH_BASE_URL", server.URL+"/search")
+
+	fetchOut, err := WebFetchTool{}.Execute(context.Background(), []byte(`{"url":"`+server.URL+`/page","prompt":"title"}`))
+	require.NoError(t, err)
+	require.Contains(t, fetchOut, `"title": "Local"`)
+	require.Contains(t, fetchOut, `"summary": "Title: Local"`)
+
+	searchOut, err := WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"local result"}`))
+	require.NoError(t, err)
+	require.Contains(t, searchOut, `"title": "Example Result"`)
+	require.Contains(t, searchOut, `"url": "https://example.com/result"`)
+
+	registry := NewRegistry(t.TempDir())
+	info, ok := registry.Info("web_fetch")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("web_search")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 }
