@@ -28,15 +28,16 @@ type MCPServerConfig struct {
 }
 
 type FutureConfig struct {
-	RemoteEnabled             bool     `json:"remote_enabled,omitempty"`
-	RemoteAuthToken           string   `json:"remote_auth_token,omitempty"`
-	EnterprisePolicy          string   `json:"enterprise_policy,omitempty"`
-	EnterprisePolicyPublicKey string   `json:"enterprise_policy_public_key,omitempty"`
-	PluginMarketplaces        []string `json:"plugin_marketplaces,omitempty"`
-	SandboxStrategy           string   `json:"sandbox_strategy,omitempty"`
-	UpdaterManifestURL        string   `json:"updater_manifest_url,omitempty"`
-	EditorBridgeSocket        string   `json:"editor_bridge_socket,omitempty"`
-	BackgroundStatePath       string   `json:"background_state_path,omitempty"`
+	RemoteEnabled             bool              `json:"remote_enabled,omitempty"`
+	RemoteAuthToken           string            `json:"remote_auth_token,omitempty"`
+	EnterprisePolicy          string            `json:"enterprise_policy,omitempty"`
+	EnterprisePolicyPublicKey string            `json:"enterprise_policy_public_key,omitempty"`
+	PluginMarketplaces        []string          `json:"plugin_marketplaces,omitempty"`
+	PluginMarketplaceKeys     map[string]string `json:"plugin_marketplace_public_keys,omitempty"`
+	SandboxStrategy           string            `json:"sandbox_strategy,omitempty"`
+	UpdaterManifestURL        string            `json:"updater_manifest_url,omitempty"`
+	EditorBridgeSocket        string            `json:"editor_bridge_socket,omitempty"`
+	BackgroundStatePath       string            `json:"background_state_path,omitempty"`
 }
 
 type PermissionRules struct {
@@ -245,6 +246,7 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.EnterprisePolicy != "" ||
 		cfg.EnterprisePolicyPublicKey != "" ||
 		len(cfg.PluginMarketplaces) != 0 ||
+		len(cfg.PluginMarketplaceKeys) != 0 ||
 		cfg.SandboxStrategy != "" ||
 		cfg.UpdaterManifestURL != "" ||
 		cfg.EditorBridgeSocket != "" ||

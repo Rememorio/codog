@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/stretchr/testify/require"
@@ -144,6 +148,51 @@ func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
 	require.False(t, app.Tools.Has("demo_tool"))
 }
 
+func TestMarketplaceInstallRemoteCommandUsesConfiguredMarketplace(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	workspace := t.TempDir()
+	archive := makeAgentPluginZip(t, map[string]string{
+		"demo/plugin.json": `{"id":"demo","name":"Demo","version":"0.1.0"}`,
+		"demo/tool.sh":     "echo ok\n",
+	})
+	sum := sha256.Sum256(archive)
+	index := plugins.MarketplaceIndex{
+		Plugins: []plugins.RemotePlugin{
+			{ID: "demo", URL: "demo.zip", SHA256: hex.EncodeToString(sum[:])},
+		},
+	}
+	payload, err := json.Marshal(index)
+	require.NoError(t, err)
+	index.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.json":
+			require.NoError(t, json.NewEncoder(w).Encode(index))
+		case "/demo.zip":
+			_, _ = w.Write(archive)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	indexURL := server.URL + "/index.json"
+	app := &App{
+		Config: config.Config{Future: config.FutureConfig{
+			PluginMarketplaces:    []string{indexURL},
+			PluginMarketplaceKeys: map[string]string{indexURL: base64.StdEncoding.EncodeToString(publicKey)},
+		}},
+		Workspace: workspace,
+		Out:       &out,
+	}
+	require.NoError(t, app.Marketplace([]string{"install-remote", "demo"}))
+	require.Contains(t, out.String(), `"checksum_valid": true`)
+	require.Contains(t, out.String(), `"signature_valid": true`)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "demo", "tool.sh"))
+}
+
 func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	dir := t.TempDir()
 	artifact := filepath.Join(dir, "codog-new")
@@ -183,4 +232,20 @@ func TestUpdaterVerifyCommand(t *testing.T) {
 	app := &App{Out: &out}
 	require.NoError(t, app.Updater(context.Background(), []string{"verify", server.URL, base64.StdEncoding.EncodeToString(publicKey)}))
 	require.Contains(t, out.String(), `"signature_valid": true`)
+}
+
+func makeAgentPluginZip(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for name, body := range files {
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		header.SetMode(0o644)
+		file, err := writer.CreateHeader(header)
+		require.NoError(t, err)
+		_, err = file.Write([]byte(body))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
 }

@@ -1,6 +1,17 @@
 package plugins
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,4 +73,106 @@ func TestInstallRejectsUnsafePluginID(t *testing.T) {
 	_, err := Install(workspace, source)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "single path component")
+}
+
+func TestFetchMarketplaceVerifiesSignature(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	index := MarketplaceIndex{
+		Name: "Default",
+		Plugins: []RemotePlugin{
+			{ID: "demo", URL: "demo.zip", SHA256: "sha256:abc123"},
+		},
+	}
+	payload, err := canonicalMarketplace(index)
+	require.NoError(t, err)
+	index.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(index))
+	}))
+	defer server.Close()
+
+	fetched, err := FetchMarketplace(context.Background(), server.URL, base64.StdEncoding.EncodeToString(publicKey))
+	require.NoError(t, err)
+	require.True(t, fetched.SignatureValid)
+	require.Equal(t, server.URL, fetched.Source)
+	require.Len(t, fetched.Plugins, 1)
+
+	index.Name = "Tampered"
+	payload, err = json.Marshal(index)
+	require.NoError(t, err)
+	tamperedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer tamperedServer.Close()
+	_, err = FetchMarketplace(context.Background(), tamperedServer.URL, base64.StdEncoding.EncodeToString(publicKey))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "marketplace signature verification failed")
+}
+
+func TestInstallRemoteVerifiesChecksumAndInstallsZip(t *testing.T) {
+	workspace := t.TempDir()
+	archive := makePluginZip(t, map[string]string{
+		"demo/plugin.json": `{"id":"demo","name":"Demo","version":"0.1.0"}`,
+		"demo/tool.sh":     "echo ok\n",
+	})
+	sum := sha256.Sum256(archive)
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.json":
+			_, _ = fmt.Fprintf(w, `{"plugins":[{"id":"demo","name":"Demo","version":"0.1.0","url":"demo.zip","sha256":"sha256:%s"}]}`, hex.EncodeToString(sum[:]))
+		case "/demo.zip":
+			_, _ = w.Write(archive)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	result, err := InstallRemote(context.Background(), workspace, serverURL+"/index.json", "demo", "")
+	require.NoError(t, err)
+	require.True(t, result.ChecksumValid)
+	require.Equal(t, "demo", result.ID)
+	require.Equal(t, "0.1.0", result.Version)
+	require.Equal(t, hex.EncodeToString(sum[:]), result.SHA256)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "demo", "tool.sh"))
+}
+
+func TestInstallRemoteRejectsChecksumMismatch(t *testing.T) {
+	archive := makePluginZip(t, map[string]string{
+		"demo/plugin.json": `{"id":"demo","name":"Demo"}`,
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.json":
+			_, _ = w.Write([]byte(`{"plugins":[{"id":"demo","url":"demo.zip","sha256":"sha256:deadbeef"}]}`))
+		case "/demo.zip":
+			_, _ = w.Write(archive)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	_, err := InstallRemote(context.Background(), t.TempDir(), server.URL+"/index.json", "demo", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "checksum mismatch")
+}
+
+func makePluginZip(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for name, body := range files {
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		header.SetMode(0o644)
+		file, err := writer.CreateHeader(header)
+		require.NoError(t, err)
+		_, err = file.Write([]byte(body))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	return buf.Bytes()
 }

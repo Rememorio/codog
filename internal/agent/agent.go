@@ -642,6 +642,12 @@ func (a *App) Marketplace(args []string) error {
 	}
 	var payload any
 	switch args[0] {
+	case "remote":
+		indexes, err := a.marketplaceRemote(args[1:])
+		if err != nil {
+			return err
+		}
+		payload = indexes
 	case "install":
 		if len(args) < 2 {
 			return errors.New("usage: codog marketplace install PATH")
@@ -651,6 +657,12 @@ func (a *App) Marketplace(args []string) error {
 			return err
 		}
 		payload = manifest
+	case "install-remote":
+		result, err := a.marketplaceInstallRemote(args[1:])
+		if err != nil {
+			return err
+		}
+		payload = result
 	case "enable":
 		if len(args) < 2 {
 			return errors.New("usage: codog marketplace enable ID")
@@ -683,6 +695,79 @@ func (a *App) Marketplace(args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) marketplaceRemote(args []string) ([]plugins.MarketplaceIndex, error) {
+	sources := a.marketplaceSources()
+	if len(args) > 0 {
+		source := plugins.MarketplaceSource{URL: args[0], PublicKey: a.marketplacePublicKey(args[0])}
+		if len(args) > 1 {
+			source.PublicKey = args[1]
+		}
+		sources = []plugins.MarketplaceSource{source}
+	}
+	if len(sources) == 0 {
+		return nil, errors.New("usage: codog marketplace remote [URL] [PUBLIC_KEY]")
+	}
+	indexes := make([]plugins.MarketplaceIndex, 0, len(sources))
+	for _, source := range sources {
+		index, err := plugins.FetchMarketplace(context.Background(), source.URL, source.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		indexes = append(indexes, index)
+	}
+	return indexes, nil
+}
+
+func (a *App) marketplaceInstallRemote(args []string) (plugins.RemoteInstallResult, error) {
+	if len(args) < 1 {
+		return plugins.RemoteInstallResult{}, errors.New("usage: codog marketplace install-remote ID [URL] [PUBLIC_KEY]")
+	}
+	id := args[0]
+	if len(args) > 1 {
+		source := plugins.MarketplaceSource{URL: args[1], PublicKey: a.marketplacePublicKey(args[1])}
+		if len(args) > 2 {
+			source.PublicKey = args[2]
+		}
+		return plugins.InstallRemote(context.Background(), a.Workspace, source.URL, id, source.PublicKey)
+	}
+	sources := a.marketplaceSources()
+	if len(sources) == 0 {
+		return plugins.RemoteInstallResult{}, errors.New("usage: codog marketplace install-remote ID [URL] [PUBLIC_KEY]")
+	}
+	for _, source := range sources {
+		index, err := plugins.FetchMarketplace(context.Background(), source.URL, source.PublicKey)
+		if err != nil {
+			return plugins.RemoteInstallResult{}, err
+		}
+		if _, ok := index.Find(id); ok {
+			return plugins.InstallRemoteFromIndex(context.Background(), a.Workspace, index, id)
+		}
+	}
+	return plugins.RemoteInstallResult{}, fmt.Errorf("plugin %q not found in configured marketplaces", id)
+}
+
+func (a *App) marketplaceSources() []plugins.MarketplaceSource {
+	sources := make([]plugins.MarketplaceSource, 0, len(a.Config.Future.PluginMarketplaces))
+	for _, marketplaceURL := range a.Config.Future.PluginMarketplaces {
+		marketplaceURL = strings.TrimSpace(marketplaceURL)
+		if marketplaceURL == "" {
+			continue
+		}
+		sources = append(sources, plugins.MarketplaceSource{
+			URL:       marketplaceURL,
+			PublicKey: a.marketplacePublicKey(marketplaceURL),
+		})
+	}
+	return sources
+}
+
+func (a *App) marketplacePublicKey(marketplaceURL string) string {
+	if a.Config.Future.PluginMarketplaceKeys == nil {
+		return ""
+	}
+	return a.Config.Future.PluginMarketplaceKeys[marketplaceURL]
 }
 
 func (a *App) OAuth(args []string) error {
@@ -1120,7 +1205,7 @@ Usage:
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
-  %s marketplace list|install|enable|disable|remove
+  %s marketplace list|remote|install|install-remote|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback

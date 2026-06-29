@@ -35,8 +35,9 @@ Claude Code source.
 - `codog agents list|run|worktrees` lists `.codog/agents/*.json` definitions,
   launches named background workers, and can isolate them in git worktrees with
   `agents run --worktree`.
-- `codog marketplace list|install|enable|disable|remove` manages local
-  `.codog/plugins/*/plugin.json` plugins.
+- `codog marketplace list|remote|install|install-remote|enable|disable|remove`
+  manages local plugins and can install SHA-256 verified zip bundles from
+  signed remote marketplace indexes.
 - `codog oauth pkce` generates a PKCE verifier/challenge pair, and
   `oauth token save|show|delete` manages a local auth token store.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
@@ -105,7 +106,8 @@ codog --permission-mode prompt prompt "inspect the repo"
     "sandbox_strategy": "detect",
     "editor_bridge_socket": "",
     "updater_manifest_url": "",
-    "plugin_marketplaces": []
+    "plugin_marketplaces": [],
+    "plugin_marketplace_public_keys": {}
   }
 }
 ```
