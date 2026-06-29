@@ -2,6 +2,8 @@ package agent
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/tools"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,4 +84,23 @@ func TestApplyStoredOAuthToken(t *testing.T) {
 	cfg = config.Config{ConfigHome: configHome, AuthToken: "explicit-token"}
 	applyStoredOAuthToken(&cfg, now)
 	require.Equal(t, "explicit-token", cfg.AuthToken)
+}
+
+func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","tools":[{"name":"demo_tool","command":"cat"}]}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Out:       &out,
+	}
+	require.NoError(t, app.Marketplace([]string{"disable", "demo"}))
+	require.Contains(t, out.String(), `"enabled": false`)
+
+	require.NoError(t, app.RegisterPluginTools())
+	require.False(t, app.Tools.Has("demo_tool"))
 }

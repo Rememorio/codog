@@ -162,7 +162,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "agents":
 		return app.Agents(rest)
 	case "marketplace":
-		return app.ListPlugins()
+		return app.Marketplace(rest)
 	case "oauth":
 		return app.OAuth(rest)
 	case "sandbox":
@@ -352,6 +352,9 @@ func (a *App) RegisterPluginTools() error {
 		return err
 	}
 	for _, manifest := range manifests {
+		if !manifest.Enabled {
+			continue
+		}
 		for _, tool := range manifest.Tools {
 			if tool.Command == "" {
 				continue
@@ -475,6 +478,55 @@ func (a *App) ListPlugins() error {
 		return err
 	}
 	data, _ := json.MarshalIndent(manifests, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) Marketplace(args []string) error {
+	if len(args) == 0 || args[0] == "list" {
+		return a.ListPlugins()
+	}
+	var payload any
+	switch args[0] {
+	case "install":
+		if len(args) < 2 {
+			return errors.New("usage: codog marketplace install PATH")
+		}
+		manifest, err := plugins.Install(a.Workspace, args[1])
+		if err != nil {
+			return err
+		}
+		payload = manifest
+	case "enable":
+		if len(args) < 2 {
+			return errors.New("usage: codog marketplace enable ID")
+		}
+		manifest, err := plugins.Enable(a.Workspace, args[1])
+		if err != nil {
+			return err
+		}
+		payload = manifest
+	case "disable":
+		if len(args) < 2 {
+			return errors.New("usage: codog marketplace disable ID")
+		}
+		manifest, err := plugins.Disable(a.Workspace, args[1])
+		if err != nil {
+			return err
+		}
+		payload = manifest
+	case "remove":
+		if len(args) < 2 {
+			return errors.New("usage: codog marketplace remove ID")
+		}
+		if err := plugins.Remove(a.Workspace, args[1]); err != nil {
+			return err
+		}
+		payload = map[string]any{"removed": true, "id": args[1]}
+	default:
+		return fmt.Errorf("unknown marketplace command %q", args[0])
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
@@ -913,7 +965,8 @@ Usage:
   %s roadmap [--json]
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
-  %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | oauth token save|show|delete
+  %s agents list | agents run NAME PROMPT | marketplace list|install|enable|disable|remove
+  %s oauth pkce | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics
   %s remote serve [addr] | bridge serve | updater check|download URL
   %s enterprise [--json] | enterprise audit [limit]
@@ -931,7 +984,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

@@ -128,12 +128,12 @@ func Surfaces() []Surface {
 			Command:     "marketplace",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Local plugin manifest inventory under .codog/plugins; remote marketplace remains planned.",
+			Description: "Local plugin inventory supports install, enable, disable, and remove flows; remote marketplace remains planned.",
 			DependsOn:   []string{"enterprise", "sandbox"},
 			NextSteps: []string{
-				"Define plugin manifest.",
-				"Add local install/enable/disable flows.",
+				"Add remote marketplace index fetching.",
 				"Add trust and signature policy before remote installs.",
+				"Support plugin updates and version constraints.",
 			},
 		},
 		{

@@ -34,7 +34,8 @@ Claude Code source.
   commands and their logs.
 - `codog agents list|run` lists `.codog/agents/*.json` definitions and can
   launch a named agent as a background `codog prompt` task.
-- `codog marketplace` lists local `.codog/plugins/*/plugin.json` manifests.
+- `codog marketplace list|install|enable|disable|remove` manages local
+  `.codog/plugins/*/plugin.json` plugins.
 - `codog oauth pkce` generates a PKCE verifier/challenge pair, and
   `oauth token save|show|delete` manages a local auth token store.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can

@@ -16,19 +16,21 @@ Codog follows a small-core layout:
 - `internal/slash`: slash command registry and help rendering.
 - `internal/harness`: in-process mock-provider smoke harness.
 - `internal/skills`: Markdown skill discovery.
-- `internal/mcp`: minimal stdio MCP lifecycle inspection.
+- `internal/mcp`: stdio MCP discovery plus tool/resource calls.
 - `internal/tui`: Bubble Tea prompt composer.
 - `internal/usage`: approximate token and cost accounting.
 - `internal/future`: explicit long-horizon capability status.
 - `internal/background`: background process metadata and log registry.
 - `internal/agentdefs`: local agent definition discovery.
-- `internal/plugins`: local plugin manifest discovery.
-- `internal/oauth`: OAuth helper primitives such as PKCE.
-- `internal/sandbox`: local sandbox strategy detection.
-- `internal/codeintel`: lightweight code intelligence and notebook helpers.
+- `internal/plugins`: local plugin discovery, install, enable/disable, and
+  removal.
+- `internal/oauth`: PKCE and local auth token storage.
+- `internal/sandbox`: local sandbox strategy detection and bash wrapping.
+- `internal/codeintel`: lightweight Go symbols, diagnostics, and notebook
+  helpers.
 - `internal/control`: HTTP session-control API.
 - `internal/bridge`: stdio JSON-RPC bridge.
-- `internal/updater`: release manifest check.
+- `internal/updater`: release manifest check and verified artifact downloads.
 
 The project deliberately keeps model-provider contracts and tool behavior
 separate from UI surfaces. That lets the one-shot CLI, REPL, TUI, bridge, and
