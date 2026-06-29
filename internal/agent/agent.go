@@ -177,7 +177,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	app := &App{
 		Config:    cfg,
 		Client:    anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
-		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy, AdditionalDirs: additionalDirs, ConfigHome: cfg.ConfigHome, QuestionIn: os.Stdin, QuestionOut: os.Stderr}),
+		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy, AdditionalDirs: additionalDirs, ConfigHome: cfg.ConfigHome, MCPServers: cfg.MCPServers, QuestionIn: os.Stdin, QuestionOut: os.Stderr}),
 		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace: workspace,
 		Out:       os.Stdout,
@@ -2316,6 +2316,7 @@ func (a *App) refreshBuiltinToolScope() error {
 	a.Tools.UpdateBuiltinScope(a.Workspace, tools.RegistryOptions{
 		SandboxStrategy: a.Config.Future.SandboxStrategy,
 		AdditionalDirs:  additionalDirs,
+		MCPServers:      a.Config.MCPServers,
 	})
 	return nil
 }
@@ -6858,6 +6859,7 @@ func (a *App) mcpServe(ctx context.Context, args []string) error {
 			SandboxStrategy: a.Config.Future.SandboxStrategy,
 			AdditionalDirs:  a.Config.AdditionalDirs,
 			ConfigHome:      a.Config.ConfigHome,
+			MCPServers:      a.Config.MCPServers,
 		})
 	}
 	in := a.In
@@ -6910,6 +6912,9 @@ func (a *App) mcpAdd(args []string) error {
 		a.Config.MCPServers = map[string]config.MCPServerConfig{}
 	}
 	a.Config.MCPServers[req.Name] = server
+	if err := a.refreshBuiltinToolScope(); err != nil {
+		return err
+	}
 	data, _ := json.MarshalIndent(map[string]any{
 		"kind":   "mcp",
 		"action": "add",
@@ -6936,6 +6941,9 @@ func (a *App) mcpRemove(args []string) error {
 		return err
 	}
 	delete(a.Config.MCPServers, name)
+	if err := a.refreshBuiltinToolScope(); err != nil {
+		return err
+	}
 	data, _ := json.MarshalIndent(map[string]any{
 		"kind":    "mcp",
 		"action":  "remove",

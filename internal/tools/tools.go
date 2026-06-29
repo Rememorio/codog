@@ -78,6 +78,7 @@ type RegistryOptions struct {
 	SandboxStrategy string
 	AdditionalDirs  []string
 	ConfigHome      string
+	MCPServers      map[string]config.MCPServerConfig
 	QuestionIn      io.Reader
 	QuestionOut     io.Writer
 }
@@ -125,6 +126,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
+	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
+	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
 	reg.Register(ToolSearchTool{Registry: reg})
 	return reg
@@ -143,6 +146,8 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
+	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 }
 
 func (r *Registry) Has(name string) bool {
@@ -384,6 +389,127 @@ func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		return "{}", nil
 	}
 	return string(result.Result), nil
+}
+
+type ListMCPResourcesTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+type listMCPResourcesInput struct {
+	Server string `json:"server,omitempty"`
+}
+
+func (t ListMCPResourcesTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "list_mcp_resources",
+		Description: "List resources exposed by configured MCP servers. Pass server to query one server, or omit it to query all configured servers.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server": map[string]any{
+					"type":        "string",
+					"description": "Optional MCP server name. When omitted, all configured servers are queried.",
+				},
+			},
+		},
+	}
+}
+
+func (ListMCPResourcesTool) Permission() Permission {
+	return PermissionReadOnly
+}
+
+func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload listMCPResourcesInput
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	if payload.Server != "" {
+		server, ok := t.Servers[payload.Server]
+		if !ok {
+			return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+		}
+		result := mcp.ListResources(ctx, payload.Server, server)
+		if result.Error != "" {
+			return "", errors.New(result.Error)
+		}
+		return pretty(result), nil
+	}
+
+	names := make([]string, 0, len(t.Servers))
+	for name := range t.Servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	results := make([]mcp.ResourceListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListResources(ctx, name, t.Servers[name]))
+	}
+	return pretty(map[string]any{
+		"kind":    "mcp_resources",
+		"servers": results,
+		"total":   len(results),
+	}), nil
+}
+
+type ReadMCPResourceTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+type readMCPResourceInput struct {
+	Server string `json:"server"`
+	URI    string `json:"uri"`
+}
+
+func (t ReadMCPResourceTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "read_mcp_resource",
+		Description: "Read a resource URI exposed by a configured MCP server.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server": map[string]any{
+					"type":        "string",
+					"description": "Configured MCP server name.",
+				},
+				"uri": map[string]any{
+					"type":        "string",
+					"description": "Resource URI returned by list_mcp_resources.",
+				},
+			},
+			"required": []string{"server", "uri"},
+		},
+	}
+}
+
+func (ReadMCPResourceTool) Permission() Permission {
+	return PermissionReadOnly
+}
+
+func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload readMCPResourceInput
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Server) == "" {
+		return "", errors.New("server is required")
+	}
+	if strings.TrimSpace(payload.URI) == "" {
+		return "", errors.New("uri is required")
+	}
+	server, ok := t.Servers[payload.Server]
+	if !ok {
+		return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+	}
+	result := mcp.ReadResource(ctx, payload.Server, server, payload.URI)
+	if result.Error != "" {
+		return "", errors.New(result.Error)
+	}
+	return pretty(result), nil
 }
 
 type BashTool struct {

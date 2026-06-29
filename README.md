@@ -12,7 +12,8 @@ Claude Code source.
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `notebook_edit`,
-  `ask_user_question`, `tool_search`, `task_create`, `task_list`,
+  `ask_user_question`, `tool_search`, `list_mcp_resources`,
+  `read_mcp_resource`, `task_create`, `task_list`,
   `task_status`, `task_stop`, `task_output`, `todo_read`, `todo_write`
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes; compatibility flags
@@ -95,7 +96,9 @@ Claude Code source.
   injects it into future prompts.
 - `codog mcp list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt`
   manages and inspects configured stdio MCP servers, and configured MCP tools
-  are exposed to the model as `mcp__server__tool` tool calls; `mcp serve`
+  are exposed to the model as `mcp__server__tool` tool calls. Configured MCP
+  resources can be discovered and read by the model through
+  `list_mcp_resources` and `read_mcp_resource`; `mcp serve`
   exposes Codog's local tools over stdio MCP.
 - Hook commands can run before and after tool use; `codog hooks list|run`
   inspects and test-runs configured hooks with the same JSON payload shape used
