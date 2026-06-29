@@ -172,6 +172,36 @@ func TestControlSessionMutationEndpoints(t *testing.T) {
 	require.Equal(t, "remote prompt", entries[0].Text)
 }
 
+func TestControlSessionPromptStartsBackgroundRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	root := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'remote-prompt:%s\\n' \"$*\"\n"), 0o755))
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  root,
+		Executable: script,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/sessions/session-remote/prompt", "application/json", bytes.NewBufferString(`{"prompt":"summarize remote state"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var task background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
+	require.NotEmpty(t, task.ID)
+	require.Equal(t, "prompt", task.Kind)
+	require.Equal(t, "session-remote", task.SessionID)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(filepath.Join(root, "home")).Logs(task.ID, 4096)
+		return err == nil && strings.Contains(logs, "remote-prompt:--resume session-remote prompt summarize remote state")
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
 func TestControlBackgroundLifecycle(t *testing.T) {
 	root := t.TempDir()
 	server := httptest.NewServer(Server{

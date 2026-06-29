@@ -24,6 +24,7 @@ type Server struct {
 	Workspace  string
 	AuthToken  string
 	LeaseTTL   time.Duration
+	Executable string
 	Now        func() time.Time
 }
 
@@ -193,6 +194,10 @@ func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 		s.sessionRewind(w, r, id)
 		return
 	}
+	if len(parts) > 1 && parts[1] == "prompt" {
+		s.sessionPrompt(w, r, id)
+		return
+	}
 	if len(parts) > 1 {
 		writeError(w, http.ErrMissingFile, http.StatusNotFound)
 		return
@@ -291,6 +296,55 @@ func (s Server) sessionRewind(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	writeJSON(w, result)
+}
+
+func (s Server) sessionPrompt(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Prompt string `json:"prompt"`
+		Kind   string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	prompt := strings.TrimSpace(payload.Prompt)
+	if prompt == "" {
+		writeError(w, errors.New("prompt is required"), http.StatusBadRequest)
+		return
+	}
+	executable := strings.TrimSpace(s.Executable)
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+	}
+	kind := strings.TrimSpace(payload.Kind)
+	if kind == "" {
+		kind = "prompt"
+	}
+	command := strings.Join([]string{
+		shellQuote(executable),
+		"--resume",
+		shellQuote(id),
+		"prompt",
+		shellQuote(prompt),
+	}, " ")
+	task, err := background.NewStore(s.ConfigHome).RunWithOptions(command, s.Workspace, background.RunOptions{
+		Kind:      kind,
+		SessionID: id,
+	})
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, task)
 }
 
 func (s Server) background(w http.ResponseWriter, r *http.Request) {
@@ -700,6 +754,16 @@ func (s Server) now() time.Time {
 		return s.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n'\"\\$`!*?[]{}()<>|&;") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
