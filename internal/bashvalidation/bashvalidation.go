@@ -69,6 +69,29 @@ func Validate(command string, mode string, workspace string) Result {
 }
 
 func Classify(command string) Intent {
+	intent := IntentReadOnly
+	seen := false
+	for _, segment := range commandSegments(command) {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		seen = true
+		intent = higherRiskIntent(intent, classifySingle(segment))
+		if intent == IntentDestructive || intent == IntentSystemAdmin {
+			return intent
+		}
+	}
+	if !seen {
+		return IntentUnknown
+	}
+	if hasWriteRedirection(command) {
+		return higherRiskIntent(intent, IntentWrite)
+	}
+	return intent
+}
+
+func classifySingle(command string) Intent {
 	first := firstCommand(command)
 	switch {
 	case readOnlyCommands[first]:
@@ -93,6 +116,48 @@ func Classify(command string) Intent {
 			return IntentWrite
 		}
 		return IntentUnknown
+	}
+}
+
+func commandSegments(command string) []string {
+	segments := []string{command}
+	for _, sep := range []string{"&&", "||", ";", "|"} {
+		var next []string
+		for _, segment := range segments {
+			next = append(next, strings.Split(segment, sep)...)
+		}
+		segments = next
+	}
+	return segments
+}
+
+func higherRiskIntent(left Intent, right Intent) Intent {
+	if intentRank(right) > intentRank(left) {
+		return right
+	}
+	return left
+}
+
+func intentRank(intent Intent) int {
+	switch intent {
+	case IntentReadOnly:
+		return 0
+	case IntentUnknown:
+		return 1
+	case IntentNetwork:
+		return 2
+	case IntentWrite:
+		return 3
+	case IntentProcessManagement:
+		return 4
+	case IntentPackageManagement:
+		return 5
+	case IntentDestructive:
+		return 6
+	case IntentSystemAdmin:
+		return 7
+	default:
+		return 1
 	}
 }
 

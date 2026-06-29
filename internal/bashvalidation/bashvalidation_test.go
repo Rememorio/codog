@@ -19,6 +19,19 @@ func TestValidateReadOnlyBlocksWrites(t *testing.T) {
 	require.Contains(t, result.Reason, "not read-only")
 }
 
+func TestValidateReadOnlyBlocksWritesAfterReadOnlyCommand(t *testing.T) {
+	result := Validate("pwd && touch created.txt", "read-only", "")
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Equal(t, IntentWrite, result.Intent)
+	require.Contains(t, result.Reason, "not read-only")
+}
+
+func TestValidateReadOnlyAllowsReadOnlyPipeline(t *testing.T) {
+	result := Validate("cat README.md | grep Codog | wc -l", "read-only", "")
+	require.Equal(t, SeverityAllow, result.Severity)
+	require.Equal(t, IntentReadOnly, result.Intent)
+}
+
 func TestValidateFlagsDestructiveCommands(t *testing.T) {
 	result := Validate("rm -rf tmp", "workspace-write", "")
 	require.Equal(t, SeverityConfirm, result.Severity)
