@@ -32,6 +32,9 @@ Claude Code source.
 - `/history` and `codog history [--session ID] [--limit N] [--json]` show
   prompts recorded for a session, with legacy fallback to user transcript
   messages.
+- `/summary` and `codog summary [--session ID|--resume latest]` report session
+  message counts, token estimates, tool-use counts, and first/last prompt
+  previews without exporting the full transcript.
 - `/rewind` and `codog rewind [N] [--session ID|--resume latest]` remove recent
   JSONL session messages and trim trailing input records so the next prompt
   resumes from the rewound context.

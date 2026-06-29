@@ -46,6 +46,7 @@ import (
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/securityreview"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/sessionsummary"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
 	localstatus "github.com/Rememorio/codog/internal/status"
@@ -209,6 +210,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SessionsCommand(rest)
 	case "history", "prompt-history":
 		return app.History(rest, overrides)
+	case "summary":
+		return app.Summary(rest, overrides)
 	case "rewind":
 		return app.Rewind(rest, overrides)
 	case "todos":
@@ -2892,6 +2895,11 @@ type historyRequest struct {
 	Limit     int
 }
 
+type summaryRequest struct {
+	SessionID string
+	Format    string
+}
+
 func (a *App) History(args []string, overrides config.FlagOverrides) error {
 	req, err := parseHistoryArgs(args, overrides)
 	if err != nil {
@@ -2913,6 +2921,28 @@ func (a *App) History(args []string, overrides config.FlagOverrides) error {
 		return err
 	}
 	return a.renderPromptHistory(req.Format, sessionID, entries, req.Limit)
+}
+
+func (a *App) Summary(args []string, overrides config.FlagOverrides) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parseSummaryArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	sess, err := a.Sessions.Open(req.SessionID)
+	if err != nil {
+		return err
+	}
+	report := sessionsummary.Build(sess.ID, sess.Path, a.Config.Model, sess.Messages)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	sessionsummary.RenderText(a.Out, report)
+	return nil
 }
 
 type rewindRequest struct {
@@ -3173,6 +3203,67 @@ func parseHistoryLimit(value string) (int, error) {
 		return 0, errors.New("history limit must be positive")
 	}
 	return limit, nil
+}
+
+func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryRequest, error) {
+	req := summaryRequest{Format: "text"}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+		if req.SessionID == "true" {
+			req.SessionID = "latest"
+		}
+	}
+	if req.SessionID == "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("summary output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("summary session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("summary resume id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown summary flag %q", arg)
+		default:
+			if req.SessionID == "" || req.SessionID == "latest" {
+				req.SessionID = arg
+				continue
+			}
+			return req, fmt.Errorf("unexpected summary argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown summary output format %q", req.Format)
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
 }
 
 func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSession string) (rewindRequest, error) {
@@ -4151,6 +4242,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleExportSlash(fields[1:], sess)
 	case "/history", "/prompt-history":
 		a.handleHistorySlash(fields[1:], sess)
+	case "/summary":
+		if err := a.Summary(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/todos":
 		if err := a.Todos(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -5950,6 +6045,7 @@ Usage:
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
+  %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
@@ -6008,7 +6104,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
