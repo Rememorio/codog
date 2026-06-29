@@ -1320,6 +1320,14 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 
 	require.NoError(t, app.MCP(context.Background(), []string{"read", "test", "codog://note"}))
 	require.Contains(t, out.String(), "note body")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"prompts", "test"}))
+	require.Contains(t, out.String(), `"name": "review"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"prompt", "test", "review", `{"topic":"hooks"}`}))
+	require.Contains(t, out.String(), "Review hooks")
 }
 
 func TestAgentMCPHelperProcess(t *testing.T) {
@@ -1362,6 +1370,23 @@ func TestAgentMCPHelperProcess(t *testing.T) {
 			writeAgentMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
 		case "resources/read":
 			writeAgentMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
+		case "prompts/list":
+			writeAgentMCP(id, map[string]any{"prompts": []map[string]any{{
+				"name":        "review",
+				"description": "Review a topic.",
+				"arguments": []map[string]any{{
+					"name":     "topic",
+					"required": true,
+				}},
+			}}})
+		case "prompts/get":
+			writeAgentMCP(id, map[string]any{"messages": []map[string]any{{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": "Review hooks",
+				},
+			}}})
 		}
 	}
 	os.Exit(0)

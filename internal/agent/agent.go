@@ -6099,7 +6099,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return nil
 	}
 	if len(args) < 2 {
-		return errors.New("usage: codog mcp list | tools SERVER | call SERVER TOOL JSON | resources SERVER | read SERVER URI")
+		return errors.New("usage: codog mcp list | tools SERVER | call SERVER TOOL JSON | resources SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]")
 	}
 	serverName := args[1]
 	server, ok := a.Config.MCPServers[serverName]
@@ -6122,6 +6122,17 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 			return errors.New("usage: codog mcp read SERVER URI")
 		}
 		payload = mcp.ReadResource(ctx, serverName, server, args[2])
+	case "prompts":
+		payload = mcp.ListPrompts(ctx, serverName, server)
+	case "prompt", "get-prompt":
+		if len(args) < 3 {
+			return errors.New("usage: codog mcp prompt SERVER NAME [JSON]")
+		}
+		var arguments json.RawMessage
+		if len(args) > 3 {
+			arguments = json.RawMessage(args[3])
+		}
+		payload = mcp.GetPrompt(ctx, serverName, server, args[2], arguments)
 	default:
 		return fmt.Errorf("unknown mcp command %q", args[0])
 	}
@@ -6412,7 +6423,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] mcp [list|tools|call|resources|read]
+  %s [flags] mcp [list|tools|call|resources|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]

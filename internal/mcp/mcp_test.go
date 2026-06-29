@@ -37,6 +37,14 @@ func TestCallToolAndReadResource(t *testing.T) {
 	read := ReadResource(context.Background(), "test", server, "codog://note")
 	require.Empty(t, read.Error)
 	require.Contains(t, string(read.Result), "note body")
+
+	prompts := ListPrompts(context.Background(), "test", server)
+	require.Empty(t, prompts.Error)
+	require.Contains(t, string(prompts.Prompts), "review")
+
+	prompt := GetPrompt(context.Background(), "test", server, "review", json.RawMessage(`{"topic":"hooks"}`))
+	require.Empty(t, prompt.Error)
+	require.Contains(t, string(prompt.Result), "Review hooks")
 }
 
 func TestMCPHelperProcess(t *testing.T) {
@@ -79,6 +87,23 @@ func TestMCPHelperProcess(t *testing.T) {
 			writeMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
 		case "resources/read":
 			writeMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
+		case "prompts/list":
+			writeMCP(id, map[string]any{"prompts": []map[string]any{{
+				"name":        "review",
+				"description": "Review a topic.",
+				"arguments": []map[string]any{{
+					"name":     "topic",
+					"required": true,
+				}},
+			}}})
+		case "prompts/get":
+			writeMCP(id, map[string]any{"messages": []map[string]any{{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": "Review hooks",
+				},
+			}}})
 		}
 	}
 	os.Exit(0)

@@ -52,6 +52,19 @@ type ResourceReadResult struct {
 	Error  string          `json:"error,omitempty"`
 }
 
+type PromptListResult struct {
+	Server  string          `json:"server"`
+	Prompts json.RawMessage `json:"prompts,omitempty"`
+	Error   string          `json:"error,omitempty"`
+}
+
+type PromptGetResult struct {
+	Server string          `json:"server"`
+	Prompt string          `json:"prompt"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
 type rpcRequest struct {
 	JSONRPC string         `json:"jsonrpc"`
 	ID      int            `json:"id"`
@@ -224,6 +237,37 @@ func ReadResource(ctx context.Context, serverName string, server config.MCPServe
 		return ResourceReadResult{Server: serverName, URI: uri, Error: err.Error()}
 	}
 	return ResourceReadResult{Server: serverName, URI: uri, Result: result}
+}
+
+func ListPrompts(ctx context.Context, serverName string, server config.MCPServerConfig) PromptListResult {
+	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "prompts/list",
+	})
+	if err != nil {
+		return PromptListResult{Server: serverName, Error: err.Error()}
+	}
+	return PromptListResult{Server: serverName, Prompts: result}
+}
+
+func GetPrompt(ctx context.Context, serverName string, server config.MCPServerConfig, promptName string, arguments json.RawMessage) PromptGetResult {
+	if len(arguments) == 0 {
+		arguments = json.RawMessage(`{}`)
+	}
+	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "prompts/get",
+		Params: map[string]any{
+			"name":      promptName,
+			"arguments": json.RawMessage(arguments),
+		},
+	})
+	if err != nil {
+		return PromptGetResult{Server: serverName, Prompt: promptName, Error: err.Error()}
+	}
+	return PromptGetResult{Server: serverName, Prompt: promptName, Result: result}
 }
 
 func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
