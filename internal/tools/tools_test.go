@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 51)
+	require.Len(t, infos, 60)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -204,6 +204,16 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("team_delete")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	for _, name := range []string{"worker_create", "worker_resolve_trust", "worker_send_prompt", "worker_restart", "worker_terminate"} {
+		info, ok = registry.Info(name)
+		require.True(t, ok)
+		require.Equal(t, PermissionDanger, info.Permission)
+	}
+	for _, name := range []string{"worker_get", "worker_observe", "worker_await_ready", "worker_observe_completion"} {
+		info, ok = registry.Info(name)
+		require.True(t, ok)
+		require.Equal(t, PermissionReadOnly, info.Permission)
+	}
 	_, ok = registry.Info("multi_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("task_create")
@@ -796,6 +806,65 @@ func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
 		logs, err := background.NewStore(configHome).Logs(payload.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "shim:prompt") && strings.Contains(logs, "Update docs")
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestWorkerToolsManagePromptWorker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'worker:%s\\n' \"$*\"\n"), 0o755))
+
+	createOut, err := WorkerCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"cwd":".","trusted_roots":["."],"auto_recover_prompt_misdelivery":false}`))
+	require.NoError(t, err)
+	var created struct {
+		WorkerID string `json:"worker_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(createOut), &created))
+	require.NotEmpty(t, created.WorkerID)
+
+	readyOut, err := WorkerAwaitReadyTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, readyOut, `"ready_for_prompt": true`)
+
+	observeOut, err := WorkerObserveTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`","screen_text":"trust this folder?"}`))
+	require.NoError(t, err)
+	require.Contains(t, observeOut, `"status": "trust_prompt"`)
+
+	resolveOut, err := WorkerResolveTrustTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, resolveOut, `"ready_for_prompt": true`)
+
+	sendOut, err := WorkerSendPromptTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`","prompt":"implement worker tests","task_receipt":{"repo":"codog","task_kind":"test","source_surface":"tool","objective_preview":"implement worker tests"}}`))
+	require.NoError(t, err)
+	require.Contains(t, sendOut, `"status": "running"`)
+	var sent struct {
+		TaskID string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(sendOut), &sent))
+	require.NotEmpty(t, sent.TaskID)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(sent.TaskID, 4096)
+		return err == nil && strings.Contains(logs, "worker:prompt") && strings.Contains(logs, "implement worker tests")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	getOut, err := WorkerGetTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, getOut, sent.TaskID)
+
+	restartOut, err := WorkerRestartTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, restartOut, `"status": "running"`)
+
+	completeOut, err := WorkerObserveCompletionTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`","finish_reason":"stop","tokens_output":12}`))
+	require.NoError(t, err)
+	require.Contains(t, completeOut, `"status": "finished"`)
+
+	terminateOut, err := WorkerTerminateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, terminateOut, `"status": "terminated"`)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

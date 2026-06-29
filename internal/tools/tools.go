@@ -32,6 +32,7 @@ import (
 	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/webaccess"
+	"github.com/Rememorio/codog/internal/workers"
 	"github.com/Rememorio/codog/internal/worktree"
 )
 
@@ -141,6 +142,15 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(CronListTool{ConfigHome: opts.ConfigHome})
 	reg.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerGetTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerObserveTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerResolveTrustTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerAwaitReadyTool{ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerSendPromptTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerRestartTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerTerminateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerObserveCompletionTool{ConfigHome: opts.ConfigHome})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -2548,6 +2558,403 @@ func (t TeamDeleteTool) Execute(_ context.Context, input json.RawMessage) (strin
 
 func buildTeamTaskCommand(executable string, prompt string) string {
 	return strings.Join([]string{shellQuoteToolArg(executable), "prompt", shellQuoteToolArg(prompt)}, " ")
+}
+
+type WorkerCreateTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (WorkerCreateTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "worker_create",
+		Description: "Create a coding worker control record ready for prompt delivery.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"cwd":                             map[string]any{"type": "string"},
+				"trusted_roots":                   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"auto_recover_prompt_misdelivery": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"cwd"},
+		},
+	}
+}
+
+func (WorkerCreateTool) Permission() Permission { return PermissionDanger }
+
+func (t WorkerCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		CWD                          string   `json:"cwd"`
+		TrustedRoots                 []string `json:"trusted_roots"`
+		AutoRecoverPromptMisdelivery *bool    `json:"auto_recover_prompt_misdelivery,omitempty"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	cwd, err := safePath(t.Workspace, payload.CWD, false)
+	if err != nil {
+		return "", err
+	}
+	autoRecover := true
+	if payload.AutoRecoverPromptMisdelivery != nil {
+		autoRecover = *payload.AutoRecoverPromptMisdelivery
+	}
+	worker, err := workerStore(t.ConfigHome, t.Workspace).Create(cwd, payload.TrustedRoots, autoRecover)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerGetTool struct {
+	ConfigHome string
+}
+
+func (WorkerGetTool) Definition() anthropic.ToolDefinition {
+	return workerIDToolDefinition("worker_get", "Fetch the current worker state and event history.")
+}
+
+func (WorkerGetTool) Permission() Permission { return PermissionReadOnly }
+
+func (t WorkerGetTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	id, err := parseWorkerID(input)
+	if err != nil {
+		return "", err
+	}
+	worker, err := workers.NewStore(t.ConfigHome).Get(id)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerObserveTool struct {
+	ConfigHome string
+}
+
+func (WorkerObserveTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "worker_observe",
+		Description: "Feed a terminal snapshot into worker state detection.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"worker_id":   map[string]any{"type": "string"},
+				"screen_text": map[string]any{"type": "string"},
+			},
+			"required": []string{"worker_id", "screen_text"},
+		},
+	}
+}
+
+func (WorkerObserveTool) Permission() Permission { return PermissionReadOnly }
+
+func (t WorkerObserveTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		WorkerID   string `json:"worker_id"`
+		ScreenText string `json:"screen_text"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	worker, err := workers.NewStore(t.ConfigHome).Observe(payload.WorkerID, payload.ScreenText)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerResolveTrustTool struct {
+	ConfigHome string
+}
+
+func (WorkerResolveTrustTool) Definition() anthropic.ToolDefinition {
+	return workerIDToolDefinition("worker_resolve_trust", "Resolve a detected worker trust prompt.")
+}
+
+func (WorkerResolveTrustTool) Permission() Permission { return PermissionDanger }
+
+func (t WorkerResolveTrustTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	id, err := parseWorkerID(input)
+	if err != nil {
+		return "", err
+	}
+	worker, err := workers.NewStore(t.ConfigHome).ResolveTrust(id)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerAwaitReadyTool struct {
+	ConfigHome string
+}
+
+func (WorkerAwaitReadyTool) Definition() anthropic.ToolDefinition {
+	return workerIDToolDefinition("worker_await_ready", "Return the current ready-for-prompt verdict for a worker.")
+}
+
+func (WorkerAwaitReadyTool) Permission() Permission { return PermissionReadOnly }
+
+func (t WorkerAwaitReadyTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	id, err := parseWorkerID(input)
+	if err != nil {
+		return "", err
+	}
+	snapshot, err := workers.NewStore(t.ConfigHome).AwaitReady(id)
+	if err != nil {
+		return "", err
+	}
+	return pretty(snapshot), nil
+}
+
+type WorkerSendPromptTool struct {
+	Workspace  string
+	ConfigHome string
+	Executable string
+}
+
+func (WorkerSendPromptTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "worker_send_prompt",
+		Description: "Send a task prompt to a ready worker and run it as a background Codog prompt.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"worker_id": map[string]any{"type": "string"},
+				"prompt":    map[string]any{"type": "string"},
+				"task_receipt": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"repo":               map[string]any{"type": "string"},
+						"task_kind":          map[string]any{"type": "string"},
+						"source_surface":     map[string]any{"type": "string"},
+						"expected_artifacts": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"objective_preview":  map[string]any{"type": "string"},
+					},
+					"required": []string{"repo", "task_kind", "source_surface", "objective_preview"},
+				},
+			},
+			"required": []string{"worker_id"},
+		},
+	}
+}
+
+func (WorkerSendPromptTool) Permission() Permission { return PermissionDanger }
+
+func (t WorkerSendPromptTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		WorkerID    string               `json:"worker_id"`
+		Prompt      string               `json:"prompt"`
+		TaskReceipt *workers.TaskReceipt `json:"task_receipt"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	prompt := strings.TrimSpace(payload.Prompt)
+	if prompt == "" && payload.TaskReceipt != nil {
+		prompt = strings.TrimSpace(payload.TaskReceipt.ObjectivePreview)
+	}
+	if prompt == "" {
+		return "", errors.New("prompt or task_receipt.objective_preview is required")
+	}
+	if err := validateWorkerReceipt(payload.TaskReceipt); err != nil {
+		return "", err
+	}
+	store := workerStore(t.ConfigHome, t.Workspace)
+	snapshot, err := store.AwaitReady(payload.WorkerID)
+	if err != nil {
+		return "", err
+	}
+	if !snapshot.ReadyForPrompt {
+		return "", fmt.Errorf("worker %s is not ready for prompt", payload.WorkerID)
+	}
+	executable := strings.TrimSpace(t.Executable)
+	if executable == "" {
+		executable, err = os.Executable()
+		if err != nil {
+			return "", err
+		}
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{Kind: "worker"})
+	if err != nil {
+		return "", err
+	}
+	worker, err := store.SendPrompt(payload.WorkerID, prompt, payload.TaskReceipt, task.ID)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerRestartTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (WorkerRestartTool) Definition() anthropic.ToolDefinition {
+	return workerIDToolDefinition("worker_restart", "Restart the background task attached to a worker.")
+}
+
+func (WorkerRestartTool) Permission() Permission { return PermissionDanger }
+
+func (t WorkerRestartTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	id, err := parseWorkerID(input)
+	if err != nil {
+		return "", err
+	}
+	store := workerStore(t.ConfigHome, t.Workspace)
+	worker, err := store.Get(id)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(worker.TaskID) == "" {
+		return "", errors.New("worker has no task to restart")
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Restart(worker.TaskID, worker.CWD)
+	if err != nil {
+		return "", err
+	}
+	worker, err = store.Restart(id, task.ID)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerTerminateTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (WorkerTerminateTool) Definition() anthropic.ToolDefinition {
+	return workerIDToolDefinition("worker_terminate", "Terminate a worker and stop its attached task when present.")
+}
+
+func (WorkerTerminateTool) Permission() Permission { return PermissionDanger }
+
+func (t WorkerTerminateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	id, err := parseWorkerID(input)
+	if err != nil {
+		return "", err
+	}
+	store := workers.NewStore(t.ConfigHome)
+	worker, err := store.Get(id)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(worker.TaskID) != "" {
+		_, _ = taskStore(t.ConfigHome, t.Workspace).Stop(worker.TaskID)
+	}
+	worker, err = store.Terminate(id)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+type WorkerObserveCompletionTool struct {
+	ConfigHome string
+}
+
+func (WorkerObserveCompletionTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "worker_observe_completion",
+		Description: "Record worker session completion and classify the finish reason.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"worker_id":     map[string]any{"type": "string"},
+				"finish_reason": map[string]any{"type": "string"},
+				"tokens_output": map[string]any{"type": "integer", "minimum": 0},
+			},
+			"required": []string{"worker_id", "finish_reason", "tokens_output"},
+		},
+	}
+}
+
+func (WorkerObserveCompletionTool) Permission() Permission { return PermissionReadOnly }
+
+func (t WorkerObserveCompletionTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		WorkerID     string `json:"worker_id"`
+		FinishReason string `json:"finish_reason"`
+		TokensOutput int64  `json:"tokens_output"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if payload.TokensOutput < 0 {
+		return "", errors.New("tokens_output must be non-negative")
+	}
+	worker, err := workers.NewStore(t.ConfigHome).Complete(payload.WorkerID, payload.FinishReason, payload.TokensOutput)
+	if err != nil {
+		return "", err
+	}
+	return pretty(worker), nil
+}
+
+func workerIDToolDefinition(name string, description string) anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        name,
+		Description: description,
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"worker_id": map[string]any{"type": "string"},
+			},
+			"required": []string{"worker_id"},
+		},
+	}
+}
+
+func parseWorkerID(input json.RawMessage) (string, error) {
+	var payload struct {
+		WorkerID string `json:"worker_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.WorkerID) == "" {
+		return "", errors.New("worker_id is required")
+	}
+	return strings.TrimSpace(payload.WorkerID), nil
+}
+
+func validateWorkerReceipt(receipt *workers.TaskReceipt) error {
+	if receipt == nil {
+		return nil
+	}
+	required := map[string]string{
+		"repo":              receipt.Repo,
+		"task_kind":         receipt.TaskKind,
+		"source_surface":    receipt.SourceSurface,
+		"objective_preview": receipt.ObjectivePreview,
+	}
+	for field, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("task_receipt.%s is required", field)
+		}
+	}
+	return nil
+}
+
+func workerStore(configHome string, workspace string) workers.Store {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" {
+		if workspace == "" {
+			workspace = "."
+		}
+		configHome = filepath.Join(workspace, ".codog")
+	}
+	return workers.NewStore(configHome)
 }
 
 type TaskCreateTool struct {
