@@ -6776,18 +6776,30 @@ func addTemplateVar(vars map[string]string, value string) error {
 }
 
 func (a *App) MCP(ctx context.Context, args []string) error {
-	if len(a.Config.MCPServers) == 0 {
-		fmt.Fprintln(a.Out, "No MCP servers configured.")
-		return nil
-	}
 	if len(args) == 0 || args[0] == "list" {
+		if len(a.Config.MCPServers) == 0 {
+			fmt.Fprintln(a.Out, "No MCP servers configured.")
+			return nil
+		}
 		statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
 		data, _ := json.MarshalIndent(statuses, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
+	switch args[0] {
+	case "show":
+		return a.mcpShow(args[1:])
+	case "add":
+		return a.mcpAdd(args[1:])
+	case "remove", "delete", "rm":
+		return a.mcpRemove(args[1:])
+	}
+	if len(a.Config.MCPServers) == 0 {
+		fmt.Fprintln(a.Out, "No MCP servers configured.")
+		return nil
+	}
 	if len(args) < 2 {
-		return errors.New("usage: codog mcp list | tools SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]")
+		return errors.New(mcpUsage)
 	}
 	serverName := args[1]
 	server, ok := a.Config.MCPServers[serverName]
@@ -6828,6 +6840,151 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+const mcpUsage = "usage: codog mcp list | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+
+func (a *App) mcpShow(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: codog mcp show SERVER")
+	}
+	name := args[0]
+	server, ok := a.Config.MCPServers[name]
+	if !ok {
+		return fmt.Errorf("unknown MCP server %q", name)
+	}
+	data, _ := json.MarshalIndent(map[string]any{
+		"kind":   "mcp",
+		"action": "show",
+		"status": "ok",
+		"name":   name,
+		"server": server,
+	}, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) mcpAdd(args []string) error {
+	req, err := parseMCPAddArgs(args)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(a.Config.ConfigHome, "config.json")
+	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env}
+	report, err := config.SetFileValue(path, "mcp_servers."+req.Name, server)
+	if err != nil {
+		return err
+	}
+	if a.Config.MCPServers == nil {
+		a.Config.MCPServers = map[string]config.MCPServerConfig{}
+	}
+	a.Config.MCPServers[req.Name] = server
+	data, _ := json.MarshalIndent(map[string]any{
+		"kind":   "mcp",
+		"action": "add",
+		"status": "ok",
+		"name":   req.Name,
+		"path":   report.Path,
+		"server": server,
+	}, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) mcpRemove(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: codog mcp remove SERVER")
+	}
+	name := args[0]
+	if err := validateMCPServerName(name); err != nil {
+		return err
+	}
+	path := filepath.Join(a.Config.ConfigHome, "config.json")
+	report, err := config.UnsetFileValue(path, "mcp_servers."+name)
+	if err != nil {
+		return err
+	}
+	delete(a.Config.MCPServers, name)
+	data, _ := json.MarshalIndent(map[string]any{
+		"kind":    "mcp",
+		"action":  "remove",
+		"status":  "ok",
+		"name":    name,
+		"path":    report.Path,
+		"removed": true,
+	}, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+type mcpAddRequest struct {
+	Name    string
+	Command string
+	Args    []string
+	Env     []string
+}
+
+func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
+	var req mcpAddRequest
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--":
+			positionals = append(positionals, args[index+1:]...)
+			index = len(args)
+		case arg == "--env" || arg == "-e":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mcp add env value is required")
+			}
+			req.Env = append(req.Env, args[index])
+		case strings.HasPrefix(arg, "--env="):
+			req.Env = append(req.Env, strings.TrimPrefix(arg, "--env="))
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) < 2 {
+		return req, errors.New("usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE]")
+	}
+	req.Name = positionals[0]
+	if err := validateMCPServerName(req.Name); err != nil {
+		return req, err
+	}
+	req.Command = positionals[1]
+	req.Args = append([]string(nil), positionals[2:]...)
+	req.Env = compactMCPEnv(req.Env)
+	for _, value := range req.Env {
+		if key, _, ok := strings.Cut(value, "="); !ok || strings.TrimSpace(key) == "" {
+			return req, fmt.Errorf("mcp env value must use KEY=VALUE: %s", value)
+		}
+	}
+	return req, nil
+}
+
+func compactMCPEnv(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func validateMCPServerName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("mcp server name is required")
+	}
+	for _, char := range name {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '-' {
+			continue
+		}
+		return fmt.Errorf("invalid MCP server name %q", name)
+	}
 	return nil
 }
 
@@ -7272,7 +7429,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] mcp [list|tools|call|resources|resource-templates|read|prompts|prompt]
+  %s [flags] mcp [list|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]

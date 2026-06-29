@@ -1553,6 +1553,42 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "Review hooks")
 }
 
+func TestMCPConfigCommands(t *testing.T) {
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"add", "demo", "demo-server", "--env", "A=B", "--env=C=D", "arg1", "arg2"}))
+	require.Contains(t, out.String(), `"action": "add"`)
+	require.Contains(t, out.String(), `"name": "demo"`)
+	require.Equal(t, config.MCPServerConfig{Command: "demo-server", Args: []string{"arg1", "arg2"}, Env: []string{"A=B", "C=D"}}, app.Config.MCPServers["demo"])
+	configData, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(configData), `"mcp_servers"`)
+	require.Contains(t, string(configData), `"demo-server"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "demo"}))
+	require.Contains(t, out.String(), `"action": "show"`)
+	require.Contains(t, out.String(), `"command": "demo-server"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"remove", "demo"}))
+	require.Contains(t, out.String(), `"removed": true`)
+	_, ok := app.Config.MCPServers["demo"]
+	require.False(t, ok)
+	configData, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(configData), `"demo"`)
+
+	err = app.MCP(context.Background(), []string{"add", "bad.name", "cmd"})
+	require.ErrorContains(t, err, "invalid MCP server name")
+}
+
 func TestSlashAliasesForExistingSurfaces(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
