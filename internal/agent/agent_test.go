@@ -255,6 +255,36 @@ func TestOAuthDeviceCommands(t *testing.T) {
 	require.Equal(t, "device-access-1234", loaded.AccessToken)
 }
 
+func TestOAuthProviderCommands(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"authorization_endpoint":"https://auth.example/authorize","token_endpoint":"https://auth.example/token"}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: t.TempDir()},
+		Out:    &out,
+	}
+	require.NoError(t, app.OAuth([]string{"provider", "save", "default", server.URL, "client-1", "profile"}))
+	require.Contains(t, out.String(), `"name": "default"`)
+	require.Contains(t, out.String(), `"client_id": "client-1"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"provider", "list"}))
+	require.Contains(t, out.String(), `"name": "default"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"provider", "show", "default"}))
+	require.Contains(t, out.String(), `"token_endpoint": "https://auth.example/token"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"provider", "delete", "default"}))
+	require.Contains(t, out.String(), `"deleted": true`)
+}
+
 func TestApplyStoredOAuthToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()

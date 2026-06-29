@@ -27,8 +27,8 @@ Codog follows a small-core layout:
 - `internal/worktree`: git worktree allocation for isolated local agent workers.
 - `internal/plugins`: local plugin discovery, remote marketplace index fetch,
   verified zip install/update, enable/disable, and removal.
-- `internal/oauth`: PKCE, provider metadata discovery, device authorization,
-  and keychain-backed auth token storage with file fallback.
+- `internal/oauth`: PKCE, provider metadata discovery/profile storage, device
+  authorization, and keychain-backed auth token storage with file fallback.
 - `internal/sandbox`: local sandbox strategy detection and bash wrapping.
 - `internal/codeintel`: lightweight Go symbols, diagnostics, notebook helpers,
   and local LSP lifecycle metadata.

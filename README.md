@@ -39,8 +39,8 @@ Claude Code source.
 - `codog marketplace list|remote|updates|install|install-remote|update|enable|disable|remove`
   manages local plugins, checks marketplace updates, and can install or update
   SHA-256 verified zip bundles from signed remote marketplace indexes.
-- `codog oauth pkce|discover|device` generates PKCE material, discovers
-  provider metadata, and runs device authorization; `oauth token
+- `codog oauth pkce|discover|provider|device` generates PKCE material, discovers
+  and stores provider profiles, and runs device authorization; `oauth token
   save|show|delete` manages a keychain-backed auth token store with a local file
   fallback.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can

@@ -1022,8 +1022,11 @@ func (a *App) OAuth(args []string) error {
 	if args[0] == "device" {
 		return a.oauthDevice(args[1:])
 	}
+	if args[0] == "provider" {
+		return a.oauthProvider(args[1:])
+	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth device start|poll|login | oauth token save|show|delete")
+		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|delete")
 	}
 	if len(args) < 2 {
 		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | delete")
@@ -1068,6 +1071,52 @@ func (a *App) OAuth(args []string) error {
 	default:
 		return fmt.Errorf("unknown oauth token command %q", args[1])
 	}
+}
+
+func (a *App) oauthProvider(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...] | list | show NAME | delete NAME")
+	}
+	var payload any
+	switch args[0] {
+	case "save":
+		if len(args) < 4 {
+			return errors.New("usage: codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...]")
+		}
+		profile, err := oauth.SaveProviderProfile(context.Background(), a.Config.ConfigHome, args[1], args[2], args[3], args[4:])
+		if err != nil {
+			return err
+		}
+		payload = profile
+	case "list":
+		profiles, err := oauth.ListProviderProfiles(a.Config.ConfigHome)
+		if err != nil {
+			return err
+		}
+		payload = profiles
+	case "show":
+		if len(args) < 2 {
+			return errors.New("usage: codog oauth provider show NAME")
+		}
+		profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, args[1])
+		if err != nil {
+			return err
+		}
+		payload = profile
+	case "delete":
+		if len(args) < 2 {
+			return errors.New("usage: codog oauth provider delete NAME")
+		}
+		if err := oauth.DeleteProviderProfile(a.Config.ConfigHome, args[1]); err != nil {
+			return err
+		}
+		payload = map[string]any{"deleted": true, "name": args[1]}
+	default:
+		return fmt.Errorf("unknown oauth provider command %q", args[0])
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
 }
 
 func (a *App) oauthDevice(args []string) error {
@@ -1593,7 +1642,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth discover ISSUER_URL | oauth device start|poll|login | oauth token save|show|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
