@@ -14,13 +14,50 @@ import (
 
 func TestGoSymbols(t *testing.T) {
 	workspace := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc Run() {}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\ntype Runner struct{}\n\nfunc Run() {}\n"), 0o644))
 
 	symbols, err := GoSymbols(workspace)
 	require.NoError(t, err)
-	require.Len(t, symbols, 1)
-	require.Equal(t, "Run", symbols[0].Name)
+	require.Len(t, symbols, 2)
+	require.Equal(t, "Runner", symbols[0].Name)
+	require.Equal(t, "type", symbols[0].Kind)
 	require.Equal(t, 3, symbols[0].Line)
+	require.Equal(t, "Run", symbols[1].Name)
+	require.Equal(t, "function", symbols[1].Kind)
+	require.Equal(t, 5, symbols[1].Line)
+}
+
+func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	source := "package pkg\n\ntype Runner struct{}\n\nfunc Run() Runner { return Runner{} }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "runner.go"), []byte(source), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "ignored.txt"), []byte("Run\n"), 0o644))
+
+	definition, ok, err := Definition(workspace, "Run")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "pkg/runner.go", definition.Path)
+	require.Equal(t, 5, definition.Line)
+
+	refs, err := References(workspace, "Runner", 10)
+	require.NoError(t, err)
+	require.Len(t, refs, 2)
+	require.Equal(t, "pkg/runner.go", refs[0].Path)
+	require.Contains(t, refs[0].Text, "type Runner")
+
+	hover, err := HoverInfo(workspace, "Run", 1)
+	require.NoError(t, err)
+	require.True(t, hover.Found)
+	require.Equal(t, "function", hover.Kind)
+	require.Equal(t, "pkg/runner.go", hover.Path)
+	require.NotEmpty(t, hover.Snippet)
+
+	entries, err := CodeMap(workspace, 2, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	require.Contains(t, entries, MapEntry{Path: "pkg", Type: "dir", Depth: 1})
+	require.Contains(t, entries, MapEntry{Path: "pkg/runner.go", Type: "file", Depth: 2})
 }
 
 func TestEditNotebookCell(t *testing.T) {

@@ -239,6 +239,18 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Doctor(rest)
 	case "sandbox":
 		return app.Sandbox()
+	case "symbols":
+		return app.Symbols(rest)
+	case "diagnostics":
+		return app.Diagnostics(ctx, rest)
+	case "map":
+		return app.Map(rest)
+	case "references":
+		return app.References(rest)
+	case "definition":
+		return app.Definition(rest)
+	case "hover":
+		return app.Hover(rest)
 	case "code-intel":
 		return app.CodeIntel(rest)
 	case "remote":
@@ -2378,6 +2390,393 @@ func (a *App) Doctor(args []string) error {
 	return nil
 }
 
+type symbolsReport struct {
+	Kind    string             `json:"kind"`
+	Total   int                `json:"total"`
+	Symbols []codeintel.Symbol `json:"symbols"`
+}
+
+type diagnosticsReport struct {
+	Kind        string                 `json:"kind"`
+	Total       int                    `json:"total"`
+	Diagnostics []codeintel.Diagnostic `json:"diagnostics"`
+}
+
+type mapReport struct {
+	Kind    string               `json:"kind"`
+	Total   int                  `json:"total"`
+	Depth   int                  `json:"depth"`
+	Entries []codeintel.MapEntry `json:"entries"`
+}
+
+type referencesReport struct {
+	Kind       string                `json:"kind"`
+	Symbol     string                `json:"symbol"`
+	Total      int                   `json:"total"`
+	References []codeintel.Reference `json:"references"`
+}
+
+type definitionReport struct {
+	Kind       string           `json:"kind"`
+	Symbol     string           `json:"symbol"`
+	Found      bool             `json:"found"`
+	Definition codeintel.Symbol `json:"definition,omitempty"`
+}
+
+func (a *App) Symbols(args []string) error {
+	format, rest, err := parseCodeIntelOutputArgs("symbols", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 0 {
+		return errors.New("usage: codog symbols [--json]")
+	}
+	symbols, err := codeintel.GoSymbols(a.Workspace)
+	if err != nil {
+		return err
+	}
+	report := symbolsReport{Kind: "symbols", Total: len(symbols), Symbols: symbols}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSymbols(a.Out, report)
+	return nil
+}
+
+func (a *App) Diagnostics(ctx context.Context, args []string) error {
+	format, rest, err := parseCodeIntelOutputArgs("diagnostics", args)
+	if err != nil {
+		return err
+	}
+	diagnostics, err := codeintel.GoDiagnostics(ctx, a.Workspace, rest)
+	if err != nil {
+		return err
+	}
+	report := diagnosticsReport{Kind: "diagnostics", Total: len(diagnostics), Diagnostics: diagnostics}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderDiagnostics(a.Out, report)
+	return nil
+}
+
+func (a *App) Map(args []string) error {
+	format, rest, depth, limit, err := parseMapArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 0 {
+		return fmt.Errorf("unexpected map argument %q", rest[0])
+	}
+	entries, err := codeintel.CodeMap(a.Workspace, depth, limit)
+	if err != nil {
+		return err
+	}
+	report := mapReport{Kind: "map", Total: len(entries), Depth: depth, Entries: entries}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderMap(a.Out, report)
+	return nil
+}
+
+func (a *App) References(args []string) error {
+	format, rest, limit, err := parseSymbolLimitArgs("references", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: codog references SYMBOL [--limit N] [--json]")
+	}
+	symbol := rest[0]
+	refs, err := codeintel.References(a.Workspace, symbol, limit)
+	if err != nil {
+		return err
+	}
+	report := referencesReport{Kind: "references", Symbol: symbol, Total: len(refs), References: refs}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderReferences(a.Out, report)
+	return nil
+}
+
+func (a *App) Definition(args []string) error {
+	format, rest, err := parseCodeIntelOutputArgs("definition", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: codog definition SYMBOL [--json]")
+	}
+	symbol := rest[0]
+	definition, found, err := codeintel.Definition(a.Workspace, symbol)
+	if err != nil {
+		return err
+	}
+	report := definitionReport{Kind: "definition", Symbol: symbol, Found: found, Definition: definition}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderDefinition(a.Out, report)
+	return nil
+}
+
+func (a *App) Hover(args []string) error {
+	format, rest, contextLines, err := parseHoverArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: codog hover SYMBOL [--context N] [--json]")
+	}
+	hover, err := codeintel.HoverInfo(a.Workspace, rest[0], contextLines)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{"kind": "hover", "hover": hover}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderHover(a.Out, hover)
+	return nil
+}
+
+func renderSymbols(out io.Writer, report symbolsReport) {
+	fmt.Fprintln(out, "Symbols")
+	fmt.Fprintf(out, "  Total            %d\n", report.Total)
+	for _, symbol := range report.Symbols {
+		fmt.Fprintf(out, "%s:%d:%s %s\n", symbol.Path, symbol.Line, symbol.Kind, symbol.Name)
+	}
+}
+
+func renderDiagnostics(out io.Writer, report diagnosticsReport) {
+	fmt.Fprintln(out, "Diagnostics")
+	fmt.Fprintf(out, "  Total            %d\n", report.Total)
+	if report.Total == 0 {
+		fmt.Fprintln(out, "No diagnostics.")
+		return
+	}
+	for _, diagnostic := range report.Diagnostics {
+		location := diagnostic.Package
+		if diagnostic.Path != "" {
+			location = fmt.Sprintf("%s:%d", diagnostic.Path, diagnostic.Line)
+			if diagnostic.Column > 0 {
+				location = fmt.Sprintf("%s:%d:%d", diagnostic.Path, diagnostic.Line, diagnostic.Column)
+			}
+		}
+		fmt.Fprintf(out, "%s %s\n", location, diagnostic.Message)
+	}
+}
+
+func renderMap(out io.Writer, report mapReport) {
+	fmt.Fprintln(out, "Map")
+	fmt.Fprintf(out, "  Entries          %d\n", report.Total)
+	for _, entry := range report.Entries {
+		fmt.Fprintf(out, "%s\t%s\n", entry.Type, entry.Path)
+	}
+}
+
+func renderReferences(out io.Writer, report referencesReport) {
+	fmt.Fprintln(out, "References")
+	fmt.Fprintf(out, "  Symbol           %s\n", report.Symbol)
+	fmt.Fprintf(out, "  Total            %d\n", report.Total)
+	for _, ref := range report.References {
+		fmt.Fprintf(out, "%s:%d:%s\n", ref.Path, ref.Line, ref.Text)
+	}
+}
+
+func renderDefinition(out io.Writer, report definitionReport) {
+	fmt.Fprintln(out, "Definition")
+	fmt.Fprintf(out, "  Symbol           %s\n", report.Symbol)
+	if !report.Found {
+		fmt.Fprintln(out, "  Found            false")
+		return
+	}
+	fmt.Fprintln(out, "  Found            true")
+	fmt.Fprintf(out, "  Location         %s:%d\n", report.Definition.Path, report.Definition.Line)
+	fmt.Fprintf(out, "  Kind             %s\n", report.Definition.Kind)
+}
+
+func renderHover(out io.Writer, hover codeintel.Hover) {
+	fmt.Fprintln(out, "Hover")
+	fmt.Fprintf(out, "  Symbol           %s\n", hover.Symbol)
+	if !hover.Found {
+		fmt.Fprintln(out, "  Found            false")
+		return
+	}
+	fmt.Fprintln(out, "  Found            true")
+	fmt.Fprintf(out, "  Location         %s:%d\n", hover.Path, hover.Line)
+	fmt.Fprintf(out, "  Kind             %s\n", hover.Kind)
+	fmt.Fprintln(out)
+	for _, line := range hover.Snippet {
+		fmt.Fprintln(out, line)
+	}
+}
+
+func parseCodeIntelOutputArgs(command string, args []string) (string, []string, error) {
+	format := "text"
+	rest := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", nil, fmt.Errorf("%s output format is required", command)
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, rest, nil
+	default:
+		return "", nil, fmt.Errorf("unknown %s output format %q", command, format)
+	}
+}
+
+func parseMapArgs(args []string) (string, []string, int, int, error) {
+	format, rest, err := parseCodeIntelOutputArgs("map", args)
+	if err != nil {
+		return "", nil, 0, 0, err
+	}
+	depth := 3
+	limit := 200
+	filtered := []string{}
+	for index := 0; index < len(rest); index++ {
+		arg := rest[index]
+		switch {
+		case arg == "--depth":
+			index++
+			if index >= len(rest) {
+				return "", nil, 0, 0, errors.New("map depth is required")
+			}
+			parsed, err := parsePositiveInt(rest[index], "map depth")
+			if err != nil {
+				return "", nil, 0, 0, err
+			}
+			depth = parsed
+		case strings.HasPrefix(arg, "--depth="):
+			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--depth="), "map depth")
+			if err != nil {
+				return "", nil, 0, 0, err
+			}
+			depth = parsed
+		case arg == "--limit":
+			index++
+			if index >= len(rest) {
+				return "", nil, 0, 0, errors.New("map limit is required")
+			}
+			parsed, err := parsePositiveInt(rest[index], "map limit")
+			if err != nil {
+				return "", nil, 0, 0, err
+			}
+			limit = parsed
+		case strings.HasPrefix(arg, "--limit="):
+			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "map limit")
+			if err != nil {
+				return "", nil, 0, 0, err
+			}
+			limit = parsed
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	return format, filtered, depth, limit, nil
+}
+
+func parseSymbolLimitArgs(command string, args []string) (string, []string, int, error) {
+	format, rest, err := parseCodeIntelOutputArgs(command, args)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	limit := 100
+	filtered := []string{}
+	for index := 0; index < len(rest); index++ {
+		arg := rest[index]
+		switch {
+		case arg == "--limit":
+			index++
+			if index >= len(rest) {
+				return "", nil, 0, fmt.Errorf("%s limit is required", command)
+			}
+			parsed, err := parsePositiveInt(rest[index], command+" limit")
+			if err != nil {
+				return "", nil, 0, err
+			}
+			limit = parsed
+		case strings.HasPrefix(arg, "--limit="):
+			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), command+" limit")
+			if err != nil {
+				return "", nil, 0, err
+			}
+			limit = parsed
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	return format, filtered, limit, nil
+}
+
+func parseHoverArgs(args []string) (string, []string, int, error) {
+	format, rest, err := parseCodeIntelOutputArgs("hover", args)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	contextLines := 2
+	filtered := []string{}
+	for index := 0; index < len(rest); index++ {
+		arg := rest[index]
+		switch {
+		case arg == "--context":
+			index++
+			if index >= len(rest) {
+				return "", nil, 0, errors.New("hover context is required")
+			}
+			parsed, err := parsePositiveInt(rest[index], "hover context")
+			if err != nil {
+				return "", nil, 0, err
+			}
+			contextLines = parsed
+		case strings.HasPrefix(arg, "--context="):
+			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--context="), "hover context")
+			if err != nil {
+				return "", nil, 0, err
+			}
+			contextLines = parsed
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	return format, filtered, contextLines, nil
+}
+
+func parsePositiveInt(value string, label string) (int, error) {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", label)
+	}
+	return parsed, nil
+}
+
 func (a *App) CodeIntel(args []string) error {
 	if len(args) == 0 || args[0] == "symbols" {
 		symbols, err := codeintel.GoSymbols(a.Workspace)
@@ -2663,6 +3062,30 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/lint":
 		if err := a.ProjectCommand(ctx, "lint", fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/symbols":
+		if err := a.Symbols(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/diagnostics":
+		if err := a.Diagnostics(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/map":
+		if err := a.Map(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/references":
+		if err := a.References(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/definition":
+		if err := a.Definition(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/hover":
+		if err := a.Hover(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/export":
@@ -3595,6 +4018,7 @@ Usage:
   %s [flags] git status | git diff [--staged] | git log [count] | git blame FILE [line] | git commit [--all] MESSAGE
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
+  %s [flags] symbols|diagnostics|map|references|definition|hover [ARGS...] [--json]
   %s mock-server :8089
   %s self-test
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
@@ -3618,7 +4042,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

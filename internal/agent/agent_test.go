@@ -531,6 +531,58 @@ func TestRunAndProjectCommandSurfaces(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/intel\n\ngo 1.22\n"), 0o644))
+	source := "package intel\n\ntype Runner struct{}\n\nfunc Run() Runner { return Runner{} }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "runner.go"), []byte(source), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.Symbols(nil))
+	require.Contains(t, out.String(), "runner.go:3:type Runner")
+	require.Contains(t, out.String(), "runner.go:5:function Run")
+	out.Reset()
+
+	require.NoError(t, app.Definition([]string{"Run"}))
+	require.Contains(t, out.String(), "Location         runner.go:5")
+	out.Reset()
+
+	require.NoError(t, app.References([]string{"Runner", "--limit", "2"}))
+	require.Contains(t, out.String(), "References")
+	require.Contains(t, out.String(), "runner.go:3:type Runner")
+	out.Reset()
+
+	require.NoError(t, app.Hover([]string{"Run", "--context", "1"}))
+	require.Contains(t, out.String(), "Hover")
+	require.Contains(t, out.String(), "func Run()")
+	out.Reset()
+
+	require.NoError(t, app.Map([]string{"--depth", "1"}))
+	require.Contains(t, out.String(), "Map")
+	require.Contains(t, out.String(), "file\tgo.mod")
+	out.Reset()
+
+	require.NoError(t, app.Diagnostics(context.Background(), []string{"./..."}))
+	require.Contains(t, out.String(), "Diagnostics")
+	require.Contains(t, out.String(), "Total            0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/definition Runner", sess))
+	require.Contains(t, out.String(), "Location         runner.go:3")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/references Run --limit=1", sess))
+	require.Contains(t, out.String(), "References")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/symbols", sess))
+	require.Contains(t, out.String(), "runner.go")
+	require.Empty(t, errOut.String())
+}
+
 func TestMemoryCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\nsecret body"), 0o644))

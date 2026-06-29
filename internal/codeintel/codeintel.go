@@ -22,6 +22,28 @@ type Symbol struct {
 	Line int    `json:"line"`
 }
 
+type Reference struct {
+	Symbol string `json:"symbol"`
+	Path   string `json:"path"`
+	Line   int    `json:"line"`
+	Text   string `json:"text"`
+}
+
+type Hover struct {
+	Symbol  string   `json:"symbol"`
+	Found   bool     `json:"found"`
+	Kind    string   `json:"kind,omitempty"`
+	Path    string   `json:"path,omitempty"`
+	Line    int      `json:"line,omitempty"`
+	Snippet []string `json:"snippet,omitempty"`
+}
+
+type MapEntry struct {
+	Path  string `json:"path"`
+	Type  string `json:"type"`
+	Depth int    `json:"depth"`
+}
+
 type Diagnostic struct {
 	Path    string `json:"path,omitempty"`
 	Line    int    `json:"line,omitempty"`
@@ -34,7 +56,8 @@ type Diagnostic struct {
 
 func GoSymbols(workspace string) ([]Symbol, error) {
 	var symbols []Symbol
-	re := regexp.MustCompile(`^\s*func\s+(\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	funcRe := regexp.MustCompile(`^\s*func\s+(\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	typeRe := regexp.MustCompile(`^\s*type\s+([A-Za-z_][A-Za-z0-9_]*)\s+`)
 	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -54,16 +77,160 @@ func GoSymbols(workspace string) ([]Symbol, error) {
 		}
 		lines := strings.Split(string(data), "\n")
 		for i, line := range lines {
-			match := re.FindStringSubmatch(line)
-			if match == nil {
+			if match := funcRe.FindStringSubmatch(line); match != nil {
+				rel, _ := filepath.Rel(workspace, path)
+				symbols = append(symbols, Symbol{Name: match[2], Kind: "function", Path: rel, Line: i + 1})
 				continue
 			}
-			rel, _ := filepath.Rel(workspace, path)
-			symbols = append(symbols, Symbol{Name: match[2], Kind: "function", Path: rel, Line: i + 1})
+			if match := typeRe.FindStringSubmatch(line); match != nil {
+				rel, _ := filepath.Rel(workspace, path)
+				symbols = append(symbols, Symbol{Name: match[1], Kind: "type", Path: rel, Line: i + 1})
+			}
 		}
 		return nil
 	})
 	return symbols, err
+}
+
+func Definition(workspace string, symbol string) (Symbol, bool, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return Symbol{}, false, errors.New("symbol is required")
+	}
+	symbols, err := GoSymbols(workspace)
+	if err != nil {
+		return Symbol{}, false, err
+	}
+	for _, candidate := range symbols {
+		if candidate.Name == symbol {
+			return candidate, true, nil
+		}
+	}
+	return Symbol{}, false, nil
+}
+
+func References(workspace string, symbol string, limit int) ([]Reference, error) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, errors.New("symbol is required")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(symbol) + `\b`)
+	if err != nil {
+		return nil, err
+	}
+	var refs []Reference
+	err = filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if len(refs) >= limit {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if re.MatchString(line) {
+				rel, _ := filepath.Rel(workspace, path)
+				refs = append(refs, Reference{Symbol: symbol, Path: rel, Line: i + 1, Text: strings.TrimSpace(line)})
+				if len(refs) >= limit {
+					return filepath.SkipAll
+				}
+			}
+		}
+		return nil
+	})
+	return refs, err
+}
+
+func HoverInfo(workspace string, symbol string, contextLines int) (Hover, error) {
+	if contextLines <= 0 {
+		contextLines = 2
+	}
+	definition, ok, err := Definition(workspace, symbol)
+	if err != nil {
+		return Hover{}, err
+	}
+	if !ok {
+		return Hover{Symbol: symbol, Found: false}, nil
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, definition.Path))
+	if err != nil {
+		return Hover{}, err
+	}
+	lines := strings.Split(string(data), "\n")
+	start := max(1, definition.Line-contextLines)
+	end := min(len(lines), definition.Line+contextLines)
+	snippet := make([]string, 0, end-start+1)
+	for line := start; line <= end; line++ {
+		snippet = append(snippet, fmt.Sprintf("%d: %s", line, lines[line-1]))
+	}
+	return Hover{
+		Symbol:  symbol,
+		Found:   true,
+		Kind:    definition.Kind,
+		Path:    definition.Path,
+		Line:    definition.Line,
+		Snippet: snippet,
+	}, nil
+}
+
+func CodeMap(workspace string, depthLimit int, limit int) ([]MapEntry, error) {
+	if depthLimit <= 0 {
+		depthLimit = 3
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	workspace = filepath.Clean(workspace)
+	var entries []MapEntry
+	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == workspace {
+			return nil
+		}
+		rel, err := filepath.Rel(workspace, path)
+		if err != nil {
+			return err
+		}
+		depth := pathDepth(rel)
+		if entry.IsDir() {
+			if ignoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			if depth > depthLimit {
+				return filepath.SkipDir
+			}
+		} else if depth > depthLimit {
+			return nil
+		}
+		if len(entries) >= limit {
+			return filepath.SkipAll
+		}
+		kind := "file"
+		if entry.IsDir() {
+			kind = "dir"
+		}
+		entries = append(entries, MapEntry{Path: filepath.ToSlash(rel), Type: kind, Depth: depth})
+		return nil
+	})
+	return entries, err
 }
 
 func GoDiagnostics(ctx context.Context, workspace string, patterns []string) ([]Diagnostic, error) {
@@ -170,6 +337,23 @@ func atoi(value string) int {
 		n = n*10 + int(r-'0')
 	}
 	return n
+}
+
+func ignoredDir(name string) bool {
+	switch name {
+	case ".git", "vendor", "node_modules", ".codog":
+		return true
+	default:
+		return false
+	}
+}
+
+func pathDepth(path string) int {
+	path = filepath.ToSlash(filepath.Clean(path))
+	if path == "." || path == "" {
+		return 0
+	}
+	return strings.Count(path, "/") + 1
 }
 
 type Notebook struct {

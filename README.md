@@ -22,7 +22,8 @@ Claude Code source.
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
-  `/run`, `/test`, `/build`, `/lint`, `/skills`, `/mcp`.
+  `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
+  `/references`, `/definition`, `/hover`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -84,8 +85,10 @@ Claude Code source.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
   wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
   `unshare`.
-- `codog code-intel symbols|diagnostics` scans Go symbols, reports Go test
-  diagnostics, `notebook-edit` updates `.ipynb` cells, and
+- `codog symbols|diagnostics|map|references|definition|hover` provides
+  lightweight static Go code intelligence without a persistent LSP process.
+- `codog code-intel symbols|diagnostics` remains available for compatibility,
+  `notebook-edit` updates `.ipynb` cells, and
   `lsp discover|start|list|status|stop` manages local language server
   lifecycles.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
