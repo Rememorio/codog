@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 60)
+	require.Len(t, infos, 61)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -251,6 +251,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("remote_trigger")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("testing_permission")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("skill")
@@ -356,6 +359,13 @@ func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
 	require.Contains(t, out, `"status_code": 200`)
 	require.Contains(t, out, `"body": "{\"ok\":true}"`)
 	require.Contains(t, out, `"X-Result": [`)
+}
+
+func TestTestingPermissionToolReturnsStub(t *testing.T) {
+	out, err := TestingPermissionTool{}.Execute(context.Background(), []byte(`{"action":"write"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "write"`)
+	require.Contains(t, out, `"permitted": true`)
 }
 
 func TestNotebookEditToolUpdatesNotebook(t *testing.T) {

@@ -130,6 +130,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
 	reg.Register(RemoteTriggerTool{})
+	reg.Register(TestingPermissionTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EnterWorktreeTool{Workspace: workspace})
@@ -1770,6 +1771,43 @@ func (RemoteTriggerTool) Execute(ctx context.Context, input json.RawMessage) (st
 		"status":      resp.Status,
 		"headers":     resp.Header,
 		"body":        string(data),
+	}), nil
+}
+
+type TestingPermissionTool struct{}
+
+func (TestingPermissionTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "testing_permission",
+		Description: "Test-only tool for verifying permission enforcement behavior.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string"},
+			},
+			"required": []string{"action"},
+		},
+	}
+}
+
+func (TestingPermissionTool) Permission() Permission { return PermissionDanger }
+
+func (TestingPermissionTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	payload.Action = strings.TrimSpace(payload.Action)
+	if payload.Action == "" {
+		return "", errors.New("action is required")
+	}
+	return pretty(map[string]any{
+		"action":    payload.Action,
+		"permitted": true,
+		"message":   "Testing permission tool stub",
 	}), nil
 }
 
