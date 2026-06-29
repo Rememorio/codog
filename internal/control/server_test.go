@@ -130,15 +130,14 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	}.Handler())
 	defer server.Close()
 
-	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"echo remote"}`))
+	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"echo remote","session_id":"session-remote"}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var task struct {
-		ID string `json:"id"`
-	}
+	var task background.Task
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&task))
 	require.NotEmpty(t, task.ID)
+	require.Equal(t, "session-remote", task.SessionID)
 
 	require.Eventually(t, func() bool {
 		resp, err := http.Get(server.URL + "/background/" + task.ID + "/logs?limit=100")
@@ -155,6 +154,22 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
+	resp, err = http.Get(server.URL + "/background?session_id=session-remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var sessionTasks []background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sessionTasks))
+	require.Len(t, sessionTasks, 1)
+	require.Equal(t, task.ID, sessionTasks[0].ID)
+
+	resp, err = http.Get(server.URL + "/sessions/session-remote/background")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	sessionTasks = nil
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sessionTasks))
+	require.Len(t, sessionTasks, 1)
+	require.Equal(t, task.ID, sessionTasks[0].ID)
+
 	resp, err = http.Post(server.URL+"/background/"+task.ID+"/restart", "application/json", nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -164,6 +179,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	require.NotEmpty(t, restarted.ID)
 	require.NotEqual(t, task.ID, restarted.ID)
 	require.Equal(t, task.ID, restarted.RestartedFrom)
+	require.Equal(t, "session-remote", restarted.SessionID)
 
 	require.Eventually(t, func() bool {
 		resp, err := http.Get(server.URL + "/background/" + restarted.ID + "/logs?limit=100")

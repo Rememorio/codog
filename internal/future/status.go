@@ -64,7 +64,7 @@ func Surfaces() []Surface {
 			Command:     "agents",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local agent specs under .codog/agents can launch named background prompt workers, optionally isolated in git worktrees.",
+			Description: "Local agent specs under .codog/agents can launch named session-attached background prompt workers, optionally isolated in git worktrees.",
 			DependsOn:   []string{"background", "sandbox"},
 			NextSteps: []string{
 				"Add parent-child session aggregation.",
@@ -77,11 +77,11 @@ func Surfaces() []Surface {
 			Command:     "background",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local background command registry supports run/list/status/stop/restart/logs/watch/prune with persisted metadata, log files, HTTP streams, bridge notifications, retention cleanup, and NDJSON status/log events.",
+			Description: "Local background command registry supports run/list/status/stop/restart/logs/watch/prune with persisted metadata, session IDs, log files, HTTP streams, bridge notifications, retention cleanup, and NDJSON status/log events.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add long-lived process supervision.",
-				"Attach background tasks to agent sessions.",
+				"Add session task summaries and parent-child aggregation.",
 				"Add health checks and automatic restart policies.",
 			},
 		},

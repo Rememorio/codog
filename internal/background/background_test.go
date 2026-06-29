@@ -64,7 +64,7 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	}
 	store := Store{Dir: t.TempDir()}
 	workspace := t.TempDir()
-	task, err := store.Run("pwd", workspace)
+	task, err := store.RunWithOptions("pwd", workspace, RunOptions{SessionID: "session-1"})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		status, err := store.Status(task.ID)
@@ -77,6 +77,7 @@ func TestRestartTaskReusesCommandAndWorkspace(t *testing.T) {
 	require.Equal(t, task.ID, restarted.RestartedFrom)
 	require.Equal(t, task.Command, restarted.Command)
 	require.Equal(t, workspace, restarted.Workspace)
+	require.Equal(t, "session-1", restarted.SessionID)
 
 	require.Eventually(t, func() bool {
 		logs, err := store.Logs(restarted.ID, 1024)
@@ -172,4 +173,15 @@ func TestPruneKeepsNewestCompletedTasks(t *testing.T) {
 	require.Equal(t, []string{"older"}, result.Removed)
 	require.FileExists(t, filepath.Join(store.Dir, "newer.json"))
 	require.NoFileExists(t, filepath.Join(store.Dir, "older.json"))
+}
+
+func TestFilterBySession(t *testing.T) {
+	tasks := []Task{
+		{ID: "one", SessionID: "session-1"},
+		{ID: "two", SessionID: "session-2"},
+		{ID: "three"},
+	}
+
+	require.Equal(t, tasks, FilterBySession(tasks, ""))
+	require.Equal(t, []Task{{ID: "one", SessionID: "session-1"}}, FilterBySession(tasks, "session-1"))
 }

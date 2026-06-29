@@ -31,8 +31,8 @@ Claude Code source.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog capabilities --json` exposes the long-horizon capability contract.
 - `codog background run|list|status|stop|restart|logs|watch|prune` manages local
-  background commands, restarts tasks, prunes retained records, and streams
-  status/log events.
+  background commands, attaches them to sessions, restarts tasks, prunes
+  retained records, and streams status/log events.
 - `codog agents list|run|worktrees` lists `.codog/agents/*.json` definitions,
   launches named background workers, and can isolate them in git worktrees with
   `agents run --worktree`.

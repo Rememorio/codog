@@ -157,9 +157,28 @@ func (s Server) sessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/sessions/")
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/sessions/"), "/")
+	if rest == "" {
+		writeError(w, http.ErrMissingFile, http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(rest, "/")
+	id := parts[0]
 	if id == "" {
 		writeError(w, http.ErrMissingFile, http.StatusBadRequest)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "background" {
+		tasks, err := background.NewStore(s.ConfigHome).List()
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, background.FilterBySession(tasks, id))
+		return
+	}
+	if len(parts) > 1 {
+		writeError(w, http.ErrMissingFile, http.StatusNotFound)
 		return
 	}
 	sess, err := s.Sessions.Open(id)
@@ -179,16 +198,18 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err, http.StatusInternalServerError)
 			return
 		}
+		tasks = background.FilterBySession(tasks, r.URL.Query().Get("session_id"))
 		writeJSON(w, tasks)
 	case http.MethodPost:
 		var payload struct {
-			Command string `json:"command"`
+			Command   string `json:"command"`
+			SessionID string `json:"session_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeError(w, err, http.StatusBadRequest)
 			return
 		}
-		task, err := store.Run(payload.Command, s.Workspace)
+		task, err := store.RunWithOptions(payload.Command, s.Workspace, background.RunOptions{SessionID: payload.SessionID})
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
 			return

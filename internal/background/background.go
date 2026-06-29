@@ -17,6 +17,7 @@ type Task struct {
 	ID            string     `json:"id"`
 	Command       string     `json:"command"`
 	Workspace     string     `json:"workspace,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
 	PID           int        `json:"pid"`
 	Status        string     `json:"status"`
 	StartedAt     time.Time  `json:"started_at"`
@@ -42,6 +43,11 @@ type WatchOptions struct {
 	MaxEvents int
 }
 
+type RunOptions struct {
+	SessionID     string
+	RestartedFrom string
+}
+
 type PruneOptions struct {
 	OlderThan time.Duration
 	Keep      int
@@ -65,8 +71,25 @@ func DefaultPruneOptions() PruneOptions {
 	return PruneOptions{OlderThan: 30 * 24 * time.Hour, Keep: 100}
 }
 
+func FilterBySession(tasks []Task, sessionID string) []Task {
+	if sessionID == "" {
+		return tasks
+	}
+	filtered := make([]Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.SessionID == sessionID {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
 func (s Store) Run(command string, cwd string) (Task, error) {
-	return s.run(command, cwd, "")
+	return s.RunWithOptions(command, cwd, RunOptions{})
+}
+
+func (s Store) RunWithOptions(command string, cwd string, options RunOptions) (Task, error) {
+	return s.run(command, cwd, options)
 }
 
 func (s Store) Restart(id string, cwd string) (Task, error) {
@@ -83,7 +106,10 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 	if workspace == "" {
 		workspace = cwd
 	}
-	return s.run(task.Command, workspace, task.ID)
+	return s.run(task.Command, workspace, RunOptions{
+		SessionID:     task.SessionID,
+		RestartedFrom: task.ID,
+	})
 }
 
 func (s Store) Prune(options PruneOptions) (PruneResult, error) {
@@ -123,7 +149,7 @@ func (s Store) Prune(options PruneOptions) (PruneResult, error) {
 	return result, nil
 }
 
-func (s Store) run(command string, cwd string, restartedFrom string) (Task, error) {
+func (s Store) run(command string, cwd string, options RunOptions) (Task, error) {
 	if strings.TrimSpace(command) == "" {
 		return Task{}, errors.New("background command is required")
 	}
@@ -149,11 +175,12 @@ func (s Store) run(command string, cwd string, restartedFrom string) (Task, erro
 		ID:            id,
 		Command:       command,
 		Workspace:     cwd,
+		SessionID:     options.SessionID,
 		PID:           cmd.Process.Pid,
 		Status:        "running",
 		StartedAt:     time.Now().UTC(),
 		LogPath:       logPath,
-		RestartedFrom: restartedFrom,
+		RestartedFrom: options.RestartedFrom,
 	}
 	if err := s.save(task); err != nil {
 		_ = cmd.Process.Kill()

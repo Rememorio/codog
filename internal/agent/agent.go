@@ -163,9 +163,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "cost":
 		return app.ShowCost(overrides)
 	case "background":
-		return app.Background(rest)
+		return app.BackgroundWithOverrides(rest, overrides)
 	case "agents":
-		return app.Agents(rest)
+		return app.AgentsWithOverrides(rest, overrides)
 	case "marketplace":
 		return app.Marketplace(rest)
 	case "oauth":
@@ -384,19 +384,35 @@ func enterpriseVerify(out io.Writer, args []string) error {
 }
 
 func (a *App) Background(args []string) error {
+	return a.BackgroundWithOverrides(args, config.FlagOverrides{})
+}
+
+func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverrides) error {
 	store := background.NewStore(a.Config.ConfigHome)
 	if len(args) == 0 || args[0] == "list" {
 		tasks, err := store.List()
 		if err != nil {
 			return err
 		}
+		sessionID, err := a.sessionIDFromOverrides(overrides)
+		if err != nil {
+			return err
+		}
+		if len(args) > 1 {
+			sessionID = args[1]
+		}
+		tasks = background.FilterBySession(tasks, sessionID)
 		data, _ := json.MarshalIndent(tasks, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
 	if args[0] == "run" {
 		command := strings.Join(args[1:], " ")
-		task, err := store.Run(command, a.Workspace)
+		sessionID, err := a.sessionIDFromOverrides(overrides)
+		if err != nil {
+			return err
+		}
+		task, err := store.RunWithOptions(command, a.Workspace, background.RunOptions{SessionID: sessionID})
 		if err != nil {
 			return err
 		}
@@ -405,7 +421,7 @@ func (a *App) Background(args []string) error {
 		return nil
 	}
 	if len(args) < 2 && args[0] != "prune" {
-		return errors.New("usage: codog background list | run COMMAND | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep]")
+		return errors.New("usage: codog background list [session-id] | run COMMAND | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep]")
 	}
 	switch args[0] {
 	case "status":
@@ -579,6 +595,10 @@ func (a *App) ListAgents() error {
 }
 
 func (a *App) Agents(args []string) error {
+	return a.AgentsWithOverrides(args, config.FlagOverrides{})
+}
+
+func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides) error {
 	if len(args) == 0 || args[0] == "list" {
 		return a.ListAgents()
 	}
@@ -638,7 +658,14 @@ func (a *App) Agents(args []string) error {
 		runWorkspace = next.Path
 	}
 	command := buildAgentCommand(exe, *selected, req.Prompt)
-	task, err := background.NewStore(a.Config.ConfigHome).Run(command, runWorkspace)
+	sessionID, err := a.sessionIDFromOverrides(overrides)
+	if err != nil {
+		if allocation != nil {
+			_ = worktree.Remove(a.Workspace, allocation.ID)
+		}
+		return err
+	}
+	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, runWorkspace, background.RunOptions{SessionID: sessionID})
 	if err != nil {
 		if allocation != nil {
 			_ = worktree.Remove(a.Workspace, allocation.ID)
@@ -1239,6 +1266,20 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 	return a.Sessions.Open(id)
 }
 
+func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, error) {
+	id := overrides.SessionID
+	if overrides.Resume != "" {
+		id = overrides.Resume
+		if id == "true" {
+			id = "latest"
+		}
+	}
+	if id == "latest" {
+		return a.Sessions.LatestID()
+	}
+	return id, nil
+}
+
 func (a *App) prompter(sessionID string) *tools.Prompter {
 	return &tools.Prompter{
 		Mode:        tools.Permission(a.Config.PermissionMode),
@@ -1364,7 +1405,7 @@ Usage:
   %s self-test
   %s roadmap [--json]
   %s capabilities [--json]
-  %s background run "command" | background list | background status|stop|restart|logs|watch ID | background prune [days] [keep]
+  %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete

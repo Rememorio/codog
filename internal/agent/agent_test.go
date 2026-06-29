@@ -24,6 +24,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/stretchr/testify/require"
@@ -112,6 +113,27 @@ func TestBackgroundWatchCommandOutputsJSONLEvents(t *testing.T) {
 	require.Contains(t, out.String(), `"type":"status"`)
 	require.Contains(t, out.String(), `"type":"log"`)
 	require.Contains(t, out.String(), "cli-watch")
+}
+
+func TestBackgroundRunAttachesSessionFromOverrides(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewStore(configHome),
+		Workspace: t.TempDir(),
+		Out:       &out,
+	}
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"run", "echo", "attached"}, config.FlagOverrides{SessionID: "session-1"}))
+	require.Contains(t, out.String(), `"session_id": "session-1"`)
+	out.Reset()
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"list"}, config.FlagOverrides{SessionID: "session-1"}))
+	require.Contains(t, out.String(), `"session_id": "session-1"`)
 }
 
 func TestCodeIntelLSPCommands(t *testing.T) {
