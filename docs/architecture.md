@@ -28,7 +28,8 @@ Codog follows a small-core layout:
 - `internal/sandbox`: local sandbox strategy detection and bash wrapping.
 - `internal/codeintel`: lightweight Go symbols, diagnostics, and notebook
   helpers.
-- `internal/control`: HTTP session-control API.
+- `internal/control`: HTTP control API for sessions, background tasks, logs,
+  and diagnostics.
 - `internal/bridge`: stdio JSON-RPC bridge.
 - `internal/updater`: release manifest check and verified artifact downloads.
 

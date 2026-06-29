@@ -43,7 +43,8 @@ Claude Code source.
   `unshare`.
 - `codog code-intel symbols|diagnostics` scans Go symbols, reports Go test
   diagnostics, and `notebook-edit` updates `.ipynb` cells.
-- `codog remote serve [addr]` starts a local HTTP session-control API.
+- `codog remote serve [addr]` starts a local HTTP control API for sessions,
+  background tasks, logs, and Go diagnostics.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, diagnostics, and bounded file read/write/edit operations.
 - `codog updater check URL` checks a release manifest; `updater download URL`

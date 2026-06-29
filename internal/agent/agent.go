@@ -217,7 +217,11 @@ func (a *App) Remote(args []string) error {
 		addr = args[1]
 	}
 	fmt.Fprintf(a.Err, "codog remote control listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, control.Server{Sessions: a.Sessions}.Handler())
+	return http.ListenAndServe(addr, control.Server{
+		Sessions:   a.Sessions,
+		ConfigHome: a.Config.ConfigHome,
+		Workspace:  a.Workspace,
+	}.Handler())
 }
 
 func (a *App) Bridge(args []string) error {
