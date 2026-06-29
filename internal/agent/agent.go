@@ -1007,8 +1007,20 @@ func (a *App) OAuth(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
+	if args[0] == "discover" {
+		if len(args) < 2 {
+			return errors.New("usage: codog oauth discover ISSUER_URL")
+		}
+		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(metadata, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth token save|show|delete")
+		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth token save|show|delete")
 	}
 	if len(args) < 2 {
 		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | delete")
@@ -1500,7 +1512,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth token save|show|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY

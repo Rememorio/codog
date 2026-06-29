@@ -201,6 +201,21 @@ func TestOAuthTokenCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted":true`)
 }
 
+func TestOAuthDiscoverCommand(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"authorization_endpoint":"https://auth.example/authorize","token_endpoint":"https://auth.example/token"}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{Out: &out}
+	require.NoError(t, app.OAuth([]string{"discover", server.URL}))
+	require.Contains(t, out.String(), `"authorization_endpoint": "https://auth.example/authorize"`)
+	require.Contains(t, out.String(), `"token_endpoint": "https://auth.example/token"`)
+}
+
 func TestApplyStoredOAuthToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()
