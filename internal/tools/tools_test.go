@@ -136,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 26)
+	require.Len(t, infos, 27)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -165,6 +165,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("skill")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("config")
+	require.True(t, ok)
+	require.Equal(t, PermissionWorkspace, info.Permission)
 	info, ok = registry.Info("enter_plan_mode")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -330,6 +333,35 @@ func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 	require.Contains(t, out, `"skill": "review"`)
 	require.Contains(t, out, "Review skill body")
 	require.Contains(t, out, "User request: check auth")
+}
+
+func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(configHome, 0o755))
+	configPath := filepath.Join(configHome, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"old-model","api_key":"secret","future":{"sandbox_strategy":"detect"}}`), 0o644))
+	tool := ConfigTool{Workspace: workspace, ConfigHome: configHome}
+
+	getOut, err := tool.Execute(context.Background(), []byte(`{"setting":"model"}`))
+	require.NoError(t, err)
+	require.Contains(t, getOut, `"operation": "get"`)
+	require.Contains(t, getOut, `"value": "old-model"`)
+
+	secretOut, err := tool.Execute(context.Background(), []byte(`{"setting":"api_key"}`))
+	require.NoError(t, err)
+	require.Contains(t, secretOut, `[redacted]`)
+	require.NotContains(t, secretOut, `secret`)
+
+	setOut, err := tool.Execute(context.Background(), []byte(`{"setting":"future.sandbox_strategy","value":"sandbox-exec"}`))
+	require.NoError(t, err)
+	require.Contains(t, setOut, `"operation": "set"`)
+	require.Contains(t, setOut, `"previous_value": "detect"`)
+	require.Contains(t, setOut, `"new_value": "sandbox-exec"`)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"sandbox_strategy": "sandbox-exec"`)
 }
 
 func TestTaskToolsManageBackgroundTasks(t *testing.T) {

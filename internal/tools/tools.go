@@ -133,6 +133,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	reg.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
@@ -1721,6 +1722,163 @@ func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		"prompt":   skill.Body,
 		"rendered": skills.RenderInvocation(skill, payload.Args),
 	}), nil
+}
+
+type ConfigTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (ConfigTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "config",
+		Description: "Get or set a Codog user config setting in the user config file.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"setting": map[string]any{
+					"type":        "string",
+					"description": "Dotted config key, such as model, max_tokens, permission_mode, or future.sandbox_strategy.",
+				},
+				"value": map[string]any{
+					"description": "When present, sets the setting to this JSON value. When omitted, reads the current user config value.",
+				},
+			},
+			"required":             []string{"setting"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ConfigTool) Permission() Permission {
+	return PermissionWorkspace
+}
+
+func (t ConfigTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(input, &raw); err != nil {
+		return "", err
+	}
+	var setting string
+	if data := raw["setting"]; len(data) != 0 {
+		if err := json.Unmarshal(data, &setting); err != nil {
+			return "", err
+		}
+	}
+	setting = strings.TrimSpace(setting)
+	if err := validateConfigToolSetting(setting); err != nil {
+		return "", err
+	}
+	path := configToolPath(t.ConfigHome, t.Workspace)
+	current, err := readConfigToolFile(path)
+	if err != nil {
+		return "", err
+	}
+	previous, _ := nestedConfigToolValue(current, setting)
+	valueData, hasValue := raw["value"]
+	if !hasValue {
+		return pretty(map[string]any{
+			"success":   true,
+			"operation": "get",
+			"setting":   setting,
+			"value":     redactConfigToolValue(setting, previous),
+			"path":      path,
+		}), nil
+	}
+	var value any
+	if err := json.Unmarshal(valueData, &value); err != nil {
+		return "", err
+	}
+	report, err := config.SetFileValue(path, setting, value)
+	if err != nil {
+		return "", err
+	}
+	updated, err := readConfigToolFile(path)
+	if err != nil {
+		return "", err
+	}
+	newValue, _ := nestedConfigToolValue(updated, setting)
+	return pretty(map[string]any{
+		"success":        true,
+		"operation":      report.Action,
+		"setting":        setting,
+		"previous_value": redactConfigToolValue(setting, previous),
+		"new_value":      redactConfigToolValue(setting, newValue),
+		"path":           report.Path,
+	}), nil
+}
+
+func configToolPath(configHome string, workspace string) string {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" {
+		if workspace == "" {
+			workspace = "."
+		}
+		configHome = filepath.Join(workspace, ".codog")
+	}
+	return filepath.Join(configHome, "config.json")
+}
+
+func validateConfigToolSetting(setting string) error {
+	if setting == "" {
+		return errors.New("setting is required")
+	}
+	if strings.ContainsAny(setting, `/\`) {
+		return fmt.Errorf("invalid config setting %q", setting)
+	}
+	for _, part := range strings.Split(setting, ".") {
+		if strings.TrimSpace(part) == "" || part == "." || part == ".." {
+			return fmt.Errorf("invalid config setting %q", setting)
+		}
+	}
+	return nil
+}
+
+func readConfigToolFile(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return map[string]any{}, nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return map[string]any{}, nil
+	}
+	return out, nil
+}
+
+func nestedConfigToolValue(root map[string]any, setting string) (any, bool) {
+	var current any = root
+	for _, part := range strings.Split(setting, ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func redactConfigToolValue(setting string, value any) any {
+	key := strings.ToLower(setting)
+	if !strings.Contains(key, "token") && !strings.Contains(key, "api_key") && !strings.Contains(key, "apikey") && !strings.Contains(key, "secret") {
+		return value
+	}
+	if value == nil {
+		return nil
+	}
+	return "[redacted]"
 }
 
 type ToolSearchTool struct {
