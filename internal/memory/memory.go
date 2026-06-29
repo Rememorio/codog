@@ -47,6 +47,22 @@ type Report struct {
 	Files            []Summary `json:"files"`
 }
 
+type ShowReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	File   File   `json:"file"`
+	Body   string `json:"body,omitempty"`
+}
+
+type AppendReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Path   string `json:"path"`
+	Bytes  int    `json:"bytes"`
+}
+
 func Discover(workspace string) ([]File, error) {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
@@ -62,6 +78,73 @@ func Discover(workspace string) ([]File, error) {
 		boundary = root
 	}
 	return discoverBetween(absWorkspace, boundary)
+}
+
+func Show(workspace string, target string) (ShowReport, error) {
+	files, err := Discover(workspace)
+	if err != nil {
+		return ShowReport{}, err
+	}
+	if len(files) == 0 {
+		return ShowReport{}, fmt.Errorf("no memory files found")
+	}
+	var selected *File
+	target = strings.TrimSpace(target)
+	if target == "" {
+		if len(files) != 1 {
+			return ShowReport{}, fmt.Errorf("memory file path is required when multiple files exist")
+		}
+		selected = &files[0]
+	} else {
+		for i := range files {
+			if matchesTarget(files[i], target) {
+				selected = &files[i]
+				break
+			}
+		}
+	}
+	if selected == nil {
+		return ShowReport{}, fmt.Errorf("memory file not found: %s", target)
+	}
+	return ShowReport{Kind: "memory", Action: "show", Status: "ok", File: *selected, Body: selected.Body}, nil
+}
+
+func Append(workspace string, text string) (AppendReport, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return AppendReport{}, fmt.Errorf("memory text is required")
+	}
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return AppendReport{}, err
+	}
+	path := filepath.Join(canonicalPath(absWorkspace), "AGENTS.md")
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return AppendReport{}, err
+	}
+	prefix := ""
+	if len(existing) != 0 {
+		if strings.HasSuffix(string(existing), "\n") {
+			prefix = "\n"
+		} else {
+			prefix = "\n\n"
+		}
+	}
+	payload := []byte(prefix + text + "\n")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return AppendReport{}, err
+	}
+	defer file.Close()
+	if _, err := file.Write(payload); err != nil {
+		return AppendReport{}, err
+	}
+	return AppendReport{Kind: "memory", Action: "add", Status: "ok", Path: path, Bytes: len(payload)}, nil
 }
 
 func BuildReport(workspace string) (Report, error) {
@@ -87,6 +170,27 @@ func BuildReport(workspace string) (Report, error) {
 	}, nil
 }
 
+func RenderShowReport(w io.Writer, report ShowReport) {
+	fmt.Fprintln(w, "Memory File")
+	fmt.Fprintf(w, "  Path             %s\n", report.File.Path)
+	fmt.Fprintf(w, "  Source           %s\n", report.File.Name)
+	fmt.Fprintf(w, "  Scope            %s\n", report.File.Scope)
+	if report.File.Truncated {
+		fmt.Fprintln(w, "  Truncated        true")
+	}
+	fmt.Fprintln(w)
+	fmt.Fprint(w, report.Body)
+	if !strings.HasSuffix(report.Body, "\n") {
+		fmt.Fprintln(w)
+	}
+}
+
+func RenderAppendReport(w io.Writer, report AppendReport) {
+	fmt.Fprintln(w, "Memory Updated")
+	fmt.Fprintf(w, "  Path             %s\n", report.Path)
+	fmt.Fprintf(w, "  Bytes appended   %d\n", report.Bytes)
+}
+
 func Summaries(files []File) []Summary {
 	summaries := make([]Summary, 0, len(files))
 	for _, file := range files {
@@ -101,6 +205,17 @@ func Summaries(files []File) []Summary {
 		})
 	}
 	return summaries
+}
+
+func matchesTarget(file File, target string) bool {
+	if target == file.Path || target == file.Name || target == filepath.Base(file.Path) {
+		return true
+	}
+	abs, err := filepath.Abs(target)
+	if err == nil && canonicalPath(abs) == canonicalPath(file.Path) {
+		return true
+	}
+	return false
 }
 
 func RenderReport(w io.Writer, report Report) {

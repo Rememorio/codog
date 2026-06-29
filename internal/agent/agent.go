@@ -155,7 +155,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		return renderMemoryReport(os.Stdout, workspace, rest)
+		return renderMemoryCommand(os.Stdout, workspace, rest)
 	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
 		return enterpriseVerify(os.Stdout, rest)
@@ -1617,7 +1617,7 @@ func (a *App) State(args []string) error {
 }
 
 func (a *App) Memory(args []string) error {
-	return renderMemoryReport(a.Out, a.Workspace, args)
+	return renderMemoryCommand(a.Out, a.Workspace, args)
 }
 
 type projectReport struct {
@@ -2819,22 +2819,97 @@ func initProject(out io.Writer, workspace string, args []string) error {
 	return nil
 }
 
-func renderMemoryReport(out io.Writer, workspace string, args []string) error {
-	format, err := parseSimpleOutputFormat("memory", args)
+type memoryRequest struct {
+	Action string
+	Format string
+	Rest   []string
+}
+
+func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
+	req, err := parseMemoryArgs(args)
 	if err != nil {
 		return err
 	}
-	report, err := memory.BuildReport(workspace)
-	if err != nil {
-		return err
+	switch req.Action {
+	case "list":
+		report, err := memory.BuildReport(workspace)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderReport(out, report)
+	case "show":
+		report, err := memory.Show(workspace, strings.Join(req.Rest, " "))
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderShowReport(out, report)
+	case "add":
+		if len(req.Rest) == 0 {
+			return errors.New("usage: codog memory add TEXT [--json]")
+		}
+		report, err := memory.Append(workspace, strings.Join(req.Rest, " "))
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderAppendReport(out, report)
+	default:
+		return fmt.Errorf("unknown memory action %q", req.Action)
 	}
-	if format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(out, string(data))
-		return nil
-	}
-	memory.RenderReport(out, report)
 	return nil
+}
+
+func parseMemoryArgs(args []string) (memoryRequest, error) {
+	req := memoryRequest{Action: "list", Format: "text"}
+	actionSet := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			if i+1 >= len(args) {
+				return req, errors.New("memory output format is required")
+			}
+			i++
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown memory flag %q", arg)
+		default:
+			if !actionSet {
+				action := strings.ToLower(arg)
+				switch action {
+				case "list", "show", "add":
+					req.Action = action
+					actionSet = true
+					continue
+				default:
+					return req, fmt.Errorf("unknown memory action %q", arg)
+				}
+			}
+			req.Rest = append(req.Rest, arg)
+		}
+	}
+	if req.Format != "text" && req.Format != "json" {
+		return req, fmt.Errorf("unknown memory output format %q", req.Format)
+	}
+	return req, nil
 }
 
 func renderWorkerState(out io.Writer, workspace string, args []string) error {
@@ -4314,7 +4389,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/memory":
-		if err := a.Memory(nil); err != nil {
+		if err := a.Memory(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/project":
@@ -6440,7 +6515,7 @@ Usage:
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
-  %s [flags] memory [--json|--output-format text|json]
+  %s [flags] memory [list|show|add] [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]

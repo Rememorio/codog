@@ -94,6 +94,37 @@ func TestBuildReportSummarizesMemoryFiles(t *testing.T) {
 	require.NotContains(t, string(data), "Second line")
 }
 
+func TestShowReturnsSelectedMemoryBody(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("First line\nSecond line\n"), 0o644))
+
+	report, err := Show(root, "AGENTS.md")
+
+	require.NoError(t, err)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "AGENTS.md", report.File.Name)
+	require.Contains(t, report.Body, "Second line")
+	data, err := json.Marshal(report)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "Second line")
+}
+
+func TestAppendAddsWorkspaceAgentsMemory(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Existing"), 0o644))
+
+	report, err := Append(root, "Use focused tests.")
+
+	require.NoError(t, err)
+	require.Equal(t, "add", report.Action)
+	expectedPath, err := filepath.EvalSymlinks(filepath.Join(root, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Equal(t, expectedPath, report.Path)
+	data, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Equal(t, "Existing\n\nUse focused tests.\n", string(data))
+}
+
 func TestRenderReportWithAndWithoutFiles(t *testing.T) {
 	var out bytes.Buffer
 	RenderReport(&out, Report{WorkingDirectory: "/repo", InstructionFiles: 0})

@@ -109,8 +109,8 @@ Claude Code source.
 - Project memory files (`AGENTS.md`, `CLAUDE.md`, `CLAW.md`, and
   `.codog/instructions.md`) are loaded from the git root to the workspace and
   injected into the system prompt.
-- `codog memory [--json]` lists discovered project memory files with line,
-  character, truncation, and preview metadata without printing full file bodies.
+- `codog memory list|show|add` lists discovered project memory metadata, shows
+  a selected memory file, or appends workspace-local notes to `AGENTS.md`.
 - `codog project [--json]` reports workspace, git, Go module, Codog directory,
   and memory-file detection metadata.
 - `codog env [--json]` reports environment variables inherited by tools with

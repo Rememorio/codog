@@ -19,7 +19,7 @@ func Specs() []Spec {
 		{Name: "/status", Usage: "/status", Description: "Show local workspace, session, config, git, and runtime status."},
 		{Name: "/init", Usage: "/init", Description: "Initialize Codog project config and instruction files."},
 		{Name: "/state", Usage: "/state", Description: "Show the current worker state file."},
-		{Name: "/memory", Usage: "/memory", Description: "List loaded project memory files."},
+		{Name: "/memory", Usage: "/memory [list|show|add]", Description: "List, show, or append project memory."},
 		{Name: "/project", Usage: "/project", Description: "Show project detection info."},
 		{Name: "/env", Usage: "/env", Description: "Show environment variables visible to tools with sensitive values redacted."},
 		{Name: "/context", Usage: "/context", Description: "Show prompt context, memory, focus, session, and token preflight."},

@@ -809,7 +809,19 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.NotContains(t, out.String(), "secret body")
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/memory", &session.Session{ID: "session"}))
+	require.NoError(t, app.Memory([]string{"show", "AGENTS.md"}))
+	require.Contains(t, out.String(), "Memory File")
+	require.Contains(t, out.String(), "secret body")
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"add", "Use", "focused", "tests."}))
+	require.Contains(t, out.String(), "Memory Updated")
+	data, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "Use focused tests.")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/memory show AGENTS.md", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory")
 }
 
