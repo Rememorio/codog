@@ -211,7 +211,7 @@ func (a *App) Bridge(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
 		return a.FutureStatus("bridge", args)
 	}
-	return bridge.Server{Sessions: a.Sessions, Version: version}.Serve(a.In, a.Out)
+	return bridge.Server{Sessions: a.Sessions, Version: version, Workspace: a.Workspace}.Serve(a.In, a.Out)
 }
 
 func (a *App) Updater(ctx context.Context, args []string) error {
