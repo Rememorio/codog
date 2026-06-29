@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -110,6 +111,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
+	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	return reg
@@ -126,6 +128,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 }
 
 func (r *Registry) Has(name string) bool {
@@ -854,6 +857,62 @@ func (WebSearchTool) Execute(ctx context.Context, input json.RawMessage) (string
 		return "", err
 	}
 	result, err := webaccess.Search(ctx, payload)
+	if err != nil {
+		return "", err
+	}
+	return pretty(result), nil
+}
+
+type NotebookEditTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+func (NotebookEditTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "notebook_edit",
+		Description: "Replace, insert, or delete a cell in a Jupyter .ipynb notebook inside the workspace.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"notebook_path": map[string]any{"type": "string"},
+				"cell_index":    map[string]any{"type": "integer", "minimum": 0},
+				"cell_type":     map[string]any{"type": "string", "enum": []string{"code", "markdown", "raw"}},
+				"new_source":    map[string]any{"type": "string"},
+				"edit_mode":     map[string]any{"type": "string", "enum": []string{"replace", "insert", "delete"}},
+			},
+			"required":             []string{"notebook_path", "cell_index"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (NotebookEditTool) Permission() Permission { return PermissionWorkspace }
+
+func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		NotebookPath string `json:"notebook_path"`
+		CellIndex    int    `json:"cell_index"`
+		CellType     string `json:"cell_type"`
+		NewSource    string `json:"new_source"`
+		EditMode     string `json:"edit_mode"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.NotebookPath, false)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".ipynb") {
+		return "", errors.New("notebook_path must point to a .ipynb file")
+	}
+	result, err := codeintel.EditNotebook(path, codeintel.NotebookEditOptions{
+		Index:    payload.CellIndex,
+		CellType: payload.CellType,
+		Source:   payload.NewSource,
+		Mode:     payload.EditMode,
+	})
 	if err != nil {
 		return "", err
 	}

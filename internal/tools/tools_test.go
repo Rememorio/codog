@@ -114,8 +114,10 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 10)
+	require.Len(t, infos, 11)
 	require.Equal(t, "bash", infos[0].Name)
+	_, ok = registry.Info("notebook_edit")
+	require.True(t, ok)
 	_, ok = registry.Info("web_fetch")
 	require.True(t, ok)
 	_, ok = registry.Info("web_search")
@@ -175,6 +177,27 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	info, ok = registry.Info("web_search")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+}
+
+func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "analysis.ipynb")
+	require.NoError(t, os.WriteFile(path, []byte(`{"metadata":{"name":"kept"},"cells":[]}`), 0o644))
+
+	out, err := NotebookEditTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"notebook_path":"analysis.ipynb","cell_index":0,"cell_type":"markdown","new_source":"# Title"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"cell_type": "markdown"`)
+	require.Contains(t, out, `"cell_count": 1`)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"name": "kept"`)
+	require.Contains(t, string(data), "# Title")
+
+	registry := NewRegistry(workspace)
+	info, ok := registry.Info("notebook_edit")
+	require.True(t, ok)
+	require.Equal(t, PermissionWorkspace, info.Permission)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

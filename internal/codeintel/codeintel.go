@@ -365,32 +365,181 @@ type NotebookCell struct {
 	Source   []string `json:"source"`
 }
 
+type NotebookEditOptions struct {
+	Index    int
+	CellType string
+	Source   string
+	Mode     string
+}
+
+type NotebookEditResult struct {
+	Path        string `json:"path"`
+	Mode        string `json:"mode"`
+	Index       int    `json:"index"`
+	CellType    string `json:"cell_type,omitempty"`
+	CellCount   int    `json:"cell_count"`
+	SourceLines int    `json:"source_lines,omitempty"`
+}
+
 func EditNotebookCell(path string, index int, cellType string, source string) error {
-	if index < 0 {
-		return errors.New("cell index must be non-negative")
+	_, err := EditNotebook(path, NotebookEditOptions{Index: index, CellType: cellType, Source: source, Mode: "replace"})
+	return err
+}
+
+func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult, error) {
+	if options.Index < 0 {
+		return NotebookEditResult{}, errors.New("cell index must be non-negative")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return NotebookEditResult{}, err
 	}
-	var notebook Notebook
+	var notebook map[string]any
 	if err := json.Unmarshal(data, &notebook); err != nil {
-		return err
+		return NotebookEditResult{}, err
 	}
-	for len(notebook.Cells) <= index {
-		notebook.Cells = append(notebook.Cells, NotebookCell{CellType: "code", Source: []string{}})
+	cells, err := notebookCells(notebook)
+	if err != nil {
+		return NotebookEditResult{}, err
 	}
-	if cellType == "" {
-		cellType = notebook.Cells[index].CellType
+	mode := strings.ToLower(strings.TrimSpace(options.Mode))
+	if mode == "" {
+		mode = "replace"
 	}
-	if cellType == "" {
+	cellType := strings.ToLower(strings.TrimSpace(options.CellType))
+	if cellType == "" && mode != "delete" && options.Index < len(cells) {
+		cellType, _ = cells[options.Index]["cell_type"].(string)
+	}
+	if cellType == "" && mode != "delete" {
 		cellType = "code"
 	}
-	notebook.Cells[index].CellType = cellType
-	notebook.Cells[index].Source = []string{source}
+	if mode != "delete" && !validNotebookCellType(cellType) {
+		return NotebookEditResult{}, fmt.Errorf("unsupported cell type %q", cellType)
+	}
+	sourceLines := notebookSourceLines(options.Source)
+	switch mode {
+	case "replace":
+		for len(cells) <= options.Index {
+			cells = append(cells, newNotebookCell("code", nil))
+		}
+		cells[options.Index] = applyNotebookCell(cells[options.Index], cellType, sourceLines)
+	case "insert":
+		cell := newNotebookCell(cellType, sourceLines)
+		if options.Index >= len(cells) {
+			cells = append(cells, cell)
+		} else {
+			cells = append(cells[:options.Index], append([]map[string]any{cell}, cells[options.Index:]...)...)
+		}
+	case "delete":
+		if options.Index < 0 || options.Index >= len(cells) {
+			return NotebookEditResult{}, errors.New("cell index out of range")
+		}
+		cells = append(cells[:options.Index], cells[options.Index+1:]...)
+	default:
+		return NotebookEditResult{}, fmt.Errorf("unknown notebook edit mode %q", options.Mode)
+	}
+	notebook["cells"] = mapsToAny(cells)
 	next, err := json.MarshalIndent(notebook, "", "  ")
 	if err != nil {
-		return err
+		return NotebookEditResult{}, err
 	}
-	return os.WriteFile(path, append(next, '\n'), 0o644)
+	if err := os.WriteFile(path, append(next, '\n'), 0o644); err != nil {
+		return NotebookEditResult{}, err
+	}
+	return NotebookEditResult{
+		Path:        path,
+		Mode:        mode,
+		Index:       options.Index,
+		CellType:    cellType,
+		CellCount:   len(cells),
+		SourceLines: len(sourceLines),
+	}, nil
+}
+
+func notebookCells(notebook map[string]any) ([]map[string]any, error) {
+	raw, ok := notebook["cells"]
+	if !ok {
+		return nil, errors.New("notebook cells array not found")
+	}
+	rawCells, ok := raw.([]any)
+	if !ok {
+		return nil, errors.New("notebook cells array not found")
+	}
+	cells := make([]map[string]any, 0, len(rawCells))
+	for _, rawCell := range rawCells {
+		cell, ok := rawCell.(map[string]any)
+		if !ok {
+			return nil, errors.New("notebook cell is not an object")
+		}
+		cells = append(cells, cell)
+	}
+	return cells, nil
+}
+
+func validNotebookCellType(cellType string) bool {
+	switch cellType {
+	case "code", "markdown", "raw":
+		return true
+	default:
+		return false
+	}
+}
+
+func notebookSourceLines(source string) []any {
+	if source == "" {
+		return []any{}
+	}
+	lines := strings.SplitAfter(source, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	out := make([]any, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, line)
+	}
+	return out
+}
+
+func newNotebookCell(cellType string, source []any) map[string]any {
+	cell := map[string]any{
+		"cell_type": cellType,
+		"metadata":  map[string]any{},
+		"source":    source,
+	}
+	if cellType == "code" {
+		cell["execution_count"] = nil
+		cell["outputs"] = []any{}
+	}
+	return cell
+}
+
+func applyNotebookCell(cell map[string]any, cellType string, source []any) map[string]any {
+	if cell == nil {
+		cell = map[string]any{}
+	}
+	cell["cell_type"] = cellType
+	if _, ok := cell["metadata"]; !ok {
+		cell["metadata"] = map[string]any{}
+	}
+	cell["source"] = source
+	if cellType == "code" {
+		if _, ok := cell["execution_count"]; !ok {
+			cell["execution_count"] = nil
+		}
+		if _, ok := cell["outputs"]; !ok {
+			cell["outputs"] = []any{}
+		}
+	} else {
+		delete(cell, "execution_count")
+		delete(cell, "outputs")
+	}
+	return cell
+}
+
+func mapsToAny(cells []map[string]any) []any {
+	out := make([]any, 0, len(cells))
+	for _, cell := range cells {
+		out = append(out, cell)
+	}
+	return out
 }

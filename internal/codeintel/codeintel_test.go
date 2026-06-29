@@ -62,13 +62,25 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 
 func TestEditNotebookCell(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nb.ipynb")
-	require.NoError(t, os.WriteFile(path, []byte(`{"cells":[]}`), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(`{"metadata":{"kernelspec":{"language":"python"}},"cells":[]}`), 0o644))
 
 	require.NoError(t, EditNotebookCell(path, 0, "markdown", "# Title"))
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"cell_type": "markdown"`)
 	require.Contains(t, string(data), "# Title")
+	require.Contains(t, string(data), `"kernelspec"`)
+
+	result, err := EditNotebook(path, NotebookEditOptions{Index: 0, Mode: "insert", CellType: "code", Source: "print('hello')\n"})
+	require.NoError(t, err)
+	require.Equal(t, "insert", result.Mode)
+	require.Equal(t, 2, result.CellCount)
+	require.Equal(t, 1, result.SourceLines)
+
+	result, err = EditNotebook(path, NotebookEditOptions{Index: 1, Mode: "delete"})
+	require.NoError(t, err)
+	require.Equal(t, "delete", result.Mode)
+	require.Equal(t, 1, result.CellCount)
 }
 
 func TestParseGoTestJSONDiagnostics(t *testing.T) {
