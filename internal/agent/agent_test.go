@@ -1388,6 +1388,38 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestCommandsCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "commands"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "commands", "review.md"), []byte("Review $ARGUMENTS"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "fix.md"), []byte("Claude fix {{args}}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "fix.md"), []byte("Codog fix {{ ARGUMENTS }}"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Commands([]string{"list"}))
+	require.Contains(t, out.String(), "fix\tclaude")
+	require.Contains(t, out.String(), "fix\tworkspace")
+	require.Contains(t, out.String(), "review\tuser")
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"show", "fix", "--json"}))
+	require.Contains(t, out.String(), `"source": "workspace"`)
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"run", "fix", "bug", "123"}))
+	require.Equal(t, "Codog fix bug 123\n", out.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/commands run review file.go", &session.Session{ID: "session"}))
+	require.Equal(t, "Review file.go\n", out.String())
+	require.Empty(t, errOut.String())
+}
+
 func TestExportCommandWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

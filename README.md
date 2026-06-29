@@ -26,7 +26,7 @@ Claude Code source.
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
-  `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/hooks`, `/mcp`.
+  `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -77,6 +77,9 @@ Claude Code source.
 - `codog templates list|show|apply` finds Markdown prompt templates from
   `~/.codog/templates` and `.codog/templates`, then renders `{{name}}`
   variables for reusable prompts.
+- `codog commands list|show|run` and `/commands` discover custom Markdown
+  slash commands from `~/.codog/commands`, `.codog/commands`, and
+  `.claude/commands`, then render `$ARGUMENTS` and `{{args}}`.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.

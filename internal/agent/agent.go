@@ -26,6 +26,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
+	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/fileinventory"
 	"github.com/Rememorio/codog/internal/focus"
@@ -228,6 +229,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OutputStyle(rest)
 	case "skills":
 		return app.ListSkills()
+	case "commands":
+		return app.Commands(rest)
 	case "templates":
 		return app.Templates(rest)
 	case "hooks":
@@ -4492,6 +4495,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/skills":
 		_ = a.ListSkills()
+	case "/commands":
+		if err := a.Commands(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/templates":
 		if err := a.Templates(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -5810,6 +5817,89 @@ func (a *App) ListSkills() error {
 	return nil
 }
 
+func (a *App) Commands(args []string) error {
+	action := "list"
+	rest := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		action = strings.ToLower(args[0])
+		rest = args[1:]
+	}
+	switch action {
+	case "list":
+		format, err := parseSimpleOutputFormat("commands", rest)
+		if err != nil {
+			return err
+		}
+		all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			summaries := make([]customcommands.Command, len(all))
+			copy(summaries, all)
+			for i := range summaries {
+				summaries[i].Body = ""
+			}
+			data, _ := json.MarshalIndent(map[string]any{"kind": "commands", "commands": summaries}, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		if len(all) == 0 {
+			fmt.Fprintln(a.Out, "No custom commands found.")
+			return nil
+		}
+		for _, command := range all {
+			fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", command.Name, command.Source, command.Preview, command.Path)
+		}
+	case "show":
+		format, remaining, err := parseTemplateOutputArgs("commands show", rest)
+		if err != nil {
+			return err
+		}
+		if len(remaining) != 1 {
+			return errors.New("usage: codog commands show NAME [--json]")
+		}
+		command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			data, _ := json.MarshalIndent(command, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprint(a.Out, command.Body)
+		if !strings.HasSuffix(command.Body, "\n") {
+			fmt.Fprintln(a.Out)
+		}
+	case "run", "render":
+		format, remaining, err := parseTemplateOutputArgs("commands run", rest)
+		if err != nil {
+			return err
+		}
+		if len(remaining) < 1 {
+			return errors.New("usage: codog commands run NAME [ARGS...] [--json]")
+		}
+		command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		if err != nil {
+			return err
+		}
+		rendered := customcommands.Render(command, strings.Join(remaining[1:], " "))
+		if format == "json" {
+			data, _ := json.MarshalIndent(map[string]any{"kind": "command_run", "command": rendered}, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprint(a.Out, rendered.Rendered)
+		if !strings.HasSuffix(rendered.Rendered, "\n") {
+			fmt.Fprintln(a.Out)
+		}
+	default:
+		return fmt.Errorf("unknown commands action %q", action)
+	}
+	return nil
+}
+
 func (a *App) Templates(args []string) error {
 	action := "list"
 	rest := args
@@ -6308,6 +6398,7 @@ Usage:
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
+  %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
@@ -6364,7 +6455,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
