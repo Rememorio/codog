@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	goformat "go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -36,6 +38,22 @@ type Hover struct {
 	Path    string   `json:"path,omitempty"`
 	Line    int      `json:"line,omitempty"`
 	Snippet []string `json:"snippet,omitempty"`
+}
+
+type Completion struct {
+	Label  string `json:"label"`
+	Kind   string `json:"kind"`
+	Path   string `json:"path,omitempty"`
+	Line   int    `json:"line,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type FormatResult struct {
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	Changed bool   `json:"changed"`
+	Bytes   int    `json:"bytes"`
+	Content string `json:"content,omitempty"`
 }
 
 type MapEntry struct {
@@ -189,6 +207,104 @@ func HoverInfo(workspace string, symbol string, contextLines int) (Hover, error)
 	}, nil
 }
 
+func Completions(workspace string, prefix string, limit int) ([]Completion, error) {
+	prefix = strings.TrimSpace(prefix)
+	if limit <= 0 {
+		limit = 50
+	}
+	seen := map[string]bool{}
+	var completions []Completion
+	symbols, err := GoSymbols(workspace)
+	if err != nil {
+		return nil, err
+	}
+	for _, symbol := range symbols {
+		if !matchesCompletionPrefix(symbol.Name, prefix) {
+			continue
+		}
+		key := symbol.Kind + ":" + symbol.Name + ":" + symbol.Path
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		completions = append(completions, Completion{
+			Label:  symbol.Name,
+			Kind:   symbol.Kind,
+			Path:   filepath.ToSlash(symbol.Path),
+			Line:   symbol.Line,
+			Detail: symbol.Path,
+		})
+	}
+	for _, keyword := range goCompletionKeywords {
+		if !matchesCompletionPrefix(keyword.label, prefix) {
+			continue
+		}
+		key := keyword.kind + ":" + keyword.label
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		completions = append(completions, Completion{Label: keyword.label, Kind: keyword.kind, Detail: keyword.detail})
+	}
+	sort.Slice(completions, func(i, j int) bool {
+		leftExact := strings.EqualFold(completions[i].Label, prefix)
+		rightExact := strings.EqualFold(completions[j].Label, prefix)
+		if leftExact != rightExact {
+			return leftExact
+		}
+		if completions[i].Label == completions[j].Label {
+			if completions[i].Kind == completions[j].Kind {
+				return completions[i].Path < completions[j].Path
+			}
+			return completions[i].Kind < completions[j].Kind
+		}
+		return strings.ToLower(completions[i].Label) < strings.ToLower(completions[j].Label)
+	})
+	if len(completions) > limit {
+		completions = completions[:limit]
+	}
+	return completions, nil
+}
+
+func FormatGoFile(workspace string, requested string, write bool) (FormatResult, error) {
+	if strings.TrimSpace(requested) == "" {
+		return FormatResult{}, errors.New("path is required")
+	}
+	path, rel, err := resolveWorkspaceFile(workspace, requested)
+	if err != nil {
+		return FormatResult{}, err
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".go") {
+		return FormatResult{}, errors.New("path must point to a .go file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return FormatResult{}, err
+	}
+	formatted, err := goformat.Source(data)
+	if err != nil {
+		return FormatResult{}, err
+	}
+	changed := !bytes.Equal(data, formatted)
+	if write && changed {
+		info, statErr := os.Stat(path)
+		mode := os.FileMode(0o644)
+		if statErr == nil {
+			mode = info.Mode()
+		}
+		if err := os.WriteFile(path, formatted, mode); err != nil {
+			return FormatResult{}, err
+		}
+	}
+	return FormatResult{
+		Kind:    "format",
+		Path:    rel,
+		Changed: changed,
+		Bytes:   len(formatted),
+		Content: string(formatted),
+	}, nil
+}
+
 func CodeMap(workspace string, depthLimit int, limit int) ([]MapEntry, error) {
 	if depthLimit <= 0 {
 		depthLimit = 3
@@ -326,6 +442,108 @@ func normalizeDiagnosticPath(workspace, path string) string {
 		}
 	}
 	return path
+}
+
+func resolveWorkspaceFile(workspace string, requested string) (string, string, error) {
+	root, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", "", err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", "", err
+	}
+	candidate := requested
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(root, candidate)
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", "", err
+	}
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return "", "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("path escapes workspace: %s", requested)
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", "", err
+	}
+	rel, err = filepath.Rel(root, resolved)
+	if err != nil {
+		return "", "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("path escapes workspace: %s", requested)
+	}
+	return resolved, filepath.ToSlash(rel), nil
+}
+
+func matchesCompletionPrefix(label string, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(label), strings.ToLower(prefix))
+}
+
+type completionKeyword struct {
+	label  string
+	kind   string
+	detail string
+}
+
+var goCompletionKeywords = []completionKeyword{
+	{label: "append", kind: "builtin", detail: "built-in function"},
+	{label: "bool", kind: "builtin", detail: "built-in type"},
+	{label: "break", kind: "keyword", detail: "Go keyword"},
+	{label: "byte", kind: "builtin", detail: "alias for uint8"},
+	{label: "cap", kind: "builtin", detail: "built-in function"},
+	{label: "case", kind: "keyword", detail: "Go keyword"},
+	{label: "chan", kind: "keyword", detail: "Go keyword"},
+	{label: "close", kind: "builtin", detail: "built-in function"},
+	{label: "complex", kind: "builtin", detail: "built-in function"},
+	{label: "const", kind: "keyword", detail: "Go keyword"},
+	{label: "continue", kind: "keyword", detail: "Go keyword"},
+	{label: "copy", kind: "builtin", detail: "built-in function"},
+	{label: "default", kind: "keyword", detail: "Go keyword"},
+	{label: "defer", kind: "keyword", detail: "Go keyword"},
+	{label: "delete", kind: "builtin", detail: "built-in function"},
+	{label: "else", kind: "keyword", detail: "Go keyword"},
+	{label: "error", kind: "builtin", detail: "built-in interface"},
+	{label: "fallthrough", kind: "keyword", detail: "Go keyword"},
+	{label: "false", kind: "builtin", detail: "predeclared identifier"},
+	{label: "float64", kind: "builtin", detail: "built-in type"},
+	{label: "for", kind: "keyword", detail: "Go keyword"},
+	{label: "func", kind: "keyword", detail: "Go keyword"},
+	{label: "go", kind: "keyword", detail: "Go keyword"},
+	{label: "goto", kind: "keyword", detail: "Go keyword"},
+	{label: "if", kind: "keyword", detail: "Go keyword"},
+	{label: "imag", kind: "builtin", detail: "built-in function"},
+	{label: "import", kind: "keyword", detail: "Go keyword"},
+	{label: "int", kind: "builtin", detail: "built-in type"},
+	{label: "interface", kind: "keyword", detail: "Go keyword"},
+	{label: "len", kind: "builtin", detail: "built-in function"},
+	{label: "make", kind: "builtin", detail: "built-in function"},
+	{label: "map", kind: "keyword", detail: "Go keyword"},
+	{label: "new", kind: "builtin", detail: "built-in function"},
+	{label: "nil", kind: "builtin", detail: "predeclared identifier"},
+	{label: "package", kind: "keyword", detail: "Go keyword"},
+	{label: "panic", kind: "builtin", detail: "built-in function"},
+	{label: "range", kind: "keyword", detail: "Go keyword"},
+	{label: "real", kind: "builtin", detail: "built-in function"},
+	{label: "recover", kind: "builtin", detail: "built-in function"},
+	{label: "return", kind: "keyword", detail: "Go keyword"},
+	{label: "rune", kind: "builtin", detail: "alias for int32"},
+	{label: "select", kind: "keyword", detail: "Go keyword"},
+	{label: "string", kind: "builtin", detail: "built-in type"},
+	{label: "struct", kind: "keyword", detail: "Go keyword"},
+	{label: "switch", kind: "keyword", detail: "Go keyword"},
+	{label: "true", kind: "builtin", detail: "predeclared identifier"},
+	{label: "type", kind: "keyword", detail: "Go keyword"},
+	{label: "var", kind: "keyword", detail: "Go keyword"},
 }
 
 func atoi(value string) int {

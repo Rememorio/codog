@@ -1900,13 +1900,13 @@ type LSPTool struct {
 func (LSPTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "lsp",
-		Description: "Query code intelligence for Go symbols, references, diagnostics, definitions, and hover context.",
+		Description: "Query code intelligence for Go symbols, references, diagnostics, definitions, hover context, completions, and formatting.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "references", "diagnostics", "definition", "hover"},
+					"enum": []string{"symbols", "references", "diagnostics", "definition", "hover", "completion", "completions", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -1987,6 +1987,29 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(map[string]any{"action": action, "query": query, "hover": hover}), nil
+	case "completion", "completions":
+		query := strings.TrimSpace(payload.Query)
+		if query == "" && strings.TrimSpace(payload.Path) != "" {
+			var err error
+			query, err = symbolAtPosition(t.Workspace, t.AdditionalDirs, payload.Path, payload.Line, payload.Character)
+			if err != nil {
+				return "", err
+			}
+		}
+		completions, err := codeintel.Completions(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"action": "completion", "query": query, "completions": completions, "total": len(completions)}), nil
+	case "format", "formatting":
+		if strings.TrimSpace(payload.Path) == "" {
+			return "", errors.New("path is required for lsp format")
+		}
+		result, err := codeintel.FormatGoFile(t.Workspace, payload.Path, false)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"action": "format", "format": result}), nil
 	case "diagnostics":
 		patterns := []string{}
 		if strings.TrimSpace(payload.Path) != "" {

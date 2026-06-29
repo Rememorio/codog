@@ -479,6 +479,7 @@ func TestControlCodeIntelligence(t *testing.T) {
 		"",
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.go"), []byte("package secret\n\ntype Secret struct{}\n"), 0o644))
 	server := httptest.NewServer(Server{
 		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
@@ -526,6 +527,37 @@ func TestControlCodeIntelligence(t *testing.T) {
 	require.Contains(t, string(body), `"kind":"hover"`)
 	require.Contains(t, string(body), `"found":true`)
 	require.Contains(t, string(body), `type Widget struct{}`)
+
+	resp, err = http.Get(server.URL + "/code/completion?query=Build&limit=5")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"completion"`)
+	require.Contains(t, string(body), `"label":"BuildWidget"`)
+
+	resp, err = http.Get(server.URL + "/code/format?path=messy.go")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"format"`)
+	require.Contains(t, string(body), `"write":false`)
+	require.Contains(t, string(body), `"changed":true`)
+	require.Contains(t, string(body), `func messy()`)
+
+	resp, err = http.Post(server.URL+"/code/format", "application/json", bytes.NewBufferString(`{"path":"messy.go","write":true}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"write":true`)
+	data, err := os.ReadFile(filepath.Join(workspace, "messy.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func messy()")
 
 	resp, err = http.Get(server.URL + "/code/symbols?path=../secret.go")
 	require.NoError(t, err)

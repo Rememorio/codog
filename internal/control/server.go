@@ -70,6 +70,8 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/code/references", s.codeReferences)
 	mux.HandleFunc("/code/definition", s.codeDefinition)
 	mux.HandleFunc("/code/hover", s.codeHover)
+	mux.HandleFunc("/code/completion", s.codeCompletion)
+	mux.HandleFunc("/code/format", s.codeFormat)
 	return s.withAuth(mux)
 }
 
@@ -964,6 +966,66 @@ func (s Server) codeHover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"kind": "hover", "symbol": strings.TrimSpace(payload.Symbol), "hover": hover})
+}
+
+func (s Server) codeCompletion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Query = r.URL.Query().Get("query")
+		payload.Limit = parseOptionalInt(r.URL.Query().Get("limit"))
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	completions, err := codeintel.Completions(workspace, payload.Query, payload.Limit)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "completion", "query": strings.TrimSpace(payload.Query), "total": len(completions), "completions": completions})
+}
+
+func (s Server) codeFormat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Path  string `json:"path"`
+		Write bool   `json:"write"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Path = r.URL.Query().Get("path")
+		payload.Write = false
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	result, err := codeintel.FormatGoFile(workspace, payload.Path, payload.Write)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "format", "write": payload.Write, "result": result})
 }
 
 func decodeOptionalJSONPayload(r *http.Request, value any) error {

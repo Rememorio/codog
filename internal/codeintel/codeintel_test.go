@@ -60,6 +60,43 @@ func TestDefinitionReferencesHoverAndCodeMap(t *testing.T) {
 	require.Contains(t, entries, MapEntry{Path: "pkg/runner.go", Type: "file", Depth: 2})
 }
 
+func TestCompletionsAndFormatGoFile(t *testing.T) {
+	workspace := t.TempDir()
+	source := "package main\n\ntype Runner struct{}\n\nfunc RunFast() Runner { return Runner{} }\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte(source), 0o644))
+
+	completions, err := Completions(workspace, "Run", 10)
+	require.NoError(t, err)
+	require.Contains(t, completions, Completion{Label: "RunFast", Kind: "function", Path: "main.go", Line: 5, Detail: "main.go"})
+
+	completions, err = Completions(workspace, "ret", 10)
+	require.NoError(t, err)
+	require.Contains(t, completions, Completion{Label: "return", Kind: "keyword", Detail: "Go keyword"})
+
+	unformatted := "package main\n\nfunc main(){println(\"hi\")}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte(unformatted), 0o644))
+	result, err := FormatGoFile(workspace, "messy.go", false)
+	require.NoError(t, err)
+	require.Equal(t, "format", result.Kind)
+	require.Equal(t, "messy.go", result.Path)
+	require.True(t, result.Changed)
+	require.Contains(t, result.Content, "func main()")
+	data, err := os.ReadFile(filepath.Join(workspace, "messy.go"))
+	require.NoError(t, err)
+	require.Equal(t, unformatted, string(data))
+
+	result, err = FormatGoFile(workspace, "messy.go", true)
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	data, err = os.ReadFile(filepath.Join(workspace, "messy.go"))
+	require.NoError(t, err)
+	require.Equal(t, result.Content, string(data))
+
+	_, err = FormatGoFile(workspace, "../escape.go", false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes workspace")
+}
+
 func TestEditNotebookCell(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nb.ipynb")
 	require.NoError(t, os.WriteFile(path, []byte(`{"metadata":{"kernelspec":{"language":"python"}},"cells":[]}`), 0o644))

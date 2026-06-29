@@ -907,6 +907,7 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/intel\n\ngo 1.22\n"), 0o644))
 	source := "package intel\n\ntype Runner struct{}\n\nfunc Run() Runner { return Runner{} }\n"
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "runner.go"), []byte(source), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package intel\n\nfunc messy(){return}\n"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
@@ -943,6 +944,20 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"found": true`)
 	out.Reset()
 
+	require.NoError(t, app.Completion([]string{"Run", "--limit", "5"}))
+	require.Contains(t, out.String(), "Completion")
+	require.Contains(t, out.String(), "runner.go:5:function Run")
+	out.Reset()
+
+	require.NoError(t, app.Format([]string{"messy.go"}))
+	require.Contains(t, out.String(), "Format")
+	require.Contains(t, out.String(), "Changed          true")
+	require.Contains(t, out.String(), "func messy()")
+	data, err := os.ReadFile(filepath.Join(workspace, "messy.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func messy(){return}")
+	out.Reset()
+
 	require.NoError(t, app.Map([]string{"--depth", "1"}))
 	require.Contains(t, out.String(), "Map")
 	require.Contains(t, out.String(), "file\tgo.mod")
@@ -968,6 +983,18 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/teleport runner.go", sess))
 	require.Contains(t, out.String(), "Mode             file")
 	require.Contains(t, out.String(), "package intel")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/completion Run --limit=5", sess))
+	require.Contains(t, out.String(), "Completion")
+	require.Contains(t, out.String(), "Run")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/format messy.go --write", sess))
+	require.Contains(t, out.String(), "Written          true")
+	data, err = os.ReadFile(filepath.Join(workspace, "messy.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func messy()")
 	require.Empty(t, errOut.String())
 }
 

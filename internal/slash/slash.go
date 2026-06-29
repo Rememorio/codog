@@ -59,6 +59,8 @@ func Specs() []Spec {
 		{Name: "/definition", Usage: "/definition SYMBOL", Description: "Find the definition of a symbol."},
 		{Name: "/hover", Usage: "/hover SYMBOL", Description: "Show definition context for a symbol."},
 		{Name: "/teleport", Usage: "/teleport SYMBOL|PATH", Description: "Jump to a file or Go symbol."},
+		{Name: "/completion", Usage: "/completion PREFIX", Description: "List Go completion candidates for a prefix."},
+		{Name: "/format", Usage: "/format PATH [--write]", Description: "Preview or write gofmt output for a Go file."},
 		{Name: "/export", Usage: "/export [file]", Description: "Export the current session transcript."},
 		{Name: "/history", Usage: "/history [limit]", Description: "Show recent prompts recorded for the current session."},
 		{Name: "/summary", Usage: "/summary", Description: "Summarize the current session."},

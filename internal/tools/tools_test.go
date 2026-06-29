@@ -433,6 +433,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 		"",
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	tool := LSPTool{Workspace: workspace}
 
 	symbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"symbols","path":"demo.go"}`))
@@ -449,6 +450,17 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, hoverOut, `"query": "BuildWidget"`)
 	require.Contains(t, hoverOut, `"found": true`)
+
+	completionOut, err := tool.Execute(context.Background(), []byte(`{"action":"completion","query":"Build","limit":5}`))
+	require.NoError(t, err)
+	require.Contains(t, completionOut, `"action": "completion"`)
+	require.Contains(t, completionOut, `"label": "BuildWidget"`)
+
+	formatOut, err := tool.Execute(context.Background(), []byte(`{"action":"format","path":"messy.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, formatOut, `"action": "format"`)
+	require.Contains(t, formatOut, `"changed": true`)
+	require.Contains(t, formatOut, `func messy()`)
 }
 
 func TestWorktreeToolsAllocateAndRemove(t *testing.T) {

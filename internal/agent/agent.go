@@ -328,6 +328,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Hover(rest)
 	case "teleport":
 		return app.Teleport(rest)
+	case "completion":
+		return app.Completion(rest)
+	case "format":
+		return app.Format(rest)
 	case "code-intel":
 		return app.CodeIntel(rest)
 	case "remote":
@@ -4069,6 +4073,19 @@ type definitionReport struct {
 	Definition codeintel.Symbol `json:"definition,omitempty"`
 }
 
+type completionReport struct {
+	Kind        string                 `json:"kind"`
+	Query       string                 `json:"query"`
+	Total       int                    `json:"total"`
+	Completions []codeintel.Completion `json:"completions"`
+}
+
+type formatReport struct {
+	Kind   string                 `json:"kind"`
+	Write  bool                   `json:"write"`
+	Result codeintel.FormatResult `json:"result"`
+}
+
 type teleportReport struct {
 	Kind       string             `json:"kind"`
 	Query      string             `json:"query"`
@@ -4209,6 +4226,51 @@ func (a *App) Hover(args []string) error {
 		return nil
 	}
 	renderHover(a.Out, hover)
+	return nil
+}
+
+func (a *App) Completion(args []string) error {
+	format, rest, limit, err := parseSymbolLimitArgs("completion", args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: codog completion PREFIX [--limit N] [--json]")
+	}
+	query := rest[0]
+	completions, err := codeintel.Completions(a.Workspace, query, limit)
+	if err != nil {
+		return err
+	}
+	report := completionReport{Kind: "completion", Query: query, Total: len(completions), Completions: completions}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderCompletion(a.Out, report)
+	return nil
+}
+
+func (a *App) Format(args []string) error {
+	format, rest, write, err := parseFormatArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: codog format PATH [--write] [--json]")
+	}
+	result, err := codeintel.FormatGoFile(a.Workspace, rest[0], write)
+	if err != nil {
+		return err
+	}
+	report := formatReport{Kind: "format", Write: write, Result: result}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderFormat(a.Out, report)
 	return nil
 }
 
@@ -4416,6 +4478,38 @@ func renderHover(out io.Writer, hover codeintel.Hover) {
 	}
 }
 
+func renderCompletion(out io.Writer, report completionReport) {
+	fmt.Fprintln(out, "Completion")
+	fmt.Fprintf(out, "  Query            %s\n", report.Query)
+	fmt.Fprintf(out, "  Total            %d\n", report.Total)
+	for _, completion := range report.Completions {
+		if completion.Path != "" {
+			fmt.Fprintf(out, "%s:%d:%s %s\n", completion.Path, completion.Line, completion.Kind, completion.Label)
+			continue
+		}
+		if completion.Detail != "" {
+			fmt.Fprintf(out, "%s %s %s\n", completion.Kind, completion.Label, completion.Detail)
+			continue
+		}
+		fmt.Fprintf(out, "%s %s\n", completion.Kind, completion.Label)
+	}
+}
+
+func renderFormat(out io.Writer, report formatReport) {
+	fmt.Fprintln(out, "Format")
+	fmt.Fprintf(out, "  Path             %s\n", report.Result.Path)
+	fmt.Fprintf(out, "  Changed          %t\n", report.Result.Changed)
+	fmt.Fprintf(out, "  Bytes            %d\n", report.Result.Bytes)
+	fmt.Fprintf(out, "  Written          %t\n", report.Write)
+	if !report.Write && report.Result.Content != "" {
+		fmt.Fprintln(out)
+		fmt.Fprint(out, report.Result.Content)
+		if !strings.HasSuffix(report.Result.Content, "\n") {
+			fmt.Fprintln(out)
+		}
+	}
+}
+
 func parseCodeIntelOutputArgs(command string, args []string) (string, []string, error) {
 	format := "text"
 	rest := []string{}
@@ -4560,6 +4654,30 @@ func parseHoverArgs(args []string) (string, []string, int, error) {
 	return format, filtered, contextLines, nil
 }
 
+func parseFormatArgs(args []string) (string, []string, bool, error) {
+	format, rest, err := parseCodeIntelOutputArgs("format", args)
+	if err != nil {
+		return "", nil, false, err
+	}
+	write := false
+	filtered := []string{}
+	for _, arg := range rest {
+		switch {
+		case arg == "--write":
+			write = true
+		case strings.HasPrefix(arg, "--write="):
+			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--write="))
+			if err != nil {
+				return "", nil, false, fmt.Errorf("format write must be a boolean")
+			}
+			write = parsed
+		default:
+			filtered = append(filtered, arg)
+		}
+	}
+	return format, filtered, write, nil
+}
+
 func parsePositiveInt(value string, label string) (int, error) {
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
@@ -4586,6 +4704,12 @@ func (a *App) CodeIntel(args []string) error {
 		data, _ := json.MarshalIndent(diagnostics, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
+	}
+	if args[0] == "completion" || args[0] == "completions" {
+		return a.Completion(args[1:])
+	}
+	if args[0] == "format" || args[0] == "formatting" {
+		return a.Format(args[1:])
 	}
 	if args[0] == "lsp" {
 		return a.CodeIntelLSP(args[1:])
@@ -4969,6 +5093,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/teleport":
 		if err := a.Teleport(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/completion":
+		if err := a.Completion(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/format":
+		if err := a.Format(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/export":
@@ -7736,7 +7868,7 @@ Usage:
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
-  %s [flags] symbols|diagnostics|map|references|definition|hover|teleport [ARGS...] [--json]
+  %s [flags] symbols|diagnostics|map|references|definition|hover|teleport|completion|format [ARGS...] [--json]
   %s mock-server :8089
   %s self-test
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
@@ -7747,7 +7879,7 @@ Usage:
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
   %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
-  %s sandbox | code-intel symbols|diagnostics|lsp
+  %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]

@@ -106,6 +106,8 @@ func (s Server) handle(req Request) (any, *Error) {
 				"code/references",
 				"code/definition",
 				"code/hover",
+				"code/completion",
+				"code/format",
 				"background/list",
 				"background/run",
 				"background/get",
@@ -249,6 +251,18 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "code/hover":
 		result, err := s.codeHover(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "code/completion":
+		result, err := s.codeCompletion(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "code/format":
+		result, err := s.codeFormat(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -398,6 +412,44 @@ func (s Server) codeHover(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"kind": "hover", "symbol": strings.TrimSpace(payload.Symbol), "hover": hover}, nil
+}
+
+func (s Server) codeCompletion(params json.RawMessage) (any, error) {
+	var payload struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	completions, err := codeintel.Completions(workspace, payload.Query, payload.Limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "completion", "query": strings.TrimSpace(payload.Query), "total": len(completions), "completions": completions}, nil
+}
+
+func (s Server) codeFormat(params json.RawMessage) (any, error) {
+	var payload struct {
+		Path  string `json:"path"`
+		Write bool   `json:"write"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	result, err := codeintel.FormatGoFile(workspace, payload.Path, payload.Write)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "format", "write": payload.Write, "result": result}, nil
 }
 
 func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (any, *Error) {

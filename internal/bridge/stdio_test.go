@@ -37,6 +37,8 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"code/references"`)
 	require.Contains(t, out.String(), `"code/definition"`)
 	require.Contains(t, out.String(), `"code/hover"`)
+	require.Contains(t, out.String(), `"code/completion"`)
+	require.Contains(t, out.String(), `"code/format"`)
 	require.Contains(t, out.String(), `"background/list"`)
 	require.Contains(t, out.String(), `"background/run"`)
 	require.Contains(t, out.String(), `"background/logs"`)
@@ -147,12 +149,15 @@ func TestBridgeCodeIntelligence(t *testing.T) {
 		"",
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "messy.go"), []byte("package demo\n\nfunc messy(){return}\n"), 0o644))
 	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"code/symbols","params":{"path":"demo.go"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"code/references","params":{"symbol":"Widget","limit":5}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"code/definition","params":{"symbol":"BuildWidget"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"code/hover","params":{"symbol":"Widget","context_lines":1}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"code/completion","params":{"query":"Build","limit":5}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"code/format","params":{"path":"messy.go"}}`,
 	}, "\n") + "\n"
 
 	var out bytes.Buffer
@@ -164,6 +169,11 @@ func TestBridgeCodeIntelligence(t *testing.T) {
 	require.Contains(t, out.String(), `"symbol":"Widget"`)
 	require.Contains(t, out.String(), `"found":true`)
 	require.Contains(t, out.String(), `"kind":"hover"`)
+	require.Contains(t, out.String(), `"kind":"completion"`)
+	require.Contains(t, out.String(), `"label":"BuildWidget"`)
+	require.Contains(t, out.String(), `"kind":"format"`)
+	require.Contains(t, out.String(), `"changed":true`)
+	require.Contains(t, out.String(), `func messy()`)
 }
 
 func TestBridgeEditorIdentifyOpenSelectionState(t *testing.T) {
