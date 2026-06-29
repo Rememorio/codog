@@ -110,6 +110,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WebFetchTool{})
@@ -131,6 +132,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -618,6 +620,92 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 		replaced = count
 	}
 	return pretty(map[string]any{"path": path, "replacements": replaced}), nil
+}
+
+type MultiEditTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+func (MultiEditTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "multi_edit",
+		Description: "Apply multiple text replacements to one workspace file atomically.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string"},
+				"edits": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"old_string":  map[string]any{"type": "string"},
+							"new_string":  map[string]any{"type": "string"},
+							"replace_all": map[string]any{"type": "boolean"},
+						},
+						"required":             []string{"old_string", "new_string"},
+						"additionalProperties": false,
+					},
+				},
+			},
+			"required":             []string{"path", "edits"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (MultiEditTool) Permission() Permission { return PermissionWorkspace }
+
+func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Path  string `json:"path"`
+		Edits []struct {
+			OldString  string `json:"old_string"`
+			NewString  string `json:"new_string"`
+			ReplaceAll bool   `json:"replace_all"`
+		} `json:"edits"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if len(payload.Edits) == 0 {
+		return "", errors.New("edits are required")
+	}
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	content := string(data)
+	total := 0
+	for index, edit := range payload.Edits {
+		if edit.OldString == "" {
+			return "", fmt.Errorf("edits[%d].old_string is required", index)
+		}
+		count := strings.Count(content, edit.OldString)
+		if count == 0 {
+			return "", fmt.Errorf("edits[%d].old_string not found", index)
+		}
+		if !edit.ReplaceAll && count > 1 {
+			return "", fmt.Errorf("edits[%d].old_string appears %d times; set replace_all to true or provide more context", index, count)
+		}
+		replacements := 1
+		if edit.ReplaceAll {
+			replacements = count
+			content = strings.ReplaceAll(content, edit.OldString, edit.NewString)
+		} else {
+			content = strings.Replace(content, edit.OldString, edit.NewString, 1)
+		}
+		total += replacements
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"path": path, "edits": len(payload.Edits), "replacements": total}), nil
 }
 
 type GrepTool struct {

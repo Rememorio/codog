@@ -69,6 +69,25 @@ func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	require.Contains(t, err.Error(), "appears 2 times")
 }
 
+func TestMultiEditAppliesAtomically(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "a.txt")
+	require.NoError(t, os.WriteFile(path, []byte("one\ntwo\nthree\n"), 0o644))
+
+	out, err := MultiEditTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"a.txt","edits":[{"old_string":"one","new_string":"1"},{"old_string":"two","new_string":"2"}]}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"replacements": 2`)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "1\n2\nthree\n", string(data))
+
+	_, err = MultiEditTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"a.txt","edits":[{"old_string":"1","new_string":"one"},{"old_string":"missing","new_string":"x"}]}`))
+	require.Error(t, err)
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, "1\n2\nthree\n", string(data))
+}
+
 func TestPrompterRules(t *testing.T) {
 	p := &Prompter{
 		Mode:      PermissionAllow,
@@ -114,13 +133,15 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 13)
+	require.Len(t, infos, 14)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	_, ok = registry.Info("ask_user_question")
 	require.True(t, ok)
 	_, ok = registry.Info("notebook_edit")
+	require.True(t, ok)
+	_, ok = registry.Info("multi_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("web_fetch")
 	require.True(t, ok)

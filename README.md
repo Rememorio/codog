@@ -10,9 +10,9 @@ Claude Code source.
 - One-shot prompt mode
 - Interactive REPL
 - Anthropic-compatible streaming through `/v1/messages`
-- Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`, `grep`,
-  `glob`, `web_fetch`, `web_search`, `notebook_edit`, `ask_user_question`,
-  `tool_search`, `todo_read`, `todo_write`
+- Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,
+  `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `notebook_edit`,
+  `ask_user_question`, `tool_search`, `todo_read`, `todo_write`
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes
 - JSONL session persistence and resume
