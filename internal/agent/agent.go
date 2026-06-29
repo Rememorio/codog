@@ -1032,6 +1032,9 @@ func (a *App) OAuth(args []string) error {
 	if args[0] == "device" {
 		return a.oauthDevice(args[1:])
 	}
+	if args[0] == "browser" {
+		return a.oauthBrowser(args[1:])
+	}
 	if args[0] == "provider" {
 		return a.oauthProvider(args[1:])
 	}
@@ -1046,7 +1049,7 @@ func (a *App) OAuth(args []string) error {
 		return nil
 	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth status [PROFILE] | oauth token save|show|refresh|delete")
+		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth token save|show|refresh|delete")
 	}
 	if len(args) < 2 {
 		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | refresh [PROFILE] | delete")
@@ -1151,6 +1154,99 @@ func (a *App) oauthProvider(args []string) error {
 	return nil
 }
 
+func (a *App) oauthBrowser(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...] | exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI | login PROFILE [ADDR]")
+	}
+	switch args[0] {
+	case "start":
+		if len(args) < 3 {
+			return errors.New("usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...]")
+		}
+		source, err := a.oauthProfileSource(args[1], args[3:])
+		if err != nil {
+			return err
+		}
+		auth, err := oauth.BuildBrowserAuthorization(source.Metadata, source.ClientID, args[2], source.Scopes, "", oauth.PKCE{})
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(auth, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "exchange":
+		if len(args) < 5 {
+			return errors.New("usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI")
+		}
+		source, err := a.oauthProfileSource(args[1], nil)
+		if err != nil {
+			return err
+		}
+		token, err := oauth.ExchangeAuthorizationCode(context.Background(), source.Metadata, source.ClientID, args[2], args[3], args[4])
+		if err != nil {
+			return err
+		}
+		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(saved.View(time.Now().UTC()), "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "login":
+		if len(args) < 2 {
+			return errors.New("usage: codog oauth browser login PROFILE [ADDR]")
+		}
+		source, err := a.oauthProfileSource(args[1], nil)
+		if err != nil {
+			return err
+		}
+		addr := "127.0.0.1:0"
+		if len(args) > 2 {
+			addr = args[2]
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		pkce, err := oauth.GeneratePKCE()
+		if err != nil {
+			return err
+		}
+		state, err := oauth.GenerateState()
+		if err != nil {
+			return err
+		}
+		callback, err := oauth.StartBrowserCallbackServer(ctx, addr, "/oauth/callback", state)
+		if err != nil {
+			return err
+		}
+		defer callback.Close()
+		auth, err := oauth.BuildBrowserAuthorization(source.Metadata, source.ClientID, callback.RedirectURI, source.Scopes, state, pkce)
+		if err != nil {
+			return err
+		}
+		if a.Err != nil {
+			fmt.Fprintf(a.Err, "Open %s\n", auth.AuthorizationURL)
+		}
+		result := <-callback.Results
+		if result.Err != nil {
+			return result.Err
+		}
+		token, err := oauth.ExchangeAuthorizationCode(ctx, source.Metadata, source.ClientID, result.Callback.Code, auth.CodeVerifier, callback.RedirectURI)
+		if err != nil {
+			return err
+		}
+		saved, err := oauth.SaveToken(a.Config.ConfigHome, token)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(map[string]any{"redirect_uri": callback.RedirectURI, "token": saved.View(time.Now().UTC())}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	default:
+		return fmt.Errorf("unknown oauth browser command %q", args[0])
+	}
+}
+
 func (a *App) oauthDevice(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] | start PROFILE [SCOPE...] | poll ISSUER_URL CLIENT_ID DEVICE_CODE | poll PROFILE DEVICE_CODE | login ISSUER_URL CLIENT_ID [SCOPE...] | login PROFILE [SCOPE...]")
@@ -1224,6 +1320,18 @@ type oauthDeviceSource struct {
 	Metadata oauth.ProviderMetadata
 	ClientID string
 	Scopes   []string
+}
+
+func (a *App) oauthProfileSource(name string, overrideScopes []string) (oauthDeviceSource, error) {
+	profile, err := oauth.ResolveProviderProfile(a.Config.ConfigHome, name)
+	if err != nil {
+		return oauthDeviceSource{}, err
+	}
+	scopes := append([]string(nil), profile.Scopes...)
+	if len(overrideScopes) != 0 {
+		scopes = append([]string(nil), overrideScopes...)
+	}
+	return oauthDeviceSource{Metadata: profile.Metadata, ClientID: profile.ClientID, Scopes: scopes}, nil
 }
 
 func (a *App) oauthDeviceSource(args []string, allowScopes bool) (oauthDeviceSource, error) {
@@ -1722,7 +1830,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth status [PROFILE] | oauth token save|show|refresh|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth token save|show|refresh|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY

@@ -296,6 +296,48 @@ func TestOAuthProviderCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
+func TestOAuthBrowserCommands(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + server.URL + `/authorize","token_endpoint":"` + server.URL + `/token"}`))
+		case "/token":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "authorization_code", r.Form.Get("grant_type"))
+			require.Equal(t, "code-1", r.Form.Get("code"))
+			require.Equal(t, "verifier-1", r.Form.Get("code_verifier"))
+			require.Equal(t, "client-1", r.Form.Get("client_id"))
+			_, _ = w.Write([]byte(`{"access_token":"browser-access-1234","refresh_token":"browser-refresh-1234","expires_in":3600}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	configHome := t.TempDir()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", []string{"profile"})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	require.NoError(t, app.OAuth([]string{"browser", "start", "default", "http://127.0.0.1:9999/oauth/callback"}))
+	require.Contains(t, out.String(), `"authorization_url":`)
+	require.Contains(t, out.String(), "client_id=client-1")
+	require.Contains(t, out.String(), "scope=profile")
+	require.Contains(t, out.String(), `"code_verifier":`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"browser", "exchange", "default", "code-1", "verifier-1", "http://127.0.0.1:9999/oauth/callback"}))
+	require.Contains(t, out.String(), `"access_token": "brow...1234"`)
+	loaded, err := oauth.LoadToken(configHome)
+	require.NoError(t, err)
+	require.Equal(t, "browser-access-1234", loaded.AccessToken)
+}
+
 func TestOAuthTokenRefreshCommand(t *testing.T) {
 	server := oauthRefreshTestServer(t)
 	defer server.Close()
