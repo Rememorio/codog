@@ -136,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 28)
+	require.Len(t, infos, 29)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -147,6 +147,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("lsp")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("agent")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	_, ok = registry.Info("multi_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("task_create")
@@ -321,6 +324,36 @@ func TestPlanModeToolsEnterAndExit(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, state.Active)
 	require.Equal(t, "ship final plan", state.Plan)
+}
+
+func TestAgentToolLaunchesBackgroundAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","model":"agent-model","prompt":"Base review instructions"}`), 0o644))
+	script := filepath.Join(t.TempDir(), "agent-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o755))
+
+	out, err := AgentTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"description":"review code","prompt":"check auth flow","subagent_type":"reviewer","session_id":"session-1"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "agent"`)
+	require.Contains(t, out, `"agent": "reviewer"`)
+	var payload struct {
+		Task background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.NotEmpty(t, payload.Task.ID)
+	require.Equal(t, "agent", payload.Task.Kind)
+	require.Equal(t, "session-1", payload.Task.SessionID)
+
+	store := background.NewStore(configHome)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(payload.Task.ID, 4096)
+		return err == nil && strings.Contains(logs, "agent-model") && strings.Contains(logs, "Base review instructions") && strings.Contains(logs, "check auth flow")
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestToolSearchToolFindsRegisteredTools(t *testing.T) {

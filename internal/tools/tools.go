@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
@@ -124,6 +125,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EnterPlanModeTool{Workspace: workspace})
 	reg.Register(ExitPlanModeTool{Workspace: workspace})
+	reg.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1415,6 +1417,138 @@ func (t ExitPlanModeTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(report), nil
+}
+
+type AgentTool struct {
+	Workspace  string
+	ConfigHome string
+	Executable string
+}
+
+func (AgentTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "agent",
+		Description: "Launch a specialized Codog agent task in the background and return its task metadata.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"description":   map[string]any{"type": "string"},
+				"prompt":        map[string]any{"type": "string"},
+				"subagent_type": map[string]any{"type": "string"},
+				"name":          map[string]any{"type": "string"},
+				"model":         map[string]any{"type": "string"},
+				"session_id":    map[string]any{"type": "string"},
+			},
+			"required":             []string{"description", "prompt"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (AgentTool) Permission() Permission {
+	return PermissionDanger
+}
+
+func (t AgentTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Description  string `json:"description"`
+		Prompt       string `json:"prompt"`
+		SubagentType string `json:"subagent_type"`
+		Name         string `json:"name"`
+		Model        string `json:"model"`
+		SessionID    string `json:"session_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	payload.Description = strings.TrimSpace(payload.Description)
+	payload.Prompt = strings.TrimSpace(payload.Prompt)
+	if payload.Description == "" {
+		return "", errors.New("description is required")
+	}
+	if payload.Prompt == "" {
+		return "", errors.New("prompt is required")
+	}
+	def, found, err := findAgentDefinition(t.Workspace, payload.Name, payload.SubagentType)
+	if err != nil {
+		return "", err
+	}
+	agentName := strings.TrimSpace(payload.Name)
+	if agentName == "" {
+		agentName = strings.TrimSpace(payload.SubagentType)
+	}
+	if found {
+		agentName = def.Name
+		if strings.TrimSpace(payload.Model) == "" {
+			payload.Model = def.Model
+		}
+	}
+	if agentName == "" {
+		agentName = payload.Description
+	}
+	executable := strings.TrimSpace(t.Executable)
+	if executable == "" {
+		executable, err = os.Executable()
+		if err != nil {
+			return "", err
+		}
+	}
+	command := buildAgentToolCommand(executable, def, payload.Description, payload.Prompt, payload.Model)
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{
+		Kind:      "agent",
+		SessionID: payload.SessionID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"kind":          "agent",
+		"agent":         agentName,
+		"description":   payload.Description,
+		"subagent_type": strings.TrimSpace(payload.SubagentType),
+		"definition":    found,
+		"task":          task,
+	}), nil
+}
+
+func findAgentDefinition(workspace string, name string, subagentType string) (agentdefs.Definition, bool, error) {
+	defs, err := agentdefs.Load(workspace)
+	if err != nil {
+		return agentdefs.Definition{}, false, err
+	}
+	candidates := []string{strings.TrimSpace(name), strings.TrimSpace(subagentType)}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		for _, def := range defs {
+			if strings.EqualFold(def.Name, candidate) {
+				return def, true, nil
+			}
+		}
+	}
+	return agentdefs.Definition{}, false, nil
+}
+
+func buildAgentToolCommand(executable string, def agentdefs.Definition, description string, prompt string, model string) string {
+	parts := []string{}
+	if strings.TrimSpace(description) != "" {
+		parts = append(parts, "Task: "+strings.TrimSpace(description))
+	}
+	if strings.TrimSpace(def.Prompt) != "" {
+		parts = append(parts, strings.TrimSpace(def.Prompt))
+	}
+	parts = append(parts, strings.TrimSpace(prompt))
+	args := []string{shellQuoteToolArg(executable)}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", shellQuoteToolArg(strings.TrimSpace(model)))
+	}
+	args = append(args, "prompt", shellQuoteToolArg(strings.Join(parts, "\n\n")))
+	return strings.Join(args, " ")
+}
+
+func shellQuoteToolArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 type TaskCreateTool struct {

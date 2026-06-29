@@ -12,7 +12,7 @@ Claude Code source.
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `notebook_edit`,
-  `lsp`, `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
+  `lsp`, `agent`, `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
   `tool_search`, `skill`, `config`, `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
