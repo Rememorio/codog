@@ -59,18 +59,23 @@ func TestControlState(t *testing.T) {
 	server := httptest.NewServer(Server{
 		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
 		ConfigHome: filepath.Join(root, "home"),
+		LeaseTTL:   30 * time.Second,
 		Now:        func() time.Time { return now },
 	}.Handler())
 	defer server.Close()
 
-	resp, err := http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"heartbeat":true,"last_error":"lost connection"}`))
+	resp, err := http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"heartbeat":true,"failure_code":"transport_lost","failure_message":"lost connection","retryable":true}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"last_error":"lost connection"`)
+	require.Contains(t, string(body), `"failure":{"code":"transport_lost","message":"lost connection","retryable":true`)
 	require.Contains(t, string(body), `"heartbeat_at":"2026-06-29T12:00:00Z"`)
+	require.Contains(t, string(body), `"lease_ttl_seconds":30`)
+	require.Contains(t, string(body), `"lease_expires_at":"2026-06-29T12:00:30Z"`)
+	require.NotContains(t, string(body), `"lease_expired":true`)
 
 	resp, err = http.Get(server.URL + "/state")
 	require.NoError(t, err)
@@ -78,6 +83,42 @@ func TestControlState(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"last_error":"lost connection"`)
+
+	now = now.Add(31 * time.Second)
+	resp, err = http.Get(server.URL + "/state")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"lease_expired":true`)
+}
+
+func TestControlStateKeepsLastErrorCompatibility(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Now:        func() time.Time { return now },
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"last_error":"legacy error"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"last_error":"legacy error"`)
+	require.Contains(t, string(body), `"failure":{"code":"remote_error","message":"legacy error"`)
+
+	resp, err = http.Post(server.URL+"/state", "application/json", bytes.NewBufferString(`{"clear_failure":true}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NotContains(t, string(body), `"failure"`)
+	require.NotContains(t, string(body), `"last_error"`)
 }
 
 func TestControlBackgroundLifecycle(t *testing.T) {

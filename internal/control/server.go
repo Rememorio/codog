@@ -21,13 +21,25 @@ type Server struct {
 	ConfigHome string
 	Workspace  string
 	AuthToken  string
+	LeaseTTL   time.Duration
 	Now        func() time.Time
 }
 
+type Failure struct {
+	Code      string    `json:"code,omitempty"`
+	Message   string    `json:"message"`
+	Retryable bool      `json:"retryable,omitempty"`
+	At        time.Time `json:"at,omitempty"`
+}
+
 type State struct {
-	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
-	LastError   string    `json:"last_error,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at,omitempty"`
+	HeartbeatAt     time.Time  `json:"heartbeat_at,omitempty"`
+	LastError       string     `json:"last_error,omitempty"`
+	Failure         *Failure   `json:"failure,omitempty"`
+	UpdatedAt       time.Time  `json:"updated_at,omitempty"`
+	LeaseTTLSeconds int        `json:"lease_ttl_seconds,omitempty"`
+	LeaseExpiresAt  *time.Time `json:"lease_expires_at,omitempty"`
+	LeaseExpired    bool       `json:"lease_expired,omitempty"`
 }
 
 func (s Server) Handler() http.Handler {
@@ -54,11 +66,16 @@ func (s Server) state(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err, http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, state)
+		writeJSON(w, s.decorateState(state))
 	case http.MethodPost:
 		var payload struct {
-			Heartbeat bool   `json:"heartbeat"`
-			LastError string `json:"last_error"`
+			Heartbeat      bool     `json:"heartbeat"`
+			LastError      *string  `json:"last_error"`
+			Failure        *Failure `json:"failure"`
+			FailureCode    string   `json:"failure_code"`
+			FailureMessage string   `json:"failure_message"`
+			Retryable      *bool    `json:"retryable"`
+			ClearFailure   bool     `json:"clear_failure"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -73,13 +90,44 @@ func (s Server) state(w http.ResponseWriter, r *http.Request) {
 		if payload.Heartbeat {
 			state.HeartbeatAt = now
 		}
-		state.LastError = payload.LastError
+		if payload.ClearFailure {
+			state.LastError = ""
+			state.Failure = nil
+		}
+		if payload.LastError != nil {
+			state.LastError = *payload.LastError
+			if *payload.LastError == "" {
+				state.Failure = nil
+			} else if payload.Failure == nil && payload.FailureCode == "" && payload.FailureMessage == "" {
+				state.Failure = &Failure{Code: "remote_error", Message: *payload.LastError, At: now}
+			}
+		}
+		if payload.Failure != nil {
+			failure := *payload.Failure
+			if failure.At.IsZero() {
+				failure.At = now
+			}
+			state.Failure = &failure
+			state.LastError = failure.Message
+		}
+		if payload.FailureCode != "" || payload.FailureMessage != "" {
+			retryable := false
+			if payload.Retryable != nil {
+				retryable = *payload.Retryable
+			}
+			message := payload.FailureMessage
+			if message == "" && payload.LastError != nil {
+				message = *payload.LastError
+			}
+			state.Failure = &Failure{Code: payload.FailureCode, Message: message, Retryable: retryable, At: now}
+			state.LastError = message
+		}
 		state.UpdatedAt = now
 		if err := s.writeState(state); err != nil {
 			writeError(w, err, http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, state)
+		writeJSON(w, s.decorateState(state))
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -325,11 +373,32 @@ func (s Server) writeState(state State) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	data, err := json.MarshalIndent(state.persisted(), "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func (s Server) decorateState(state State) State {
+	ttl := s.LeaseTTL
+	if ttl <= 0 {
+		return state
+	}
+	state.LeaseTTLSeconds = int(ttl.Seconds())
+	if !state.HeartbeatAt.IsZero() {
+		expires := state.HeartbeatAt.Add(ttl)
+		state.LeaseExpiresAt = &expires
+		state.LeaseExpired = s.now().After(expires)
+	}
+	return state
+}
+
+func (state State) persisted() State {
+	state.LeaseTTLSeconds = 0
+	state.LeaseExpiresAt = nil
+	state.LeaseExpired = false
+	return state
 }
 
 func (s Server) statePath() string {

@@ -51,12 +51,12 @@ func Surfaces() []Surface {
 			Command:     "remote",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Local HTTP control server exposes sessions, background tasks, logs/watch streams, Go diagnostics, bearer-token auth, heartbeat, and last-error state; durable remote transport remains planned.",
+			Description: "Local HTTP control server exposes sessions, background tasks, logs/watch streams, Go diagnostics, bearer-token auth, heartbeat leases, and structured failure state; durable remote transport remains planned.",
 			DependsOn:   []string{"background", "enterprise"},
 			NextSteps: []string{
-				"Support reconnect and structured failure reasons.",
 				"Add authenticated terminal/websocket transport.",
-				"Add remote session lease expiration.",
+				"Add durable reconnect transport.",
+				"Add remote connection backoff policy.",
 			},
 		},
 		{

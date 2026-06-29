@@ -30,6 +30,7 @@ type MCPServerConfig struct {
 type FutureConfig struct {
 	RemoteEnabled             bool              `json:"remote_enabled,omitempty"`
 	RemoteAuthToken           string            `json:"remote_auth_token,omitempty"`
+	RemoteLeaseSeconds        int               `json:"remote_lease_seconds,omitempty"`
 	EnterprisePolicy          string            `json:"enterprise_policy,omitempty"`
 	EnterprisePolicyPublicKey string            `json:"enterprise_policy_public_key,omitempty"`
 	PluginMarketplaces        []string          `json:"plugin_marketplaces,omitempty"`
@@ -243,6 +244,7 @@ func merge(dst *Config, src Config) {
 func futureConfigSet(cfg FutureConfig) bool {
 	return cfg.RemoteEnabled ||
 		cfg.RemoteAuthToken != "" ||
+		cfg.RemoteLeaseSeconds != 0 ||
 		cfg.EnterprisePolicy != "" ||
 		cfg.EnterprisePolicyPublicKey != "" ||
 		len(cfg.PluginMarketplaces) != 0 ||

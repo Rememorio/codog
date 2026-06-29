@@ -87,11 +87,12 @@ func TestMergeAppendsPermissionRules(t *testing.T) {
 func TestLoadRemoteAuthToken(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"remote_auth_token":"secret-token"}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"remote_auth_token":"secret-token","remote_lease_seconds":30}}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "secret-token", cfg.Future.RemoteAuthToken)
+	require.Equal(t, 30, cfg.Future.RemoteLeaseSeconds)
 }
 
 func writeSignedPolicy(t *testing.T, path string, policy ManagedPolicy, privateKey ed25519.PrivateKey) ManagedPolicy {

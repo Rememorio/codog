@@ -47,7 +47,7 @@ Claude Code source.
   diagnostics, and `notebook-edit` updates `.ipynb` cells.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
   background tasks, logs/watch streams, Go diagnostics, bearer-token auth, and
-  heartbeat state.
+  heartbeat lease/failure state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, diagnostics, background watch events, and bounded file
   read/write/edit operations.
@@ -102,6 +102,7 @@ codog --permission-mode prompt prompt "inspect the repo"
   },
   "future": {
     "remote_auth_token": "",
+    "remote_lease_seconds": 0,
     "enterprise_policy": "",
     "enterprise_policy_public_key": "",
     "sandbox_strategy": "detect",

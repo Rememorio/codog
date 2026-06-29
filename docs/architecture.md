@@ -31,7 +31,8 @@ Codog follows a small-core layout:
 - `internal/codeintel`: lightweight Go symbols, diagnostics, and notebook
   helpers.
 - `internal/control`: HTTP control API for sessions, background tasks, logs,
-  watch streams, diagnostics, remote auth, and heartbeat state.
+  watch streams, diagnostics, remote auth, structured failure state, and
+  heartbeat leases.
 - `internal/bridge`: stdio JSON-RPC bridge with workspace, diagnostics, files,
   sessions, and background watch notifications.
 - `internal/updater`: release manifest check, signed manifest verification,

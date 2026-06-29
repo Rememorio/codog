@@ -227,6 +227,7 @@ func (a *App) Remote(args []string) error {
 		ConfigHome: a.Config.ConfigHome,
 		Workspace:  a.Workspace,
 		AuthToken:  a.Config.Future.RemoteAuthToken,
+		LeaseTTL:   time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
 	}.Handler())
 }
 
