@@ -30,7 +30,8 @@ Claude Code source.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog capabilities --json` exposes the long-horizon capability contract.
-- `codog background run|list` starts and lists local background commands.
+- `codog background run|list|status|stop|logs` manages local background
+  commands and their logs.
 - `codog agents` lists `.codog/agents/*.json` agent definitions.
 - `codog marketplace` lists local `.codog/plugins/*/plugin.json` manifests.
 - `codog oauth pkce` generates a PKCE verifier/challenge pair.

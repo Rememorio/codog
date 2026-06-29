@@ -77,12 +77,12 @@ func Surfaces() []Surface {
 			Command:     "background",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local background command registry with persisted metadata and log files.",
+			Description: "Local background command registry supports run/list/status/stop/logs with persisted metadata and log files.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
-				"Add process supervision.",
-				"Persist task output and exit status.",
-				"Expose watch and stop commands.",
+				"Add long-lived process supervision.",
+				"Expose watch streams over bridge and remote APIs.",
+				"Attach background tasks to agent sessions.",
 			},
 		},
 		{

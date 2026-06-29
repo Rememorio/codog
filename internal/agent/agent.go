@@ -272,7 +272,44 @@ func (a *App) Background(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	return fmt.Errorf("unknown background command %q", args[0])
+	if len(args) < 2 {
+		return errors.New("usage: codog background list | run COMMAND | status ID | stop ID | logs ID [bytes]")
+	}
+	switch args[0] {
+	case "status":
+		task, err := store.Status(args[1])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(task, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "stop":
+		task, err := store.Stop(args[1])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(task, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "logs":
+		limit := int64(64 * 1024)
+		if len(args) > 2 {
+			parsed, err := strconv.ParseInt(args[2], 10, 64)
+			if err != nil {
+				return err
+			}
+			limit = parsed
+		}
+		logs, err := store.Logs(args[1], limit)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(a.Out, logs)
+		return nil
+	default:
+		return fmt.Errorf("unknown background command %q", args[0])
+	}
 }
 
 func (a *App) RegisterPluginTools() error {
@@ -734,7 +771,7 @@ Usage:
   %s self-test
   %s roadmap [--json]
   %s capabilities [--json]
-  %s background run "command" | background list
+  %s background run "command" | background list | background status|stop|logs ID
   %s agents | marketplace | oauth pkce | sandbox | code-intel symbols
   %s remote serve [addr] | bridge serve | updater check URL
   %s enterprise [--json] | enterprise audit [limit]
