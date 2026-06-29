@@ -136,6 +136,11 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"echo simple-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo documented-post", "echo direct-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []HookCommand{{Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
+	require.Equal(t, []HookCommand{
+		{Matcher: "Write", Command: "echo documented-post"},
+		{Command: "echo direct-post"},
+	}, cfg.Hooks.PostToolUseCommands)
 }
 
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {

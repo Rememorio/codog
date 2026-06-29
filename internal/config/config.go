@@ -17,8 +17,15 @@ const (
 )
 
 type HookConfig struct {
-	PreToolUse  []string `json:"pre_tool_use,omitempty"`
-	PostToolUse []string `json:"post_tool_use,omitempty"`
+	PreToolUse          []string      `json:"pre_tool_use,omitempty"`
+	PostToolUse         []string      `json:"post_tool_use,omitempty"`
+	PreToolUseCommands  []HookCommand `json:"-"`
+	PostToolUseCommands []HookCommand `json:"-"`
+}
+
+type HookCommand struct {
+	Matcher string
+	Command string
 }
 
 func (h *HookConfig) UnmarshalJSON(data []byte) error {
@@ -34,8 +41,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	h.PreToolUse = pre
-	h.PostToolUse = post
+	h.PreToolUseCommands = pre
+	h.PostToolUseCommands = post
+	h.PreToolUse = hookCommandStrings(pre)
+	h.PostToolUse = hookCommandStrings(post)
 	return nil
 }
 
@@ -220,7 +229,7 @@ func readConfigFile(path string) (Config, error) {
 	return cfg, nil
 }
 
-func hookCommands(raw map[string]json.RawMessage, keys ...string) ([]string, error) {
+func hookCommands(raw map[string]json.RawMessage, keys ...string) ([]HookCommand, error) {
 	for _, key := range keys {
 		data, ok := raw[key]
 		if !ok || len(data) == 0 || string(data) == "null" {
@@ -231,40 +240,74 @@ func hookCommands(raw map[string]json.RawMessage, keys ...string) ([]string, err
 	return nil, nil
 }
 
-func parseHookCommandList(data json.RawMessage) ([]string, error) {
+func parseHookCommandList(data json.RawMessage) ([]HookCommand, error) {
+	return parseHookCommandListWithMatcher(data, "")
+}
+
+func parseHookCommandListWithMatcher(data json.RawMessage, inheritedMatcher string) ([]HookCommand, error) {
 	var entries []json.RawMessage
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, err
 	}
-	commands := []string{}
+	commands := []HookCommand{}
 	for _, entry := range entries {
-		next, err := parseHookEntry(entry)
+		next, err := parseHookEntry(entry, inheritedMatcher)
 		if err != nil {
 			return nil, err
 		}
 		commands = append(commands, next...)
 	}
-	return compactStrings(commands), nil
+	return compactHookCommands(commands), nil
 }
 
-func parseHookEntry(data json.RawMessage) ([]string, error) {
+func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookCommand, error) {
 	var command string
 	if err := json.Unmarshal(data, &command); err == nil {
-		return []string{command}, nil
+		return []HookCommand{{Matcher: inheritedMatcher, Command: command}}, nil
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(data, &object); err != nil {
 		return nil, err
 	}
+	matcher := inheritedMatcher
+	if rawMatcher, ok := object["matcher"]; ok {
+		var parsed string
+		if err := json.Unmarshal(rawMatcher, &parsed); err == nil {
+			matcher = parsed
+		}
+	}
 	if rawCommand, ok := object["command"]; ok {
 		if err := json.Unmarshal(rawCommand, &command); err == nil {
-			return []string{command}, nil
+			return []HookCommand{{Matcher: matcher, Command: command}}, nil
 		}
 	}
 	if rawHooks, ok := object["hooks"]; ok {
-		return parseHookCommandList(rawHooks)
+		return parseHookCommandListWithMatcher(rawHooks, matcher)
 	}
 	return nil, nil
+}
+
+func hookCommandStrings(values []HookCommand) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		command := strings.TrimSpace(value.Command)
+		if command != "" {
+			out = append(out, command)
+		}
+	}
+	return out
+}
+
+func compactHookCommands(values []HookCommand) []HookCommand {
+	out := make([]HookCommand, 0, len(values))
+	for _, value := range values {
+		value.Matcher = strings.TrimSpace(value.Matcher)
+		value.Command = strings.TrimSpace(value.Command)
+		if value.Command != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func compactStrings(values []string) []string {
@@ -323,6 +366,12 @@ func merge(dst *Config, src Config) {
 	}
 	if len(src.Hooks.PostToolUse) != 0 {
 		dst.Hooks.PostToolUse = append([]string(nil), src.Hooks.PostToolUse...)
+	}
+	if len(src.Hooks.PreToolUseCommands) != 0 {
+		dst.Hooks.PreToolUseCommands = append([]HookCommand(nil), src.Hooks.PreToolUseCommands...)
+	}
+	if len(src.Hooks.PostToolUseCommands) != 0 {
+		dst.Hooks.PostToolUseCommands = append([]HookCommand(nil), src.Hooks.PostToolUseCommands...)
 	}
 	if len(src.MCPServers) != 0 {
 		if dst.MCPServers == nil {

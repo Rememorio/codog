@@ -1831,10 +1831,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Output:  req.Output,
 			IsError: req.IsError,
 		}
-		commands := a.Config.Hooks.PreToolUse
-		if req.Event == "post_tool_use" {
-			commands = a.Config.Hooks.PostToolUse
-		}
+		commands := hooks.CommandsForEvent(a.Config.Hooks, req.Event, req.Tool)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
 		report, runErr := hooks.Runner{Config: a.Config.Hooks, Workspace: a.Workspace, Timeout: timeout}.RunPayload(ctx, commands, payload)
 		if req.Format == "json" {

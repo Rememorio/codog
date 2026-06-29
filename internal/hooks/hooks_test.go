@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,4 +45,25 @@ func TestRunPayloadReturnsPartialFailureReport(t *testing.T) {
 	data, readErr := os.ReadFile(path)
 	require.NoError(t, readErr)
 	require.Equal(t, "ok\n", string(data))
+}
+
+func TestCommandsForEventFiltersMatchers(t *testing.T) {
+	cfg := config.HookConfig{
+		PreToolUse: []string{"legacy"},
+		PreToolUseCommands: []config.HookCommand{
+			{Matcher: "Write", Command: "write-only"},
+			{Matcher: "Bash|Glob", Command: "regex"},
+			{Matcher: "read_*", Command: "glob"},
+			{Command: "all"},
+		},
+		PostToolUseCommands: []config.HookCommand{
+			{Matcher: "Edit,MultiEdit", Command: "edits"},
+		},
+	}
+
+	require.Equal(t, []string{"write-only", "all"}, CommandsForEvent(cfg, "pre_tool_use", "write_file"))
+	require.Equal(t, []string{"glob", "all"}, CommandsForEvent(cfg, "pre_tool_use", "read_file"))
+	require.Equal(t, []string{"regex", "all"}, CommandsForEvent(cfg, "pre_tool_use", "bash"))
+	require.Equal(t, []string{"edits"}, CommandsForEvent(cfg, "post", "multi_edit"))
+	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
 }

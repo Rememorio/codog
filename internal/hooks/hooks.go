@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
@@ -44,7 +47,7 @@ type RunReport struct {
 }
 
 func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error {
-	return r.run(ctx, r.Config.PreToolUse, Payload{
+	return r.run(ctx, CommandsForEvent(r.Config, "pre_tool_use", tool), Payload{
 		Event: "pre_tool_use",
 		Tool:  tool,
 		Input: string(input),
@@ -52,13 +55,24 @@ func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error
 }
 
 func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, output string, isError bool) error {
-	return r.run(ctx, r.Config.PostToolUse, Payload{
+	return r.run(ctx, CommandsForEvent(r.Config, "post_tool_use", tool), Payload{
 		Event:   "post_tool_use",
 		Tool:    tool,
 		Input:   string(input),
 		Output:  output,
 		IsError: isError,
 	})
+}
+
+func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
+	switch normalizeEvent(event) {
+	case "pre_tool_use":
+		return matchingCommands(cfg.PreToolUseCommands, cfg.PreToolUse, tool)
+	case "post_tool_use":
+		return matchingCommands(cfg.PostToolUseCommands, cfg.PostToolUse, tool)
+	default:
+		return nil
+	}
 }
 
 func (r Runner) run(ctx context.Context, commands []string, payload Payload) error {
@@ -124,4 +138,138 @@ func (r Runner) RunPayload(ctx context.Context, commands []string, payload Paylo
 		report.Results = append(report.Results, result)
 	}
 	return report, nil
+}
+
+func matchingCommands(entries []config.HookCommand, fallback []string, tool string) []string {
+	if len(entries) == 0 {
+		return compactStrings(fallback)
+	}
+	commands := []string{}
+	for _, entry := range entries {
+		if matcherMatches(entry.Matcher, tool) {
+			command := strings.TrimSpace(entry.Command)
+			if command != "" {
+				commands = append(commands, command)
+			}
+		}
+	}
+	return commands
+}
+
+func matcherMatches(matcher string, tool string) bool {
+	matcher = strings.TrimSpace(matcher)
+	if matcher == "" || matcher == "*" {
+		return true
+	}
+	candidates := toolCandidates(tool)
+	for _, part := range strings.Split(matcher, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		for _, candidate := range candidates {
+			if strings.EqualFold(part, candidate) {
+				return true
+			}
+			if ok, _ := path.Match(part, candidate); ok {
+				return true
+			}
+		}
+		if re, err := regexp.Compile(part); err == nil {
+			for _, candidate := range candidates {
+				if re.MatchString(candidate) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func toolCandidates(tool string) []string {
+	tool = strings.TrimSpace(tool)
+	normalized := normalizeTool(tool)
+	claude := claudeToolName(normalized)
+	values := []string{tool, normalized, claude}
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeTool(tool string) string {
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	tool = strings.ReplaceAll(tool, "-", "_")
+	switch tool {
+	case "bash":
+		return "bash"
+	case "read":
+		return "read_file"
+	case "write":
+		return "write_file"
+	case "edit":
+		return "edit_file"
+	case "multiedit", "multi_edit":
+		return "multi_edit"
+	case "grep":
+		return "grep"
+	case "glob":
+		return "glob"
+	default:
+		return tool
+	}
+}
+
+func claudeToolName(tool string) string {
+	switch normalizeTool(tool) {
+	case "bash":
+		return "Bash"
+	case "read_file":
+		return "Read"
+	case "write_file":
+		return "Write"
+	case "edit_file":
+		return "Edit"
+	case "multi_edit":
+		return "MultiEdit"
+	case "grep":
+		return "Grep"
+	case "glob":
+		return "Glob"
+	default:
+		return tool
+	}
+}
+
+func normalizeEvent(event string) string {
+	event = strings.ToLower(strings.TrimSpace(event))
+	switch event {
+	case "pre", "pretooluse", "pre_tool_use":
+		return "pre_tool_use"
+	case "post", "posttooluse", "post_tool_use":
+		return "post_tool_use"
+	default:
+		return event
+	}
+}
+
+func compactStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
