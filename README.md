@@ -21,7 +21,7 @@ Claude Code source.
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/hooks`, `/mcp`.
@@ -41,6 +41,8 @@ Claude Code source.
 - `/todos` and `codog todos list|add|start|done|pending|clear` maintain the
   workspace todo state used by the built-in `todo_read` and `todo_write` model
   tools.
+- `/files` and `codog files [PATH] [--glob GLOB] [--limit N]` list workspace
+  file inventory with size, extension, depth, truncation, and JSON output.
 - `/search` and `codog search PATTERN [--path PATH] [--glob GLOB]` search
   workspace file contents without making a provider request.
 - `/security-review` and `codog security-review [--limit N]` run a local

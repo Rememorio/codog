@@ -64,6 +64,7 @@ func Specs() []Spec {
 		{Name: "/resume", Usage: "/resume [session-id|latest]", Description: "Load a saved session into the REPL."},
 		{Name: "/rewind", Usage: "/rewind [messages]", Description: "Remove recent messages from the current session."},
 		{Name: "/sandbox", Usage: "/sandbox", Description: "Show local sandbox isolation status."},
+		{Name: "/files", Usage: "/files [PATH] [--glob GLOB]", Description: "List workspace files."},
 		{Name: "/search", Usage: "/search PATTERN [--glob GLOB]", Description: "Search files in the workspace."},
 		{Name: "/security-review", Usage: "/security-review [--limit N]", Description: "Run a local security heuristic scan."},
 		{Name: "/review", Usage: "/review [--staged|--base REF]", Description: "Review changed files with diff summary and security findings."},

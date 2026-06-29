@@ -636,6 +636,29 @@ func TestSearchCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestFilesCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".hidden"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("docs\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "main.go"), []byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".hidden", "secret.go"), []byte("package hidden\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Files([]string{"--glob", "*.go", "--json"}))
+	require.Contains(t, out.String(), `"kind": "files"`)
+	require.Contains(t, out.String(), `"path": "pkg/main.go"`)
+	require.NotContains(t, out.String(), "secret.go")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/files --glob=*.md", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Files")
+	require.Contains(t, out.String(), "README.md")
+	require.Empty(t, errOut.String())
+}
+
 func TestRunAndProjectCommandSurfaces(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/cmdsurf\n\ngo 1.22\n"), 0o644))

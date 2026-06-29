@@ -27,6 +27,7 @@ import (
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/doctor"
+	"github.com/Rememorio/codog/internal/fileinventory"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
@@ -278,6 +279,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Status(rest, overrides)
 	case "context":
 		return app.Context(rest, overrides)
+	case "files":
+		return app.Files(rest)
 	case "search":
 		return app.Search(ctx, rest)
 	case "security-review":
@@ -2529,6 +2532,37 @@ type searchReport struct {
 	Matches    []searchMatch `json:"matches"`
 }
 
+type filesRequest struct {
+	Format        string
+	Path          string
+	Glob          string
+	Limit         int
+	IncludeHidden bool
+}
+
+func (a *App) Files(args []string) error {
+	req, err := parseFilesArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := fileinventory.Build(a.Workspace, fileinventory.Options{
+		Path:          req.Path,
+		Glob:          req.Glob,
+		Limit:         req.Limit,
+		IncludeHidden: req.IncludeHidden,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fileinventory.RenderText(a.Out, report)
+	return nil
+}
+
 func (a *App) Search(ctx context.Context, args []string) error {
 	req, err := parseSearchArgs(args)
 	if err != nil {
@@ -3359,6 +3393,84 @@ func parseRewindCount(value string) (int, error) {
 	return count, nil
 }
 
+func parseFilesArgs(args []string) (filesRequest, error) {
+	req := filesRequest{Format: "text", Limit: 200}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("files output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("files path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--glob":
+			index++
+			if index >= len(args) {
+				return req, errors.New("files glob is required")
+			}
+			req.Glob = args[index]
+		case strings.HasPrefix(arg, "--glob="):
+			req.Glob = strings.TrimPrefix(arg, "--glob=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("files limit is required")
+			}
+			limit, err := parseFilesLimit(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parseFilesLimit(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case arg == "--hidden" || arg == "--include-hidden":
+			req.IncludeHidden = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown files flag %q", arg)
+		default:
+			if req.Path == "" {
+				req.Path = arg
+				continue
+			}
+			return req, fmt.Errorf("unexpected files argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown files output format %q", req.Format)
+	}
+	return req, nil
+}
+
+func parseFilesLimit(value string) (int, error) {
+	limit, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		return 0, errors.New("files limit must be positive")
+	}
+	return limit, nil
+}
+
 func parseSearchArgs(args []string) (searchRequest, error) {
 	req := searchRequest{Format: "text", Limit: 100}
 	queryParts := []string{}
@@ -4102,6 +4214,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/env":
 		if err := a.Env(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/files":
+		if err := a.Files(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/search":
@@ -6061,6 +6177,7 @@ Usage:
   %s [flags] memory [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
+  %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
   %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
@@ -6104,7 +6221,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
