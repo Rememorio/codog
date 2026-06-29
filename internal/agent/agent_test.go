@@ -2,6 +2,7 @@ package agent
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -9,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1288,6 +1290,87 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"event":"post_tool_use"`)
 	require.Contains(t, string(data), `"is_error":true`)
 	require.Empty(t, errOut.String())
+}
+
+func TestMCPCommandToolsCallAndResources(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:     []string{"CODOG_AGENT_MCP_HELPER=1"},
+	}
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"test": server}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"tools", "test"}))
+	require.Contains(t, out.String(), `"name": "echo"`)
+	require.Contains(t, out.String(), `"input_schema"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"call", "test", "echo", `{"text":"hi"}`}))
+	require.Contains(t, out.String(), `"text": "hi"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"resources", "test"}))
+	require.Contains(t, out.String(), "codog://note")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"read", "test", "codog://note"}))
+	require.Contains(t, out.String(), "note body")
+}
+
+func TestAgentMCPHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_AGENT_MCP_HELPER") != "1" {
+		return
+	}
+	reader := bufio.NewScanner(os.Stdin)
+	for reader.Scan() {
+		line := reader.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var req map[string]any
+		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			continue
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			writeAgentMCP(id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]any{"name": "test", "version": "0.0.0"},
+			})
+		case "tools/list":
+			writeAgentMCP(id, map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{"type": "string"},
+					},
+				},
+			}}})
+		case "tools/call":
+			writeAgentMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
+		case "resources/list":
+			writeAgentMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
+		case "resources/read":
+			writeAgentMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
+		}
+	}
+	os.Exit(0)
+}
+
+func writeAgentMCP(id any, result map[string]any) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, _ := json.Marshal(payload)
+	fmt.Println(string(data))
 }
 
 func TestPromptWritesCompletedWorkerState(t *testing.T) {

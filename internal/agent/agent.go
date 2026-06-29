@@ -6099,7 +6099,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return nil
 	}
 	if len(args) < 2 {
-		return errors.New("usage: codog mcp list | call SERVER TOOL JSON | resources SERVER | read SERVER URI")
+		return errors.New("usage: codog mcp list | tools SERVER | call SERVER TOOL JSON | resources SERVER | read SERVER URI")
 	}
 	serverName := args[1]
 	server, ok := a.Config.MCPServers[serverName]
@@ -6108,6 +6108,8 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	}
 	var payload any
 	switch args[0] {
+	case "tools", "list-tools":
+		payload = mcp.ListTools(ctx, serverName, server)
 	case "call":
 		if len(args) < 4 {
 			return errors.New("usage: codog mcp call SERVER TOOL JSON")
@@ -6115,7 +6117,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		payload = mcp.CallTool(ctx, serverName, server, args[2], json.RawMessage(args[3]))
 	case "resources":
 		payload = mcp.ListResources(ctx, serverName, server)
-	case "read":
+	case "read", "read-resource":
 		if len(args) < 3 {
 			return errors.New("usage: codog mcp read SERVER URI")
 		}
@@ -6410,7 +6412,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] mcp
+  %s [flags] mcp [list|tools|call|resources|read]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
