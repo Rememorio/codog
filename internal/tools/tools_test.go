@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 50)
+	require.Len(t, infos, 51)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -208,6 +208,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	_, ok = registry.Info("task_create")
 	require.True(t, ok)
+	info, ok = registry.Info("run_task_packet")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("task_get")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -760,6 +763,39 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	info, ok := registry.Info("task_create")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+}
+
+func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'shim:%s\\n' \"$*\"\n"), 0o755))
+
+	out, err := RunTaskPacketTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{
+		"objective":"Update docs",
+		"scope":"README only",
+		"repo":"codog",
+		"branch_policy":"use main",
+		"acceptance_tests":["go test ./..."],
+		"commit_policy":"commit changes",
+		"reporting_contract":"summarize result",
+		"escalation_policy":"ask if blocked"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"task_packet": {`)
+	require.Contains(t, out, `"objective": "Update docs"`)
+	var payload struct {
+		TaskID string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.NotEmpty(t, payload.TaskID)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(payload.TaskID, 4096)
+		return err == nil && strings.Contains(logs, "shim:prompt") && strings.Contains(logs, "Update docs")
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

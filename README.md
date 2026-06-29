@@ -19,7 +19,7 @@ Claude Code source.
   `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
   `brief`, `send_user_message`, `structured_output`, `sleep`, `repl`, `tool_search`, `skill`, `config`,
   `mcp`, `mcp_auth`, `list_mcp_resources`,
-  `read_mcp_resource`, `task_create`, `task_list`,
+  `read_mcp_resource`, `task_create`, `run_task_packet`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
   `todo_read`, `todo_write`, `git_status`, `git_diff`, `git_log`,
   `git_show`, `git_blame`

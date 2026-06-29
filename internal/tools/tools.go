@@ -142,6 +142,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -2590,6 +2591,142 @@ func (t TaskCreateTool) Execute(_ context.Context, input json.RawMessage) (strin
 		return "", err
 	}
 	return pretty(task), nil
+}
+
+type RunTaskPacketTool struct {
+	Workspace  string
+	ConfigHome string
+	Executable string
+}
+
+type taskPacketInput struct {
+	Objective         string   `json:"objective"`
+	Scope             string   `json:"scope"`
+	Repo              string   `json:"repo"`
+	BranchPolicy      string   `json:"branch_policy"`
+	AcceptanceTests   []string `json:"acceptance_tests"`
+	CommitPolicy      string   `json:"commit_policy"`
+	ReportingContract string   `json:"reporting_contract"`
+	EscalationPolicy  string   `json:"escalation_policy"`
+}
+
+func (RunTaskPacketTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "run_task_packet",
+		Description: "Create a background task from a structured task packet.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"objective":          map[string]any{"type": "string"},
+				"scope":              map[string]any{"type": "string"},
+				"repo":               map[string]any{"type": "string"},
+				"branch_policy":      map[string]any{"type": "string"},
+				"acceptance_tests":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"commit_policy":      map[string]any{"type": "string"},
+				"reporting_contract": map[string]any{"type": "string"},
+				"escalation_policy":  map[string]any{"type": "string"},
+			},
+			"required": []string{
+				"objective",
+				"scope",
+				"repo",
+				"branch_policy",
+				"acceptance_tests",
+				"commit_policy",
+				"reporting_contract",
+				"escalation_policy",
+			},
+		},
+	}
+}
+
+func (RunTaskPacketTool) Permission() Permission { return PermissionDanger }
+
+func (t RunTaskPacketTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var packet taskPacketInput
+	if err := json.Unmarshal(input, &packet); err != nil {
+		return "", err
+	}
+	if err := validateTaskPacket(packet); err != nil {
+		return "", err
+	}
+	executable := strings.TrimSpace(t.Executable)
+	var err error
+	if executable == "" {
+		executable, err = os.Executable()
+		if err != nil {
+			return "", err
+		}
+	}
+	prompt := renderTaskPacketPrompt(packet)
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{
+		Kind: "task_packet",
+	})
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"task_id":     task.ID,
+		"status":      task.Status,
+		"prompt":      prompt,
+		"description": packet.Objective,
+		"task_packet": packet,
+		"created_at":  task.StartedAt,
+		"task":        task,
+	}), nil
+}
+
+func validateTaskPacket(packet taskPacketInput) error {
+	required := map[string]string{
+		"objective":          packet.Objective,
+		"scope":              packet.Scope,
+		"repo":               packet.Repo,
+		"branch_policy":      packet.BranchPolicy,
+		"commit_policy":      packet.CommitPolicy,
+		"reporting_contract": packet.ReportingContract,
+		"escalation_policy":  packet.EscalationPolicy,
+	}
+	for field, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", field)
+		}
+	}
+	if len(packet.AcceptanceTests) == 0 {
+		return errors.New("acceptance_tests is required")
+	}
+	for index, test := range packet.AcceptanceTests {
+		if strings.TrimSpace(test) == "" {
+			return fmt.Errorf("acceptance_tests[%d] is empty", index)
+		}
+	}
+	return nil
+}
+
+func renderTaskPacketPrompt(packet taskPacketInput) string {
+	var builder strings.Builder
+	builder.WriteString("Execute this structured task packet.\n\n")
+	builder.WriteString("Objective:\n")
+	builder.WriteString(strings.TrimSpace(packet.Objective))
+	builder.WriteString("\n\nScope:\n")
+	builder.WriteString(strings.TrimSpace(packet.Scope))
+	builder.WriteString("\n\nRepository:\n")
+	builder.WriteString(strings.TrimSpace(packet.Repo))
+	builder.WriteString("\n\nBranch policy:\n")
+	builder.WriteString(strings.TrimSpace(packet.BranchPolicy))
+	builder.WriteString("\n\nAcceptance tests:\n")
+	for _, test := range packet.AcceptanceTests {
+		builder.WriteString("- ")
+		builder.WriteString(strings.TrimSpace(test))
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\nCommit policy:\n")
+	builder.WriteString(strings.TrimSpace(packet.CommitPolicy))
+	builder.WriteString("\n\nReporting contract:\n")
+	builder.WriteString(strings.TrimSpace(packet.ReportingContract))
+	builder.WriteString("\n\nEscalation policy:\n")
+	builder.WriteString(strings.TrimSpace(packet.EscalationPolicy))
+	return builder.String()
 }
 
 type TaskListTool struct {
