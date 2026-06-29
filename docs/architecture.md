@@ -9,8 +9,8 @@ Codog follows a small-core layout:
   REPL, TUI, and remote transports.
 - `internal/anthropic`: Anthropic-compatible streaming client and event parser.
 - `internal/tools`: built-in tool registry and permission gate.
-- `internal/session`: workspace-scoped JSONL session persistence and legacy
-  flat-session compatibility.
+- `internal/session`: workspace-scoped JSONL session persistence, export
+  rendering, and legacy flat-session compatibility.
 - `internal/config`: config merge from user file, project file, environment, and
   flags.
 - `internal/hooks`: pre/post tool hook runner.

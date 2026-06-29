@@ -156,6 +156,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.MCP(ctx, rest)
 	case "cost":
 		return app.ShowCost(overrides)
+	case "export":
+		return app.Export(rest)
 	case "git":
 		return app.Git(rest)
 	case "background":
@@ -1622,6 +1624,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleDiffSlash(fields[1:])
 	case "/commit":
 		a.handleCommitSlash(fields[1:])
+	case "/export":
+		a.handleExportSlash(fields[1:], sess)
 	case "/skills":
 		_ = a.ListSkills()
 	case "/mcp":
@@ -1706,6 +1710,130 @@ func parseGitCommitArgs(args []string) gitops.CommitOptions {
 	}
 	options.Message = strings.Join(message, " ")
 	return options
+}
+
+type exportRequest struct {
+	SessionID string
+	Output    string
+	Format    string
+}
+
+func (a *App) Export(args []string) error {
+	req, err := parseExportArgs(args, "latest")
+	if err != nil {
+		return err
+	}
+	data, sess, err := a.Sessions.Export(req.SessionID, req.Format)
+	if err != nil {
+		return err
+	}
+	if req.Output == "" {
+		_, err = a.Out.Write(data)
+		return err
+	}
+	path := a.resolveOutputPath(req.Output)
+	if err := session.ValidateExportOutputPath(path); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	format, _ := session.NormalizeExportFormat(req.Format)
+	report := map[string]any{
+		"session_id": sess.ID,
+		"file":       path,
+		"format":     format,
+		"messages":   len(sess.Messages),
+	}
+	encoded, _ := json.MarshalIndent(report, "", "  ")
+	fmt.Fprintln(a.Out, string(encoded))
+	return nil
+}
+
+func (a *App) handleExportSlash(args []string, sess *session.Session) {
+	req, err := parseExportArgs(args, sess.ID)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if req.Output == "" {
+		req.Output = session.DefaultExportFilename(sess)
+	}
+	data, exported, err := a.Sessions.Export(req.SessionID, req.Format)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	path := a.resolveOutputPath(req.Output)
+	if err := session.ValidateExportOutputPath(path); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	fmt.Fprintf(a.Err, "exported session %s to %s (%d messages)\n", exported.ID, path, len(exported.Messages))
+}
+
+func parseExportArgs(args []string, defaultSession string) (exportRequest, error) {
+	req := exportRequest{SessionID: defaultSession, Format: session.ExportMarkdown}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--output" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--format" || arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--format="):
+			req.Format = strings.TrimPrefix(arg, "--format=")
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown export option %q", arg)
+		default:
+			if req.Output != "" {
+				return req, fmt.Errorf("unexpected export argument %q", arg)
+			}
+			req.Output = arg
+		}
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	if _, err := session.NormalizeExportFormat(req.Format); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func (a *App) resolveOutputPath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	base := a.Workspace
+	if base == "" {
+		base = "."
+	}
+	return filepath.Join(base, path)
 }
 
 func (a *App) handleSessionSlash(args []string, sess *session.Session) {
@@ -2033,6 +2161,7 @@ Usage:
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
+  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
   %s [flags] mcp
   %s [flags] cost --resume latest
@@ -2060,7 +2189,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

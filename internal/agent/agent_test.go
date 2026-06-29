@@ -157,6 +157,44 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "+changed")
 }
 
+func TestExportCommandWritesFormats(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "export me")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Export([]string{"--session", "source"}))
+	require.Contains(t, out.String(), "# Conversation Export")
+	require.Contains(t, out.String(), "export me")
+	out.Reset()
+
+	output := filepath.Join(workspace, "transcript.json")
+	require.NoError(t, app.Export([]string{"--session=source", "--format=json", "--output", output}))
+	require.Contains(t, out.String(), `"format": "json"`)
+	data, err := os.ReadFile(output)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"id": "source"`)
+}
+
+func TestExportSlashWritesCurrentSession(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "slash export")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.True(t, app.handleSlash(context.Background(), "/export notes.md", sess))
+	require.Contains(t, errOut.String(), "exported session source")
+	data, err := os.ReadFile(filepath.Join(workspace, "notes.md"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "slash export")
+}
+
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	command := buildAgentCommand("/tmp/codog", agentdefs.Definition{
 		Name:   "reviewer",

@@ -97,3 +97,32 @@ func TestForkExistsAndDeleteSession(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 }
+
+func TestExportMarkdownJSONAndJSONL(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize this repo")))
+	require.NoError(t, store.Append("export-session", anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{
+		{Type: "text", Text: "Summary"},
+		{Type: "tool_use", ID: "tool-1", Name: "grep", Input: []byte(`{"pattern":"TODO"}`)},
+	}}))
+
+	markdown, sess, err := store.Export("export-session", "markdown")
+	require.NoError(t, err)
+	require.Equal(t, "export-session", sess.ID)
+	require.Contains(t, string(markdown), "# Conversation Export")
+	require.Contains(t, string(markdown), "- **Session**: `export-session`")
+	require.Contains(t, string(markdown), "## 1. user")
+	require.Contains(t, string(markdown), "Summarize this repo")
+	require.Contains(t, string(markdown), "[tool_use id=tool-1 name=grep]")
+
+	data, _, err := store.Export("export-session", "json")
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"id": "export-session"`)
+	require.Contains(t, string(data), `"Summary"`)
+
+	raw, _, err := store.Export("export-session", "jsonl")
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"session_id":"export-session"`)
+
+	require.Equal(t, "summarize-this-repo.md", DefaultExportFilename(sess))
+}

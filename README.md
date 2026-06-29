@@ -21,6 +21,8 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/cost`, `/compact`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
+- `/export` and `codog export` write session transcripts as markdown, JSON, or
+  raw JSONL.
 - `/diff`, `/commit`, and `codog git` provide local git status, diff, and
   commit workflows.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and
