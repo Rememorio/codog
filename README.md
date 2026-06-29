@@ -22,7 +22,7 @@ Claude Code source.
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
-  `/skills`, `/mcp`.
+  `/run`, `/test`, `/build`, `/lint`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -34,6 +34,8 @@ Claude Code source.
   workspace file contents without making a provider request.
 - `/diff`, `/commit`, `/log`, `/blame`, `/git`, and `codog git` provide local
   git status, diff, log, blame, and commit workflows.
+- `/run`, `/test`, `/build`, `/lint`, and matching CLI commands run workspace
+  commands with captured stdout/stderr and text or JSON reports.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and
   `.codog/skills`.
 - `codog mcp` inspects configured stdio MCP servers, and configured MCP tools

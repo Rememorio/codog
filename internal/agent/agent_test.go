@@ -495,6 +495,42 @@ func TestSearchCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestRunAndProjectCommandSurfaces(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/cmdsurf\n\ngo 1.22\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "add.go"), []byte("package cmdsurf\n\nfunc Add(a, b int) int { return a + b }\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "add_test.go"), []byte("package cmdsurf\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal(\"bad add\") } }\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.RunCommand(context.Background(), []string{"--json", "go", "version"}))
+	require.Contains(t, out.String(), `"kind": "run"`)
+	require.Contains(t, out.String(), `"exit_code": 0`)
+	out.Reset()
+
+	require.NoError(t, app.ProjectCommand(context.Background(), "test", nil))
+	require.Contains(t, out.String(), "Command")
+	require.Contains(t, out.String(), "go test ./...")
+	require.Contains(t, out.String(), "Exit code        0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/build", sess))
+	require.Contains(t, out.String(), "go build ./...")
+	require.Contains(t, out.String(), "Exit code        0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/lint", sess))
+	require.Contains(t, out.String(), "go vet ./...")
+	require.Contains(t, out.String(), "Exit code        0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/run go version", sess))
+	require.Contains(t, out.String(), "go version")
+	require.Empty(t, errOut.String())
+}
+
 func TestMemoryCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\nsecret body"), 0o644))

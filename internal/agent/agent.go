@@ -22,6 +22,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
+	"github.com/Rememorio/codog/internal/commandrun"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/doctor"
@@ -204,6 +205,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Export(rest)
 	case "git":
 		return app.Git(rest)
+	case "run":
+		return app.RunCommand(ctx, rest)
+	case "test":
+		return app.ProjectCommand(ctx, "test", rest)
+	case "build":
+		return app.ProjectCommand(ctx, "build", rest)
+	case "lint":
+		return app.ProjectCommand(ctx, "lint", rest)
 	case "background":
 		return app.BackgroundWithOverrides(rest, overrides)
 	case "agents":
@@ -1697,6 +1706,128 @@ func emptyAsNone(value string) string {
 	return value
 }
 
+type commandRequest struct {
+	Format    string
+	TimeoutMS int
+	Command   []string
+}
+
+func (a *App) RunCommand(ctx context.Context, args []string) error {
+	req, err := parseCommandRequest(args, nil)
+	if err != nil {
+		return err
+	}
+	return a.runCommandRequest(ctx, "run", req)
+}
+
+func (a *App) ProjectCommand(ctx context.Context, kind string, args []string) error {
+	req, err := parseCommandRequest(args, defaultProjectCommand(kind))
+	if err != nil {
+		return err
+	}
+	return a.runCommandRequest(ctx, kind, req)
+}
+
+func (a *App) runCommandRequest(ctx context.Context, kind string, req commandRequest) error {
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	result, err := commandrun.Run(ctx, commandrun.Options{
+		Workspace: a.Workspace,
+		Command:   req.Command,
+		Timeout:   timeout,
+		Kind:      kind,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	commandrun.RenderText(a.Out, result)
+	return nil
+}
+
+func parseCommandRequest(args []string, defaultCommand []string) (commandRequest, error) {
+	req := commandRequest{Format: "text", TimeoutMS: 10 * 60 * 1000}
+	commandArgs := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--":
+			commandArgs = append(commandArgs, args[index+1:]...)
+			index = len(args)
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("command output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--timeout-ms":
+			index++
+			if index >= len(args) {
+				return req, errors.New("command timeout is required")
+			}
+			timeout, err := parseCommandTimeout(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.TimeoutMS = timeout
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			timeout, err := parseCommandTimeout(strings.TrimPrefix(arg, "--timeout-ms="))
+			if err != nil {
+				return req, err
+			}
+			req.TimeoutMS = timeout
+		default:
+			commandArgs = append(commandArgs, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown command output format %q", req.Format)
+	}
+	if len(defaultCommand) == 0 {
+		req.Command = commandArgs
+	} else {
+		req.Command = append([]string(nil), defaultCommand...)
+		req.Command = append(req.Command, commandArgs...)
+	}
+	if len(req.Command) == 0 {
+		return req, errors.New("usage: codog run COMMAND [ARG...]")
+	}
+	return req, nil
+}
+
+func parseCommandTimeout(value string) (int, error) {
+	timeout, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if timeout <= 0 {
+		return 0, errors.New("command timeout must be positive")
+	}
+	return timeout, nil
+}
+
+func defaultProjectCommand(kind string) []string {
+	switch kind {
+	case "test":
+		return []string{"go", "test", "./..."}
+	case "build":
+		return []string{"go", "build", "./..."}
+	case "lint":
+		return []string{"go", "vet", "./..."}
+	default:
+		return nil
+	}
+}
+
 type searchRequest struct {
 	Query      string
 	Path       string
@@ -2516,6 +2647,22 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleBlameSlash(fields[1:])
 	case "/git":
 		if err := a.Git(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/run":
+		if err := a.RunCommand(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/test":
+		if err := a.ProjectCommand(ctx, "test", fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/build":
+		if err := a.ProjectCommand(ctx, "build", fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/lint":
+		if err := a.ProjectCommand(ctx, "lint", fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/export":
@@ -3446,6 +3593,8 @@ Usage:
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git log [count] | git blame FILE [line] | git commit [--all] MESSAGE
+  %s [flags] run [--timeout-ms N] COMMAND [ARG...]
+  %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
   %s mock-server :8089
   %s self-test
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
@@ -3469,7 +3618,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
