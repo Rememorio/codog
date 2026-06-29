@@ -591,6 +591,23 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
 }
 
+func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
+	store := session.NewWorkspaceStore(t.TempDir(), t.TempDir())
+	require.NoError(t, store.AppendInput("source", "hello"))
+	app := &App{
+		Config:   config.Config{Model: "claude-test"},
+		Sessions: store,
+	}
+
+	candidates := app.slashCompletionCandidates("active-session")
+	require.Contains(t, candidates, "/model claude-test")
+	require.Contains(t, candidates, "/resume active-session")
+	require.Contains(t, candidates, "/session switch active-session")
+	require.Contains(t, candidates, "/resume source")
+	require.Contains(t, candidates, "/session switch source")
+	require.Contains(t, candidates, "/permissions workspace-write")
+}
+
 func TestRenderConfigInspectionSections(t *testing.T) {
 	cfg := redactedConfig(config.Config{
 		APIKey:         "secret",

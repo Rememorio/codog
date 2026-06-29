@@ -39,7 +39,7 @@ Claude Code source.
   `--append-system-prompt`
 
 - `codog tui` starts a Bubble Tea prompt composer with Tab completion for
-  slash commands.
+  slash commands, common subcommands, the current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,

@@ -13,6 +13,12 @@ type Spec struct {
 	Description string
 }
 
+type CandidateOptions struct {
+	Model            string
+	ActiveSessionID  string
+	RecentSessionIDs []string
+}
+
 func Specs() []Spec {
 	specs := []Spec{
 		{Name: "/help", Usage: "/help", Description: "Show slash command help."},
@@ -111,24 +117,118 @@ func Lookup(name string) (Spec, bool) {
 }
 
 func Candidates(prefix string) []string {
+	return CandidatesWithOptions(prefix, CandidateOptions{})
+}
+
+func CandidatesWithOptions(prefix string, options CandidateOptions) []string {
 	prefix = strings.TrimSpace(prefix)
 	if !strings.HasPrefix(prefix, "/") {
 		return nil
 	}
-	candidates := []string{}
+	return FilterCandidates(prefix, AllCandidates(options))
+}
+
+func AllCandidates(options CandidateOptions) []string {
 	seen := map[string]bool{}
+	candidates := []string{}
+	add := func(candidate string) {
+		candidate = strings.Trim(candidate, "\r\n\t")
+		if strings.TrimSpace(candidate) == "" || !strings.HasPrefix(candidate, "/") || seen[candidate] {
+			return
+		}
+		seen[candidate] = true
+		candidates = append(candidates, candidate)
+	}
 	for _, spec := range Specs() {
-		if !strings.HasPrefix(spec.Name, prefix) {
+		add(spec.Name)
+	}
+	for _, candidate := range []string{
+		"/add-dir ",
+		"/allowed-tools add ",
+		"/allowed-tools clear",
+		"/allowed-tools list",
+		"/allowed-tools remove ",
+		"/bughunter ",
+		"/clear --confirm",
+		"/commands list",
+		"/commands run ",
+		"/config auth",
+		"/config env",
+		"/config model",
+		"/config paths",
+		"/focus ",
+		"/history 10",
+		"/hooks list",
+		"/hooks run pre",
+		"/hooks run post",
+		"/marketplace list",
+		"/mcp list",
+		"/mcp tools ",
+		"/mcp resources ",
+		"/model ",
+		"/permissions read-only",
+		"/permissions workspace-write",
+		"/permissions danger-full-access",
+		"/plugin list",
+		"/plugin install ",
+		"/plugin enable ",
+		"/plugin disable ",
+		"/plugin remove ",
+		"/resume latest",
+		"/session list",
+		"/session switch ",
+		"/session fork ",
+		"/skills list",
+		"/skills show ",
+		"/skills invoke ",
+		"/teleport ",
+		"/templates list",
+		"/templates apply ",
+		"/unfocus --all",
+	} {
+		add(candidate)
+	}
+	model := strings.TrimSpace(options.Model)
+	if model != "" {
+		add("/model " + model)
+	}
+	activeSessionID := strings.TrimSpace(options.ActiveSessionID)
+	if activeSessionID != "" {
+		add("/resume " + activeSessionID)
+		add("/session switch " + activeSessionID)
+	}
+	for index, sessionID := range options.RecentSessionIDs {
+		if index >= 10 {
+			break
+		}
+		sessionID = strings.TrimSpace(sessionID)
+		if sessionID == "" {
 			continue
 		}
-		if seen[spec.Name] {
-			continue
-		}
-		seen[spec.Name] = true
-		candidates = append(candidates, spec.Name)
+		add("/resume " + sessionID)
+		add("/session switch " + sessionID)
 	}
 	sort.Strings(candidates)
 	return candidates
+}
+
+func FilterCandidates(prefix string, candidates []string) []string {
+	prefix = strings.TrimSpace(prefix)
+	if !strings.HasPrefix(prefix, "/") {
+		return nil
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate = strings.Trim(candidate, "\r\n\t")
+		if candidate == "" || seen[candidate] || !strings.HasPrefix(candidate, prefix) {
+			continue
+		}
+		seen[candidate] = true
+		out = append(out, candidate)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func RenderHelp(w io.Writer) {

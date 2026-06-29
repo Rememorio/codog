@@ -92,6 +92,22 @@ func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, candidates, "/compact")
 	require.Contains(t, candidates, "/completion")
 	require.Contains(t, candidates, "/commands")
+	require.Contains(t, candidates, "/config auth")
 	require.NotContains(t, candidates, "/status")
 	require.Empty(t, Candidates("co"))
+}
+
+func TestCandidatesWithOptionsIncludeModelAndSessions(t *testing.T) {
+	candidates := CandidatesWithOptions("/resume", CandidateOptions{
+		Model:            "claude-test",
+		ActiveSessionID:  "active-session",
+		RecentSessionIDs: []string{"recent-one", "recent-two"},
+	})
+	require.Contains(t, candidates, "/resume active-session")
+	require.Contains(t, candidates, "/resume recent-one")
+	require.Contains(t, candidates, "/resume recent-two")
+
+	modelCandidates := CandidatesWithOptions("/model", CandidateOptions{Model: "claude-test"})
+	require.Contains(t, modelCandidates, "/model claude-test")
+	require.Contains(t, modelCandidates, "/model ")
 }

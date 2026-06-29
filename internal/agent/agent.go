@@ -194,7 +194,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "", "repl":
 		return app.REPL(ctx, overrides)
 	case "tui":
-		result, err := tui.Prompt()
+		result, err := tui.PromptWithCandidates(app.slashCompletionCandidates(""))
 		if err != nil {
 			return err
 		}
@@ -7784,6 +7784,25 @@ func containsFold(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) slashCompletionCandidates(activeSessionID string) []string {
+	recent := []string{}
+	if a.Sessions != nil {
+		if sessions, err := a.Sessions.List(); err == nil {
+			for _, sess := range sessions {
+				recent = append(recent, sess.ID)
+				if len(recent) >= 10 {
+					break
+				}
+			}
+		}
+	}
+	return slash.AllCandidates(slash.CandidateOptions{
+		Model:            a.Config.Model,
+		ActiveSessionID:  activeSessionID,
+		RecentSessionIDs: recent,
+	})
 }
 
 type stringListFlag []string

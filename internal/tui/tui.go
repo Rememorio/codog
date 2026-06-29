@@ -16,21 +16,26 @@ type Result struct {
 }
 
 type model struct {
-	textarea textarea.Model
-	result   Result
-	width    int
-	height   int
-	matches  []string
+	textarea   textarea.Model
+	result     Result
+	width      int
+	height     int
+	matches    []string
+	candidates []string
 }
 
 func Prompt() (Result, error) {
+	return PromptWithCandidates(nil)
+}
+
+func PromptWithCandidates(candidates []string) (Result, error) {
 	ta := textarea.New()
 	ta.Placeholder = "Ask Codog to work on this repository..."
 	ta.Focus()
 	ta.SetWidth(80)
 	ta.SetHeight(8)
 	ta.CharLimit = 16000
-	m := model{textarea: ta}
+	m := model{textarea: ta, candidates: candidates}
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
 		return Result{}, err
@@ -86,12 +91,12 @@ func (m model) View() string {
 
 func (m model) completeSlashCommand() model {
 	value := strings.TrimSpace(m.textarea.Value())
-	candidates := slash.Candidates(value)
+	candidates := slash.FilterCandidates(value, m.completionCandidates())
 	switch len(candidates) {
 	case 0:
 		m.matches = nil
 	case 1:
-		m.textarea.SetValue(candidates[0] + " ")
+		m.textarea.SetValue(completeValue(candidates[0]))
 		m.matches = nil
 	default:
 		if len(candidates) > 8 {
@@ -100,6 +105,20 @@ func (m model) completeSlashCommand() model {
 		m.matches = candidates
 	}
 	return m
+}
+
+func completeValue(candidate string) string {
+	if strings.HasSuffix(candidate, " ") {
+		return candidate
+	}
+	return candidate + " "
+}
+
+func (m model) completionCandidates() []string {
+	if len(m.candidates) > 0 {
+		return m.candidates
+	}
+	return slash.AllCandidates(slash.CandidateOptions{})
 }
 
 func max(a, b int) int {
