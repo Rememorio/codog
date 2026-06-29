@@ -32,7 +32,8 @@ Claude Code source.
 - `codog capabilities --json` exposes the long-horizon capability contract.
 - `codog background run|list|status|stop|logs` manages local background
   commands and their logs.
-- `codog agents` lists `.codog/agents/*.json` agent definitions.
+- `codog agents list|run` lists `.codog/agents/*.json` definitions and can
+  launch a named agent as a background `codog prompt` task.
 - `codog marketplace` lists local `.codog/plugins/*/plugin.json` manifests.
 - `codog oauth pkce` generates a PKCE verifier/challenge pair.
 - `codog sandbox` reports detected strategies; `future.sandbox_strategy` can

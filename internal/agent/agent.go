@@ -158,7 +158,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "background":
 		return app.Background(rest)
 	case "agents":
-		return app.ListAgents()
+		return app.Agents(rest)
 	case "marketplace":
 		return app.ListPlugins()
 	case "oauth":
@@ -380,6 +380,59 @@ func (a *App) ListAgents() error {
 	data, _ := json.MarshalIndent(defs, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) Agents(args []string) error {
+	if len(args) == 0 || args[0] == "list" {
+		return a.ListAgents()
+	}
+	if args[0] != "run" {
+		return fmt.Errorf("unknown agents command %q", args[0])
+	}
+	if len(args) < 3 {
+		return errors.New("usage: codog agents run NAME PROMPT")
+	}
+	defs, err := agentdefs.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	name := args[1]
+	var selected *agentdefs.Definition
+	for i := range defs {
+		if strings.EqualFold(defs[i].Name, name) {
+			selected = &defs[i]
+			break
+		}
+	}
+	if selected == nil {
+		return fmt.Errorf("unknown agent %q", name)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	command := buildAgentCommand(exe, *selected, strings.Join(args[2:], " "))
+	task, err := background.NewStore(a.Config.ConfigHome).Run(command, a.Workspace)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(map[string]any{"agent": selected.Name, "task": task}, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func buildAgentCommand(exe string, def agentdefs.Definition, prompt string) string {
+	combined := strings.TrimSpace(strings.Join([]string{def.Prompt, prompt}, "\n\n"))
+	args := []string{shellQuote(exe)}
+	if def.Model != "" {
+		args = append(args, "--model", shellQuote(def.Model))
+	}
+	args = append(args, "prompt", shellQuote(combined))
+	return strings.Join(args, " ")
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func (a *App) ListPlugins() error {
@@ -772,7 +825,7 @@ Usage:
   %s roadmap [--json]
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
-  %s agents | marketplace | oauth pkce | sandbox | code-intel symbols
+  %s agents list | agents run NAME PROMPT | marketplace | oauth pkce | sandbox | code-intel symbols
   %s remote serve [addr] | bridge serve | updater check URL
   %s enterprise [--json] | enterprise audit [limit]
   %s config

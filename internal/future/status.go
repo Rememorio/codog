@@ -64,12 +64,12 @@ func Surfaces() []Surface {
 			Command:     "agents",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local agent spec inventory under .codog/agents, with future worker orchestration planned.",
+			Description: "Local agent specs under .codog/agents can launch named background prompt workers.",
 			DependsOn:   []string{"background", "sandbox"},
 			NextSteps: []string{
-				"Define agent spec files under .codog/agents.",
-				"Add local worker lifecycle registry.",
+				"Add isolated worktree allocation.",
 				"Route task packets to isolated worktrees.",
+				"Add parent-child session aggregation.",
 			},
 		},
 		{
