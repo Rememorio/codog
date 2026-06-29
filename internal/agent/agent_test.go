@@ -99,6 +99,20 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
 }
 
+func TestParseFlagsSupportsPermissionSkipAliases(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--dangerously-skip-permissions", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.SkipPermissions)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	overrides, command, rest, err = parseFlags([]string{"--skip-permissions", "repl"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.SkipPermissions)
+	require.Equal(t, "repl", command)
+	require.Empty(t, rest)
+}
+
 func TestDumpManifestsCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

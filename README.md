@@ -15,7 +15,8 @@ Claude Code source.
   `ask_user_question`, `tool_search`, `task_create`, `task_list`,
   `task_status`, `task_stop`, `task_output`, `todo_read`, `todo_write`
 - Permission confirmation with `read-only`, `workspace-write`,
-  `danger-full-access`, `prompt`, and `allow` modes
+  `danger-full-access`, `prompt`, and `allow` modes; compatibility flags
+  `--dangerously-skip-permissions` and `--skip-permissions` select `allow`
 - JSONL session persistence and resume
 - Workspace-scoped session storage with legacy flat-session compatibility
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags

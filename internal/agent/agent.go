@@ -7131,6 +7131,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.SessionID, "session", base.SessionID, "session id")
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
+	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
+	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.IntVar(&base.MaxTurns, "max-turns", base.MaxTurns, "max model/tool loop iterations")
 	flags.IntVar(&base.MaxTokens, "max-tokens", base.MaxTokens, "maximum output tokens")
 	if err := flags.Parse(args); err != nil {
@@ -7213,6 +7215,8 @@ Flags:
   --session ID
   --resume ID|latest
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
+  --dangerously-skip-permissions
+  --skip-permissions
   --max-turns N
   --max-tokens N
   --config PATH

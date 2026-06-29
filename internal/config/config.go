@@ -117,14 +117,15 @@ type MutationReport struct {
 }
 
 type FlagOverrides struct {
-	ConfigPath     string
-	SessionID      string
-	Resume         string
-	Model          string
-	BaseURL        string
-	PermissionMode string
-	MaxTurns       int
-	MaxTokens      int
+	ConfigPath      string
+	SessionID       string
+	Resume          string
+	Model           string
+	BaseURL         string
+	PermissionMode  string
+	SkipPermissions bool
+	MaxTurns        int
+	MaxTokens       int
 }
 
 func Load(overrides FlagOverrides) (Config, error) {
@@ -654,6 +655,9 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.PermissionMode != "" {
 		cfg.PermissionMode = overrides.PermissionMode
+	}
+	if overrides.SkipPermissions {
+		cfg.PermissionMode = "allow"
 	}
 	if overrides.MaxTurns != 0 {
 		cfg.MaxTurns = overrides.MaxTurns
