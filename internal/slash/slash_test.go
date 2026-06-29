@@ -12,6 +12,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	RenderHelp(&out)
 	require.Contains(t, out.String(), "/status")
 	require.Contains(t, out.String(), "/init")
+	require.Contains(t, out.String(), "/state")
 	require.Contains(t, out.String(), "/config")
 	require.Contains(t, out.String(), "/model")
 	require.Contains(t, out.String(), "/permissions")

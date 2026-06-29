@@ -42,6 +42,7 @@ import (
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
+	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/Rememorio/codog/internal/worktree"
 )
 
@@ -106,6 +107,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 		return initProject(os.Stdout, workspace, rest)
+	}
+	if command == "state" {
+		workspace, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		return renderWorkerState(os.Stdout, workspace, rest)
 	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
 		return enterpriseVerify(os.Stdout, rest)
@@ -180,6 +188,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Status(rest, overrides)
 	case "init":
 		return app.Init(rest)
+	case "state":
+		return app.State(rest)
 	case "doctor":
 		return app.Doctor(rest)
 	case "sandbox":
@@ -1447,6 +1457,10 @@ func (a *App) Init(args []string) error {
 	return initProject(a.Out, a.Workspace, args)
 }
 
+func (a *App) State(args []string) error {
+	return renderWorkerState(a.Out, a.Workspace, args)
+}
+
 func initProject(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("init", args)
 	if err != nil {
@@ -1462,6 +1476,24 @@ func initProject(out io.Writer, workspace string, args []string) error {
 		return nil
 	}
 	fmt.Fprintln(out, projectinit.RenderText(report))
+	return nil
+}
+
+func renderWorkerState(out io.Writer, workspace string, args []string) error {
+	format, err := parseSimpleOutputFormat("state", args)
+	if err != nil {
+		return err
+	}
+	state, err := workerstate.Load(workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(state, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	workerstate.RenderText(out, state)
 	return nil
 }
 
@@ -1739,6 +1771,7 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err != nil {
 		return err
 	}
+	a.writeWorkerState("prompt", "running", sess, "")
 	runner := runloop.Runner{
 		Config:    a.Config,
 		Client:    a.Client,
@@ -1751,6 +1784,7 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	}
 	result, err := runner.Run(ctx, sess.Messages, input)
 	if err != nil {
+		a.writeWorkerState("prompt", "error", sess, err.Error())
 		return err
 	}
 	for _, msg := range result.Messages[len(sess.Messages):] {
@@ -1758,6 +1792,8 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 			return err
 		}
 	}
+	sess.Messages = result.Messages
+	a.writeWorkerState("prompt", "completed", sess, "")
 	fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
 	return nil
 }
@@ -1770,6 +1806,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
+	a.writeWorkerState("repl", "idle", sess, "")
 	fmt.Fprintf(a.Err, "Codog %s (%s). Type /exit to quit.\n", version, sess.ID)
 	scanner := bufio.NewScanner(a.In)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -1792,6 +1829,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		if a.handleSlash(ctx, line, sess) {
 			continue
 		}
+		a.writeWorkerState("repl", "running", sess, "")
 		runner := runloop.Runner{
 			Config:    a.Config,
 			Client:    a.Client,
@@ -1804,6 +1842,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		}
 		result, err := runner.Run(ctx, sess.Messages, line)
 		if err != nil {
+			a.writeWorkerState("repl", "error", sess, err.Error())
 			fmt.Fprintln(a.Err, "error:", err)
 			continue
 		}
@@ -1813,6 +1852,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			}
 		}
 		sess.Messages = result.Messages
+		a.writeWorkerState("repl", "idle", sess, "")
 	}
 	return scanner.Err()
 }
@@ -1830,6 +1870,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.renderStatus("text", sess)
 	case "/init":
 		if err := a.Init(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/state":
+		if err := a.State(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/cost":
@@ -2355,6 +2399,26 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 	return a.Sessions.Open(id)
 }
 
+func (a *App) writeWorkerState(mode string, status string, sess *session.Session, lastError string) {
+	if sess == nil {
+		return
+	}
+	state := workerstate.New(workerstate.Options{
+		Version:        version,
+		Mode:           mode,
+		Status:         status,
+		Workspace:      a.Workspace,
+		SessionID:      sess.ID,
+		SessionPath:    sess.Path,
+		Model:          a.Config.Model,
+		PermissionMode: a.Config.PermissionMode,
+		LastError:      lastError,
+	})
+	if err := workerstate.Save(a.Workspace, state); err != nil && a.Err != nil {
+		fmt.Fprintln(a.Err, "state:", err)
+	}
+}
+
 func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, error) {
 	id := overrides.SessionID
 	if overrides.Resume != "" {
@@ -2486,6 +2550,7 @@ Usage:
   %s [flags] mcp
   %s [flags] status [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
+  %s [flags] state [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
@@ -2512,7 +2577,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

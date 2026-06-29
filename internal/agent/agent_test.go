@@ -25,11 +25,13 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/updater"
+	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -313,6 +315,85 @@ func TestInitCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/init", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Init")
+}
+
+func TestStateCommandAndREPLWritesWorkerState(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+		},
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		In:        strings.NewReader("/exit\n"),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.REPL(context.Background(), config.FlagOverrides{SessionID: "session-1"}))
+	require.FileExists(t, workerstate.Path(workspace))
+	loaded, err := workerstate.Load(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "repl", loaded.Mode)
+	require.Equal(t, "idle", loaded.Status)
+	require.Equal(t, "session-1", loaded.SessionID)
+
+	require.NoError(t, app.State(nil))
+	require.Contains(t, out.String(), "State")
+	require.Contains(t, out.String(), "Worker")
+	out.Reset()
+
+	require.NoError(t, app.State([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "worker_state"`)
+	require.Contains(t, out.String(), `"mode": "repl"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/state", &session.Session{ID: "session-1"}))
+	require.Contains(t, out.String(), "State")
+}
+
+func TestPromptWritesCompletedWorkerState(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+			EnabledSkills:       nil,
+			Hooks:               config.HookConfig{},
+			Future:              config.FutureConfig{},
+			AuthToken:           "",
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Prompt(context.Background(), "hello", config.FlagOverrides{SessionID: "prompt-session"}))
+	loaded, err := workerstate.Load(workspace)
+	require.NoError(t, err)
+	require.Equal(t, "prompt", loaded.Mode)
+	require.Equal(t, "completed", loaded.Status)
+	require.Equal(t, "prompt-session", loaded.SessionID)
+	require.Contains(t, out.String(), "done")
 }
 
 func TestSystemPromptIncludesProjectMemory(t *testing.T) {
