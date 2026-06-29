@@ -41,6 +41,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
 	localstatus "github.com/Rememorio/codog/internal/status"
+	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
@@ -197,6 +198,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.History(rest, overrides)
 	case "skills":
 		return app.ListSkills()
+	case "templates":
+		return app.Templates(rest)
 	case "mcp":
 		return app.MCP(ctx, rest)
 	case "cost":
@@ -3104,6 +3107,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleHistorySlash(fields[1:], sess)
 	case "/skills":
 		_ = a.ListSkills()
+	case "/templates":
+		if err := a.Templates(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/mcp":
 		_ = a.MCP(ctx, nil)
 	case "/session":
@@ -3889,6 +3896,185 @@ func (a *App) ListSkills() error {
 	return nil
 }
 
+func (a *App) Templates(args []string) error {
+	action := "list"
+	rest := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		action = strings.ToLower(args[0])
+		rest = args[1:]
+	}
+	switch action {
+	case "list":
+		format, err := parseSimpleOutputFormat("templates", rest)
+		if err != nil {
+			return err
+		}
+		all, err := prompttemplates.Load(a.Config.ConfigHome, a.Workspace)
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			summaries := make([]prompttemplates.Template, len(all))
+			copy(summaries, all)
+			for i := range summaries {
+				summaries[i].Body = ""
+			}
+			data, _ := json.MarshalIndent(map[string]any{"kind": "templates", "templates": summaries}, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		if len(all) == 0 {
+			fmt.Fprintln(a.Out, "No templates found.")
+			return nil
+		}
+		for _, tmpl := range all {
+			fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", tmpl.Name, tmpl.Source, tmpl.Preview, tmpl.Path)
+		}
+	case "show":
+		format, remaining, err := parseTemplateOutputArgs("templates show", rest)
+		if err != nil {
+			return err
+		}
+		if len(remaining) != 1 {
+			return errors.New("usage: codog templates show NAME [--json]")
+		}
+		tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			data, _ := json.MarshalIndent(tmpl, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprint(a.Out, tmpl.Body)
+		if !strings.HasSuffix(tmpl.Body, "\n") {
+			fmt.Fprintln(a.Out)
+		}
+	case "apply":
+		req, err := parseTemplateApplyArgs(rest)
+		if err != nil {
+			return err
+		}
+		tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, req.Name)
+		if err != nil {
+			return err
+		}
+		rendered, err := prompttemplates.Render(tmpl, req.Vars)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(map[string]any{"kind": "template_apply", "template": rendered}, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprint(a.Out, rendered.Rendered)
+		if !strings.HasSuffix(rendered.Rendered, "\n") {
+			fmt.Fprintln(a.Out)
+		}
+	default:
+		return fmt.Errorf("unknown templates action %q", action)
+	}
+	return nil
+}
+
+type templateApplyRequest struct {
+	Name   string
+	Vars   map[string]string
+	Format string
+}
+
+func parseTemplateOutputArgs(command string, args []string) (string, []string, error) {
+	format := "text"
+	remaining := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", nil, fmt.Errorf("%s output format is required", command)
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, remaining, nil
+	default:
+		return "", nil, fmt.Errorf("unknown %s output format %q", command, format)
+	}
+}
+
+func parseTemplateApplyArgs(args []string) (templateApplyRequest, error) {
+	req := templateApplyRequest{Format: "text", Vars: map[string]string{}}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("templates apply output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--var" || arg == "-v":
+			index++
+			if index >= len(args) {
+				return req, errors.New("template variable is required")
+			}
+			if err := addTemplateVar(req.Vars, args[index]); err != nil {
+				return req, err
+			}
+		case strings.HasPrefix(arg, "--var="):
+			if err := addTemplateVar(req.Vars, strings.TrimPrefix(arg, "--var=")); err != nil {
+				return req, err
+			}
+		default:
+			if req.Name == "" {
+				req.Name = arg
+				continue
+			}
+			if strings.Contains(arg, "=") {
+				if err := addTemplateVar(req.Vars, arg); err != nil {
+					return req, err
+				}
+				continue
+			}
+			return req, fmt.Errorf("unexpected template apply argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown templates apply output format %q", req.Format)
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return req, errors.New("usage: codog templates apply NAME [--var key=value] [--json]")
+	}
+	return req, nil
+}
+
+func addTemplateVar(vars map[string]string, value string) error {
+	key, val, ok := strings.Cut(value, "=")
+	key = strings.TrimSpace(key)
+	if !ok || key == "" {
+		return fmt.Errorf("template variable must use key=value: %s", value)
+	}
+	vars[key] = val
+	return nil
+}
+
 func (a *App) MCP(ctx context.Context, args []string) error {
 	if len(a.Config.MCPServers) == 0 {
 		fmt.Fprintln(a.Out, "No MCP servers configured.")
@@ -4102,6 +4288,7 @@ Usage:
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
+  %s [flags] templates [list|show|apply]
   %s [flags] mcp
   %s [flags] status [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
@@ -4141,7 +4328,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

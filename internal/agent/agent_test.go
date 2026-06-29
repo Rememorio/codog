@@ -814,6 +814,45 @@ func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	require.Contains(t, prompt, "Always run focused tests.")
 }
 
+func TestTemplatesCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "templates"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "templates"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "templates", "review.md"), []byte("Review {{target}} as {{role}}."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "templates", "plan.md"), []byte("Plan {{topic}}."), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Templates(nil))
+	require.Contains(t, out.String(), "plan\tworkspace")
+	require.Contains(t, out.String(), "review\tuser")
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"show", "review"}))
+	require.Contains(t, out.String(), "Review {{target}} as {{role}}.")
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"apply", "review", "--var", "target=auth", "role=reviewer"}))
+	require.Equal(t, "Review auth as reviewer.\n", out.String())
+	out.Reset()
+
+	require.NoError(t, app.Templates([]string{"apply", "plan", "--json", "--var=topic=tests"}))
+	require.Contains(t, out.String(), `"kind": "template_apply"`)
+	require.Contains(t, out.String(), `"rendered": "Plan tests."`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/templates apply plan topic=release", &session.Session{ID: "session"}))
+	require.Equal(t, "Plan release.\n", out.String())
+	require.Empty(t, errOut.String())
+}
+
 func TestExportCommandWritesFormats(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -62,6 +62,7 @@ func Specs() []Spec {
 		{Name: "/tool-details", Usage: "/tool-details TOOL", Description: "Show detailed information for a tool."},
 		{Name: "/tokens", Usage: "/tokens", Description: "Alias for /cost."},
 		{Name: "/version", Usage: "/version", Description: "Show CLI version and build information."},
+		{Name: "/templates", Usage: "/templates [list|show|apply]", Description: "List, show, or render prompt templates."},
 		{Name: "/exit", Usage: "/exit", Description: "Exit the REPL."},
 	}
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })

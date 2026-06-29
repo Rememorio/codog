@@ -23,7 +23,7 @@ Claude Code source.
   `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
-  `/references`, `/definition`, `/hover`, `/skills`, `/mcp`.
+  `/references`, `/definition`, `/hover`, `/templates`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -40,6 +40,9 @@ Claude Code source.
   commands with captured stdout/stderr and text or JSON reports.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and
   `.codog/skills`.
+- `codog templates list|show|apply` finds Markdown prompt templates from
+  `~/.codog/templates` and `.codog/templates`, then renders `{{name}}`
+  variables for reusable prompts.
 - `codog mcp` inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls.
 - Hook commands can run before and after tool use.
