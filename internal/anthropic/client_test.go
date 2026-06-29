@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClientStreamsText(t *testing.T) {
@@ -22,16 +23,9 @@ func TestClientStreamsText(t *testing.T) {
 	}, func(delta string) {
 		streamed.WriteString(delta)
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(streamed.String(), "hello from mock") {
-		t.Fatalf("missing streamed text: %q", streamed.String())
-	}
-	if len(msg.Blocks) != 1 || !strings.Contains(msg.Blocks[0].Text, "hello from mock") {
-		t.Fatalf("unexpected blocks: %#v", msg.Blocks)
-	}
-	if msg.Usage.InputTokens != 10 {
-		t.Fatalf("usage not parsed: %#v", msg.Usage)
-	}
+	require.NoError(t, err)
+	require.Contains(t, streamed.String(), "hello from mock")
+	require.Len(t, msg.Blocks, 1)
+	require.Contains(t, msg.Blocks[0].Text, "hello from mock")
+	require.Equal(t, 10, msg.Usage.InputTokens)
 }

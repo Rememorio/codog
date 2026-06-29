@@ -16,9 +16,9 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/future"
-	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/tools"
@@ -145,18 +145,19 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err != nil {
 		return err
 	}
-	runner := Runner{
-		Config:   a.Config,
-		Client:   a.Client,
-		Tools:    a.Tools,
-		Prompter: &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
-		Out:      a.Out,
+	runner := runloop.Runner{
+		Config:    a.Config,
+		Client:    a.Client,
+		Tools:     a.Tools,
+		Prompter:  &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
+		Workspace: a.Workspace,
+		Out:       a.Out,
 	}
-	messages, err := runner.Run(ctx, sess.Messages, input)
+	result, err := runner.Run(ctx, sess.Messages, input)
 	if err != nil {
 		return err
 	}
-	for _, msg := range messages[len(sess.Messages):] {
+	for _, msg := range result.Messages[len(sess.Messages):] {
 		if err := a.Sessions.Append(sess.ID, msg); err != nil {
 			return err
 		}
@@ -192,24 +193,25 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		if a.handleSlash(ctx, line, sess) {
 			continue
 		}
-		runner := Runner{
-			Config:   a.Config,
-			Client:   a.Client,
-			Tools:    a.Tools,
-			Prompter: &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
-			Out:      a.Out,
+		runner := runloop.Runner{
+			Config:    a.Config,
+			Client:    a.Client,
+			Tools:     a.Tools,
+			Prompter:  &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
+			Workspace: a.Workspace,
+			Out:       a.Out,
 		}
-		next, err := runner.Run(ctx, sess.Messages, line)
+		result, err := runner.Run(ctx, sess.Messages, line)
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			continue
 		}
-		for _, msg := range next[len(sess.Messages):] {
+		for _, msg := range result.Messages[len(sess.Messages):] {
 			if err := a.Sessions.Append(sess.ID, msg); err != nil {
 				return err
 			}
 		}
-		sess.Messages = next
+		sess.Messages = result.Messages
 	}
 	return scanner.Err()
 }
@@ -229,7 +231,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/compact":
 		before := len(sess.Messages)
-		sess.Messages = compactMessages(sess.Messages, a.Config.AutoCompactMessages)
+		sess.Messages = runloop.CompactMessages(sess.Messages, a.Config.AutoCompactMessages)
 		fmt.Fprintf(a.Err, "compacted request context from %d to %d messages\n", before, len(sess.Messages))
 	case "/skills":
 		_ = a.ListSkills()
@@ -298,87 +300,6 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 		}
 	}
 	return a.Sessions.Open(id)
-}
-
-type Runner struct {
-	Config   config.Config
-	Client   *anthropic.Client
-	Tools    *tools.Registry
-	Prompter *tools.Prompter
-	Out      io.Writer
-}
-
-func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input string) ([]anthropic.Message, error) {
-	messages := append([]anthropic.Message(nil), previous...)
-	messages = append(messages, anthropic.TextMessage("user", input))
-	system := "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
-
-	for turn := 0; turn < r.Config.MaxTurns; turn++ {
-		requestMessages := compactMessages(messages, r.Config.AutoCompactMessages)
-		req := anthropic.Request{
-			Model:     r.Config.Model,
-			MaxTokens: r.Config.MaxTokens,
-			System:    system,
-			Messages:  requestMessages,
-			Tools:     r.Tools.Definitions(),
-		}
-		assistant, err := r.Client.Stream(ctx, req, func(delta string) {
-			if r.Out != nil {
-				fmt.Fprint(r.Out, delta)
-			}
-		})
-		if err != nil {
-			return nil, err
-		}
-		assistantMsg := anthropic.Message{Role: "assistant", Content: assistant.Blocks}
-		messages = append(messages, assistantMsg)
-
-		toolUses := toolUseBlocks(assistant.Blocks)
-		if len(toolUses) == 0 {
-			return messages, nil
-		}
-		for _, block := range toolUses {
-			hookRunner := hooks.Runner{Config: r.Config.Hooks}
-			if err := hookRunner.PreToolUse(ctx, block.Name, block.Input); err != nil {
-				messages = append(messages, anthropic.ToolResultMessage(block.ID, err.Error(), true))
-				continue
-			}
-			output, err := r.Tools.Execute(ctx, block.Name, block.Input, r.Prompter)
-			isErr := false
-			if err != nil {
-				output = err.Error()
-				isErr = true
-			}
-			if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, output, isErr); hookErr != nil && !isErr {
-				output = hookErr.Error()
-				isErr = true
-			}
-			messages = append(messages, anthropic.ToolResultMessage(block.ID, output, isErr))
-		}
-	}
-	return messages, errors.New("conversation exceeded max turns")
-}
-
-func compactMessages(messages []anthropic.Message, keep int) []anthropic.Message {
-	if keep <= 0 || len(messages) <= keep {
-		return messages
-	}
-	omitted := len(messages) - keep
-	summary := anthropic.TextMessage("user", fmt.Sprintf("Previous Codog context was auto-compacted. %d older messages were omitted; recent context is retained.", omitted))
-	out := make([]anthropic.Message, 0, keep+1)
-	out = append(out, summary)
-	out = append(out, messages[len(messages)-keep:]...)
-	return out
-}
-
-func toolUseBlocks(blocks []anthropic.ContentBlock) []anthropic.ContentBlock {
-	var result []anthropic.ContentBlock
-	for _, block := range blocks {
-		if block.Type == "tool_use" {
-			result = append(result, block)
-		}
-	}
-	return result
 }
 
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {

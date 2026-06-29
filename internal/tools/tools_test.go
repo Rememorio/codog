@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadFileRejectsWorkspaceEscape(t *testing.T) {
@@ -17,9 +18,8 @@ func TestReadFileRejectsWorkspaceEscape(t *testing.T) {
 	}
 	input, _ := json.Marshal(map[string]string{"path": outside})
 	_, err := ReadFileTool{Workspace: workspace}.Execute(context.Background(), input)
-	if err == nil || !strings.Contains(err.Error(), "escapes workspace") {
-		t.Fatalf("expected escape error, got %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes workspace")
 }
 
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
@@ -34,7 +34,6 @@ func TestEditFileRequiresUniqueMatch(t *testing.T) {
 		"new_string": "two",
 	})
 	_, err := EditFileTool{Workspace: workspace}.Execute(context.Background(), input)
-	if err == nil || !strings.Contains(err.Error(), "appears 2 times") {
-		t.Fatalf("expected duplicate error, got %v", err)
-	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "appears 2 times")
 }

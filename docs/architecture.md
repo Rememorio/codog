@@ -5,6 +5,8 @@ Codog follows a small-core layout:
 - `cmd/codog`: binary entrypoint.
 - `internal/agent`: CLI, REPL, prompt loop, slash commands, and model/tool
   orchestration.
+- `internal/runloop`: provider-agnostic model/tool turn loop shared by CLI,
+  REPL, TUI, and future transports.
 - `internal/anthropic`: Anthropic-compatible streaming client and event parser.
 - `internal/tools`: built-in tool registry and permission gate.
 - `internal/session`: JSONL session persistence.
