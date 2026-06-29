@@ -463,3 +463,72 @@ func TestControlGoDiagnostics(t *testing.T) {
 	require.Contains(t, string(body), "undefined")
 	require.Contains(t, string(body), "main.go")
 }
+
+func TestControlCodeIntelligence(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	source := strings.Join([]string{
+		"package demo",
+		"",
+		"type Widget struct{}",
+		"",
+		"func BuildWidget() Widget {",
+		"    return Widget{}",
+		"}",
+		"",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.go"), []byte("package secret\n\ntype Secret struct{}\n"), 0o644))
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  workspace,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/code/symbols?path=demo.go")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"symbols"`)
+	require.Contains(t, string(body), `"name":"BuildWidget"`)
+	require.Contains(t, string(body), `"name":"Widget"`)
+
+	resp, err = http.Post(server.URL+"/code/references", "application/json", bytes.NewBufferString(`{"symbol":"Widget","limit":5}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"references"`)
+	require.Contains(t, string(body), `"symbol":"Widget"`)
+	require.Contains(t, string(body), `"text":"type Widget struct{}"`)
+
+	resp, err = http.Get(server.URL + "/code/definition?symbol=BuildWidget")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"definition"`)
+	require.Contains(t, string(body), `"found":true`)
+	require.Contains(t, string(body), `"name":"BuildWidget"`)
+
+	resp, err = http.Post(server.URL+"/code/hover", "application/json", bytes.NewBufferString(`{"symbol":"Widget","context_lines":1}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"hover"`)
+	require.Contains(t, string(body), `"found":true`)
+	require.Contains(t, string(body), `type Widget struct{}`)
+
+	resp, err = http.Get(server.URL + "/code/symbols?path=../secret.go")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
