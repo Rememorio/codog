@@ -13,7 +13,7 @@ Claude Code source.
 - Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `notebook_edit`,
   `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`, `tool_search`,
-  `list_mcp_resources`,
+  `skill`, `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
   `todo_read`, `todo_write`

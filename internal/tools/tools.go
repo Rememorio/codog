@@ -24,6 +24,7 @@ import (
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
+	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/webaccess"
 )
@@ -131,6 +132,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
+	reg.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
@@ -1662,6 +1664,63 @@ func resolveQuestionChoice(answer string, choices []string) string {
 		}
 	}
 	return answer
+}
+
+type SkillTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (SkillTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "skill",
+		Description: "Load a local Codog or Claude-style skill definition and render its invocation text.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"skill": map[string]any{
+					"type":        "string",
+					"description": "Skill name, such as review or team:audit.",
+				},
+				"args": map[string]any{
+					"type":        "string",
+					"description": "Optional user request or arguments to render with the skill.",
+				},
+			},
+			"required":             []string{"skill"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (SkillTool) Permission() Permission {
+	return PermissionReadOnly
+}
+
+func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Skill string `json:"skill"`
+		Args  string `json:"args"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Skill) == "" {
+		return "", errors.New("skill is required")
+	}
+	skill, err := skills.Find(t.ConfigHome, t.Workspace, payload.Skill)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"kind":     "skill",
+		"skill":    skill.Name,
+		"source":   skill.Source,
+		"path":     skill.Path,
+		"args":     strings.TrimSpace(payload.Args),
+		"prompt":   skill.Body,
+		"rendered": skills.RenderInvocation(skill, payload.Args),
+	}), nil
 }
 
 type ToolSearchTool struct {

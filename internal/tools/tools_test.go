@@ -136,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 25)
+	require.Len(t, infos, 26)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -162,6 +162,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	_, ok = registry.Info("tool_search")
 	require.True(t, ok)
+	info, ok = registry.Info("skill")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("enter_plan_mode")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -313,6 +316,20 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	result, err = tool.Execute(context.Background(), []byte(`{"question":"Continue?","default":"yes"}`))
 	require.NoError(t, err)
 	require.Contains(t, result, `"answer": "yes"`)
+}
+
+func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review skill body"), 0o644))
+
+	out, err := SkillTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"skill":"review","args":"check auth"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "skill"`)
+	require.Contains(t, out, `"skill": "review"`)
+	require.Contains(t, out, "Review skill body")
+	require.Contains(t, out, "User request: check auth")
 }
 
 func TestTaskToolsManageBackgroundTasks(t *testing.T) {
