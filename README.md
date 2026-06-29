@@ -24,7 +24,7 @@ Claude Code source.
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
-  `/references`, `/definition`, `/hover`, `/branch`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
+  `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -50,9 +50,10 @@ Claude Code source.
 - `/add-dir` and `codog add-dir [PATH...|remove PATH|clear]` persist
   workspace-local extra directories that `read_file`, `write_file`,
   `edit_file`, `grep`, and `glob` can access after path-scope validation.
-- `/diff`, `/commit`, `/branch`, `/log`, `/changelog`, `/release-notes`,
-  `/blame`, `/stash`, `/git`, and `codog git` provide local git status, diff,
-  branch, log, changelog, blame, stash, and commit workflows.
+- `/diff`, `/commit`, `/branch`, `/tag`, `/log`, `/changelog`,
+  `/release-notes`, `/blame`, `/stash`, `/git`, and `codog git` provide local
+  git status, diff, branch, tag, log, changelog, blame, stash, and commit
+  workflows.
 - `codog release-notes [FROM [TO]] [--format markdown|json]` generates grouped
   release notes from git commits, defaulting to the latest tag through `HEAD`
   when a tag exists.

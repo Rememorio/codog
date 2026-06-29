@@ -31,6 +31,12 @@ type BranchList struct {
 	Branches []BranchInfo `json:"branches"`
 }
 
+type TagInfo struct {
+	Name    string `json:"name"`
+	Commit  string `json:"commit,omitempty"`
+	Subject string `json:"subject,omitempty"`
+}
+
 type StashPushOptions struct {
 	Message          string
 	IncludeUntracked bool
@@ -189,6 +195,71 @@ func RenameBranch(workspace, oldName, newName string) (string, error) {
 	return git(workspace, args...)
 }
 
+func ListTags(workspace, pattern string, limit int) ([]TagInfo, error) {
+	args := []string{"tag", "--list"}
+	if strings.TrimSpace(pattern) != "" {
+		args = append(args, strings.TrimSpace(pattern))
+	}
+	args = append(args, "--sort=-creatordate", "--format=%(refname:short)%00%(objectname:short)%00%(subject)")
+	raw, err := git(workspace, args...)
+	if err != nil {
+		return nil, err
+	}
+	var tags []TagInfo
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\x00")
+		for len(parts) < 3 {
+			parts = append(parts, "")
+		}
+		tags = append(tags, TagInfo{
+			Name:    strings.TrimSpace(parts[0]),
+			Commit:  strings.TrimSpace(parts[1]),
+			Subject: strings.TrimSpace(parts[2]),
+		})
+		if limit > 0 && len(tags) >= limit {
+			break
+		}
+	}
+	return tags, nil
+}
+
+func CreateTag(workspace, name, ref, message string) (string, error) {
+	name = strings.TrimSpace(name)
+	if err := validateTagName(workspace, name); err != nil {
+		return "", err
+	}
+	args := []string{"tag"}
+	if strings.TrimSpace(message) != "" {
+		args = append(args, "-a", name, "-m", strings.TrimSpace(message))
+	} else {
+		args = append(args, name)
+	}
+	if strings.TrimSpace(ref) != "" {
+		args = append(args, strings.TrimSpace(ref))
+	}
+	return git(workspace, args...)
+}
+
+func DeleteTag(workspace, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("tag name is required")
+	}
+	return git(workspace, "tag", "-d", name)
+}
+
+func ShowTag(workspace, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("tag name is required")
+	}
+	return git(workspace, "show", "--stat", "--oneline", "--decorate", "--no-renames", name)
+}
+
 func Head(workspace string) (string, error) {
 	return git(workspace, "rev-parse", "--short", "HEAD")
 }
@@ -247,6 +318,19 @@ func validateBranchName(workspace, name string) error {
 	}
 	if _, err := git(workspace, "check-ref-format", "--branch", name); err != nil {
 		return fmt.Errorf("invalid branch name %q: %w", name, err)
+	}
+	return nil
+}
+
+func validateTagName(workspace, name string) error {
+	if name == "" {
+		return errors.New("tag name is required")
+	}
+	if strings.HasPrefix(name, "-") {
+		return errors.New("tag name may not start with '-'")
+	}
+	if _, err := git(workspace, "check-ref-format", "refs/tags/"+name); err != nil {
+		return fmt.Errorf("invalid tag name %q: %w", name, err)
 	}
 	return nil
 }

@@ -150,6 +150,38 @@ func TestBranchWorkflows(t *testing.T) {
 	require.Contains(t, output, "Deleted branch")
 }
 
+func TestTagWorkflows(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "add notes")
+
+	output, err := CreateTag(workspace, "v0.1.0", "", "")
+	require.NoError(t, err)
+	require.Empty(t, output)
+	output, err = CreateTag(workspace, "v0.2.0", "HEAD", "release v0.2.0")
+	require.NoError(t, err)
+	require.Empty(t, output)
+
+	tags, err := ListTags(workspace, "v0.*", 10)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"v0.1.0", "v0.2.0"}, tagNames(tags))
+
+	show, err := ShowTag(workspace, "v0.2.0")
+	require.NoError(t, err)
+	require.Contains(t, show, "release v0.2.0")
+
+	output, err = DeleteTag(workspace, "v0.1.0")
+	require.NoError(t, err)
+	require.Contains(t, output, "Deleted tag")
+}
+
 func TestCommitRequiresStagedChanges(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")
@@ -168,6 +200,14 @@ func branchNames(branches []BranchInfo) []string {
 	names := make([]string, 0, len(branches))
 	for _, branch := range branches {
 		names = append(names, branch.Name)
+	}
+	return names
+}
+
+func tagNames(tags []TagInfo) []string {
+	names := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		names = append(names, tag.Name)
 	}
 	return names
 }

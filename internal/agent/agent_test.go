@@ -347,6 +347,34 @@ func TestBranchCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestTagCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "add tag notes")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	sess := &session.Session{ID: "session"}
+
+	require.NoError(t, app.Tag([]string{"create", "v0.1.0", "--message", "release v0.1.0", "--json"}))
+	require.Contains(t, out.String(), `"kind": "tag"`)
+	require.Contains(t, out.String(), `"name": "v0.1.0"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/tag list v0.*", sess))
+	require.Contains(t, out.String(), "v0.1.0")
+	out.Reset()
+
+	require.NoError(t, app.Git([]string{"tag", "show", "v0.1.0"}))
+	require.Contains(t, out.String(), "release v0.1.0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/tag delete v0.1.0", sess))
+	require.Contains(t, out.String(), "Deleted tag")
+	require.Empty(t, errOut.String())
+}
+
 func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer

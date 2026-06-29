@@ -38,6 +38,7 @@ func Specs() []Spec {
 		{Name: "/diff", Usage: "/diff [--staged]", Description: "Show git working tree or staged diff."},
 		{Name: "/commit", Usage: "/commit [--all] MESSAGE", Description: "Create a git commit from staged changes."},
 		{Name: "/branch", Usage: "/branch [list|current|create|switch|delete|rename]", Description: "Manage local git branches."},
+		{Name: "/tag", Usage: "/tag [list|create|show|delete]", Description: "Manage local git tags."},
 		{Name: "/git", Usage: "/git status|diff|log|blame", Description: "Run a supported git workflow."},
 		{Name: "/log", Usage: "/log [count]", Description: "Show recent git commits."},
 		{Name: "/changelog", Usage: "/changelog [count]", Description: "Show recent git changes with stats."},

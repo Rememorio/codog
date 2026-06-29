@@ -236,6 +236,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Git(rest)
 	case "branch":
 		return app.Branch(rest)
+	case "tag":
+		return app.Tag(rest)
 	case "stash":
 		return app.Stash(rest)
 	case "changelog":
@@ -3713,6 +3715,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Branch(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/tag":
+		if err := a.Tag(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/log":
 		a.handleLogSlash(fields[1:])
 	case "/changelog":
@@ -4072,7 +4078,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -4121,6 +4127,8 @@ func (a *App) Git(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 	case "branch":
 		return a.Branch(args[1:])
+	case "tag":
+		return a.Tag(args[1:])
 	default:
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
@@ -4327,6 +4335,185 @@ func renderBranchReport(out io.Writer, report branchReport) {
 			detail = strings.TrimSpace(detail + " upstream=" + branch.Upstream)
 		}
 		fmt.Fprintf(out, "  %s %s", marker, branch.Name)
+		if detail != "" {
+			fmt.Fprintf(out, "  %s", detail)
+		}
+		fmt.Fprintln(out)
+	}
+}
+
+type tagRequest struct {
+	Format  string
+	Action  string
+	Name    string
+	Ref     string
+	Message string
+	Pattern string
+	Limit   int
+}
+
+type tagReport struct {
+	Kind    string           `json:"kind"`
+	Action  string           `json:"action"`
+	Status  string           `json:"status"`
+	Pattern string           `json:"pattern,omitempty"`
+	Tags    []gitops.TagInfo `json:"tags,omitempty"`
+	Output  string           `json:"output,omitempty"`
+}
+
+func (a *App) Tag(args []string) error {
+	req, err := parseTagArgs(args)
+	if err != nil {
+		return err
+	}
+	report := tagReport{Kind: "tag", Action: req.Action, Status: "ok", Pattern: req.Pattern}
+	switch req.Action {
+	case "list":
+		tags, err := gitops.ListTags(a.Workspace, req.Pattern, req.Limit)
+		if err != nil {
+			return err
+		}
+		report.Tags = tags
+	case "create":
+		output, err := gitops.CreateTag(a.Workspace, req.Name, req.Ref, req.Message)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+		report.Tags, err = gitops.ListTags(a.Workspace, req.Name, 1)
+		if err != nil {
+			return err
+		}
+	case "show":
+		output, err := gitops.ShowTag(a.Workspace, req.Name)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+	case "delete":
+		output, err := gitops.DeleteTag(a.Workspace, req.Name)
+		if err != nil {
+			return err
+		}
+		report.Output = output
+	default:
+		return fmt.Errorf("unknown tag action %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTagReport(a.Out, report)
+	return nil
+}
+
+func parseTagArgs(args []string) (tagRequest, error) {
+	req := tagRequest{Format: "text", Action: "list", Limit: 50}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("tag output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit":
+			i++
+			if i >= len(args) {
+				return req, errors.New("tag limit is required")
+			}
+			limit, err := strconv.Atoi(args[i])
+			if err != nil || limit < 0 {
+				return req, errors.New("tag limit must be a non-negative integer")
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil || limit < 0 {
+				return req, errors.New("tag limit must be a non-negative integer")
+			}
+			req.Limit = limit
+		case arg == "--message" || arg == "-m":
+			i++
+			if i >= len(args) {
+				return req, errors.New("tag message is required")
+			}
+			req.Message = args[i]
+		case strings.HasPrefix(arg, "--message="):
+			req.Message = strings.TrimPrefix(arg, "--message=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown tag output format %q", req.Format)
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	req.Action = strings.ToLower(positionals[0])
+	rest := positionals[1:]
+	switch req.Action {
+	case "list", "ls":
+		req.Action = "list"
+		if len(rest) > 0 {
+			req.Pattern = rest[0]
+		}
+	case "create", "add":
+		req.Action = "create"
+		if len(rest) == 0 {
+			return req, errors.New("tag create requires a name")
+		}
+		req.Name = rest[0]
+		if len(rest) > 1 {
+			req.Ref = rest[1]
+		}
+	case "show":
+		if len(rest) == 0 {
+			return req, errors.New("tag show requires a name")
+		}
+		req.Name = rest[0]
+	case "delete", "del", "remove", "rm":
+		req.Action = "delete"
+		if len(rest) == 0 {
+			return req, errors.New("tag delete requires a name")
+		}
+		req.Name = rest[0]
+	default:
+		return req, fmt.Errorf("unknown tag action %q", positionals[0])
+	}
+	return req, nil
+}
+
+func renderTagReport(out io.Writer, report tagReport) {
+	fmt.Fprintln(out, "Tags")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	if report.Pattern != "" {
+		fmt.Fprintf(out, "  Pattern          %s\n", report.Pattern)
+	}
+	if strings.TrimSpace(report.Output) != "" {
+		fmt.Fprintf(out, "  Output           %s\n", strings.ReplaceAll(strings.TrimSpace(report.Output), "\n", "\n                   "))
+	}
+	if len(report.Tags) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  Count            %d\n", len(report.Tags))
+	fmt.Fprintln(out)
+	for _, tag := range report.Tags {
+		detail := tag.Commit
+		if tag.Subject != "" {
+			detail = strings.TrimSpace(detail + " " + tag.Subject)
+		}
+		fmt.Fprintf(out, "  %s", tag.Name)
 		if detail != "" {
 			fmt.Fprintf(out, "  %s", detail)
 		}
@@ -5380,7 +5567,8 @@ Usage:
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]
-  %s [flags] git status | git diff [--staged] | git branch [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
+  %s [flags] git status | git diff [--staged] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
@@ -5410,7 +5598,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
