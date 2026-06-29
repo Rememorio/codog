@@ -34,6 +34,10 @@ func TestCallToolAndReadResource(t *testing.T) {
 	require.Empty(t, resources.Error)
 	require.Contains(t, string(resources.Resources), "codog://note")
 
+	templates := ListResourceTemplates(context.Background(), "test", server)
+	require.Empty(t, templates.Error)
+	require.Contains(t, string(templates.Templates), "codog://notes/{name}")
+
 	read := ReadResource(context.Background(), "test", server, "codog://note")
 	require.Empty(t, read.Error)
 	require.Contains(t, string(read.Result), "note body")
@@ -85,6 +89,11 @@ func TestMCPHelperProcess(t *testing.T) {
 			writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
 		case "resources/list":
 			writeMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
+		case "resources/templates/list":
+			writeMCP(id, map[string]any{"resourceTemplates": []map[string]any{{
+				"uriTemplate": "codog://notes/{name}",
+				"name":        "note by name",
+			}}})
 		case "resources/read":
 			writeMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
 		case "prompts/list":

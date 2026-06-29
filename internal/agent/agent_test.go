@@ -1318,6 +1318,10 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "codog://note")
 	out.Reset()
 
+	require.NoError(t, app.MCP(context.Background(), []string{"resource-templates", "test"}))
+	require.Contains(t, out.String(), "codog://notes/{name}")
+	out.Reset()
+
 	require.NoError(t, app.MCP(context.Background(), []string{"read", "test", "codog://note"}))
 	require.Contains(t, out.String(), "note body")
 	out.Reset()
@@ -1368,6 +1372,11 @@ func TestAgentMCPHelperProcess(t *testing.T) {
 			writeAgentMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
 		case "resources/list":
 			writeAgentMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
+		case "resources/templates/list":
+			writeAgentMCP(id, map[string]any{"resourceTemplates": []map[string]any{{
+				"uriTemplate": "codog://notes/{name}",
+				"name":        "note by name",
+			}}})
 		case "resources/read":
 			writeAgentMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
 		case "prompts/list":

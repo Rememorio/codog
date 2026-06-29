@@ -52,6 +52,12 @@ type ResourceReadResult struct {
 	Error  string          `json:"error,omitempty"`
 }
 
+type ResourceTemplateListResult struct {
+	Server    string          `json:"server"`
+	Templates json.RawMessage `json:"templates,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
 type PromptListResult struct {
 	Server  string          `json:"server"`
 	Prompts json.RawMessage `json:"prompts,omitempty"`
@@ -237,6 +243,18 @@ func ReadResource(ctx context.Context, serverName string, server config.MCPServe
 		return ResourceReadResult{Server: serverName, URI: uri, Error: err.Error()}
 	}
 	return ResourceReadResult{Server: serverName, URI: uri, Result: result}
+}
+
+func ListResourceTemplates(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceTemplateListResult {
+	result, err := requestAfterInitialize(ctx, server, rpcRequest{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "resources/templates/list",
+	})
+	if err != nil {
+		return ResourceTemplateListResult{Server: serverName, Error: err.Error()}
+	}
+	return ResourceTemplateListResult{Server: serverName, Templates: result}
 }
 
 func ListPrompts(ctx context.Context, serverName string, server config.MCPServerConfig) PromptListResult {
