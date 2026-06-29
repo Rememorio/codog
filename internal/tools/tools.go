@@ -22,6 +22,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/webaccess"
@@ -119,6 +120,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(EnterPlanModeTool{Workspace: workspace})
+	reg.Register(ExitPlanModeTool{Workspace: workspace})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -146,6 +149,8 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(EnterPlanModeTool{Workspace: workspace})
+	r.Register(ExitPlanModeTool{Workspace: workspace})
 	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 }
@@ -1143,6 +1148,93 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+type EnterPlanModeTool struct {
+	Workspace string
+}
+
+type planModeInput struct {
+	Plan string `json:"plan,omitempty"`
+}
+
+func (EnterPlanModeTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "enter_plan_mode",
+		Description: "Enter plan mode and optionally persist the current implementation plan. While plan mode is active, future tool permission checks are read-only until exit_plan_mode is called or the user exits plan mode.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"plan": map[string]any{
+					"type":        "string",
+					"description": "Optional plan text to store with the active plan-mode state.",
+				},
+			},
+		},
+	}
+}
+
+func (EnterPlanModeTool) Permission() Permission {
+	return PermissionReadOnly
+}
+
+func (t EnterPlanModeTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload planModeInput
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	report, err := planmode.Enter(t.Workspace, payload.Plan)
+	if err != nil {
+		return "", err
+	}
+	return pretty(report), nil
+}
+
+type ExitPlanModeTool struct {
+	Workspace string
+}
+
+func (ExitPlanModeTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "exit_plan_mode",
+		Description: "Exit plan mode. Include the final implementation plan to persist it before returning to normal tool permissions on the next user turn.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"plan": map[string]any{
+					"type":        "string",
+					"description": "Optional final plan text to store before leaving plan mode.",
+				},
+			},
+		},
+	}
+}
+
+func (ExitPlanModeTool) Permission() Permission {
+	return PermissionReadOnly
+}
+
+func (t ExitPlanModeTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload planModeInput
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(payload.Plan) != "" {
+		if _, err := planmode.Set(t.Workspace, payload.Plan); err != nil {
+			return "", err
+		}
+	}
+	report, err := planmode.Exit(t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	return pretty(report), nil
 }
 
 type TaskCreateTool struct {

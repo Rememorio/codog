@@ -16,6 +16,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/stretchr/testify/require"
 )
 
@@ -135,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 21)
+	require.Len(t, infos, 23)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -155,6 +156,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	_, ok = registry.Info("tool_search")
 	require.True(t, ok)
+	info, ok = registry.Info("enter_plan_mode")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("exit_plan_mode")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("list_mcp_resources")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -237,6 +244,37 @@ func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 	info, ok := registry.Info("notebook_edit")
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
+}
+
+func TestPlanModeToolsEnterAndExit(t *testing.T) {
+	workspace := t.TempDir()
+	enterTool := EnterPlanModeTool{Workspace: workspace}
+	exitTool := ExitPlanModeTool{Workspace: workspace}
+
+	require.Equal(t, PermissionReadOnly, enterTool.Permission())
+	require.Equal(t, PermissionReadOnly, exitTool.Permission())
+
+	enterOut, err := enterTool.Execute(context.Background(), []byte(`{"plan":"inspect first"}`))
+	require.NoError(t, err)
+	require.Contains(t, enterOut, `"action": "enter"`)
+	require.Contains(t, enterOut, `"status": "active"`)
+	require.Contains(t, enterOut, "inspect first")
+
+	state, err := planmode.Load(workspace)
+	require.NoError(t, err)
+	require.True(t, state.Active)
+	require.Equal(t, "inspect first", state.Plan)
+
+	exitOut, err := exitTool.Execute(context.Background(), []byte(`{"plan":"ship final plan"}`))
+	require.NoError(t, err)
+	require.Contains(t, exitOut, `"action": "exit"`)
+	require.Contains(t, exitOut, `"status": "inactive"`)
+	require.Contains(t, exitOut, "ship final plan")
+
+	state, err = planmode.Load(workspace)
+	require.NoError(t, err)
+	require.False(t, state.Active)
+	require.Equal(t, "ship final plan", state.Plan)
 }
 
 func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
