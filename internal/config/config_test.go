@@ -119,6 +119,25 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"hooks": {
+			"pre_tool_use": ["echo simple-pre"],
+			"PostToolUse": [
+				{"matcher": "Write", "hooks": [{"type": "command", "command": "echo documented-post"}]},
+				{"command": "echo direct-post"}
+			]
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, []string{"echo simple-pre"}, cfg.Hooks.PreToolUse)
+	require.Equal(t, []string{"echo documented-post", "echo direct-post"}, cfg.Hooks.PostToolUse)
+}
+
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

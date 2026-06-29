@@ -84,7 +84,8 @@ Claude Code source.
   are exposed to the model as `mcp__server__tool` tool calls.
 - Hook commands can run before and after tool use; `codog hooks list|run`
   inspects and test-runs configured hooks with the same JSON payload shape used
-  by model tool calls.
+  by model tool calls. Hook config accepts simple string arrays and the
+  documented Claude Code object format with nested command hooks.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
 - `codog rate-limit-options` reports provider retry/backoff settings; Anthropic

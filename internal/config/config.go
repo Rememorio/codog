@@ -21,6 +21,24 @@ type HookConfig struct {
 	PostToolUse []string `json:"post_tool_use,omitempty"`
 }
 
+func (h *HookConfig) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	pre, err := hookCommands(raw, "pre_tool_use", "PreToolUse")
+	if err != nil {
+		return err
+	}
+	post, err := hookCommands(raw, "post_tool_use", "PostToolUse")
+	if err != nil {
+		return err
+	}
+	h.PreToolUse = pre
+	h.PostToolUse = post
+	return nil
+}
+
 type RateLimitConfig struct {
 	MaxRetries       int `json:"max_retries,omitempty"`
 	InitialBackoffMS int `json:"initial_backoff_ms,omitempty"`
@@ -200,6 +218,64 @@ func readConfigFile(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func hookCommands(raw map[string]json.RawMessage, keys ...string) ([]string, error) {
+	for _, key := range keys {
+		data, ok := raw[key]
+		if !ok || len(data) == 0 || string(data) == "null" {
+			continue
+		}
+		return parseHookCommandList(data)
+	}
+	return nil, nil
+}
+
+func parseHookCommandList(data json.RawMessage) ([]string, error) {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	commands := []string{}
+	for _, entry := range entries {
+		next, err := parseHookEntry(entry)
+		if err != nil {
+			return nil, err
+		}
+		commands = append(commands, next...)
+	}
+	return compactStrings(commands), nil
+}
+
+func parseHookEntry(data json.RawMessage) ([]string, error) {
+	var command string
+	if err := json.Unmarshal(data, &command); err == nil {
+		return []string{command}, nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if rawCommand, ok := object["command"]; ok {
+		if err := json.Unmarshal(rawCommand, &command); err == nil {
+			return []string{command}, nil
+		}
+	}
+	if rawHooks, ok := object["hooks"]; ok {
+		return parseHookCommandList(rawHooks)
+	}
+	return nil, nil
+}
+
+func compactStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func merge(dst *Config, src Config) {
