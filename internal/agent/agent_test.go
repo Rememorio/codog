@@ -75,6 +75,23 @@ func TestEnterpriseVerifyCommand(t *testing.T) {
 	require.NotContains(t, out.String(), policy.Signature)
 }
 
+func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+
+	require.NoError(t, renderVersion(&out, workspace, nil))
+	require.Contains(t, out.String(), "Codog")
+	require.Contains(t, out.String(), "Version          0.1.0")
+	out.Reset()
+
+	require.NoError(t, renderVersion(&out, workspace, []string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "version"`)
+	require.Contains(t, out.String(), `"version": "0.1.0"`)
+	require.Contains(t, out.String(), `"go_version":`)
+
+	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
+}
+
 func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	configHome := t.TempDir()
 	store := session.NewStore(configHome)

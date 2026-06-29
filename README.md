@@ -62,6 +62,8 @@ Claude Code source.
   runtime snapshot for humans or scripts.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and
   one-shot prompt runs update for local observability.
+- `codog version [--json]` reports version, Go runtime, target, build metadata,
+  executable path, and workspace git provenance.
 - `codog doctor [--json]` runs local auth, config, workspace, permission,
   sandbox, git, session, tool registry, and runtime diagnostics without making
   a provider request.

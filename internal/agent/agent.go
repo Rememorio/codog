@@ -42,6 +42,7 @@ import (
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
+	"github.com/Rememorio/codog/internal/versioninfo"
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/Rememorio/codog/internal/worktree"
 )
@@ -62,6 +63,19 @@ type App struct {
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "--help", "-h":
+			printHelp(os.Stdout)
+			return nil
+		case "--version", "-v":
+			workspace, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			return renderVersion(os.Stdout, workspace, args[1:])
+		}
+	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
 		return err
@@ -71,8 +85,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return nil
 	}
 	if command == "version" || command == "--version" || command == "-v" {
-		fmt.Fprintln(os.Stdout, version)
-		return nil
+		workspace, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		return renderVersion(os.Stdout, workspace, rest)
 	}
 	if command == "config" {
 		cfg, paths, err := config.LoadForInspection(overrides)
@@ -1474,6 +1491,22 @@ func (a *App) Memory(args []string) error {
 	return renderMemoryReport(a.Out, a.Workspace, args)
 }
 
+func renderVersion(out io.Writer, workspace string, args []string) error {
+	format, err := parseSimpleOutputFormat("version", args)
+	if err != nil {
+		return err
+	}
+	report := versioninfo.Build(version, workspace)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	versioninfo.RenderText(out, report)
+	fmt.Fprintln(out)
+	return nil
+}
+
 func initProject(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("init", args)
 	if err != nil {
@@ -2577,6 +2610,7 @@ func printHelp(out io.Writer) {
 
 Usage:
   %s [flags] prompt "explain this repo"
+  %s version [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
@@ -2613,7 +2647,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

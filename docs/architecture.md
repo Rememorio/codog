@@ -19,6 +19,8 @@ Codog follows a small-core layout:
   and memory report rendering.
 - `internal/workerstate`: file-based worker observability surface shared by
   REPL, one-shot prompts, and `codog state`.
+- `internal/versioninfo`: version, build metadata, runtime, and workspace
+  provenance reporting.
 - `internal/hooks`: pre/post tool hook runner.
 - `internal/slash`: slash command registry and help rendering.
 - `internal/harness`: in-process mock-provider smoke harness.
