@@ -1505,6 +1505,30 @@ func TestOAuthTokenCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted":true`)
 }
 
+func TestLoginLogoutAliases(t *testing.T) {
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+
+	err := app.Login(nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "oauth browser login PROFILE")
+
+	err = app.Login([]string{"device"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "oauth device")
+
+	_, err = oauth.SaveToken(configHome, oauth.Token{AccessToken: "access-token-1234"})
+	require.NoError(t, err)
+	require.NoError(t, app.Logout(nil))
+	require.Contains(t, out.String(), `"deleted": true`)
+	_, err = oauth.LoadToken(configHome)
+	require.ErrorIs(t, err, oauth.ErrNoToken)
+}
+
 func TestOAuthDiscoverCommand(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)

@@ -110,6 +110,9 @@ Claude Code source.
   browser authorization; `oauth status` inspects local auth readiness; `oauth
   logout` revokes and deletes local auth; `oauth token save|show|refresh|revoke|delete`
   manages and refreshes a keychain-backed auth token store with a local file fallback.
+- `codog login [browser|device] PROFILE` and `codog logout [PROFILE]` are
+  top-level aliases for the configured OAuth browser/device login and logout
+  flows.
 - `codog status [--json]` prints a local workspace/config/session/git/sandbox
   runtime snapshot for humans or scripts.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and

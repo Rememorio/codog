@@ -265,6 +265,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AgentsWithOverrides(rest, overrides)
 	case "marketplace":
 		return app.Marketplace(rest)
+	case "login":
+		return app.Login(rest)
+	case "logout":
+		return app.Logout(rest)
 	case "oauth":
 		return app.OAuth(rest)
 	case "status":
@@ -1130,6 +1134,26 @@ func (a *App) marketplacePublicKey(marketplaceURL string) string {
 		return ""
 	}
 	return a.Config.Future.PluginMarketplaceKeys[marketplaceURL]
+}
+
+func (a *App) Login(args []string) error {
+	flow := "browser"
+	rest := args
+	if len(args) > 0 {
+		switch strings.ToLower(args[0]) {
+		case "browser":
+			flow = "browser"
+			rest = args[1:]
+		case "device":
+			flow = "device"
+			rest = args[1:]
+		}
+	}
+	return a.OAuth(append([]string{flow, "login"}, rest...))
+}
+
+func (a *App) Logout(args []string) error {
+	return a.OAuth(append([]string{"logout"}, args...))
 }
 
 func (a *App) OAuth(args []string) error {
@@ -5965,6 +5989,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
+  %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
@@ -5983,7 +6008,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
