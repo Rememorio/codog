@@ -187,8 +187,8 @@ Claude Code source.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
   identity, open-file/selection state, session mutation/rewind, background
   prompt turns, workspace info, file listing/search/diff, diagnostics,
-  background task control/watch events, and bounded file read/write/edit
-  operations.
+  code-intelligence queries, background task control/watch events, and bounded
+  file read/write/edit operations.
 - `codog updater check|download|install|rollback` checks releases, downloads
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.

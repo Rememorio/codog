@@ -104,6 +104,10 @@ func (s Server) handle(req Request) (any, *Error) {
 				"editor/open",
 				"editor/selection",
 				"diagnostics/go",
+				"code/symbols",
+				"code/references",
+				"code/definition",
+				"code/hover",
 				"background/list",
 				"background/run",
 				"background/get",
@@ -227,6 +231,30 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return result, nil
+	case "code/symbols":
+		result, err := s.codeSymbols(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "code/references":
+		result, err := s.codeReferences(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "code/definition":
+		result, err := s.codeDefinition(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "code/hover":
+		result, err := s.codeHover(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	case "background/list":
 		result, err := s.backgroundList(req.Params)
 		if err != nil {
@@ -296,6 +324,96 @@ func (s Server) goDiagnostics(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return codeintel.GoDiagnostics(context.Background(), workspace, payload.Patterns)
+}
+
+func (s Server) codeSymbols(params json.RawMessage) (any, error) {
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	symbols, err := codeintel.GoSymbols(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(payload.Path) != "" {
+		_, rel, err := s.resolve(payload.Path, false)
+		if err != nil {
+			return nil, err
+		}
+		rel = filepath.ToSlash(rel)
+		filtered := symbols[:0]
+		for _, symbol := range symbols {
+			if filepath.ToSlash(symbol.Path) == rel {
+				filtered = append(filtered, symbol)
+			}
+		}
+		symbols = filtered
+	}
+	return map[string]any{"kind": "symbols", "total": len(symbols), "symbols": symbols}, nil
+}
+
+func (s Server) codeReferences(params json.RawMessage) (any, error) {
+	var payload struct {
+		Symbol string `json:"symbol"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	refs, err := codeintel.References(workspace, payload.Symbol, payload.Limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "references", "symbol": strings.TrimSpace(payload.Symbol), "total": len(refs), "references": refs}, nil
+}
+
+func (s Server) codeDefinition(params json.RawMessage) (any, error) {
+	var payload struct {
+		Symbol string `json:"symbol"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	definition, found, err := codeintel.Definition(workspace, payload.Symbol)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "definition", "symbol": strings.TrimSpace(payload.Symbol), "found": found, "definition": definition}, nil
+}
+
+func (s Server) codeHover(params json.RawMessage) (any, error) {
+	var payload struct {
+		Symbol       string `json:"symbol"`
+		ContextLines int    `json:"context_lines"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return nil, err
+	}
+	hover, err := codeintel.HoverInfo(workspace, payload.Symbol, payload.ContextLines)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "hover", "symbol": strings.TrimSpace(payload.Symbol), "hover": hover}, nil
 }
 
 func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (any, *Error) {

@@ -33,6 +33,10 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"editor/identify"`)
 	require.Contains(t, out.String(), `"editor/selection"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
+	require.Contains(t, out.String(), `"code/symbols"`)
+	require.Contains(t, out.String(), `"code/references"`)
+	require.Contains(t, out.String(), `"code/definition"`)
+	require.Contains(t, out.String(), `"code/hover"`)
 	require.Contains(t, out.String(), `"background/list"`)
 	require.Contains(t, out.String(), `"background/run"`)
 	require.Contains(t, out.String(), `"background/logs"`)
@@ -128,6 +132,38 @@ func TestBridgeWorkspaceFilesSearchAndDiff(t *testing.T) {
 	require.Contains(t, out.String(), `"text":"hello bridge"`)
 	require.Contains(t, out.String(), `-hello bridge`)
 	require.Contains(t, out.String(), `+hello codog`)
+}
+
+func TestBridgeCodeIntelligence(t *testing.T) {
+	workspace := t.TempDir()
+	source := strings.Join([]string{
+		"package demo",
+		"",
+		"type Widget struct{}",
+		"",
+		"func BuildWidget() Widget {",
+		"	return Widget{}",
+		"}",
+		"",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"code/symbols","params":{"path":"demo.go"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"code/references","params":{"symbol":"Widget","limit":5}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"code/definition","params":{"symbol":"BuildWidget"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"code/hover","params":{"symbol":"Widget","context_lines":1}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"symbols"`)
+	require.Contains(t, out.String(), `"name":"BuildWidget"`)
+	require.Contains(t, out.String(), `"kind":"references"`)
+	require.Contains(t, out.String(), `"symbol":"Widget"`)
+	require.Contains(t, out.String(), `"found":true`)
+	require.Contains(t, out.String(), `"kind":"hover"`)
 }
 
 func TestBridgeEditorIdentifyOpenSelectionState(t *testing.T) {
