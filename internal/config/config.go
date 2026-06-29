@@ -34,6 +34,7 @@ type Config struct {
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
+	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
 	Hooks               HookConfig                 `json:"hooks,omitempty"`
 	MCPServers          map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 }
@@ -175,6 +176,9 @@ func merge(dst *Config, src Config) {
 	}
 	if src.AutoCompactMessages != 0 {
 		dst.AutoCompactMessages = src.AutoCompactMessages
+	}
+	if len(src.EnabledSkills) != 0 {
+		dst.EnabledSkills = append([]string(nil), src.EnabledSkills...)
 	}
 	if len(src.Hooks.PreToolUse) != 0 {
 		dst.Hooks.PreToolUse = append([]string(nil), src.Hooks.PreToolUse...)

@@ -13,6 +13,8 @@ Codog follows a small-core layout:
 - `internal/config`: config merge from user file, project file, environment, and
   flags.
 - `internal/hooks`: pre/post tool hook runner.
+- `internal/slash`: slash command registry and help rendering.
+- `internal/harness`: in-process mock-provider smoke harness.
 - `internal/skills`: Markdown skill discovery.
 - `internal/mcp`: minimal stdio MCP lifecycle inspection.
 - `internal/tui`: Bubble Tea prompt composer.

@@ -16,11 +16,13 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/future"
+	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
+	"github.com/Rememorio/codog/internal/slash"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/usage"
@@ -70,6 +72,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		fmt.Fprintf(os.Stderr, "mock Anthropic-compatible server listening on %s\n", addr)
 		return http.ListenAndServe(addr, mockanthropic.Server{Text: "mock response from codog"}.Handler())
+	}
+	if command == "self-test" {
+		report, err := harness.Run(ctx)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(os.Stdout, string(data))
+		return nil
 	}
 	if command == "roadmap" {
 		future.RenderText(os.Stdout, future.Surfaces())
@@ -152,6 +163,7 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 		Prompter:  &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
 		Workspace: a.Workspace,
 		Out:       a.Out,
+		System:    a.systemPrompt(),
 	}
 	result, err := runner.Run(ctx, sess.Messages, input)
 	if err != nil {
@@ -187,7 +199,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			return nil
 		}
 		if line == "/help" {
-			fmt.Fprintln(a.Err, "Commands: /help, /exit, /status, /cost, /compact, /skills, /mcp. Ask normally to run an agent turn.")
+			slash.RenderHelp(a.Err)
 			continue
 		}
 		if a.handleSlash(ctx, line, sess) {
@@ -200,6 +212,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			Prompter:  &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
 			Workspace: a.Workspace,
 			Out:       a.Out,
+			System:    a.systemPrompt(),
 		}
 		result, err := runner.Run(ctx, sess.Messages, line)
 		if err != nil {
@@ -238,7 +251,9 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/mcp":
 		_ = a.ListMCP(ctx)
 	default:
-		fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
+		if _, ok := slash.Lookup(fields[0]); !ok {
+			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
+		}
 	}
 	return true
 }
@@ -264,7 +279,11 @@ func (a *App) ListSkills() error {
 		return nil
 	}
 	for _, skill := range all {
-		fmt.Fprintf(a.Out, "%s\t%s\t%s\n", skill.Name, skill.Source, skill.Path)
+		enabled := ""
+		if containsFold(a.Config.EnabledSkills, skill.Name) {
+			enabled = "enabled"
+		}
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", skill.Name, skill.Source, enabled, skill.Path)
 	}
 	return nil
 }
@@ -302,6 +321,36 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 	return a.Sessions.Open(id)
 }
 
+func (a *App) systemPrompt() string {
+	base := "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
+	if len(a.Config.EnabledSkills) == 0 {
+		return base
+	}
+	var builder strings.Builder
+	builder.WriteString(base)
+	for _, name := range a.Config.EnabledSkills {
+		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
+		if err != nil {
+			continue
+		}
+		builder.WriteString("\n\n<skill name=\"")
+		builder.WriteString(skill.Name)
+		builder.WriteString("\">\n")
+		builder.WriteString(skill.Body)
+		builder.WriteString("\n</skill>")
+	}
+	return builder.String()
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -336,6 +385,7 @@ Usage:
   %s [flags] mcp
   %s [flags] cost --resume latest
   %s mock-server :8089
+  %s self-test
   %s roadmap
   %s bridge|remote|agents|background|code-intel|oauth|enterprise|marketplace|sandbox|updater
   %s config
@@ -352,7 +402,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

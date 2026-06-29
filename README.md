@@ -30,6 +30,8 @@ Codog also includes the first practical-layer surfaces:
 - Request context is automatically compacted for long sessions.
 - `codog mock-server :8089` starts a deterministic Anthropic-compatible
   streaming server for harness tests.
+- `codog self-test` runs the prompt loop against an in-process mock provider.
+- `enabled_skills` injects selected Markdown skills into the system prompt.
 
 ## Quick start
 
@@ -58,6 +60,7 @@ codog --permission-mode prompt prompt "inspect the repo"
   "permission_mode": "workspace-write",
   "max_turns": 8,
   "max_tokens": 4096,
+  "enabled_skills": ["go-review"],
   "hooks": {
     "pre_tool_use": ["echo pre >&2"],
     "post_tool_use": ["echo post >&2"]
