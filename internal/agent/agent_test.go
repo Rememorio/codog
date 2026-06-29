@@ -389,6 +389,34 @@ func TestOAuthStatusCommand(t *testing.T) {
 	require.NotContains(t, out.String(), "status-access-1234")
 }
 
+func TestOAuthTokenRevokeAndLogoutCommands(t *testing.T) {
+	server, revoked := oauthRevocationTestServer(t)
+	defer server.Close()
+	configHome := t.TempDir()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{AccessToken: "access-1", RefreshToken: "refresh-1"})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	require.NoError(t, app.OAuth([]string{"token", "revoke", "default", "refresh"}))
+	require.Contains(t, out.String(), `"revoked": true`)
+	require.Contains(t, out.String(), `"token": "refresh"`)
+	require.Contains(t, *revoked, "refresh_token:refresh-1")
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"logout"}))
+	require.Contains(t, out.String(), `"deleted": true`)
+	require.Contains(t, out.String(), `"access_revoked": true`)
+	require.Contains(t, *revoked, "access_token:access-1")
+	_, err = oauth.LoadToken(configHome)
+	require.ErrorIs(t, err, oauth.ErrNoToken)
+}
+
 func TestApplyStoredOAuthToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()
@@ -445,6 +473,26 @@ func oauthRefreshTestServer(t *testing.T) *httptest.Server {
 		}
 	}))
 	return server
+}
+
+func oauthRevocationTestServer(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	revoked := []string{}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"revocation_endpoint":"` + server.URL + `/revoke","token_endpoint":"` + server.URL + `/token"}`))
+		case "/revoke":
+			require.NoError(t, r.ParseForm())
+			revoked = append(revoked, r.Form.Get("token_type_hint")+":"+r.Form.Get("token"))
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server, &revoked
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {

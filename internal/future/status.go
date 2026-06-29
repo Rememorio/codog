@@ -103,11 +103,11 @@ func Surfaces() []Surface {
 			Command:     "oauth",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "PKCE helper, provider metadata discovery/profile storage, profile-backed device and browser authorization, refresh-token renewal, local auth status inspection, and keychain-backed token storage with local file fallback are available.",
+			Description: "PKCE helper, provider metadata discovery/profile storage, profile-backed device and browser authorization, refresh-token renewal, token revocation/logout, local auth status inspection, and keychain-backed token storage with local file fallback are available.",
 			NextSteps: []string{
 				"Add refresh failure recovery guidance.",
 				"Fetch remote OAuth account profile when provider APIs are configured.",
-				"Add OAuth token revocation and logout across storage backends.",
+				"Add provider-specific OAuth scopes and account validation.",
 			},
 		},
 		{

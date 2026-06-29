@@ -1048,8 +1048,21 @@ func (a *App) OAuth(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
+	if args[0] == "logout" {
+		profile := ""
+		if len(args) > 1 {
+			profile = args[1]
+		}
+		result, err := oauth.Logout(context.Background(), a.Config.ConfigHome, profile)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth token save|show|refresh|delete")
+		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete")
 	}
 	if len(args) < 2 {
 		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | refresh [PROFILE] | delete")
@@ -1097,6 +1110,14 @@ func (a *App) OAuth(args []string) error {
 		data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
+	case "revoke":
+		result, err := a.oauthTokenRevoke(args[2:])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	case "delete":
 		if err := oauth.DeleteToken(a.Config.ConfigHome); err != nil {
 			return err
@@ -1106,6 +1127,37 @@ func (a *App) OAuth(args []string) error {
 	default:
 		return fmt.Errorf("unknown oauth token command %q", args[1])
 	}
+}
+
+func (a *App) oauthTokenRevoke(args []string) (map[string]any, error) {
+	profileName := ""
+	tokenKind := "access"
+	if len(args) > 0 {
+		profileName = args[0]
+	}
+	if len(args) > 1 {
+		tokenKind = args[1]
+	}
+	profile, err := oauth.ResolveProviderProfile(a.Config.ConfigHome, profileName)
+	if err != nil {
+		return nil, err
+	}
+	token, err := oauth.LoadToken(a.Config.ConfigHome)
+	if err != nil {
+		return nil, err
+	}
+	tokenValue := token.AccessToken
+	hint := "access_token"
+	if tokenKind == "refresh" {
+		tokenValue = token.RefreshToken
+		hint = "refresh_token"
+	} else if tokenKind != "access" {
+		return nil, errors.New("token kind must be access or refresh")
+	}
+	if err := oauth.RevokeToken(context.Background(), profile.Metadata, profile.ClientID, tokenValue, hint); err != nil {
+		return nil, err
+	}
+	return map[string]any{"revoked": true, "profile": profile.Name, "token": tokenKind}, nil
 }
 
 func (a *App) oauthProvider(args []string) error {
@@ -1830,7 +1882,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth token save|show|refresh|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
