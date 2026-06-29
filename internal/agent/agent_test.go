@@ -3,6 +3,11 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +18,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/updater"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,4 +144,22 @@ func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	data, err = os.ReadFile(target)
 	require.NoError(t, err)
 	require.Equal(t, "old", string(data))
+}
+
+func TestUpdaterVerifyCommand(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		manifest := updater.Manifest{Version: "0.2.0"}
+		data, err := json.Marshal(manifest)
+		require.NoError(t, err)
+		manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, data))
+		require.NoError(t, json.NewEncoder(w).Encode(manifest))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{Out: &out}
+	require.NoError(t, app.Updater(context.Background(), []string{"verify", server.URL, base64.StdEncoding.EncodeToString(publicKey)}))
+	require.Contains(t, out.String(), `"signature_valid": true`)
 }

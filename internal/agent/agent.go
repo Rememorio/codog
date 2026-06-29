@@ -242,16 +242,31 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "check":
 		if len(args) < 2 {
-			return errors.New("usage: codog updater check URL")
+			return errors.New("usage: codog updater check URL [PUBLIC_KEY]")
 		}
-		result, err := updater.Check(ctx, version, args[1])
+		var result updater.CheckResult
+		var err error
+		if len(args) > 2 {
+			result, err = updater.CheckSigned(ctx, version, args[1], args[2])
+		} else {
+			result, err = updater.Check(ctx, version, args[1])
+		}
+		if err != nil {
+			return err
+		}
+		payload = result
+	case "verify":
+		if len(args) < 3 {
+			return errors.New("usage: codog updater verify URL PUBLIC_KEY")
+		}
+		result, err := updater.CheckSigned(ctx, version, args[1], args[2])
 		if err != nil {
 			return err
 		}
 		payload = result
 	case "download":
 		if len(args) < 2 {
-			return errors.New("usage: codog updater download URL [PLATFORM] [DEST]")
+			return errors.New("usage: codog updater download URL [PLATFORM] [DEST] [PUBLIC_KEY]")
 		}
 		platform := ""
 		if len(args) > 2 {
@@ -261,7 +276,13 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		if len(args) > 3 {
 			dest = args[3]
 		}
-		result, err := updater.Download(ctx, args[1], platform, dest)
+		var result updater.DownloadResult
+		var err error
+		if len(args) > 4 {
+			result, err = updater.DownloadSigned(ctx, args[1], platform, dest, args[4])
+		} else {
+			result, err = updater.Download(ctx, args[1], platform, dest)
+		}
 		if err != nil {
 			return err
 		}
@@ -1074,7 +1095,7 @@ Usage:
   %s marketplace list|install|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics
-  %s remote serve [addr] | bridge serve | updater check|download|install|rollback
+  %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit]
   %s config
 

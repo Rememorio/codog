@@ -32,8 +32,8 @@ Codog follows a small-core layout:
 - `internal/control`: HTTP control API for sessions, background tasks, logs,
   diagnostics, remote auth, and heartbeat state.
 - `internal/bridge`: stdio JSON-RPC bridge.
-- `internal/updater`: release manifest check, verified artifact downloads, and
-  backup-based binary installation.
+- `internal/updater`: release manifest check, signed manifest verification,
+  verified artifact downloads, and backup-based binary installation.
 
 The project deliberately keeps model-provider contracts and tool behavior
 separate from UI surfaces. That lets the one-shot CLI, REPL, TUI, bridge, and

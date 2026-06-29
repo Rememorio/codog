@@ -2,7 +2,9 @@ package updater
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +22,7 @@ type Manifest struct {
 	Notes     string            `json:"notes,omitempty"`
 	Downloads map[string]string `json:"downloads,omitempty"`
 	Checksums map[string]string `json:"checksums,omitempty"`
+	Signature string            `json:"signature,omitempty"`
 }
 
 type CheckResult struct {
@@ -27,6 +30,7 @@ type CheckResult struct {
 	LatestVersion   string   `json:"latest_version"`
 	UpdateAvailable bool     `json:"update_available"`
 	Manifest        Manifest `json:"manifest"`
+	SignatureValid  bool     `json:"signature_valid,omitempty"`
 }
 
 type DownloadResult struct {
@@ -65,6 +69,23 @@ func Check(ctx context.Context, currentVersion, manifestURL string) (CheckResult
 	}, nil
 }
 
+func CheckSigned(ctx context.Context, currentVersion, manifestURL, publicKey string) (CheckResult, error) {
+	manifest, err := FetchManifest(ctx, manifestURL)
+	if err != nil {
+		return CheckResult{}, err
+	}
+	if err := VerifyManifest(manifest, publicKey); err != nil {
+		return CheckResult{}, err
+	}
+	return CheckResult{
+		CurrentVersion:  currentVersion,
+		LatestVersion:   manifest.Version,
+		UpdateAvailable: manifest.Version != "" && manifest.Version != currentVersion,
+		Manifest:        manifest,
+		SignatureValid:  true,
+	}, nil
+}
+
 func FetchManifest(ctx context.Context, manifestURL string) (Manifest, error) {
 	if manifestURL == "" {
 		return Manifest{}, fmt.Errorf("manifest URL is required")
@@ -89,11 +110,48 @@ func FetchManifest(ctx context.Context, manifestURL string) (Manifest, error) {
 	return manifest, nil
 }
 
+func VerifyManifest(manifest Manifest, publicKey string) error {
+	if manifest.Signature == "" {
+		return fmt.Errorf("manifest signature is required")
+	}
+	key, err := decodePublicKey(publicKey)
+	if err != nil {
+		return err
+	}
+	signature, err := decodeSignature(manifest.Signature)
+	if err != nil {
+		return err
+	}
+	payload, err := canonicalManifest(manifest)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(key, payload, signature) {
+		return fmt.Errorf("manifest signature verification failed")
+	}
+	return nil
+}
+
 func Download(ctx context.Context, manifestURL, platform, destDir string) (DownloadResult, error) {
 	manifest, err := FetchManifest(ctx, manifestURL)
 	if err != nil {
 		return DownloadResult{}, err
 	}
+	return DownloadManifest(ctx, manifest, platform, destDir)
+}
+
+func DownloadSigned(ctx context.Context, manifestURL, platform, destDir, publicKey string) (DownloadResult, error) {
+	manifest, err := FetchManifest(ctx, manifestURL)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	if err := VerifyManifest(manifest, publicKey); err != nil {
+		return DownloadResult{}, err
+	}
+	return DownloadManifest(ctx, manifest, platform, destDir)
+}
+
+func DownloadManifest(ctx context.Context, manifest Manifest, platform, destDir string) (DownloadResult, error) {
 	key, url, checksum, err := selectDownload(manifest, platform)
 	if err != nil {
 		return DownloadResult{}, err
@@ -287,6 +345,52 @@ func safeName(value string) string {
 		return "unknown"
 	}
 	return name
+}
+
+func canonicalManifest(manifest Manifest) ([]byte, error) {
+	manifest.Signature = ""
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func decodePublicKey(value string) (ed25519.PublicKey, error) {
+	data, err := decodeBase64OrHex(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid public key: %w", err)
+	}
+	if len(data) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("invalid public key length: got %d want %d", len(data), ed25519.PublicKeySize)
+	}
+	return ed25519.PublicKey(data), nil
+}
+
+func decodeSignature(value string) ([]byte, error) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "ed25519:")
+	data, err := decodeBase64OrHex(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid signature: %w", err)
+	}
+	if len(data) != ed25519.SignatureSize {
+		return nil, fmt.Errorf("invalid signature length: got %d want %d", len(data), ed25519.SignatureSize)
+	}
+	return data, nil
+}
+
+func decodeBase64OrHex(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	if data, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return data, nil
+	}
+	if data, err := base64.RawStdEncoding.DecodeString(value); err == nil {
+		return data, nil
+	}
+	if data, err := base64.RawURLEncoding.DecodeString(value); err == nil {
+		return data, nil
+	}
+	return hex.DecodeString(value)
 }
 
 func copyExecutable(source, target string, mode os.FileMode) error {

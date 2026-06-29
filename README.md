@@ -50,7 +50,8 @@ Claude Code source.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for sessions,
   workspace info, diagnostics, and bounded file read/write/edit operations.
 - `codog updater check|download|install|rollback` checks releases, downloads
-  verified artifacts, and installs with a backup rollback path.
+  verified artifacts, verifies signed manifests, and installs with a backup
+  rollback path.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use
   audit events.
 

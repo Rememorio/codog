@@ -2,8 +2,11 @@ package updater
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +73,58 @@ func TestDownloadRejectsChecksumMismatch(t *testing.T) {
 	_, err := Download(context.Background(), server.URL+"/manifest.json", "test", t.TempDir())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "checksum mismatch")
+}
+
+func TestVerifyManifest(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	manifest := Manifest{
+		Version:   "0.2.0",
+		Downloads: map[string]string{"test": "https://example.invalid/codog"},
+	}
+	payload, err := canonicalManifest(manifest)
+	require.NoError(t, err)
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+
+	require.NoError(t, VerifyManifest(manifest, base64.StdEncoding.EncodeToString(publicKey)))
+
+	manifest.Version = "0.3.0"
+	err = VerifyManifest(manifest, base64.StdEncoding.EncodeToString(publicKey))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "verification failed")
+}
+
+func TestDownloadSignedVerifiesManifest(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	payload := []byte("codog binary")
+	sum := sha256.Sum256(payload)
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/manifest.json":
+			manifest := Manifest{
+				Version:   "0.2.0",
+				Downloads: map[string]string{"test": serverURL + "/binary"},
+				Checksums: map[string]string{"test": hex.EncodeToString(sum[:])},
+			}
+			data, err := canonicalManifest(manifest)
+			require.NoError(t, err)
+			manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, data))
+			require.NoError(t, json.NewEncoder(w).Encode(manifest))
+		case "/binary":
+			_, _ = w.Write(payload)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	result, err := DownloadSigned(context.Background(), server.URL+"/manifest.json", "test", t.TempDir(), base64.StdEncoding.EncodeToString(publicKey))
+	require.NoError(t, err)
+	require.True(t, result.Verified)
+	require.FileExists(t, result.Path)
 }
 
 func TestInstallAndRollback(t *testing.T) {

@@ -153,11 +153,11 @@ func Surfaces() []Surface {
 			Command:     "updater",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Manifest check, SHA-256 verified artifact download, and backup-based binary install/rollback are available.",
+			Description: "Manifest check, Ed25519 signed manifest verification, SHA-256 verified artifact download, and backup-based binary install/rollback are available.",
 			NextSteps: []string{
-				"Support signed manifests.",
 				"Add platform-specific package manager handoff.",
 				"Keep package-manager installs out of self-update.",
+				"Add automatic update policy scheduling.",
 			},
 		},
 	}
