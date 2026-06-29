@@ -121,6 +121,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EnterPlanModeTool{Workspace: workspace})
 	reg.Register(ExitPlanModeTool{Workspace: workspace})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -154,6 +155,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
 	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
@@ -1153,6 +1155,179 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+type LSPTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+func (LSPTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "lsp",
+		Description: "Query code intelligence for Go symbols, references, diagnostics, definitions, and hover context.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{
+					"type": "string",
+					"enum": []string{"symbols", "references", "diagnostics", "definition", "hover"},
+				},
+				"path":      map[string]any{"type": "string"},
+				"line":      map[string]any{"type": "integer", "minimum": 0},
+				"character": map[string]any{"type": "integer", "minimum": 0},
+				"query":     map[string]any{"type": "string"},
+				"limit":     map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required":             []string{"action"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (LSPTool) Permission() Permission {
+	return PermissionReadOnly
+}
+
+func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action    string `json:"action"`
+		Path      string `json:"path"`
+		Line      int    `json:"line"`
+		Character int    `json:"character"`
+		Query     string `json:"query"`
+		Limit     int    `json:"limit"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	switch action {
+	case "symbols":
+		symbols, err := codeintel.GoSymbols(t.Workspace)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(payload.Path) != "" {
+			rel, err := scopedRelativePath(t.Workspace, t.AdditionalDirs, payload.Path)
+			if err != nil {
+				return "", err
+			}
+			filtered := symbols[:0]
+			for _, symbol := range symbols {
+				if filepath.ToSlash(symbol.Path) == rel {
+					filtered = append(filtered, symbol)
+				}
+			}
+			symbols = filtered
+		}
+		return pretty(map[string]any{"action": action, "symbols": symbols, "total": len(symbols)}), nil
+	case "definition":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		definition, found, err := codeintel.Definition(t.Workspace, query)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"action": action, "query": query, "found": found, "definition": definition}), nil
+	case "references":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		refs, err := codeintel.References(t.Workspace, query, payload.Limit)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"action": action, "query": query, "references": refs, "total": len(refs)}), nil
+	case "hover":
+		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
+		if err != nil {
+			return "", err
+		}
+		hover, err := codeintel.HoverInfo(t.Workspace, query, 2)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"action": action, "query": query, "hover": hover}), nil
+	case "diagnostics":
+		patterns := []string{}
+		if strings.TrimSpace(payload.Path) != "" {
+			patterns = append(patterns, payload.Path)
+		} else if strings.TrimSpace(payload.Query) != "" {
+			patterns = append(patterns, payload.Query)
+		}
+		diagnostics, err := codeintel.GoDiagnostics(ctx, t.Workspace, patterns)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"action": action, "diagnostics": diagnostics, "total": len(diagnostics)}), nil
+	default:
+		return "", fmt.Errorf("unknown lsp action %q", payload.Action)
+	}
+}
+
+func (t LSPTool) lspQuery(query string, path string, line int, character int) (string, error) {
+	query = strings.TrimSpace(query)
+	if query != "" {
+		return query, nil
+	}
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("query or path position is required")
+	}
+	return symbolAtPosition(t.Workspace, t.AdditionalDirs, path, line, character)
+}
+
+func scopedRelativePath(workspace string, additionalDirs []string, requested string) (string, error) {
+	path, err := safePathInScope(workspace, additionalDirs, requested, false)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(workspace, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(filepath.Clean(requested)), nil
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func symbolAtPosition(workspace string, additionalDirs []string, requested string, line int, character int) (string, error) {
+	path, err := safePathInScope(workspace, additionalDirs, requested, false)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(data), "\n")
+	if line < 0 || line >= len(lines) {
+		return "", fmt.Errorf("line %d is out of range", line)
+	}
+	text := lines[line]
+	if character < 0 {
+		character = 0
+	}
+	if character > len(text) {
+		character = len(text)
+	}
+	start := character
+	for start > 0 && isIdentifierByte(text[start-1]) {
+		start--
+	}
+	end := character
+	for end < len(text) && isIdentifierByte(text[end]) {
+		end++
+	}
+	if start == end {
+		return "", errors.New("no symbol found at position")
+	}
+	return text[start:end], nil
+}
+
+func isIdentifierByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
 type EnterPlanModeTool struct {

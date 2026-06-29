@@ -136,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 27)
+	require.Len(t, infos, 28)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -144,6 +144,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	_, ok = registry.Info("notebook_edit")
 	require.True(t, ok)
+	info, ok = registry.Info("lsp")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	_, ok = registry.Info("multi_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("task_create")
@@ -256,6 +259,37 @@ func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 	info, ok := registry.Info("notebook_edit")
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
+}
+
+func TestLSPToolQueriesCodeIntel(t *testing.T) {
+	workspace := t.TempDir()
+	source := strings.Join([]string{
+		"package demo",
+		"",
+		"type Widget struct{}",
+		"",
+		"func BuildWidget() Widget {",
+		"	return Widget{}",
+		"}",
+		"",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "demo.go"), []byte(source), 0o644))
+	tool := LSPTool{Workspace: workspace}
+
+	symbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"symbols","path":"demo.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, symbolsOut, `"action": "symbols"`)
+	require.Contains(t, symbolsOut, "BuildWidget")
+
+	definitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget"}`))
+	require.NoError(t, err)
+	require.Contains(t, definitionOut, `"found": true`)
+	require.Contains(t, definitionOut, `"name": "Widget"`)
+
+	hoverOut, err := tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6}`))
+	require.NoError(t, err)
+	require.Contains(t, hoverOut, `"query": "BuildWidget"`)
+	require.Contains(t, hoverOut, `"found": true`)
 }
 
 func TestPlanModeToolsEnterAndExit(t *testing.T) {
