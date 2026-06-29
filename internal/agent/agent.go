@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -221,6 +222,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.State(rest)
 	case "memory":
 		return app.Memory(rest)
+	case "project":
+		return app.Project(rest)
+	case "env":
+		return app.Env(rest)
 	case "doctor":
 		return app.Doctor(rest)
 	case "sandbox":
@@ -1496,6 +1501,202 @@ func (a *App) Memory(args []string) error {
 	return renderMemoryReport(a.Out, a.Workspace, args)
 }
 
+type projectReport struct {
+	Kind        string           `json:"kind"`
+	Workspace   string           `json:"workspace"`
+	Name        string           `json:"name"`
+	Git         projectGitReport `json:"git"`
+	GoModule    string           `json:"go_module,omitempty"`
+	CodogDir    string           `json:"codog_dir,omitempty"`
+	MemoryFiles []memory.Summary `json:"memory_files,omitempty"`
+}
+
+type projectGitReport struct {
+	Available bool   `json:"available"`
+	Root      string `json:"root,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	Head      string `json:"head,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type envReport struct {
+	Kind      string     `json:"kind"`
+	Total     int        `json:"total"`
+	Redacted  int        `json:"redacted"`
+	Variables []envValue `json:"variables"`
+}
+
+type envValue struct {
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Redacted bool   `json:"redacted,omitempty"`
+}
+
+func (a *App) Project(args []string) error {
+	format, err := parseSimpleOutputFormat("project", args)
+	if err != nil {
+		return err
+	}
+	report := a.buildProjectReport()
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderProjectReport(a.Out, report)
+	return nil
+}
+
+func (a *App) buildProjectReport() projectReport {
+	workspace := a.Workspace
+	if workspace == "" {
+		workspace = "."
+	}
+	if abs, err := filepath.Abs(workspace); err == nil {
+		workspace = abs
+	}
+	workspace = filepath.Clean(workspace)
+	report := projectReport{
+		Kind:      "project",
+		Workspace: workspace,
+		Name:      filepath.Base(workspace),
+	}
+	if root, err := gitops.Root(workspace); err == nil {
+		report.Git.Available = true
+		report.Git.Root = root
+		if branch, err := gitops.Branch(workspace); err == nil {
+			report.Git.Branch = branch
+		}
+		if head, err := gitops.Head(workspace); err == nil {
+			report.Git.Head = head
+		}
+	} else {
+		report.Git.Error = err.Error()
+	}
+	if path := findUp(workspace, "go.mod"); path != "" {
+		report.GoModule = path
+	}
+	if path := filepath.Join(workspace, ".codog"); dirExists(path) {
+		report.CodogDir = path
+	}
+	if files, err := memory.Discover(workspace); err == nil {
+		report.MemoryFiles = memory.Summaries(files)
+	}
+	return report
+}
+
+func renderProjectReport(out io.Writer, report projectReport) {
+	fmt.Fprintln(out, "Project")
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	fmt.Fprintf(out, "  Name             %s\n", report.Name)
+	if report.Git.Available {
+		fmt.Fprintf(out, "  Git root         %s\n", report.Git.Root)
+		fmt.Fprintf(out, "  Git branch       %s\n", emptyAsNone(report.Git.Branch))
+		fmt.Fprintf(out, "  Git head         %s\n", emptyAsNone(report.Git.Head))
+	} else {
+		fmt.Fprintf(out, "  Git              unavailable: %s\n", report.Git.Error)
+	}
+	fmt.Fprintf(out, "  Go module        %s\n", emptyAsNone(report.GoModule))
+	fmt.Fprintf(out, "  Codog dir        %s\n", emptyAsNone(report.CodogDir))
+	fmt.Fprintf(out, "  Memory files     %d\n", len(report.MemoryFiles))
+	for index, file := range report.MemoryFiles {
+		fmt.Fprintf(out, "  %d. %s\n", index+1, file.Path)
+	}
+}
+
+func (a *App) Env(args []string) error {
+	format, err := parseSimpleOutputFormat("env", args)
+	if err != nil {
+		return err
+	}
+	report := buildEnvReport(os.Environ())
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderEnvReport(a.Out, report)
+	return nil
+}
+
+func buildEnvReport(environ []string) envReport {
+	var variables []envValue
+	redacted := 0
+	for _, item := range environ {
+		name, value, ok := strings.Cut(item, "=")
+		if !ok || name == "" {
+			continue
+		}
+		entry := envValue{Name: name, Value: value}
+		if isSensitiveEnvName(name) {
+			entry.Value = "[redacted]"
+			entry.Redacted = true
+			redacted++
+		}
+		variables = append(variables, entry)
+	}
+	sort.Slice(variables, func(i, j int) bool { return variables[i].Name < variables[j].Name })
+	return envReport{
+		Kind:      "env",
+		Total:     len(variables),
+		Redacted:  redacted,
+		Variables: variables,
+	}
+}
+
+func renderEnvReport(out io.Writer, report envReport) {
+	fmt.Fprintln(out, "Environment")
+	fmt.Fprintf(out, "  Variables        %d\n", report.Total)
+	fmt.Fprintf(out, "  Redacted         %d\n", report.Redacted)
+	fmt.Fprintln(out)
+	for _, variable := range report.Variables {
+		fmt.Fprintf(out, "%s=%s\n", variable.Name, variable.Value)
+	}
+}
+
+func isSensitiveEnvName(name string) bool {
+	upper := strings.ToUpper(name)
+	sensitive := []string{"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH"}
+	for _, marker := range sensitive {
+		if strings.Contains(upper, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func findUp(start string, name string) string {
+	cursor := filepath.Clean(start)
+	for {
+		path := filepath.Join(cursor, name)
+		if fileExists(path) {
+			return path
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			return ""
+		}
+		cursor = parent
+	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func emptyAsNone(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "none"
+	}
+	return value
+}
+
 type searchRequest struct {
 	Query      string
 	Path       string
@@ -2263,6 +2464,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/memory":
 		if err := a.Memory(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/project":
+		if err := a.Project(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/env":
+		if err := a.Env(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/search":
@@ -3231,6 +3440,8 @@ Usage:
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
   %s [flags] memory [--json|--output-format text|json]
+  %s [flags] project [--json|--output-format text|json]
+  %s [flags] env [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
@@ -3258,7 +3469,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

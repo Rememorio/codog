@@ -37,6 +37,22 @@ func Log(workspace string, limit int) (string, error) {
 	return git(workspace, "log", "--oneline", "--decorate", fmt.Sprintf("--max-count=%d", limit))
 }
 
+func Root(workspace string) (string, error) {
+	return git(workspace, "rev-parse", "--show-toplevel")
+}
+
+func Branch(workspace string) (string, error) {
+	branch, err := git(workspace, "branch", "--show-current")
+	if err == nil && strings.TrimSpace(branch) != "" {
+		return branch, nil
+	}
+	return git(workspace, "rev-parse", "--short", "HEAD")
+}
+
+func Head(workspace string) (string, error) {
+	return git(workspace, "rev-parse", "--short", "HEAD")
+}
+
 func Blame(workspace string, path string, line int) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {

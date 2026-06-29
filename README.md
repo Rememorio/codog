@@ -20,8 +20,9 @@ Claude Code source.
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/clear`, `/resume`, `/version`, `/sandbox`, `/search`, `/cost`, `/tokens`,
-  `/compact`, `/system-prompt`, `/tool-details`, `/skills`, `/mcp`.
+  `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
+  `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -51,6 +52,10 @@ Claude Code source.
   injected into the system prompt.
 - `codog memory [--json]` lists discovered project memory files with line,
   character, truncation, and preview metadata without printing full file bodies.
+- `codog project [--json]` reports workspace, git, Go module, Codog directory,
+  and memory-file detection metadata.
+- `codog env [--json]` reports environment variables inherited by tools with
+  sensitive values redacted.
 - `codog background run|list|status|stop|restart|logs|watch|prune` manages local
   background commands, attaches them to sessions, supervises restart policies,
   restarts tasks, prunes retained records, and streams status/log events.

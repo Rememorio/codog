@@ -524,6 +524,58 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Memory")
 }
 
+func TestProjectCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Project instructions."), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog"), 0o755))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "initial project")
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}, Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Project(nil))
+	require.Contains(t, out.String(), "Project")
+	require.Contains(t, out.String(), "Go module")
+	require.Contains(t, out.String(), "Memory files     1")
+	out.Reset()
+
+	require.NoError(t, app.Project([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "project"`)
+	require.Contains(t, out.String(), `"available": true`)
+	require.Contains(t, out.String(), `"go_module":`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/project", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Project")
+}
+
+func TestEnvCommandRedactsSensitiveValues(t *testing.T) {
+	report := buildEnvReport([]string{
+		"ALPHA=visible",
+		"CODOG_SECRET_TOKEN=hidden",
+		"NO_EQUALS",
+	})
+	require.Equal(t, 2, report.Total)
+	require.Equal(t, 1, report.Redacted)
+	require.Equal(t, "ALPHA", report.Variables[0].Name)
+	require.Equal(t, "visible", report.Variables[0].Value)
+	require.Equal(t, "CODOG_SECRET_TOKEN", report.Variables[1].Name)
+	require.Equal(t, "[redacted]", report.Variables[1].Value)
+
+	t.Setenv("CODOG_SECRET_TOKEN", "codog-super-secret-value-123")
+	var out bytes.Buffer
+	app := &App{Out: &out, Err: io.Discard}
+	require.NoError(t, app.Env([]string{"--json"}))
+	require.Contains(t, out.String(), `"name": "CODOG_SECRET_TOKEN"`)
+	require.Contains(t, out.String(), `"value": "[redacted]"`)
+	require.NotContains(t, out.String(), "codog-super-secret-value-123")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/env", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Environment")
+}
+
 func TestInitCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/app\n"), 0o644))

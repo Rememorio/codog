@@ -20,6 +20,8 @@ func Specs() []Spec {
 		{Name: "/init", Usage: "/init", Description: "Initialize Codog project config and instruction files."},
 		{Name: "/state", Usage: "/state", Description: "Show the current worker state file."},
 		{Name: "/memory", Usage: "/memory", Description: "List loaded project memory files."},
+		{Name: "/project", Usage: "/project", Description: "Show project detection info."},
+		{Name: "/env", Usage: "/env", Description: "Show environment variables visible to tools with sensitive values redacted."},
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/max-tokens", Usage: "/max-tokens [count]", Description: "Show or switch max output tokens."},

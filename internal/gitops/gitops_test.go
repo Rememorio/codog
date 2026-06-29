@@ -37,6 +37,20 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, log, "add notes")
 
+	root, err := Root(workspace)
+	require.NoError(t, err)
+	expectedRoot, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedRoot, root)
+
+	branch, err := Branch(workspace)
+	require.NoError(t, err)
+	require.NotEmpty(t, branch)
+
+	head, err := Head(workspace)
+	require.NoError(t, err)
+	require.NotEmpty(t, head)
+
 	blame, err := Blame(workspace, "notes.txt", 1)
 	require.NoError(t, err)
 	require.Contains(t, blame, "hello")
