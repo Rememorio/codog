@@ -1,7 +1,9 @@
 package codeintel
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -210,4 +212,84 @@ func TestLSPStoreRejectsUnsafeLanguage(t *testing.T) {
 	_, err := store.Start("../go", []string{"gopls"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "safe name")
+}
+
+func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell command")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	store := NewLSPStore(configHome, workspace)
+	command := "CODOG_FAKE_LSP=1 " + shellCommand([]string{os.Args[0], "-test.run", "TestFakeLSPServer"})
+	require.NoError(t, store.save(LSPServer{Language: "go", Command: command, Workspace: workspace, StartedAt: time.Now()}))
+
+	result, err := store.Query(context.Background(), "go", LSPQueryRequest{Action: "hover", Path: "main.go", Line: 2, Character: 5})
+	require.NoError(t, err)
+	require.Equal(t, "lsp_query", result.Kind)
+	require.Equal(t, "go", result.Language)
+	require.Equal(t, "hover", result.Action)
+	require.Equal(t, "textDocument/hover", result.Method)
+	require.Equal(t, "main.go", result.Path)
+	require.NotNil(t, result.Result)
+}
+
+func TestNormalizeLSPActionAliases(t *testing.T) {
+	cases := map[string]string{
+		"goto_definition":  "definition",
+		"find_references":  "references",
+		"completions":      "completion",
+		"document_symbols": "symbols",
+		"formatting":       "format",
+	}
+	for input, expected := range cases {
+		actual, err := NormalizeLSPAction(input)
+		require.NoError(t, err)
+		require.Equal(t, expected, actual)
+	}
+	_, err := NormalizeLSPAction("unknown")
+	require.Error(t, err)
+}
+
+func TestFakeLSPServer(t *testing.T) {
+	if os.Getenv("CODOG_FAKE_LSP") != "1" {
+		return
+	}
+	defer os.Exit(0)
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		raw, err := readLSPMessage(reader)
+		if err != nil {
+			return
+		}
+		var msg lspRPCMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return
+		}
+		if msg.Method == "exit" {
+			return
+		}
+		if msg.ID == nil {
+			continue
+		}
+		switch msg.Method {
+		case "initialize":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"capabilities": map[string]any{}})})
+		case "textDocument/hover":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(map[string]any{"contents": map[string]any{"kind": "markdown", "value": "fake hover"}})})
+		case "shutdown":
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
+		default:
+			_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", ID: msg.ID, Result: mustRawJSON(nil)})
+		}
+	}
+}
+
+func mustRawJSON(value any) json.RawMessage {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

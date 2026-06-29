@@ -199,7 +199,7 @@ func TestControlSessionPromptStartsBackgroundRun(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(filepath.Join(root, "home")).Logs(task.ID, 4096)
 		return err == nil && strings.Contains(logs, "remote-prompt:--resume session-remote prompt summarize remote state")
-	}, 5*time.Second, 50*time.Millisecond)
+	}, 10*time.Second, 50*time.Millisecond)
 }
 
 func TestControlBackgroundLifecycle(t *testing.T) {

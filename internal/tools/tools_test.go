@@ -441,10 +441,20 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.Contains(t, symbolsOut, `"action": "symbols"`)
 	require.Contains(t, symbolsOut, "BuildWidget")
 
+	documentSymbolsOut, err := tool.Execute(context.Background(), []byte(`{"action":"document_symbols","path":"demo.go"}`))
+	require.NoError(t, err)
+	require.Contains(t, documentSymbolsOut, `"action": "symbols"`)
+	require.Contains(t, documentSymbolsOut, "BuildWidget")
+
 	definitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget"}`))
 	require.NoError(t, err)
 	require.Contains(t, definitionOut, `"found": true`)
 	require.Contains(t, definitionOut, `"name": "Widget"`)
+
+	gotoDefinitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"goto_definition","query":"Widget"}`))
+	require.NoError(t, err)
+	require.Contains(t, gotoDefinitionOut, `"action": "definition"`)
+	require.Contains(t, gotoDefinitionOut, `"found": true`)
 
 	hoverOut, err := tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6}`))
 	require.NoError(t, err)

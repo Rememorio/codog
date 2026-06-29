@@ -4760,6 +4760,36 @@ func (a *App) CodeIntelLSP(args []string) error {
 			return err
 		}
 		payload = status
+	case "query", "request":
+		if len(args) < 4 {
+			return errors.New("usage: codog code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]")
+		}
+		line := 0
+		character := 0
+		if len(args) > 4 {
+			var err error
+			line, err = strconv.Atoi(args[4])
+			if err != nil {
+				return fmt.Errorf("lsp query line must be an integer")
+			}
+		}
+		if len(args) > 5 {
+			var err error
+			character, err = strconv.Atoi(args[5])
+			if err != nil {
+				return fmt.Errorf("lsp query character must be an integer")
+			}
+		}
+		result, err := store.Query(context.Background(), args[1], codeintel.LSPQueryRequest{
+			Action:    args[2],
+			Path:      args[3],
+			Line:      line,
+			Character: character,
+		})
+		if err != nil {
+			return err
+		}
+		payload = result
 	case "stop":
 		if len(args) < 2 {
 			return errors.New("usage: codog code-intel lsp stop LANGUAGE")
@@ -7880,6 +7910,7 @@ Usage:
   %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
+  %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
@@ -7902,7 +7933,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

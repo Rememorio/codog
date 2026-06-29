@@ -188,7 +188,9 @@ Claude Code source.
 - `codog code-intel symbols|diagnostics|completion|format` remains available
   for compatibility, `notebook-edit` updates `.ipynb` cells, and
   `lsp discover|start|list|status|stop` manages local language server
-  lifecycles.
+  lifecycles. `code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]`
+  starts the saved LSP command over stdio for one request when a real server is
+  configured.
 - `codog remote serve [addr]` starts a local HTTP control API for sessions,
   session message/input mutation and rewind, background prompt turns, background
   tasks, terminal command streams, logs/watch streams, workspace file

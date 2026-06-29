@@ -1906,7 +1906,7 @@ func (LSPTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"action": map[string]any{
 					"type": "string",
-					"enum": []string{"symbols", "references", "diagnostics", "definition", "hover", "completion", "completions", "format", "formatting"},
+					"enum": []string{"symbols", "document_symbols", "references", "find_references", "diagnostics", "definition", "goto_definition", "hover", "completion", "completions", "format", "formatting"},
 				},
 				"path":      map[string]any{"type": "string"},
 				"line":      map[string]any{"type": "integer", "minimum": 0},
@@ -1936,7 +1936,10 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	action, err := codeintel.NormalizeLSPAction(payload.Action)
+	if err != nil {
+		return "", err
+	}
 	switch action {
 	case "symbols":
 		symbols, err := codeintel.GoSymbols(t.Workspace)
@@ -1987,7 +1990,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(map[string]any{"action": action, "query": query, "hover": hover}), nil
-	case "completion", "completions":
+	case "completion":
 		query := strings.TrimSpace(payload.Query)
 		if query == "" && strings.TrimSpace(payload.Path) != "" {
 			var err error
@@ -2001,7 +2004,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			return "", err
 		}
 		return pretty(map[string]any{"action": "completion", "query": query, "completions": completions, "total": len(completions)}), nil
-	case "format", "formatting":
+	case "format":
 		if strings.TrimSpace(payload.Path) == "" {
 			return "", errors.New("path is required for lsp format")
 		}
