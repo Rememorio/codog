@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,11 +29,23 @@ type Session struct {
 }
 
 type Store struct {
-	Dir string
+	Dir       string
+	LegacyDir string
+	Workspace string
 }
 
 func NewStore(configHome string) *Store {
 	return &Store{Dir: filepath.Join(configHome, "sessions")}
+}
+
+func NewWorkspaceStore(configHome string, workspace string) *Store {
+	canonical := canonicalWorkspace(workspace)
+	root := filepath.Join(configHome, "sessions")
+	return &Store{
+		Dir:       filepath.Join(root, WorkspaceFingerprint(canonical)),
+		LegacyDir: root,
+		Workspace: canonical,
+	}
 }
 
 func (s *Store) Open(id string) (*Session, error) {
@@ -85,22 +98,32 @@ func (s *Store) List() ([]Session, error) {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(s.Dir)
-	if err != nil {
-		return nil, err
-	}
+	seen := map[string]struct{}{}
 	var sessions []Session
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		id := strings.TrimSuffix(entry.Name(), ".jsonl")
-		path := filepath.Join(s.Dir, entry.Name())
-		messages, err := s.readMessages(path)
+	for _, dir := range s.sessionDirs() {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return nil, err
 		}
-		sessions = append(sessions, Session{ID: id, Path: path, Messages: messages})
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+				continue
+			}
+			id := strings.TrimSuffix(entry.Name(), ".jsonl")
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			messages, err := s.readMessages(path)
+			if err != nil {
+				return nil, err
+			}
+			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages})
+			seen[id] = struct{}{}
+		}
 	}
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].ID > sessions[j].ID
@@ -120,7 +143,18 @@ func (s *Store) LatestID() (string, error) {
 }
 
 func (s *Store) pathFor(id string) string {
-	return filepath.Join(s.Dir, id+".jsonl")
+	path := filepath.Join(s.Dir, id+".jsonl")
+	if s.LegacyDir == "" || sameDir(s.Dir, s.LegacyDir) {
+		return path
+	}
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	legacy := filepath.Join(s.LegacyDir, id+".jsonl")
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return path
 }
 
 func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
@@ -151,4 +185,48 @@ func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 func newID() string {
 	now := time.Now().UTC()
 	return fmt.Sprintf("%s-%06d", now.Format("20060102T150405Z"), now.Nanosecond()/1000)
+}
+
+func canonicalWorkspace(workspace string) string {
+	if workspace == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(workspace)
+	if err == nil {
+		workspace = abs
+	}
+	canonical, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return filepath.Clean(workspace)
+	}
+	return canonical
+}
+
+func WorkspaceFingerprint(workspace string) string {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(filepath.Clean(workspace)))
+	return fmt.Sprintf("%016x", hash.Sum64())
+}
+
+func (s *Store) sessionDirs() []string {
+	dirs := []string{s.Dir}
+	if s.LegacyDir != "" && !sameDir(s.Dir, s.LegacyDir) {
+		dirs = append(dirs, s.LegacyDir)
+	}
+	return dirs
+}
+
+func sameDir(left string, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	leftAbs, err := filepath.Abs(left)
+	if err == nil {
+		left = leftAbs
+	}
+	rightAbs, err := filepath.Abs(right)
+	if err == nil {
+		right = rightAbs
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }

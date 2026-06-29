@@ -14,6 +14,7 @@ Claude Code source.
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes
 - JSONL session persistence and resume
+- Workspace-scoped session storage with legacy flat-session compatibility
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags
 
 - `codog tui` starts a Bubble Tea prompt composer.
