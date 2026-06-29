@@ -81,8 +81,9 @@ Claude Code source.
   variables for reusable prompts.
 - `codog commands list|show|run` and `/commands` discover custom Markdown
   slash commands from `~/.codog/commands`, `.codog/commands`, and
-  `.claude/commands`, then render `$ARGUMENTS` and `{{args}}`. In the REPL,
-  custom commands can also run directly as `/name args`.
+  `.claude/commands`, including nested commands like `team/review.md` as
+  `team:review`, then render `$ARGUMENTS` and `{{args}}`. In the REPL, custom
+  commands can also run directly as `/name args` or `/team/review args`.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.

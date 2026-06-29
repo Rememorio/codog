@@ -35,30 +35,42 @@ type root struct {
 func Load(configHome, workspace string) ([]Command, error) {
 	var commands []Command
 	for _, root := range roots(configHome, workspace) {
-		entries, err := os.ReadDir(root.path)
-		if err != nil {
+		if _, err := os.Stat(root.path); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return nil, err
 		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
+		err := filepath.WalkDir(root.path, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
-			path := filepath.Join(root.path, entry.Name())
+			if entry.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(entry.Name(), ".md") {
+				return nil
+			}
+			name, err := commandName(root.path, path)
+			if err != nil {
+				return err
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			body := string(data)
 			commands = append(commands, Command{
-				Name:    strings.TrimSuffix(entry.Name(), ".md"),
+				Name:    name,
 				Path:    path,
 				Source:  root.source,
 				Preview: preview(body),
 				Body:    body,
 			})
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 	}
 	sort.Slice(commands, func(i, j int) bool {
@@ -71,12 +83,12 @@ func Load(configHome, workspace string) ([]Command, error) {
 }
 
 func Find(configHome, workspace, name string) (Command, error) {
-	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	name = normalizeName(name)
 	if name == "" {
 		return Command{}, errors.New("command name is required")
 	}
 	for _, root := range rootsByPrecedence(configHome, workspace) {
-		path := filepath.Join(root.path, name+".md")
+		path := filepath.Join(root.path, commandPathName(name)+".md")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -119,6 +131,30 @@ func rootsByPrecedence(configHome, workspace string) []root {
 		{filepath.Join(workspace, ".claude", "commands"), "claude"},
 		{filepath.Join(configHome, "commands"), "user"},
 	}
+}
+
+func commandName(root string, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", err
+	}
+	rel = strings.TrimSuffix(filepath.ToSlash(rel), ".md")
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		parts[i] = strings.TrimSpace(part)
+	}
+	return strings.Join(parts, ":"), nil
+}
+
+func commandPathName(name string) string {
+	return filepath.FromSlash(strings.ReplaceAll(name, ":", "/"))
+}
+
+func normalizeName(name string) string {
+	name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+	name = strings.TrimSuffix(name, ".md")
+	name = strings.ReplaceAll(filepath.ToSlash(name), "/", ":")
+	return name
 }
 
 func preview(body string) string {

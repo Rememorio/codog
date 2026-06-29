@@ -1664,8 +1664,8 @@ func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
 	defer server.Close()
 	configHome := t.TempDir()
 	workspace := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team-review.md"), []byte("Review this target: $ARGUMENTS"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands", "team"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "review.md"), []byte("Review this target: $ARGUMENTS"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -1690,7 +1690,7 @@ func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
 	sess, err := app.Sessions.Open("custom-slash")
 	require.NoError(t, err)
 
-	require.True(t, app.handleSlash(context.Background(), "/team-review target.go", sess))
+	require.True(t, app.handleSlash(context.Background(), "/team/review target.go", sess))
 	require.Contains(t, out.String(), "custom done")
 	require.Empty(t, errOut.String())
 	require.Len(t, sess.Messages, 2)
