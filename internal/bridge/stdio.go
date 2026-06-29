@@ -27,6 +27,7 @@ type Server struct {
 	Workspace  string
 	ConfigHome string
 	TrustToken string
+	Executable string
 }
 
 type Request struct {
@@ -90,6 +91,7 @@ func (s Server) handle(req Request) (any, *Error) {
 				"sessions/append_message",
 				"sessions/append_input",
 				"sessions/rewind",
+				"sessions/prompt",
 				"workspace/info",
 				"workspace/files",
 				"workspace/search",
@@ -155,6 +157,12 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "sessions/rewind":
 		result, err := s.sessionRewind(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/prompt":
+		result, err := s.sessionPrompt(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -375,6 +383,51 @@ func (s Server) sessionRewind(params json.RawMessage) (any, error) {
 		return nil, errors.New("id is required")
 	}
 	return s.Sessions.Rewind(id, payload.RemoveMessages)
+}
+
+func (s Server) sessionPrompt(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID     string `json:"id"`
+		Prompt string `json:"prompt"`
+		Kind   string `json:"kind"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	prompt := strings.TrimSpace(payload.Prompt)
+	if prompt == "" {
+		return nil, errors.New("prompt is required")
+	}
+	if strings.TrimSpace(s.ConfigHome) == "" {
+		return nil, errors.New("config home is required")
+	}
+	executable := strings.TrimSpace(s.Executable)
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return nil, err
+		}
+	}
+	kind := strings.TrimSpace(payload.Kind)
+	if kind == "" {
+		kind = "prompt"
+	}
+	command := strings.Join([]string{
+		bridgeShellQuote(executable),
+		"--resume",
+		bridgeShellQuote(id),
+		"prompt",
+		bridgeShellQuote(prompt),
+	}, " ")
+	return background.NewStore(s.ConfigHome).RunWithOptions(command, s.Workspace, background.RunOptions{
+		Kind:      kind,
+		SessionID: id,
+	})
 }
 
 func (s Server) workspaceFiles(params json.RawMessage) (any, error) {
@@ -756,6 +809,16 @@ func boundedLimit(value, defaultValue, maxValue int) int {
 		return maxValue
 	}
 	return value
+}
+
+func bridgeShellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n'\"\\$`!*?[]{}()<>|&;") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func shouldSkipBridgePath(rel string, entry os.DirEntry, includeHidden bool) bool {

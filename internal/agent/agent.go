@@ -400,12 +400,14 @@ func (a *App) Bridge(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
 		return errors.New("usage: codog bridge serve")
 	}
+	executable, _ := os.Executable()
 	return bridge.Server{
 		Sessions:   a.Sessions,
 		Version:    version,
 		Workspace:  a.Workspace,
 		ConfigHome: a.Config.ConfigHome,
 		TrustToken: a.Config.Future.EditorBridgeToken,
+		Executable: executable,
 	}.Serve(a.In, a.Out)
 }
 

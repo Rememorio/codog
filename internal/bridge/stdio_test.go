@@ -24,6 +24,7 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"sessions/append_message"`)
 	require.Contains(t, out.String(), `"sessions/append_input"`)
 	require.Contains(t, out.String(), `"sessions/rewind"`)
+	require.Contains(t, out.String(), `"sessions/prompt"`)
 	require.Contains(t, out.String(), `"workspace/files"`)
 	require.Contains(t, out.String(), `"workspace/search"`)
 	require.Contains(t, out.String(), `"file/read"`)
@@ -58,6 +59,29 @@ func TestBridgeSessionMutations(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "bridge prompt", entries[0].Text)
+}
+
+func TestBridgeSessionPromptStartsBackgroundTask(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'bridge-prompt:%s\\n' \"$*\"\n"), 0o755))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := `{"jsonrpc":"2.0","id":1,"method":"sessions/prompt","params":{"id":"ide-session","prompt":"summarize selection"}}` + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome, Executable: script}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"prompt"`)
+	require.Contains(t, out.String(), `"session_id":"ide-session"`)
+
+	tasks, err := background.NewStore(configHome).List()
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(tasks[0].ID, 4096)
+		return err == nil && strings.Contains(logs, "bridge-prompt:--resume ide-session prompt summarize selection")
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestBridgeFileReadWriteEdit(t *testing.T) {
