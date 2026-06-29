@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+const MaxFileBytes int64 = 2_000_000
 
 type Service struct {
 	Workspace string
@@ -254,29 +257,19 @@ func (s Service) Read(options ReadOptions) (ReadResult, error) {
 	if err != nil {
 		return ReadResult{}, err
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ReadResult{}, err
-	}
-	if options.Offset < 0 {
-		options.Offset = 0
-	}
-	if options.Offset > len(data) {
-		options.Offset = len(data)
-	}
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 64 * 1024
 	}
-	end := options.Offset + limit
-	if end > len(data) {
-		end = len(data)
+	data, totalBytes, truncated, err := readWindow(path, options.Offset, limit)
+	if err != nil {
+		return ReadResult{}, err
 	}
 	return ReadResult{
 		Path:      rel,
-		Content:   string(data[options.Offset:end]),
-		Bytes:     len(data),
-		Truncated: end < len(data),
+		Content:   string(data),
+		Bytes:     totalBytes,
+		Truncated: truncated,
 	}, nil
 }
 
@@ -284,6 +277,9 @@ func (s Service) Write(options WriteOptions) (WriteResult, error) {
 	path, rel, err := s.Resolve(options.Path, true)
 	if err != nil {
 		return WriteResult{}, err
+	}
+	if int64(len(options.Content)) > MaxFileBytes {
+		return WriteResult{}, fmt.Errorf("content exceeds maximum workspace file size of %d bytes", MaxFileBytes)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return WriteResult{}, err
@@ -302,7 +298,7 @@ func (s Service) Edit(options EditOptions) (EditResult, error) {
 	if err != nil {
 		return EditResult{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := readEditableFile(path)
 	if err != nil {
 		return EditResult{}, err
 	}
@@ -336,11 +332,14 @@ func (s Service) Diff(options DiffOptions) (DiffResult, error) {
 	}
 	original := options.Original
 	if original == "" {
-		data, err := os.ReadFile(path)
+		data, err := readEditableFile(path)
 		if err != nil {
 			return DiffResult{}, err
 		}
 		original = string(data)
+	}
+	if int64(len(original)) > MaxFileBytes || int64(len(options.Updated)) > MaxFileBytes {
+		return DiffResult{}, fmt.Errorf("diff content exceeds maximum workspace file size of %d bytes", MaxFileBytes)
 	}
 	updated := options.Updated
 	if updated == "" {
@@ -353,6 +352,68 @@ func (s Service) Diff(options DiffOptions) (DiffResult, error) {
 		updated = strings.Replace(original, options.OldString, options.NewString, 1)
 	}
 	return DiffResult{Path: rel, Diff: UnifiedDiff(rel, original, updated)}, nil
+}
+
+func readWindow(path string, offset int, limit int) ([]byte, int, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	total := info.Size()
+	if offset < 0 {
+		offset = 0
+	}
+	if int64(offset) > total {
+		offset = int(total)
+	}
+	if limit <= 0 {
+		limit = 64 * 1024
+	}
+	if int64(limit) > MaxFileBytes {
+		limit = int(MaxFileBytes)
+	}
+	if _, err := file.Seek(int64(offset), io.SeekStart); err != nil {
+		return nil, 0, false, err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	if err != nil {
+		return nil, 0, false, err
+	}
+	truncated := int64(offset)+int64(len(data)) < total
+	if len(data) > limit {
+		data = data[:limit]
+		truncated = true
+	}
+	return data, safeInt64(total), truncated, nil
+}
+
+func readEditableFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, MaxFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > MaxFileBytes {
+		return nil, fmt.Errorf("file exceeds maximum editable size of %d bytes", MaxFileBytes)
+	}
+	return data, nil
+}
+
+func safeInt64(value int64) int {
+	maxInt := int64(^uint(0) >> 1)
+	if value > maxInt {
+		return int(maxInt)
+	}
+	return int(value)
 }
 
 func (s Service) WorkspacePath() (string, error) {
