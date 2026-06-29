@@ -21,6 +21,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
+	"github.com/Rememorio/codog/internal/bughunt"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/commandrun"
 	"github.com/Rememorio/codog/internal/config"
@@ -297,6 +298,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Search(ctx, rest)
 	case "security-review":
 		return app.SecurityReview(rest)
+	case "bughunter":
+		return app.Bughunter(rest)
 	case "init":
 		return app.Init(rest)
 	case "state":
@@ -2815,6 +2818,78 @@ type securityReviewRequest struct {
 	Limit  int
 }
 
+type bughunterRequest struct {
+	Format string
+	Scope  string
+	Limit  int
+}
+
+func (a *App) Bughunter(args []string) error {
+	req, err := parseBughunterArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := bughunt.Scan(a.Workspace, bughunt.Options{Scope: req.Scope, Limit: req.Limit})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	bughunt.RenderText(a.Out, report)
+	return nil
+}
+
+func parseBughunterArgs(args []string) (bughunterRequest, error) {
+	req := bughunterRequest{Format: "text", Limit: 200}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return bughunterRequest{}, errors.New("bughunter output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return bughunterRequest{}, errors.New("bughunter limit is required")
+			}
+			limit, err := strconv.Atoi(args[index])
+			if err != nil {
+				return bughunterRequest{}, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return bughunterRequest{}, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "-"):
+			return bughunterRequest{}, fmt.Errorf("unknown bughunter argument %q", arg)
+		default:
+			if req.Scope != "" {
+				return bughunterRequest{}, fmt.Errorf("unexpected bughunter argument %q", arg)
+			}
+			req.Scope = arg
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return bughunterRequest{}, fmt.Errorf("unknown bughunter output format %q", req.Format)
+	}
+}
+
 func (a *App) SecurityReview(args []string) error {
 	req, err := parseSecurityReviewArgs(args)
 	if err != nil {
@@ -4746,6 +4821,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/security-review":
 		if err := a.SecurityReview(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/bughunter":
+		if err := a.Bughunter(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/review":
@@ -7638,6 +7717,7 @@ Usage:
   %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
+  %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]
   %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
@@ -7690,7 +7770,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

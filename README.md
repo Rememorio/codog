@@ -42,7 +42,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/stats`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
@@ -67,6 +67,9 @@ Claude Code source.
   workspace file contents without making a provider request.
 - `/security-review` and `codog security-review [--limit N]` run a local
   heuristic scan for common credential and shell-command risks.
+- `/bughunter` and `codog bughunter [PATH] [--limit N]` scan local code for
+  likely correctness issues such as unchecked returns, panics, os.Exit,
+  defer-in-loop, and loop variable capture.
 - `/review` and `codog review [--staged|--base REF]` summarize changed files,
   added/deleted lines, and security findings limited to the changed paths.
 - `/context` and `codog context [--resume latest]` summarize prompt context,

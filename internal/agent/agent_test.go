@@ -1340,6 +1340,30 @@ func TestSecurityReviewCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestBughunterCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc risky(v any) { _, _ = v.(string); panic(\"boom\") }\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Bughunter([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "bughunter"`)
+	require.Contains(t, out.String(), `"rule": "ignored-return-value"`)
+	require.Contains(t, out.String(), `"rule": "panic-in-runtime-path"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/bughunter . --limit 5", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Bughunter")
+	require.Contains(t, out.String(), "ignored-return-value")
+	require.Empty(t, errOut.String())
+}
+
 func TestReviewCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "script.sh"), []byte("echo safe\n"), 0o644))
