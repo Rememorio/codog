@@ -4561,6 +4561,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/stats":
+		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/rate-limit-options":
 		if err := a.RateLimitOptions(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -4698,7 +4702,33 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/mcp":
-		_ = a.MCP(ctx, nil)
+		if err := a.MCP(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/agents":
+		if err := a.AgentsWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/background":
+		if err := a.BackgroundWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/tasks":
+		if err := a.BackgroundWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/plugin", "/plugins", "/marketplace":
+		if err := a.Marketplace(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/providers":
+		args := fields[1:]
+		if len(args) == 0 {
+			args = []string{"list"}
+		}
+		if err := a.OAuth(append([]string{"provider"}, args...)); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/session":
 		a.handleSessionSlash(fields[1:], sess)
 	case "/clear":

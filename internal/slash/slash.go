@@ -33,6 +33,7 @@ func Specs() []Spec {
 		{Name: "/doctor", Usage: "/doctor", Description: "Run local auth, config, workspace, and runtime diagnostics."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/usage", Usage: "/usage", Description: "Show detailed token, role, block, and tool usage for the current session."},
+		{Name: "/stats", Usage: "/stats", Description: "Alias for /usage."},
 		{Name: "/rate-limit-options", Usage: "/rate-limit-options", Description: "Show provider retry and backoff settings."},
 		{Name: "/plan", Usage: "/plan [TEXT|show|exit|clear]", Description: "Enter or inspect read-only planning mode."},
 		{Name: "/exit-plan", Usage: "/exit-plan", Description: "Leave read-only planning mode."},
@@ -84,6 +85,13 @@ func Specs() []Spec {
 		{Name: "/version", Usage: "/version", Description: "Show CLI version and build information."},
 		{Name: "/templates", Usage: "/templates [list|show|apply]", Description: "List, show, or render prompt templates."},
 		{Name: "/exit", Usage: "/exit", Description: "Exit the REPL."},
+		{Name: "/agents", Usage: "/agents [list|run|worktrees]", Description: "List or launch local agent definitions."},
+		{Name: "/tasks", Usage: "/tasks [list|status|stop|logs|watch]", Description: "Alias for background task management."},
+		{Name: "/background", Usage: "/background [run|list|status|stop|logs|watch]", Description: "Manage local background tasks."},
+		{Name: "/plugin", Usage: "/plugin [list|install|enable|disable|remove]", Description: "Alias for marketplace plugin management."},
+		{Name: "/plugins", Usage: "/plugins [list|install|enable|disable|remove]", Description: "Alias for marketplace plugin management."},
+		{Name: "/marketplace", Usage: "/marketplace [list|remote|updates|install|update]", Description: "Manage local and remote plugins."},
+		{Name: "/providers", Usage: "/providers [list|show|save|delete]", Description: "Manage OAuth provider profiles."},
 	}
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	return specs

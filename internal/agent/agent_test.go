@@ -1075,6 +1075,11 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=0")
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/stats", sess))
+	require.Contains(t, out.String(), "Usage")
+	require.Contains(t, out.String(), "Session          usage-session")
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/summary", sess))
 	require.Contains(t, out.String(), "Summary")
 	require.Contains(t, out.String(), "Session          usage-session")
@@ -1429,6 +1434,10 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), `"input_schema"`)
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/mcp tools test", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"name": "echo"`)
+	out.Reset()
+
 	require.NoError(t, app.MCP(context.Background(), []string{"call", "test", "echo", `{"text":"hi"}`}))
 	require.Contains(t, out.String(), `"text": "hi"`)
 	out.Reset()
@@ -1451,6 +1460,28 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 
 	require.NoError(t, app.MCP(context.Background(), []string{"prompt", "test", "review", `{"topic":"hooks"}`}))
 	require.Contains(t, out.String(), "Review hooks")
+}
+
+func TestSlashAliasesForExistingSurfaces(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	for _, command := range []string{"/agents", "/tasks", "/background", "/plugin", "/plugins", "/marketplace", "/providers"} {
+		out.Reset()
+		errOut.Reset()
+		require.True(t, app.handleSlash(context.Background(), command, sess), command)
+		require.NotEmpty(t, strings.TrimSpace(out.String()), command)
+		require.Empty(t, errOut.String(), command)
+	}
 }
 
 func TestAgentMCPHelperProcess(t *testing.T) {
