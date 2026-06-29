@@ -21,7 +21,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
-  `/context`, `/focus`, `/unfocus`, `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/templates`, `/output-style`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
@@ -36,6 +36,8 @@ Claude Code source.
   tools.
 - `/search` and `codog search PATTERN [--path PATH] [--glob GLOB]` search
   workspace file contents without making a provider request.
+- `/security-review` and `codog security-review [--limit N]` run a local
+  heuristic scan for common credential and shell-command risks.
 - `/context` and `codog context [--resume latest]` summarize prompt context,
   project memory, focused paths, session token estimates, git state, and local
   preflight signals before a provider request.

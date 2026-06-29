@@ -25,6 +25,8 @@ Codog follows a small-core layout:
   system prompt injection for selected files/directories.
 - `internal/todos`: workspace todo persistence shared by CLI, slash commands,
   and model-facing todo tools.
+- `internal/securityreview`: local heuristic scanner for credential and
+  shell-command risk patterns.
 - `internal/workerstate`: file-based worker observability surface shared by
   REPL, one-shot prompts, and `codog state`.
 - `internal/versioninfo`: version, build metadata, runtime, and workspace

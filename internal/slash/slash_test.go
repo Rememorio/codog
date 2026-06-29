@@ -50,6 +50,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/prompt-history")
 	require.Contains(t, out.String(), "/resume")
 	require.Contains(t, out.String(), "/search")
+	require.Contains(t, out.String(), "/security-review")
 	require.Contains(t, out.String(), "/focus")
 	require.Contains(t, out.String(), "/unfocus")
 	require.Contains(t, out.String(), "/output-style")

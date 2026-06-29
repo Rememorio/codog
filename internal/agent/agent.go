@@ -40,6 +40,7 @@ import (
 	"github.com/Rememorio/codog/internal/prompthistory"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
+	"github.com/Rememorio/codog/internal/securityreview"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
@@ -246,6 +247,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Context(rest, overrides)
 	case "search":
 		return app.Search(ctx, rest)
+	case "security-review":
+		return app.SecurityReview(rest)
 	case "init":
 		return app.Init(rest)
 	case "state":
@@ -2207,6 +2210,72 @@ func renderSearchReport(out io.Writer, report searchReport) {
 	}
 }
 
+type securityReviewRequest struct {
+	Format string
+	Limit  int
+}
+
+func (a *App) SecurityReview(args []string) error {
+	req, err := parseSecurityReviewArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := securityreview.Review(a.Workspace, req.Limit)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	securityreview.RenderText(a.Out, report)
+	return nil
+}
+
+func parseSecurityReviewArgs(args []string) (securityReviewRequest, error) {
+	req := securityReviewRequest{Format: "text", Limit: 200}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return securityReviewRequest{}, errors.New("security-review output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return securityReviewRequest{}, errors.New("security-review limit is required")
+			}
+			limit, err := strconv.Atoi(args[index])
+			if err != nil {
+				return securityReviewRequest{}, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return securityReviewRequest{}, err
+			}
+			req.Limit = limit
+		default:
+			return securityReviewRequest{}, fmt.Errorf("unknown security-review argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return securityReviewRequest{}, fmt.Errorf("unknown security-review output format %q", req.Format)
+	}
+}
+
 func renderVersion(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("version", args)
 	if err != nil {
@@ -3336,6 +3405,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/search":
 		if err := a.Search(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/security-review":
+		if err := a.SecurityReview(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/focus":
@@ -4647,6 +4720,7 @@ Usage:
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
+  %s [flags] security-review [--limit N] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] cost --resume latest
@@ -4680,7 +4754,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
