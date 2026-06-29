@@ -37,6 +37,14 @@ type PromptEntry struct {
 	SessionID string    `json:"session_id"`
 }
 
+type RewindResult struct {
+	SessionID         string `json:"session_id"`
+	Path              string `json:"path"`
+	OriginalMessages  int    `json:"original_messages"`
+	RemainingMessages int    `json:"remaining_messages"`
+	RemovedMessages   int    `json:"removed_messages"`
+}
+
 type Store struct {
 	Dir       string
 	LegacyDir string
@@ -307,6 +315,61 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 	return entries, nil
 }
 
+func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
+	if strings.TrimSpace(id) == "" {
+		return RewindResult{}, errors.New("session id is required")
+	}
+	if removeMessages <= 0 {
+		return RewindResult{}, errors.New("rewind message count must be positive")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return RewindResult{}, err
+		}
+		id = latest
+	}
+	path := s.pathFor(id)
+	records, err := s.readRecords(path)
+	if err != nil {
+		return RewindResult{}, err
+	}
+	totalMessages := 0
+	for _, record := range records {
+		if record.Message != nil {
+			totalMessages++
+		}
+	}
+	if totalMessages == 0 {
+		return RewindResult{}, errors.New("session has no messages to rewind")
+	}
+	remainingMessages := totalMessages - removeMessages
+	if remainingMessages < 0 {
+		remainingMessages = 0
+	}
+	var kept []Record
+	seenMessages := 0
+	for _, record := range records {
+		if seenMessages >= remainingMessages {
+			break
+		}
+		if record.Message != nil {
+			seenMessages++
+		}
+		kept = append(kept, record)
+	}
+	if err := s.writeRecords(path, kept); err != nil {
+		return RewindResult{}, err
+	}
+	return RewindResult{
+		SessionID:         id,
+		Path:              path,
+		OriginalMessages:  totalMessages,
+		RemainingMessages: remainingMessages,
+		RemovedMessages:   totalMessages - remainingMessages,
+	}, nil
+}
+
 func (s *Store) pathFor(id string) string {
 	path := filepath.Join(s.Dir, id+".jsonl")
 	if s.LegacyDir == "" || sameDir(s.Dir, s.LegacyDir) {
@@ -357,6 +420,28 @@ func (s *Store) readRecords(path string) ([]Record, error) {
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+func (s *Store) writeRecords(path string, records []Record) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".rewind-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	for _, record := range records {
+		if err := writeRecord(tmp, record); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func writeRecord(file *os.File, record Record) error {

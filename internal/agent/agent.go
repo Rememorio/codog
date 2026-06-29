@@ -209,6 +209,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SessionsCommand(rest)
 	case "history", "prompt-history":
 		return app.History(rest, overrides)
+	case "rewind":
+		return app.Rewind(rest, overrides)
 	case "todos":
 		return app.Todos(rest)
 	case "focus":
@@ -2889,6 +2891,57 @@ func (a *App) History(args []string, overrides config.FlagOverrides) error {
 	return a.renderPromptHistory(req.Format, sessionID, entries, req.Limit)
 }
 
+type rewindRequest struct {
+	SessionID string
+	Format    string
+	Messages  int
+}
+
+type rewindReport struct {
+	Kind   string               `json:"kind"`
+	Action string               `json:"action"`
+	Status string               `json:"status"`
+	Result session.RewindResult `json:"result"`
+}
+
+func (a *App) Rewind(args []string, overrides config.FlagOverrides) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parseRewindArgs(args, overrides, "")
+	if err != nil {
+		return err
+	}
+	if req.SessionID == "" {
+		req.SessionID = "latest"
+	}
+	result, err := a.Sessions.Rewind(req.SessionID, req.Messages)
+	if err != nil {
+		return err
+	}
+	a.renderRewindReport(req.Format, result)
+	return nil
+}
+
+func (a *App) renderRewindReport(format string, result session.RewindResult) {
+	report := rewindReport{
+		Kind:   "rewind",
+		Action: "rewind",
+		Status: "ok",
+		Result: result,
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return
+	}
+	fmt.Fprintln(a.Out, "Rewind")
+	fmt.Fprintf(a.Out, "  Session          %s\n", result.SessionID)
+	fmt.Fprintf(a.Out, "  Removed          %d\n", result.RemovedMessages)
+	fmt.Fprintf(a.Out, "  Remaining        %d\n", result.RemainingMessages)
+	fmt.Fprintf(a.Out, "  Path             %s\n", result.Path)
+}
+
 func (a *App) renderPromptHistory(format string, sessionID string, entries []session.PromptEntry, limit int) error {
 	report := prompthistory.Build(sessionID, entries, limit)
 	if format == "json" {
@@ -3096,6 +3149,99 @@ func parseHistoryLimit(value string) (int, error) {
 		return 0, errors.New("history limit must be positive")
 	}
 	return limit, nil
+}
+
+func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSession string) (rewindRequest, error) {
+	req := rewindRequest{Format: "text", Messages: 2, SessionID: defaultSession}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+		if req.SessionID == "true" {
+			req.SessionID = "latest"
+		}
+	}
+	if req.SessionID == "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rewind output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rewind session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rewind resume id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--messages" || arg == "-n":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rewind message count is required")
+			}
+			count, err := parseRewindCount(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Messages = count
+		case strings.HasPrefix(arg, "--messages="):
+			count, err := parseRewindCount(strings.TrimPrefix(arg, "--messages="))
+			if err != nil {
+				return req, err
+			}
+			req.Messages = count
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown rewind flag %q", arg)
+		default:
+			count, err := strconv.Atoi(arg)
+			if err == nil {
+				if count <= 0 {
+					return req, errors.New("rewind message count must be positive")
+				}
+				req.Messages = count
+				continue
+			}
+			if req.SessionID == "" || req.SessionID == "latest" {
+				req.SessionID = arg
+				continue
+			}
+			return req, fmt.Errorf("unexpected rewind argument %q", arg)
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown rewind output format %q", req.Format)
+	}
+	return req, nil
+}
+
+func parseRewindCount(value string) (int, error) {
+	count, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if count <= 0 {
+		return 0, errors.New("rewind message count must be positive")
+	}
+	return count, nil
 }
 
 func parseSearchArgs(args []string) (searchRequest, error) {
@@ -4003,6 +4149,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleClearSlash(fields[1:], sess)
 	case "/resume":
 		a.handleResumeSlash(fields[1:], sess)
+	case "/rewind":
+		a.handleRewindSlash(fields[1:], sess)
 	default:
 		if _, ok := slash.Lookup(fields[0]); !ok {
 			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
@@ -4045,6 +4193,37 @@ func (a *App) handleResumeSlash(args []string, sess *session.Session) {
 	*sess = *next
 	a.writeWorkerState("repl", "idle", sess, "")
 	fmt.Fprintf(a.Err, "session resumed: %s\n", sess.ID)
+}
+
+func (a *App) handleRewindSlash(args []string, sess *session.Session) {
+	if a.Sessions == nil {
+		fmt.Fprintln(a.Err, "error: session store is not configured")
+		return
+	}
+	defaultSession := ""
+	if sess != nil {
+		defaultSession = sess.ID
+	}
+	req, err := parseRewindArgs(args, config.FlagOverrides{}, defaultSession)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	result, err := a.Sessions.Rewind(req.SessionID, req.Messages)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	next, err := a.Sessions.Open(result.SessionID)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if sess != nil {
+		*sess = *next
+		a.writeWorkerState("repl", "idle", sess, "")
+	}
+	a.renderRewindReport(req.Format, result)
 }
 
 func (a *App) handleHistorySlash(args []string, sess *session.Session) {
@@ -5747,6 +5926,7 @@ Usage:
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|delete]
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
+  %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
   %s [flags] skills
@@ -5803,7 +5983,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

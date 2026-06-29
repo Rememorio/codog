@@ -120,6 +120,35 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
+func TestRewindCommandAndSlash(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "first answer")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "second prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "second answer")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Rewind([]string{"2", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "rewind"`)
+	require.Contains(t, out.String(), `"removed_messages": 2`)
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 2)
+	out.Reset()
+
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "third prompt")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	require.Len(t, sess.Messages, 3)
+
+	require.True(t, app.handleSlash(context.Background(), "/rewind 1", sess))
+	require.Len(t, sess.Messages, 2)
+	require.Contains(t, out.String(), "Removed          1")
+	require.Empty(t, errOut.String())
+}
+
 func TestSessionSlashSwitchAndFork(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello slash")))

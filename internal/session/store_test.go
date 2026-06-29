@@ -131,6 +131,49 @@ func TestPromptHistoryFallsBackToUserMessages(t *testing.T) {
 	require.Equal(t, "legacy prompt", entries[0].Text)
 }
 
+func TestRewindTruncatesMessagesAndTrailingInputs(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.AppendInput("source", "first prompt"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "first answer")))
+	require.NoError(t, store.AppendInput("source", "second prompt"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "second prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "second answer")))
+
+	result, err := store.Rewind("source", 2)
+	require.NoError(t, err)
+	require.Equal(t, "source", result.SessionID)
+	require.Equal(t, 4, result.OriginalMessages)
+	require.Equal(t, 2, result.RemainingMessages)
+	require.Equal(t, 2, result.RemovedMessages)
+
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 2)
+	require.Equal(t, "first answer", opened.Messages[1].Content[0].Text)
+	entries, err := store.PromptHistory("source")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "first prompt", entries[0].Text)
+}
+
+func TestWorkspaceStoreRewindsLegacySession(t *testing.T) {
+	configHome := t.TempDir()
+	legacy := NewStore(configHome)
+	require.NoError(t, legacy.Append("legacy-session", anthropic.TextMessage("user", "legacy prompt")))
+	require.NoError(t, legacy.Append("legacy-session", anthropic.TextMessage("assistant", "legacy answer")))
+
+	store := NewWorkspaceStore(configHome, t.TempDir())
+	result, err := store.Rewind("legacy-session", 1)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(configHome, "sessions", "legacy-session.jsonl"), result.Path)
+
+	opened, err := store.Open("legacy-session")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "legacy prompt", opened.Messages[0].Content[0].Text)
+}
+
 func TestAppendInputIgnoresBlankInput(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.AppendInput("source", "  \n\t"))

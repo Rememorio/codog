@@ -21,7 +21,7 @@ Claude Code source.
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/hooks`, `/mcp`.
@@ -32,6 +32,9 @@ Claude Code source.
 - `/history` and `codog history [--session ID] [--limit N] [--json]` show
   prompts recorded for a session, with legacy fallback to user transcript
   messages.
+- `/rewind` and `codog rewind [N] [--session ID|--resume latest]` remove recent
+  JSONL session messages and trim trailing input records so the next prompt
+  resumes from the rewound context.
 - `/todos` and `codog todos list|add|start|done|pending|clear` maintain the
   workspace todo state used by the built-in `todo_read` and `todo_write` model
   tools.
