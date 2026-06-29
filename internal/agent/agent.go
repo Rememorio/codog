@@ -404,8 +404,8 @@ func (a *App) Background(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	if len(args) < 2 {
-		return errors.New("usage: codog background list | run COMMAND | status ID | stop ID | logs ID [bytes] | watch ID [offset]")
+	if len(args) < 2 && args[0] != "prune" {
+		return errors.New("usage: codog background list | run COMMAND | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep]")
 	}
 	switch args[0] {
 	case "status":
@@ -418,6 +418,14 @@ func (a *App) Background(args []string) error {
 		return nil
 	case "stop":
 		task, err := store.Stop(args[1])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(task, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "restart":
+		task, err := store.Restart(args[1], a.Workspace)
 		if err != nil {
 			return err
 		}
@@ -452,9 +460,49 @@ func (a *App) Background(args []string) error {
 		return store.Watch(context.Background(), args[1], background.WatchOptions{Offset: offset}, func(event background.WatchEvent) error {
 			return encoder.Encode(event)
 		})
+	case "prune":
+		options, err := parseBackgroundPruneArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		result, err := store.Prune(options)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	default:
 		return fmt.Errorf("unknown background command %q", args[0])
 	}
+}
+
+func parseBackgroundPruneArgs(args []string) (background.PruneOptions, error) {
+	options := background.DefaultPruneOptions()
+	if len(args) > 0 {
+		days, err := strconv.Atoi(args[0])
+		if err != nil {
+			return options, err
+		}
+		if days < 0 {
+			return options, errors.New("prune days must be non-negative")
+		}
+		options.OlderThan = time.Duration(days) * 24 * time.Hour
+	}
+	if len(args) > 1 {
+		keep, err := strconv.Atoi(args[1])
+		if err != nil {
+			return options, err
+		}
+		if keep < 0 {
+			return options, errors.New("prune keep must be non-negative")
+		}
+		options.Keep = keep
+	}
+	if len(args) > 2 {
+		return options, errors.New("usage: codog background prune [days] [keep]")
+	}
+	return options, nil
 }
 
 func (a *App) RegisterPluginTools() error {
@@ -1316,7 +1364,7 @@ Usage:
   %s self-test
   %s roadmap [--json]
   %s capabilities [--json]
-  %s background run "command" | background list | background status|stop|logs|watch ID
+  %s background run "command" | background list | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete

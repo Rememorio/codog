@@ -14,14 +14,16 @@ import (
 )
 
 type Task struct {
-	ID          string     `json:"id"`
-	Command     string     `json:"command"`
-	PID         int        `json:"pid"`
-	Status      string     `json:"status"`
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	LogPath     string     `json:"log_path"`
-	Error       string     `json:"error,omitempty"`
+	ID            string     `json:"id"`
+	Command       string     `json:"command"`
+	Workspace     string     `json:"workspace,omitempty"`
+	PID           int        `json:"pid"`
+	Status        string     `json:"status"`
+	StartedAt     time.Time  `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	LogPath       string     `json:"log_path"`
+	Error         string     `json:"error,omitempty"`
+	RestartedFrom string     `json:"restarted_from,omitempty"`
 }
 
 type WatchEvent struct {
@@ -40,6 +42,17 @@ type WatchOptions struct {
 	MaxEvents int
 }
 
+type PruneOptions struct {
+	OlderThan time.Duration
+	Keep      int
+}
+
+type PruneResult struct {
+	Removed      []string `json:"removed"`
+	RemovedCount int      `json:"removed_count"`
+	Kept         int      `json:"kept"`
+}
+
 type Store struct {
 	Dir string
 }
@@ -48,7 +61,69 @@ func NewStore(configHome string) Store {
 	return Store{Dir: filepath.Join(configHome, "background")}
 }
 
+func DefaultPruneOptions() PruneOptions {
+	return PruneOptions{OlderThan: 30 * 24 * time.Hour, Keep: 100}
+}
+
 func (s Store) Run(command string, cwd string) (Task, error) {
+	return s.run(command, cwd, "")
+}
+
+func (s Store) Restart(id string, cwd string) (Task, error) {
+	task, err := s.Status(id)
+	if err != nil {
+		return Task{}, err
+	}
+	if task.Status == "running" {
+		if _, err := s.Stop(id); err != nil {
+			return Task{}, err
+		}
+	}
+	workspace := task.Workspace
+	if workspace == "" {
+		workspace = cwd
+	}
+	return s.run(task.Command, workspace, task.ID)
+}
+
+func (s Store) Prune(options PruneOptions) (PruneResult, error) {
+	tasks, err := s.List()
+	if err != nil {
+		return PruneResult{}, err
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		return taskRetentionTime(tasks[i]).After(taskRetentionTime(tasks[j]))
+	})
+	cutoff := time.Time{}
+	if options.OlderThan > 0 {
+		cutoff = time.Now().UTC().Add(-options.OlderThan)
+	}
+	seenNonRunning := 0
+	result := PruneResult{}
+	for _, task := range tasks {
+		if task.Status == "running" {
+			result.Kept++
+			continue
+		}
+		seenNonRunning++
+		if options.Keep > 0 && seenNonRunning <= options.Keep {
+			result.Kept++
+			continue
+		}
+		if !cutoff.IsZero() && taskRetentionTime(task).After(cutoff) {
+			result.Kept++
+			continue
+		}
+		if err := s.remove(task); err != nil {
+			return result, err
+		}
+		result.Removed = append(result.Removed, task.ID)
+	}
+	result.RemovedCount = len(result.Removed)
+	return result, nil
+}
+
+func (s Store) run(command string, cwd string, restartedFrom string) (Task, error) {
 	if strings.TrimSpace(command) == "" {
 		return Task{}, errors.New("background command is required")
 	}
@@ -71,14 +146,17 @@ func (s Store) Run(command string, cwd string) (Task, error) {
 		return Task{}, err
 	}
 	task := Task{
-		ID:        id,
-		Command:   command,
-		PID:       cmd.Process.Pid,
-		Status:    "running",
-		StartedAt: time.Now().UTC(),
-		LogPath:   logPath,
+		ID:            id,
+		Command:       command,
+		Workspace:     cwd,
+		PID:           cmd.Process.Pid,
+		Status:        "running",
+		StartedAt:     time.Now().UTC(),
+		LogPath:       logPath,
+		RestartedFrom: restartedFrom,
 	}
 	if err := s.save(task); err != nil {
+		_ = cmd.Process.Kill()
 		return Task{}, err
 	}
 	go func() {
@@ -301,4 +379,42 @@ func (s Store) save(task Task) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(s.Dir, task.ID+".json"), data, 0o644)
+}
+
+func (s Store) remove(task Task) error {
+	if task.Status == "running" {
+		return errors.New("cannot prune a running background task")
+	}
+	if task.LogPath != "" && isPathInsideDir(task.LogPath, s.Dir) {
+		if err := os.Remove(task.LogPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if err := os.Remove(filepath.Join(s.Dir, task.ID+".json")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func taskRetentionTime(task Task) time.Time {
+	if task.CompletedAt != nil && !task.CompletedAt.IsZero() {
+		return *task.CompletedAt
+	}
+	return task.StartedAt
+}
+
+func isPathInsideDir(path string, dir string) bool {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }

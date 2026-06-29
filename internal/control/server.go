@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/sessions", s.sessions)
 	mux.HandleFunc("/sessions/", s.sessionByID)
 	mux.HandleFunc("/background", s.background)
+	mux.HandleFunc("/background/prune", s.backgroundPrune)
 	mux.HandleFunc("/background/", s.backgroundByID)
 	mux.HandleFunc("/diagnostics/go", s.goDiagnostics)
 	return s.withAuth(mux)
@@ -197,6 +199,42 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s Server) backgroundPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	options := background.DefaultPruneOptions()
+	var payload struct {
+		OlderThanDays *int `json:"older_than_days"`
+		Keep          *int `json:"keep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if payload.OlderThanDays != nil {
+		if *payload.OlderThanDays < 0 {
+			writeError(w, errors.New("older_than_days must be non-negative"), http.StatusBadRequest)
+			return
+		}
+		options.OlderThan = time.Duration(*payload.OlderThanDays) * 24 * time.Hour
+	}
+	if payload.Keep != nil {
+		if *payload.Keep < 0 {
+			writeError(w, errors.New("keep must be non-negative"), http.StatusBadRequest)
+			return
+		}
+		options.Keep = *payload.Keep
+	}
+	result, err := background.NewStore(s.ConfigHome).Prune(options)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
+}
+
 func (s Server) backgroundByID(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/background/"), "/")
 	if rest == "" {
@@ -213,6 +251,13 @@ func (s Server) backgroundByID(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && action == "":
 		task, err := store.Status(id)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		writeJSON(w, task)
+	case r.Method == http.MethodPost && action == "restart":
+		task, err := store.Restart(id, s.Workspace)
 		if err != nil {
 			writeError(w, err, http.StatusNotFound)
 			return

@@ -154,6 +154,47 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Post(server.URL+"/background/"+task.ID+"/restart", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var restarted background.Task
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&restarted))
+	require.NotEmpty(t, restarted.ID)
+	require.NotEqual(t, task.ID, restarted.ID)
+	require.Equal(t, task.ID, restarted.RestartedFrom)
+
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(server.URL + "/background/" + restarted.ID + "/logs?limit=100")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return bytes.Contains(body, []byte("remote"))
+	}, 2*time.Second, 50*time.Millisecond)
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(server.URL + "/background/" + restarted.ID)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		var task background.Task
+		if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
+			return false
+		}
+		return task.Status != "running"
+	}, 2*time.Second, 50*time.Millisecond)
+
+	resp, err = http.Post(server.URL+"/background/prune", "application/json", bytes.NewBufferString(`{"older_than_days":0,"keep":0}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var pruned background.PruneResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&pruned))
+	require.Contains(t, pruned.Removed, task.ID)
+	require.Contains(t, pruned.Removed, restarted.ID)
 }
 
 func TestControlBackgroundWatchStreamsEvents(t *testing.T) {

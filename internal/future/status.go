@@ -77,12 +77,12 @@ func Surfaces() []Surface {
 			Command:     "background",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local background command registry supports run/list/status/stop/logs/watch with persisted metadata, log files, HTTP streams, bridge notifications, and NDJSON status/log events.",
+			Description: "Local background command registry supports run/list/status/stop/restart/logs/watch/prune with persisted metadata, log files, HTTP streams, bridge notifications, retention cleanup, and NDJSON status/log events.",
 			DependsOn:   []string{"sandbox"},
 			NextSteps: []string{
 				"Add long-lived process supervision.",
 				"Attach background tasks to agent sessions.",
-				"Add task restart and retention policies.",
+				"Add health checks and automatic restart policies.",
 			},
 		},
 		{
