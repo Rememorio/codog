@@ -14,6 +14,7 @@ Claude Code source.
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
   `team_create`, `team_delete`,
+  `enter_worktree`, `exit_worktree`,
   `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
   `tool_search`, `skill`, `config`, `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `task_list`,

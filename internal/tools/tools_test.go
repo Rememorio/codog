@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -136,7 +137,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 34)
+	require.Len(t, infos, 36)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -147,6 +148,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("lsp")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("enter_worktree")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("exit_worktree")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("agent")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -308,6 +315,45 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, hoverOut, `"query": "BuildWidget"`)
 	require.Contains(t, hoverOut, `"found": true`)
+}
+
+func TestWorktreeToolsAllocateAndRemove(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	workspace := t.TempDir()
+	runToolTestGit(t, workspace, "init", "-q")
+	runToolTestGit(t, workspace, "config", "user.email", "codog@example.test")
+	runToolTestGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("hello\n"), 0o644))
+	runToolTestGit(t, workspace, "add", "README.md")
+	runToolTestGit(t, workspace, "commit", "-q", "-m", "init")
+
+	enterOut, err := EnterWorktreeTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"name":"reviewer"}`))
+	require.NoError(t, err)
+	require.Contains(t, enterOut, `"operation": "enter"`)
+	var payload struct {
+		Allocation struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		} `json:"allocation"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(enterOut), &payload))
+	require.NotEmpty(t, payload.Allocation.ID)
+	require.FileExists(t, filepath.Join(payload.Allocation.Path, "README.md"))
+
+	exitOut, err := ExitWorktreeTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"id":"`+payload.Allocation.ID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, exitOut, `"removed": true`)
+	require.NoDirExists(t, payload.Allocation.Path)
+}
+
+func runToolTestGit(t *testing.T, workspace string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
 
 func TestPlanModeToolsEnterAndExit(t *testing.T) {

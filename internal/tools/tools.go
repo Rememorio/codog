@@ -30,6 +30,7 @@ import (
 	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/webaccess"
+	"github.com/Rememorio/codog/internal/worktree"
 )
 
 type Permission string
@@ -125,6 +126,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(WebSearchTool{})
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(EnterWorktreeTool{Workspace: workspace})
+	reg.Register(ExitWorktreeTool{Workspace: workspace})
 	reg.Register(EnterPlanModeTool{Workspace: workspace})
 	reg.Register(ExitPlanModeTool{Workspace: workspace})
 	reg.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1337,6 +1340,84 @@ func symbolAtPosition(workspace string, additionalDirs []string, requested strin
 
 func isIdentifierByte(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+type EnterWorktreeTool struct {
+	Workspace string
+}
+
+func (EnterWorktreeTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "enter_worktree",
+		Description: "Allocate a detached git worktree for isolated agent or verification work.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+			},
+			"required":             []string{"name"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (EnterWorktreeTool) Permission() Permission { return PermissionDanger }
+
+func (t EnterWorktreeTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	allocation, err := worktree.Allocate(t.Workspace, payload.Name)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"kind":       "worktree",
+		"operation":  "enter",
+		"allocation": allocation,
+	}), nil
+}
+
+type ExitWorktreeTool struct {
+	Workspace string
+}
+
+func (ExitWorktreeTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "exit_worktree",
+		Description: "Remove a Codog-managed git worktree allocation by id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ExitWorktreeTool) Permission() Permission { return PermissionDanger }
+
+func (t ExitWorktreeTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if err := worktree.Remove(t.Workspace, payload.ID); err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"kind":      "worktree",
+		"operation": "exit",
+		"id":        payload.ID,
+		"removed":   true,
+	}), nil
 }
 
 type EnterPlanModeTool struct {
