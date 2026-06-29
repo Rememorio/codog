@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
+	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
@@ -68,6 +69,53 @@ func TestEnterpriseVerifyCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"signature_valid": true`)
 	require.Contains(t, out.String(), `"max_permission_mode": "read-only"`)
 	require.NotContains(t, out.String(), policy.Signature)
+}
+
+func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
+	configHome := t.TempDir()
+	store := session.NewStore(configHome)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.SessionsCommand([]string{"exists", "source"}))
+	require.Contains(t, out.String(), `"exists": true`)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"fork", "source", "branch"}))
+	require.Contains(t, out.String(), `"ID":`)
+	require.Contains(t, out.String(), "hello session")
+	var forked session.Session
+	require.NoError(t, json.Unmarshal(out.Bytes(), &forked))
+	require.NotEmpty(t, forked.ID)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"delete", forked.ID}))
+	require.Contains(t, out.String(), `"deleted": true`)
+}
+
+func TestSessionSlashSwitchAndFork(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello slash")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/session fork branch", sess))
+	require.NotEqual(t, "source", sess.ID)
+	require.Contains(t, errOut.String(), "session forked:")
+	forkedID := sess.ID
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/session switch source", sess))
+	require.Equal(t, "source", sess.ID)
+	require.Contains(t, errOut.String(), "session switched: source")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/session delete "+forkedID, sess))
+	require.Contains(t, errOut.String(), "session deleted: "+forkedID)
 }
 
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {

@@ -71,3 +71,29 @@ func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "legacy-session", latest)
 }
+
+func TestForkExistsAndDeleteSession(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "before fork"}}}))
+
+	ok, err := store.Exists("source")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	forked, err := store.Fork("source", "investigation")
+	require.NoError(t, err)
+	require.NotEqual(t, "source", forked.ID)
+	require.Len(t, forked.Messages, 1)
+	require.Equal(t, "before fork", forked.Messages[0].Content[0].Text)
+
+	data, err := os.ReadFile(forked.Path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"type":"fork"`)
+	require.Contains(t, string(data), `"parent_session_id":"source"`)
+	require.Contains(t, string(data), `"branch_name":"investigation"`)
+
+	require.NoError(t, store.Delete(forked.ID))
+	ok, err = store.Exists(forked.ID)
+	require.NoError(t, err)
+	require.False(t, ok)
+}

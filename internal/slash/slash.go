@@ -19,6 +19,7 @@ func Specs() []Spec {
 		{Name: "/status", Usage: "/status", Description: "Show session, model, and permission status."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/compact", Usage: "/compact", Description: "Compact in-memory request context for long sessions."},
+		{Name: "/session", Usage: "/session [list|exists|switch|fork|delete]", Description: "Manage saved sessions."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},
 		{Name: "/exit", Usage: "/exit", Description: "Exit the REPL."},

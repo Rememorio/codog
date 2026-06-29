@@ -15,11 +15,13 @@ import (
 )
 
 type Record struct {
-	Type      string             `json:"type"`
-	Time      time.Time          `json:"time"`
-	Message   *anthropic.Message `json:"message,omitempty"`
-	Input     string             `json:"input,omitempty"`
-	SessionID string             `json:"session_id,omitempty"`
+	Type            string             `json:"type"`
+	Time            time.Time          `json:"time"`
+	Message         *anthropic.Message `json:"message,omitempty"`
+	Input           string             `json:"input,omitempty"`
+	SessionID       string             `json:"session_id,omitempty"`
+	ParentSessionID string             `json:"parent_session_id,omitempty"`
+	BranchName      string             `json:"branch_name,omitempty"`
 }
 
 type Session struct {
@@ -33,6 +35,8 @@ type Store struct {
 	LegacyDir string
 	Workspace string
 }
+
+var ErrNoSessions = errors.New("no saved sessions")
 
 func NewStore(configHome string) *Store {
 	return &Store{Dir: filepath.Join(configHome, "sessions")}
@@ -86,12 +90,95 @@ func (s *Store) Append(id string, msg anthropic.Message) error {
 		Message:   &msg,
 		SessionID: id,
 	}
-	data, err := json.Marshal(record)
-	if err != nil {
+	return writeRecord(file, record)
+}
+
+func (s *Store) Exists(id string) (bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return false, errors.New("session id is required")
+	}
+	if id == "latest" {
+		_, err := s.LatestID()
+		if errors.Is(err, ErrNoSessions) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	_, err := os.Stat(s.pathFor(id))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s *Store) Delete(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("session id is required")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return err
+		}
+		id = latest
+	}
+	path := s.pathFor(id)
+	if err := os.Remove(path); err != nil {
 		return err
 	}
-	_, err = file.Write(append(data, '\n'))
-	return err
+	return nil
+}
+
+func (s *Store) Fork(id string, branchName string) (*Session, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("session id is required")
+	}
+	exists, err := s.Exists(id)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, os.ErrNotExist
+	}
+	source, err := s.Open(id)
+	if err != nil {
+		return nil, err
+	}
+	forkID := newID()
+	path := filepath.Join(s.Dir, forkID+".jsonl")
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	branchName = strings.TrimSpace(branchName)
+	if err := writeRecord(file, Record{
+		Type:            "fork",
+		Time:            time.Now().UTC(),
+		SessionID:       forkID,
+		ParentSessionID: source.ID,
+		BranchName:      branchName,
+	}); err != nil {
+		return nil, err
+	}
+	for _, msg := range source.Messages {
+		next := msg
+		if err := writeRecord(file, Record{
+			Type:      "message",
+			Time:      time.Now().UTC(),
+			Message:   &next,
+			SessionID: forkID,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return &Session{ID: forkID, Messages: append([]anthropic.Message(nil), source.Messages...), Path: path}, nil
 }
 
 func (s *Store) List() ([]Session, error) {
@@ -137,7 +224,7 @@ func (s *Store) LatestID() (string, error) {
 		return "", err
 	}
 	if len(sessions) == 0 {
-		return "", errors.New("no saved sessions")
+		return "", ErrNoSessions
 	}
 	return sessions[0].ID, nil
 }
@@ -180,6 +267,15 @@ func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 		}
 	}
 	return messages, nil
+}
+
+func writeRecord(file *os.File, record Record) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(append(data, '\n'))
+	return err
 }
 
 func newID() string {

@@ -148,7 +148,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return app.Prompt(ctx, input, overrides)
 	case "sessions":
-		return app.ListSessions()
+		return app.SessionsCommand(rest)
 	case "skills":
 		return app.ListSkills()
 	case "mcp":
@@ -1619,12 +1619,123 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		_ = a.ListSkills()
 	case "/mcp":
 		_ = a.MCP(ctx, nil)
+	case "/session":
+		a.handleSessionSlash(fields[1:], sess)
 	default:
 		if _, ok := slash.Lookup(fields[0]); !ok {
 			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
 		}
 	}
 	return true
+}
+
+func (a *App) handleSessionSlash(args []string, sess *session.Session) {
+	if len(args) == 0 || args[0] == "list" {
+		if err := a.ListSessions(); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+		return
+	}
+	switch args[0] {
+	case "exists":
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /session exists ID")
+			return
+		}
+		ok, err := a.Sessions.Exists(args[1])
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		fmt.Fprintf(a.Err, "%t\n", ok)
+	case "switch":
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /session switch ID")
+			return
+		}
+		next, err := a.Sessions.Open(args[1])
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		*sess = *next
+		fmt.Fprintf(a.Err, "session switched: %s\n", sess.ID)
+	case "fork":
+		branch := strings.Join(args[1:], " ")
+		next, err := a.Sessions.Fork(sess.ID, branch)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		*sess = *next
+		fmt.Fprintf(a.Err, "session forked: %s\n", sess.ID)
+	case "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /session delete ID")
+			return
+		}
+		if args[1] == sess.ID && !containsFold(args[2:], "--force") {
+			fmt.Fprintln(a.Err, "refusing to delete active session without --force")
+			return
+		}
+		if err := a.Sessions.Delete(args[1]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		fmt.Fprintf(a.Err, "session deleted: %s\n", args[1])
+	default:
+		fmt.Fprintf(a.Err, "unknown /session action: %s\n", args[0])
+	}
+}
+
+func (a *App) SessionsCommand(args []string) error {
+	if len(args) == 0 || args[0] == "list" {
+		return a.ListSessions()
+	}
+	switch args[0] {
+	case "show":
+		if len(args) < 2 {
+			return errors.New("usage: codog sessions show ID")
+		}
+		sess, err := a.Sessions.Open(args[1])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(sess, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	case "exists":
+		if len(args) < 2 {
+			return errors.New("usage: codog sessions exists ID")
+		}
+		ok, err := a.Sessions.Exists(args[1])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(map[string]any{"id": args[1], "exists": ok}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	case "fork":
+		if len(args) < 2 {
+			return errors.New("usage: codog sessions fork ID [branch-name]")
+		}
+		forked, err := a.Sessions.Fork(args[1], strings.Join(args[2:], " "))
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(forked, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	case "delete":
+		if len(args) < 2 {
+			return errors.New("usage: codog sessions delete ID")
+		}
+		if err := a.Sessions.Delete(args[1]); err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(map[string]any{"deleted": true, "id": args[1]}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	default:
+		return fmt.Errorf("unknown sessions command %q", args[0])
+	}
+	return nil
 }
 
 func (a *App) ListSessions() error {
@@ -1842,7 +1953,7 @@ Usage:
   %s [flags] prompt "explain this repo"
   %s [flags] repl
   %s [flags] tui
-  %s [flags] sessions
+  %s [flags] sessions [list|show|exists|fork|delete]
   %s [flags] skills
   %s [flags] mcp
   %s [flags] cost --resume latest
