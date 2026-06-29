@@ -42,6 +42,8 @@ Claude Code source.
 - Project memory files (`AGENTS.md`, `CLAUDE.md`, `CLAW.md`, and
   `.codog/instructions.md`) are loaded from the git root to the workspace and
   injected into the system prompt.
+- `codog memory [--json]` lists discovered project memory files with line,
+  character, truncation, and preview metadata without printing full file bodies.
 - `codog background run|list|status|stop|restart|logs|watch|prune` manages local
   background commands, attaches them to sessions, supervises restart policies,
   restarts tasks, prunes retained records, and streams status/log events.

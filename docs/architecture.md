@@ -15,6 +15,8 @@ Codog follows a small-core layout:
   flags.
 - `internal/projectinit`: idempotent project bootstrap for `.codog`
   instructions, shared config, and local ignore entries.
+- `internal/memory`: project instruction discovery, system prompt injection,
+  and memory report rendering.
 - `internal/workerstate`: file-based worker observability surface shared by
   REPL, one-shot prompts, and `codog state`.
 - `internal/hooks`: pre/post tool hook runner.

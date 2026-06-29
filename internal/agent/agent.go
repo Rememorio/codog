@@ -115,6 +115,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return renderWorkerState(os.Stdout, workspace, rest)
 	}
+	if command == "memory" {
+		workspace, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		return renderMemoryReport(os.Stdout, workspace, rest)
+	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
 		return enterpriseVerify(os.Stdout, rest)
 	}
@@ -190,6 +197,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Init(rest)
 	case "state":
 		return app.State(rest)
+	case "memory":
+		return app.Memory(rest)
 	case "doctor":
 		return app.Doctor(rest)
 	case "sandbox":
@@ -1461,6 +1470,10 @@ func (a *App) State(args []string) error {
 	return renderWorkerState(a.Out, a.Workspace, args)
 }
 
+func (a *App) Memory(args []string) error {
+	return renderMemoryReport(a.Out, a.Workspace, args)
+}
+
 func initProject(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("init", args)
 	if err != nil {
@@ -1476,6 +1489,24 @@ func initProject(out io.Writer, workspace string, args []string) error {
 		return nil
 	}
 	fmt.Fprintln(out, projectinit.RenderText(report))
+	return nil
+}
+
+func renderMemoryReport(out io.Writer, workspace string, args []string) error {
+	format, err := parseSimpleOutputFormat("memory", args)
+	if err != nil {
+		return err
+	}
+	report, err := memory.BuildReport(workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	memory.RenderReport(out, report)
 	return nil
 }
 
@@ -1874,6 +1905,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/state":
 		if err := a.State(nil); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/memory":
+		if err := a.Memory(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/cost":
@@ -2551,6 +2586,7 @@ Usage:
   %s [flags] status [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
+  %s [flags] memory [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
@@ -2577,7 +2613,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

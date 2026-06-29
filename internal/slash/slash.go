@@ -19,6 +19,7 @@ func Specs() []Spec {
 		{Name: "/status", Usage: "/status", Description: "Show local workspace, session, config, git, and runtime status."},
 		{Name: "/init", Usage: "/init", Description: "Initialize Codog project config and instruction files."},
 		{Name: "/state", Usage: "/state", Description: "Show the current worker state file."},
+		{Name: "/memory", Usage: "/memory", Description: "List loaded project memory files."},
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/permissions", Usage: "/permissions [mode]", Description: "Show or switch the current permission mode."},

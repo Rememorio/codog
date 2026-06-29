@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +72,49 @@ func TestRenderMemoryBlock(t *testing.T) {
 	require.Contains(t, rendered, "<project_memory>")
 	require.Contains(t, rendered, `path="/repo/AGENTS.md"`)
 	require.Contains(t, rendered, "Use concise commit messages.")
+}
+
+func TestBuildReportSummarizesMemoryFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("First line\nSecond line\n"), 0o644))
+
+	report, err := BuildReport(root)
+
+	require.NoError(t, err)
+	require.Equal(t, "memory", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.InstructionFiles)
+	require.Equal(t, "AGENTS.md", report.Files[0].Name)
+	require.Equal(t, 2, report.Files[0].Lines)
+	require.Equal(t, "First line", report.Files[0].Preview)
+
+	data, err := json.Marshal(report)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "Second line")
+}
+
+func TestRenderReportWithAndWithoutFiles(t *testing.T) {
+	var out bytes.Buffer
+	RenderReport(&out, Report{WorkingDirectory: "/repo", InstructionFiles: 0})
+	require.Contains(t, out.String(), "Memory")
+	require.Contains(t, out.String(), "No AGENTS.md")
+	out.Reset()
+
+	RenderReport(&out, Report{
+		WorkingDirectory: "/repo",
+		InstructionFiles: 1,
+		Files: []Summary{{
+			Path:    "/repo/AGENTS.md",
+			Name:    "AGENTS.md",
+			Lines:   1,
+			Chars:   10,
+			Preview: "First",
+		}},
+	})
+	require.Contains(t, out.String(), "1. /repo/AGENTS.md")
+	require.Contains(t, out.String(), "source=AGENTS.md")
+	require.Contains(t, out.String(), "preview=First")
 }
 
 func runGit(t *testing.T, workspace string, args ...string) {

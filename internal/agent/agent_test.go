@@ -290,6 +290,35 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Session          source (1 messages)")
 }
 
+func TestMemoryCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\nsecret body"), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Memory(nil))
+	require.Contains(t, out.String(), "Memory")
+	require.Contains(t, out.String(), "Instruction files 1")
+	require.Contains(t, out.String(), "preview=Memory first line")
+	require.NotContains(t, out.String(), "secret body")
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "memory"`)
+	require.Contains(t, out.String(), `"instruction_files": 1`)
+	require.Contains(t, out.String(), `"preview": "Memory first line"`)
+	require.NotContains(t, out.String(), "secret body")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/memory", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Memory")
+}
+
 func TestInitCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/app\n"), 0o644))

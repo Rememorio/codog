@@ -2,6 +2,8 @@ package memory
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +28,25 @@ type File struct {
 	Body      string `json:"-"`
 }
 
+type Summary struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Scope     string `json:"scope"`
+	Lines     int    `json:"lines"`
+	Chars     int    `json:"chars"`
+	Preview   string `json:"preview"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type Report struct {
+	Kind             string    `json:"kind"`
+	Action           string    `json:"action"`
+	Status           string    `json:"status"`
+	WorkingDirectory string    `json:"working_directory"`
+	InstructionFiles int       `json:"instruction_files"`
+	Files            []Summary `json:"files"`
+}
+
 func Discover(workspace string) ([]File, error) {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
@@ -41,6 +62,64 @@ func Discover(workspace string) ([]File, error) {
 		boundary = root
 	}
 	return discoverBetween(absWorkspace, boundary)
+}
+
+func BuildReport(workspace string) (Report, error) {
+	absWorkspace := strings.TrimSpace(workspace)
+	if absWorkspace == "" {
+		absWorkspace = "."
+	}
+	absWorkspace, err := filepath.Abs(absWorkspace)
+	if err != nil {
+		return Report{}, err
+	}
+	files, err := Discover(absWorkspace)
+	if err != nil {
+		return Report{}, err
+	}
+	return Report{
+		Kind:             "memory",
+		Action:           "list",
+		Status:           "ok",
+		WorkingDirectory: canonicalPath(absWorkspace),
+		InstructionFiles: len(files),
+		Files:            Summaries(files),
+	}, nil
+}
+
+func Summaries(files []File) []Summary {
+	summaries := make([]Summary, 0, len(files))
+	for _, file := range files {
+		summaries = append(summaries, Summary{
+			Path:      file.Path,
+			Name:      file.Name,
+			Scope:     file.Scope,
+			Lines:     countLines(file.Body),
+			Chars:     file.Chars,
+			Preview:   preview(file.Body),
+			Truncated: file.Truncated,
+		})
+	}
+	return summaries
+}
+
+func RenderReport(w io.Writer, report Report) {
+	fmt.Fprintln(w, "Memory")
+	fmt.Fprintf(w, "  Working directory %s\n", report.WorkingDirectory)
+	fmt.Fprintf(w, "  Instruction files %d\n", report.InstructionFiles)
+	fmt.Fprintln(w, "Discovered files")
+	if report.InstructionFiles == 0 {
+		fmt.Fprintln(w, "  No AGENTS.md, CLAUDE.md, CLAW.md, or .codog/instructions.md files discovered in the current workspace ancestry.")
+		return
+	}
+	for i, file := range report.Files {
+		fmt.Fprintf(w, "  %d. %s\n", i+1, file.Path)
+		truncated := ""
+		if file.Truncated {
+			truncated = " truncated=true"
+		}
+		fmt.Fprintf(w, "     source=%s lines=%d chars=%d preview=%s%s\n", file.Name, file.Lines, file.Chars, file.Preview, truncated)
+	}
 }
 
 func Render(files []File) string {
@@ -116,6 +195,25 @@ func readCandidate(path string, scope string, name string) (File, bool, error) {
 		Truncated: truncated,
 		Body:      body,
 	}, true, nil
+}
+
+func countLines(body string) int {
+	if body == "" {
+		return 0
+	}
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return 1
+	}
+	return strings.Count(body, "\n") + 1
+}
+
+func preview(body string) string {
+	line := strings.TrimSpace(strings.SplitN(body, "\n", 2)[0])
+	if line == "" {
+		return "<empty>"
+	}
+	return line
 }
 
 func dirsFromBoundary(workspace string, boundary string) []string {
