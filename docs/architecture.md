@@ -22,6 +22,7 @@ Codog follows a small-core layout:
 - `internal/future`: explicit long-horizon capability status.
 - `internal/background`: background process metadata and log registry.
 - `internal/agentdefs`: local agent definition discovery.
+- `internal/worktree`: git worktree allocation for isolated local agent workers.
 - `internal/plugins`: local plugin discovery, install, enable/disable, and
   removal.
 - `internal/oauth`: PKCE and local auth token storage.

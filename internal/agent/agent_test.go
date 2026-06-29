@@ -47,6 +47,17 @@ func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	require.Contains(t, command, "'\"'\"'$HOME'\"'\"'")
 }
 
+func TestParseAgentRunArgs(t *testing.T) {
+	req, err := parseAgentRunArgs([]string{"--worktree", "reviewer", "check", "this"})
+	require.NoError(t, err)
+	require.True(t, req.Worktree)
+	require.Equal(t, "reviewer", req.Name)
+	require.Equal(t, "check this", req.Prompt)
+
+	_, err = parseAgentRunArgs([]string{"--worktree", "reviewer"})
+	require.Error(t, err)
+}
+
 func TestOAuthTokenCommands(t *testing.T) {
 	configHome := t.TempDir()
 	var out bytes.Buffer

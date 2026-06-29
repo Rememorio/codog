@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
+	"github.com/Rememorio/codog/internal/worktree"
 )
 
 const version = "0.1.0"
@@ -429,39 +430,96 @@ func (a *App) Agents(args []string) error {
 	if len(args) == 0 || args[0] == "list" {
 		return a.ListAgents()
 	}
+	if args[0] == "worktrees" {
+		allocations, err := worktree.List(a.Workspace)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(allocations, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if args[0] == "worktree-remove" {
+		if len(args) < 2 {
+			return errors.New("usage: codog agents worktree-remove ID")
+		}
+		if err := worktree.Remove(a.Workspace, args[1]); err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(map[string]any{"removed": true, "id": args[1]}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	if args[0] != "run" {
 		return fmt.Errorf("unknown agents command %q", args[0])
 	}
-	if len(args) < 3 {
-		return errors.New("usage: codog agents run NAME PROMPT")
+	req, err := parseAgentRunArgs(args[1:])
+	if err != nil {
+		return err
 	}
 	defs, err := agentdefs.Load(a.Workspace)
 	if err != nil {
 		return err
 	}
-	name := args[1]
 	var selected *agentdefs.Definition
 	for i := range defs {
-		if strings.EqualFold(defs[i].Name, name) {
+		if strings.EqualFold(defs[i].Name, req.Name) {
 			selected = &defs[i]
 			break
 		}
 	}
 	if selected == nil {
-		return fmt.Errorf("unknown agent %q", name)
+		return fmt.Errorf("unknown agent %q", req.Name)
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	command := buildAgentCommand(exe, *selected, strings.Join(args[2:], " "))
-	task, err := background.NewStore(a.Config.ConfigHome).Run(command, a.Workspace)
+	runWorkspace := a.Workspace
+	var allocation *worktree.Allocation
+	if req.Worktree {
+		next, err := worktree.Allocate(a.Workspace, selected.Name)
+		if err != nil {
+			return err
+		}
+		allocation = &next
+		runWorkspace = next.Path
+	}
+	command := buildAgentCommand(exe, *selected, req.Prompt)
+	task, err := background.NewStore(a.Config.ConfigHome).Run(command, runWorkspace)
 	if err != nil {
+		if allocation != nil {
+			_ = worktree.Remove(a.Workspace, allocation.ID)
+		}
 		return err
 	}
-	data, _ := json.MarshalIndent(map[string]any{"agent": selected.Name, "task": task}, "", "  ")
+	response := map[string]any{"agent": selected.Name, "task": task}
+	if allocation != nil {
+		response["worktree"] = allocation
+	}
+	data, _ := json.MarshalIndent(response, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type agentRunRequest struct {
+	Name     string
+	Prompt   string
+	Worktree bool
+}
+
+func parseAgentRunArgs(args []string) (agentRunRequest, error) {
+	var req agentRunRequest
+	if len(args) > 0 && args[0] == "--worktree" {
+		req.Worktree = true
+		args = args[1:]
+	}
+	if len(args) < 2 {
+		return agentRunRequest{}, errors.New("usage: codog agents run [--worktree] NAME PROMPT")
+	}
+	req.Name = args[0]
+	req.Prompt = strings.Join(args[1:], " ")
+	return req, nil
 }
 
 func buildAgentCommand(exe string, def agentdefs.Definition, prompt string) string {
@@ -971,7 +1029,8 @@ Usage:
   %s roadmap [--json]
   %s capabilities [--json]
   %s background run "command" | background list | background status|stop|logs ID
-  %s agents list | agents run NAME PROMPT | marketplace list|install|enable|disable|remove
+  %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
+  %s marketplace list|install|enable|disable|remove
   %s oauth pkce | oauth token save|show|delete
   %s sandbox | code-intel symbols|diagnostics
   %s remote serve [addr] | bridge serve | updater check|download URL
@@ -990,7 +1049,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

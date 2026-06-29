@@ -64,12 +64,12 @@ func Surfaces() []Surface {
 			Command:     "agents",
 			Status:      StatusAvailable,
 			Horizon:     "6-12 months",
-			Description: "Local agent specs under .codog/agents can launch named background prompt workers.",
+			Description: "Local agent specs under .codog/agents can launch named background prompt workers, optionally isolated in git worktrees.",
 			DependsOn:   []string{"background", "sandbox"},
 			NextSteps: []string{
-				"Add isolated worktree allocation.",
-				"Route task packets to isolated worktrees.",
 				"Add parent-child session aggregation.",
+				"Add task packet routing between parent and worker agents.",
+				"Add per-agent resource and policy limits.",
 			},
 		},
 		{
