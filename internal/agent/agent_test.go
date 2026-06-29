@@ -191,6 +191,20 @@ func TestDumpManifestsCommand(t *testing.T) {
 	require.ErrorContains(t, err, "missing_manifests")
 }
 
+func TestBootstrapPlanCommand(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{Out: &out}
+
+	require.NoError(t, app.BootstrapPlan([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "bootstrap-plan"`)
+	require.Contains(t, out.String(), `"name": "load_config"`)
+	out.Reset()
+
+	require.NoError(t, app.BootstrapPlan(nil))
+	require.Contains(t, out.String(), "Bootstrap Plan")
+	require.Contains(t, out.String(), "load_config")
+}
+
 func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	configHome := t.TempDir()
 	store := session.NewStore(configHome)

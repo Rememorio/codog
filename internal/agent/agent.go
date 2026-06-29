@@ -333,6 +333,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Enterprise(rest)
 	case "dump-manifests":
 		return app.DumpManifests(rest)
+	case "bootstrap-plan":
+		return app.BootstrapPlan(rest)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
@@ -645,6 +647,44 @@ func renderManifestDump(out io.Writer, report manifests.Report) {
 	fmt.Fprintf(out, "  Agents           %d\n", report.Agents)
 	fmt.Fprintf(out, "  Skills           %d\n", report.Skills)
 	fmt.Fprintf(out, "  Bootstrap phases %d\n", report.BootstrapPhases)
+}
+
+type bootstrapPlanReport struct {
+	Kind   string                     `json:"kind"`
+	Action string                     `json:"action"`
+	Status string                     `json:"status"`
+	Count  int                        `json:"count"`
+	Phases []manifests.BootstrapPhase `json:"phases"`
+}
+
+func (a *App) BootstrapPlan(args []string) error {
+	format, err := parseSimpleOutputFormat("bootstrap-plan", args)
+	if err != nil {
+		return err
+	}
+	phases := manifests.BootstrapManifest()
+	report := bootstrapPlanReport{
+		Kind:   "bootstrap-plan",
+		Action: "show",
+		Status: "ok",
+		Count:  len(phases),
+		Phases: phases,
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBootstrapPlan(a.Out, report)
+	return nil
+}
+
+func renderBootstrapPlan(out io.Writer, report bootstrapPlanReport) {
+	fmt.Fprintln(out, "Bootstrap Plan")
+	fmt.Fprintf(out, "  Phases           %d\n", report.Count)
+	for index, phase := range report.Phases {
+		fmt.Fprintf(out, "  %d. %s\t%s\n", index+1, phase.Name, phase.Description)
+	}
 }
 
 func (a *App) Background(args []string) error {
@@ -7244,6 +7284,7 @@ Usage:
   %s mock-server :8089
   %s self-test
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
+  %s bootstrap-plan [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
@@ -7272,7 +7313,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
