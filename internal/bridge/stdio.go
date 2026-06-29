@@ -104,6 +104,12 @@ func (s Server) handle(req Request) (any, *Error) {
 				"editor/open",
 				"editor/selection",
 				"diagnostics/go",
+				"background/list",
+				"background/run",
+				"background/get",
+				"background/logs",
+				"background/stop",
+				"background/restart",
 				"background/watch",
 			},
 		}, nil
@@ -221,6 +227,42 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return result, nil
+	case "background/list":
+		result, err := s.backgroundList(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/run":
+		result, err := s.backgroundRun(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/get":
+		result, err := s.backgroundGet(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/logs":
+		result, err := s.backgroundLogs(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/stop":
+		result, err := s.backgroundStop(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/restart":
+		result, err := s.backgroundRestart(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	default:
 		return nil, &Error{Code: -32601, Message: fmt.Sprintf("method not found: %s", req.Method)}
 	}
@@ -285,6 +327,116 @@ func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (
 		return nil, &Error{Code: -32000, Message: err.Error()}
 	}
 	return map[string]any{"id": payload.ID, "events": count}, nil
+}
+
+func (s Server) backgroundList(params json.RawMessage) (any, error) {
+	var payload struct {
+		SessionID string `json:"session_id"`
+		Kind      string `json:"kind"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	tasks = background.FilterBySession(tasks, payload.SessionID)
+	tasks = background.FilterByKind(tasks, payload.Kind)
+	return tasks, nil
+}
+
+func (s Server) backgroundRun(params json.RawMessage) (any, error) {
+	var payload struct {
+		Command       string                    `json:"command"`
+		Kind          string                    `json:"kind"`
+		SessionID     string                    `json:"session_id"`
+		RestartPolicy *background.RestartPolicy `json:"restart_policy"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(payload.Command) == "" {
+		return nil, errors.New("command is required")
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.RunWithOptions(payload.Command, s.Workspace, background.RunOptions{
+		Kind:          payload.Kind,
+		SessionID:     payload.SessionID,
+		RestartPolicy: payload.RestartPolicy,
+	})
+}
+
+func (s Server) backgroundGet(params json.RawMessage) (any, error) {
+	id, err := parseBridgeBackgroundID(params)
+	if err != nil {
+		return nil, err
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Status(id)
+}
+
+func (s Server) backgroundLogs(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID    string `json:"id"`
+		Limit int64  `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	limit := payload.Limit
+	if limit <= 0 {
+		limit = 64 * 1024
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	logs, err := store.Logs(id, limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "logs": logs}, nil
+}
+
+func (s Server) backgroundStop(params json.RawMessage) (any, error) {
+	id, err := parseBridgeBackgroundID(params)
+	if err != nil {
+		return nil, err
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Stop(id)
+}
+
+func (s Server) backgroundRestart(params json.RawMessage) (any, error) {
+	id, err := parseBridgeBackgroundID(params)
+	if err != nil {
+		return nil, err
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Restart(id, s.Workspace)
 }
 
 func (s Server) sessionOpen(params json.RawMessage) (any, error) {
@@ -799,6 +951,27 @@ func (s Server) workspace() (string, error) {
 		return filepath.Abs(s.Workspace)
 	}
 	return os.Getwd()
+}
+
+func (s Server) backgroundStore() (background.Store, error) {
+	if strings.TrimSpace(s.ConfigHome) == "" {
+		return background.Store{}, errors.New("config home is required")
+	}
+	return background.NewStore(s.ConfigHome), nil
+}
+
+func parseBridgeBackgroundID(params json.RawMessage) (string, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return "", errors.New("id is required")
+	}
+	return id, nil
 }
 
 func boundedLimit(value, defaultValue, maxValue int) int {

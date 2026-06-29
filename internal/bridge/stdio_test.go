@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,9 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"editor/identify"`)
 	require.Contains(t, out.String(), `"editor/selection"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
+	require.Contains(t, out.String(), `"background/list"`)
+	require.Contains(t, out.String(), `"background/run"`)
+	require.Contains(t, out.String(), `"background/logs"`)
 	require.Contains(t, out.String(), `"background/watch"`)
 }
 
@@ -191,6 +195,57 @@ func TestBridgeBackgroundWatchStreamsNotifications(t *testing.T) {
 	require.Contains(t, lines[1], "bridge log")
 	require.Contains(t, lines[2], `"id":1`)
 	require.Contains(t, lines[2], `"events":2`)
+}
+
+func TestBridgeBackgroundControl(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	var out bytes.Buffer
+	runInput := `{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf bridge-control","kind":"terminal","session_id":"ide-session"}}` + "\n"
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(runInput), &out)
+	require.NoError(t, err)
+	var runResp struct {
+		Result background.Task `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(out.Bytes()), &runResp))
+	require.NotEmpty(t, runResp.Result.ID)
+	require.Equal(t, "terminal", runResp.Result.Kind)
+	require.Equal(t, "ide-session", runResp.Result.SessionID)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(runResp.Result.ID, 4096)
+		return err == nil && strings.Contains(logs, "bridge-control")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	out.Reset()
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":2,"method":"background/list","params":{"session_id":"ide-session","kind":"terminal"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"background/get","params":{"id":"` + runResp.Result.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"background/logs","params":{"id":"` + runResp.Result.ID + `","limit":4096}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"background/restart","params":{"id":"` + runResp.Result.ID + `"}}`,
+	}, "\n") + "\n"
+	err = Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"session_id":"ide-session"`)
+	require.Contains(t, out.String(), `"logs":"bridge-control"`)
+	require.Contains(t, out.String(), `"restarted_from":"`+runResp.Result.ID+`"`)
+
+	tasks, err := background.NewStore(configHome).List()
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(tasks), 2)
+	restartedID := ""
+	for _, task := range tasks {
+		if task.RestartedFrom == runResp.Result.ID {
+			restartedID = task.ID
+			break
+		}
+	}
+	require.NotEmpty(t, restartedID)
+
+	out.Reset()
+	err = Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(`{"jsonrpc":"2.0","id":6,"method":"background/stop","params":{"id":"`+restartedID+`"}}`+"\n"), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"id":"`+restartedID+`"`)
 }
 
 func TestBridgeRejectsWorkspaceEscape(t *testing.T) {
