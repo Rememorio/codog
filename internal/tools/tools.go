@@ -45,6 +45,7 @@ const (
 	PermissionDanger    Permission = "danger-full-access"
 	PermissionPrompt    Permission = "prompt"
 	PermissionAllow     Permission = "allow"
+	maxFileToolBytes    int64      = 2_000_000
 )
 
 type Tool interface {
@@ -1249,7 +1250,7 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	data, truncated, err := readFileLimited(path, maxFileToolBytes)
 	if err != nil {
 		return "", err
 	}
@@ -1266,6 +1267,8 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 		"path":       path,
 		"start_line": start + 1,
 		"total":      len(lines),
+		"bytes":      len(data),
+		"truncated":  truncated,
 		"content":    strings.Join(lines[start:end], "\n"),
 	}), nil
 }
@@ -1300,6 +1303,9 @@ func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
+	}
+	if int64(len(payload.Content)) > maxFileToolBytes {
+		return "", fmt.Errorf("content exceeds maximum file tool size of %d bytes", maxFileToolBytes)
 	}
 	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, true)
 	if err != nil {
@@ -1360,9 +1366,12 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	data, truncated, err := readFileLimited(path, maxFileToolBytes)
 	if err != nil {
 		return "", err
+	}
+	if truncated {
+		return "", fmt.Errorf("file exceeds maximum editable size of %d bytes", maxFileToolBytes)
 	}
 	content := string(data)
 	count := strings.Count(content, payload.OldString)
@@ -1440,9 +1449,12 @@ func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	data, truncated, err := readFileLimited(path, maxFileToolBytes)
 	if err != nil {
 		return "", err
+	}
+	if truncated {
+		return "", fmt.Errorf("file exceeds maximum editable size of %d bytes", maxFileToolBytes)
 	}
 	content := string(data)
 	total := 0
@@ -4404,6 +4416,25 @@ func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string
 
 func safePath(workspace, requested string, allowMissing bool) (string, error) {
 	return safePathInScope(workspace, nil, requested, allowMissing)
+}
+
+func readFileLimited(path string, maxBytes int64) ([]byte, bool, error) {
+	if maxBytes <= 0 {
+		maxBytes = maxFileToolBytes
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > maxBytes {
+		return data[:maxBytes], true, nil
+	}
+	return data, false, nil
 }
 
 func safePathInScope(workspace string, additionalDirs []string, requested string, allowMissing bool) (string, error) {

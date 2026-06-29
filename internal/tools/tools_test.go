@@ -34,6 +34,24 @@ func TestReadFileRejectsWorkspaceEscape(t *testing.T) {
 	require.Contains(t, err.Error(), "escapes workspace")
 }
 
+func TestFileToolsEnforceSizeLimits(t *testing.T) {
+	workspace := t.TempDir()
+	largeContent := strings.Repeat("a", int(maxFileToolBytes)+1)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "large.txt"), []byte(largeContent), 0o644))
+
+	out, err := ReadFileTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"large.txt"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"truncated": true`)
+
+	_, err = WriteFileTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"too-large.txt","content":"`+largeContent+`"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum file tool size")
+
+	_, err = EditFileTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"large.txt","old_string":"a","new_string":"b"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum editable size")
+}
+
 func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell script")
