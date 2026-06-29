@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,8 @@ type ToolInfo struct {
 type RegistryOptions struct {
 	SandboxStrategy string
 	AdditionalDirs  []string
+	QuestionIn      io.Reader
+	QuestionOut     io.Writer
 }
 
 type Prompter struct {
@@ -114,6 +117,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
+	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
 	reg.Register(ToolSearchTool{Registry: reg})
 	return reg
 }
@@ -918,6 +922,122 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+type AskUserQuestionTool struct {
+	In  io.Reader
+	Out io.Writer
+}
+
+func (AskUserQuestionTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "ask_user_question",
+		Description: "Ask the user a concise question and return their answer to the model.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"question": map[string]any{"type": "string"},
+				"choices":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"default":  map[string]any{"type": "string"},
+			},
+			"required":             []string{"question"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (AskUserQuestionTool) Permission() Permission { return PermissionReadOnly }
+
+func (t AskUserQuestionTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Question string   `json:"question"`
+		Choices  []string `json:"choices"`
+		Default  string   `json:"default"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	payload.Question = strings.TrimSpace(payload.Question)
+	if payload.Question == "" {
+		return "", errors.New("question is required")
+	}
+	in := t.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := t.Out
+	if out == nil {
+		out = os.Stderr
+	}
+	fmt.Fprintf(out, "\n%s\n", payload.Question)
+	choices := normalizeQuestionChoices(payload.Choices)
+	for index, choice := range choices {
+		fmt.Fprintf(out, "  %d. %s\n", index+1, choice)
+	}
+	if strings.TrimSpace(payload.Default) != "" {
+		fmt.Fprintf(out, "Default: %s\n", strings.TrimSpace(payload.Default))
+	}
+	fmt.Fprint(out, "Answer: ")
+
+	answerCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(in).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			errCh <- err
+			return
+		}
+		answerCh <- strings.TrimSpace(line)
+	}()
+	var answer string
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case err := <-errCh:
+		return "", err
+	case answer = <-answerCh:
+	}
+	if answer == "" {
+		answer = strings.TrimSpace(payload.Default)
+	}
+	answer = resolveQuestionChoice(answer, choices)
+	return pretty(map[string]any{
+		"question": payload.Question,
+		"answer":   answer,
+	}), nil
+}
+
+func normalizeQuestionChoices(choices []string) []string {
+	out := make([]string, 0, len(choices))
+	seen := map[string]struct{}{}
+	for _, choice := range choices {
+		choice = strings.TrimSpace(choice)
+		if choice == "" {
+			continue
+		}
+		key := strings.ToLower(choice)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, choice)
+	}
+	return out
+}
+
+func resolveQuestionChoice(answer string, choices []string) string {
+	if answer == "" || len(choices) == 0 {
+		return answer
+	}
+	if index, err := strconv.Atoi(answer); err == nil && index >= 1 && index <= len(choices) {
+		return choices[index-1]
+	}
+	for _, choice := range choices {
+		if strings.EqualFold(answer, choice) {
+			return choice
+		}
+	}
+	return answer
 }
 
 type ToolSearchTool struct {

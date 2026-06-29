@@ -114,8 +114,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 12)
-	require.Equal(t, "bash", infos[0].Name)
+	require.Len(t, infos, 13)
+	info, ok = registry.Info("bash")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	_, ok = registry.Info("ask_user_question")
+	require.True(t, ok)
 	_, ok = registry.Info("notebook_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("web_fetch")
@@ -213,6 +217,25 @@ func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
 	info, ok := registry.Info("tool_search")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+}
+
+func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
+	var out strings.Builder
+	tool := AskUserQuestionTool{
+		In:  strings.NewReader("2\n"),
+		Out: &out,
+	}
+	result, err := tool.Execute(context.Background(), []byte(`{"question":"Pick one","choices":["alpha","beta"],"default":"alpha"}`))
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "Pick one")
+	require.Contains(t, out.String(), "2. beta")
+	require.Contains(t, result, `"answer": "beta"`)
+
+	out.Reset()
+	tool.In = strings.NewReader("\n")
+	result, err = tool.Execute(context.Background(), []byte(`{"question":"Continue?","default":"yes"}`))
+	require.NoError(t, err)
+	require.Contains(t, result, `"answer": "yes"`)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
