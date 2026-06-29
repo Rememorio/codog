@@ -769,7 +769,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
-	require.Contains(t, out.String(), "Tools            43")
+	require.Contains(t, out.String(), "Tools            44")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
@@ -1523,6 +1523,11 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.NoError(t, app.MCP(context.Background(), []string{"tools", "test"}))
 	require.Contains(t, out.String(), `"name": "echo"`)
 	require.Contains(t, out.String(), `"input_schema"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"auth", "test"}))
+	require.Contains(t, out.String(), `"status": "ok"`)
+	require.Contains(t, out.String(), `"tool_count": 1`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/mcp tools test", &session.Session{ID: "session"}))

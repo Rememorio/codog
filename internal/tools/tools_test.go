@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 43)
+	require.Len(t, infos, 44)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -246,6 +246,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("mcp")
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
+	info, ok = registry.Info("mcp_auth")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("enter_plan_mode")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -746,6 +749,15 @@ func TestMCPToolCallsRemoteTool(t *testing.T) {
 	_, err = MCPDispatchTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"missing","tool":"echo"}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown MCP server")
+
+	authOut, err := MCPAuthTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"test"}`))
+	require.NoError(t, err)
+	require.Contains(t, authOut, `"status": "ok"`)
+	require.Contains(t, authOut, `"tool_count": 1`)
+
+	authOut, err = MCPAuthTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"missing"}`))
+	require.NoError(t, err)
+	require.Contains(t, authOut, `"status": "unknown"`)
 }
 
 func TestMCPResourceToolsListAndReadRemoteResources(t *testing.T) {
@@ -792,7 +804,17 @@ func TestMCPToolHelperProcess(t *testing.T) {
 		id := req["id"]
 		switch method {
 		case "initialize":
-			writeMCPResponse(id, map[string]any{"protocolVersion": "2024-11-05"})
+			writeMCPResponse(id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]any{"name": "test", "version": "0.0.0"},
+			})
+		case "tools/list":
+			writeMCPResponse(id, map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}})
 		case "tools/call":
 			params, _ := req["params"].(map[string]any)
 			name, _ := params["name"].(string)

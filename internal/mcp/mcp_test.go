@@ -49,6 +49,12 @@ func TestCallToolAndReadResource(t *testing.T) {
 	prompt := GetPrompt(context.Background(), "test", server, "review", json.RawMessage(`{"topic":"hooks"}`))
 	require.Empty(t, prompt.Error)
 	require.Contains(t, string(prompt.Result), "Review hooks")
+
+	auth := InspectAuth(context.Background(), "test", server)
+	require.Equal(t, "ok", auth.Status)
+	require.Contains(t, string(auth.ServerInfo), `"name":"test"`)
+	require.Equal(t, 1, auth.ToolCount)
+	require.Equal(t, 1, auth.ResourceCount)
 }
 
 func TestMCPHelperProcess(t *testing.T) {

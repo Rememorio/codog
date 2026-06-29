@@ -156,6 +156,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(MCPDispatchTool{Servers: opts.MCPServers})
+	reg.Register(MCPAuthTool{Servers: opts.MCPServers})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
@@ -180,6 +181,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
 	r.Register(MCPDispatchTool{Servers: opts.MCPServers})
+	r.Register(MCPAuthTool{Servers: opts.MCPServers})
 	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 }
@@ -492,6 +494,55 @@ func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (st
 		return "{}", nil
 	}
 	return string(result.Result), nil
+}
+
+type MCPAuthTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+type mcpAuthInput struct {
+	Server string `json:"server"`
+}
+
+func (MCPAuthTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "mcp_auth",
+		Description: "Inspect authentication and readiness status for a configured MCP server.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server": map[string]any{
+					"type":        "string",
+					"description": "Configured MCP server name.",
+				},
+			},
+			"required": []string{"server"},
+		},
+	}
+}
+
+func (MCPAuthTool) Permission() Permission {
+	return PermissionDanger
+}
+
+func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload mcpAuthInput
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Server) == "" {
+		return "", errors.New("server is required")
+	}
+	server, ok := t.Servers[payload.Server]
+	if !ok {
+		return pretty(map[string]any{
+			"server": payload.Server,
+			"status": "unknown",
+			"error":  "server is not configured",
+		}), nil
+	}
+	return pretty(mcp.InspectAuth(ctx, payload.Server, server)), nil
 }
 
 type ListMCPResourcesTool struct {

@@ -18,7 +18,7 @@ Claude Code source.
   `enter_worktree`, `exit_worktree`,
   `enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
   `brief`, `structured_output`, `sleep`, `repl`, `tool_search`, `skill`, `config`,
-  `mcp`, `list_mcp_resources`,
+  `mcp`, `mcp_auth`, `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
   `todo_read`, `todo_write`
@@ -101,11 +101,12 @@ Claude Code source.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
-- `codog mcp list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt`
+- `codog mcp list|serve|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt`
   manages and inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls or through the
-  generic `mcp` dispatcher. Configured MCP resources can be discovered and read
-  by the model through `list_mcp_resources` and `read_mcp_resource`; `mcp serve`
+  generic `mcp` dispatcher. MCP server readiness and auth metadata can be
+  inspected through `mcp_auth`. Configured MCP resources can be discovered and
+  read by the model through `list_mcp_resources` and `read_mcp_resource`; `mcp serve`
   exposes Codog's local tools over stdio MCP.
 - Hook commands can run before and after tool use; `codog hooks list|run`
   inspects and test-runs configured hooks with the same JSON payload shape used

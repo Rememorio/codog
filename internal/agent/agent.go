@@ -6814,6 +6814,8 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "tools", "list-tools":
 		payload = mcp.ListTools(ctx, serverName, server)
+	case "auth":
+		payload = mcp.InspectAuth(ctx, serverName, server)
 	case "call":
 		if len(args) < 4 {
 			return errors.New("usage: codog mcp call SERVER TOOL JSON")
@@ -6847,7 +6849,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	return nil
 }
 
-const mcpUsage = "usage: codog mcp list | serve | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
 
 func (a *App) mcpServe(ctx context.Context, args []string) error {
 	if len(args) != 0 {

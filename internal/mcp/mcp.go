@@ -20,6 +20,26 @@ type ServerStatus struct {
 	Error string   `json:"error,omitempty"`
 }
 
+type InitializeResult struct {
+	Server          string          `json:"server"`
+	Status          string          `json:"status"`
+	ProtocolVersion string          `json:"protocol_version,omitempty"`
+	Capabilities    json.RawMessage `json:"capabilities,omitempty"`
+	ServerInfo      json.RawMessage `json:"server_info,omitempty"`
+	Error           string          `json:"error,omitempty"`
+}
+
+type AuthStatusResult struct {
+	Server        string          `json:"server"`
+	Status        string          `json:"status"`
+	ServerInfo    json.RawMessage `json:"server_info,omitempty"`
+	Capabilities  json.RawMessage `json:"capabilities,omitempty"`
+	ToolCount     int             `json:"tool_count"`
+	ResourceCount int             `json:"resource_count"`
+	ResourceError string          `json:"resource_error,omitempty"`
+	Error         string          `json:"error,omitempty"`
+}
+
 type ToolInfo struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
@@ -104,6 +124,109 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 		tools = append(tools, tool.Name)
 	}
 	return ServerStatus{Name: name, Tools: tools}
+}
+
+func Initialize(ctx context.Context, serverName string, server config.MCPServerConfig) InitializeResult {
+	if server.Command == "" {
+		return InitializeResult{Server: serverName, Status: "error", Error: "missing command"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
+	cmd.Env = append(os.Environ(), server.Env...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+	}
+	if err := cmd.Start(); err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+	}
+	defer cmd.Process.Kill()
+
+	reader := bufio.NewReader(stdout)
+	if err := send(stdin, rpcRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params: map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
+		},
+	}); err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+	}
+	resp, err := readResponse(reader)
+	if err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+	}
+	if resp.Error != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: resp.Error.Message}
+	}
+	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
+
+	var payload struct {
+		ProtocolVersion string          `json:"protocolVersion"`
+		Capabilities    json.RawMessage `json:"capabilities"`
+		ServerInfo      json.RawMessage `json:"serverInfo"`
+	}
+	if err := json.Unmarshal(resp.Result, &payload); err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+	}
+	return InitializeResult{
+		Server:          serverName,
+		Status:          "ok",
+		ProtocolVersion: payload.ProtocolVersion,
+		Capabilities:    payload.Capabilities,
+		ServerInfo:      payload.ServerInfo,
+	}
+}
+
+func InspectAuth(ctx context.Context, serverName string, server config.MCPServerConfig) AuthStatusResult {
+	initialized := Initialize(ctx, serverName, server)
+	if initialized.Error != "" {
+		return AuthStatusResult{Server: serverName, Status: "error", Error: initialized.Error}
+	}
+	result := AuthStatusResult{
+		Server:       serverName,
+		Status:       initialized.Status,
+		ServerInfo:   initialized.ServerInfo,
+		Capabilities: initialized.Capabilities,
+	}
+	tools := ListTools(ctx, serverName, server)
+	if tools.Error != "" {
+		result.Status = "error"
+		result.Error = tools.Error
+		return result
+	}
+	result.ToolCount = len(tools.Tools)
+	resources := ListResources(ctx, serverName, server)
+	if resources.Error != "" {
+		result.ResourceError = resources.Error
+		return result
+	}
+	result.ResourceCount = countJSONArrayField(resources.Resources, "resources")
+	return result
+}
+
+func countJSONArrayField(raw json.RawMessage, field string) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return 0
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(payload[field], &items); err != nil {
+		return 0
+	}
+	return len(items)
 }
 
 func ListTools(ctx context.Context, serverName string, server config.MCPServerConfig) ToolListResult {
