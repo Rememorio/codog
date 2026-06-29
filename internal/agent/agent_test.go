@@ -226,6 +226,7 @@ func TestOAuthDeviceCommands(t *testing.T) {
 		case "/device":
 			require.NoError(t, r.ParseForm())
 			require.Equal(t, "client-1", r.Form.Get("client_id"))
+			require.Equal(t, "profile", r.Form.Get("scope"))
 			_, _ = w.Write([]byte(`{"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri":"` + server.URL + `/verify","expires_in":600,"interval":1}`))
 		case "/token":
 			require.NoError(t, r.ParseForm())
@@ -244,11 +245,21 @@ func TestOAuthDeviceCommands(t *testing.T) {
 		Config: config.Config{ConfigHome: configHome},
 		Out:    &out,
 	}
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", []string{"profile"})
+	require.NoError(t, err)
 	require.NoError(t, app.OAuth([]string{"device", "start", server.URL, "client-1", "profile"}))
 	require.Contains(t, out.String(), `"user_code": "ABCD-EFGH"`)
 	out.Reset()
 
+	require.NoError(t, app.OAuth([]string{"device", "start", "default"}))
+	require.Contains(t, out.String(), `"user_code": "ABCD-EFGH"`)
+	out.Reset()
+
 	require.NoError(t, app.OAuth([]string{"device", "poll", server.URL, "client-1", "device-1"}))
+	require.Contains(t, out.String(), `"access_token": "devi...1234"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"device", "poll", "default", "device-1"}))
 	require.Contains(t, out.String(), `"access_token": "devi...1234"`)
 	loaded, err := oauth.LoadToken(configHome)
 	require.NoError(t, err)

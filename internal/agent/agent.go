@@ -1143,18 +1143,15 @@ func (a *App) oauthProvider(args []string) error {
 
 func (a *App) oauthDevice(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] | poll ISSUER_URL CLIENT_ID DEVICE_CODE | login ISSUER_URL CLIENT_ID [SCOPE...]")
+		return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] | start PROFILE [SCOPE...] | poll ISSUER_URL CLIENT_ID DEVICE_CODE | poll PROFILE DEVICE_CODE | login ISSUER_URL CLIENT_ID [SCOPE...] | login PROFILE [SCOPE...]")
 	}
 	switch args[0] {
 	case "start":
-		if len(args) < 3 {
-			return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...]")
-		}
-		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		source, err := a.oauthDeviceSource(args[1:], true)
 		if err != nil {
 			return err
 		}
-		auth, err := oauth.StartDeviceAuthorization(context.Background(), metadata, args[2], args[3:])
+		auth, err := oauth.StartDeviceAuthorization(context.Background(), source.Metadata, source.ClientID, source.Scopes)
 		if err != nil {
 			return err
 		}
@@ -1162,14 +1159,11 @@ func (a *App) oauthDevice(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "poll":
-		if len(args) < 4 {
-			return errors.New("usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE")
-		}
-		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		source, deviceCode, err := a.oauthDevicePollSource(args[1:])
 		if err != nil {
 			return err
 		}
-		token, err := oauth.PollDeviceToken(context.Background(), metadata, args[3], oauth.DevicePollOptions{ClientID: args[2]})
+		token, err := oauth.PollDeviceToken(context.Background(), source.Metadata, deviceCode, oauth.DevicePollOptions{ClientID: source.ClientID})
 		if err != nil {
 			return err
 		}
@@ -1181,14 +1175,11 @@ func (a *App) oauthDevice(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "login":
-		if len(args) < 3 {
-			return errors.New("usage: codog oauth device login ISSUER_URL CLIENT_ID [SCOPE...]")
-		}
-		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
+		source, err := a.oauthDeviceSource(args[1:], true)
 		if err != nil {
 			return err
 		}
-		auth, err := oauth.StartDeviceAuthorization(context.Background(), metadata, args[2], args[3:])
+		auth, err := oauth.StartDeviceAuthorization(context.Background(), source.Metadata, source.ClientID, source.Scopes)
 		if err != nil {
 			return err
 		}
@@ -1199,8 +1190,8 @@ func (a *App) oauthDevice(args []string) error {
 			}
 			fmt.Fprintf(a.Err, "Open %s and enter code %s\n", target, auth.UserCode)
 		}
-		token, err := oauth.PollDeviceToken(context.Background(), metadata, auth.DeviceCode, oauth.DevicePollOptions{
-			ClientID:  args[2],
+		token, err := oauth.PollDeviceToken(context.Background(), source.Metadata, auth.DeviceCode, oauth.DevicePollOptions{
+			ClientID:  source.ClientID,
 			Interval:  time.Duration(auth.Interval) * time.Second,
 			ExpiresAt: auth.ExpiresAt,
 		})
@@ -1217,6 +1208,63 @@ func (a *App) oauthDevice(args []string) error {
 	default:
 		return fmt.Errorf("unknown oauth device command %q", args[0])
 	}
+}
+
+type oauthDeviceSource struct {
+	Metadata oauth.ProviderMetadata
+	ClientID string
+	Scopes   []string
+}
+
+func (a *App) oauthDeviceSource(args []string, allowScopes bool) (oauthDeviceSource, error) {
+	if len(args) == 0 {
+		return oauthDeviceSource{}, errors.New("oauth device provider is required")
+	}
+	if isURLish(args[0]) {
+		if len(args) < 2 {
+			return oauthDeviceSource{}, errors.New("oauth device client id is required")
+		}
+		metadata, err := oauth.DiscoverProvider(context.Background(), args[0])
+		if err != nil {
+			return oauthDeviceSource{}, err
+		}
+		source := oauthDeviceSource{Metadata: metadata, ClientID: args[1]}
+		if allowScopes {
+			source.Scopes = append([]string(nil), args[2:]...)
+		}
+		return source, nil
+	}
+	profile, err := oauth.ResolveProviderProfile(a.Config.ConfigHome, args[0])
+	if err != nil {
+		return oauthDeviceSource{}, err
+	}
+	scopes := append([]string(nil), profile.Scopes...)
+	if allowScopes && len(args) > 1 {
+		scopes = append([]string(nil), args[1:]...)
+	}
+	return oauthDeviceSource{Metadata: profile.Metadata, ClientID: profile.ClientID, Scopes: scopes}, nil
+}
+
+func (a *App) oauthDevicePollSource(args []string) (oauthDeviceSource, string, error) {
+	if len(args) == 0 {
+		return oauthDeviceSource{}, "", errors.New("usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE | poll PROFILE DEVICE_CODE")
+	}
+	if isURLish(args[0]) {
+		if len(args) < 3 {
+			return oauthDeviceSource{}, "", errors.New("usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE")
+		}
+		source, err := a.oauthDeviceSource(args[:2], false)
+		return source, args[2], err
+	}
+	if len(args) < 2 {
+		return oauthDeviceSource{}, "", errors.New("usage: codog oauth device poll PROFILE DEVICE_CODE")
+	}
+	source, err := a.oauthDeviceSource(args[:1], false)
+	return source, args[1], err
+}
+
+func isURLish(value string) bool {
+	return strings.Contains(value, "://")
 }
 
 func (a *App) Sandbox() error {
