@@ -2277,6 +2277,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleModelSlash(fields[1:])
 	case "/permissions":
 		a.handlePermissionsSlash(fields[1:])
+	case "/allowed-tools":
+		a.handleAllowedToolsSlash(fields[1:])
 	case "/doctor":
 		if err := a.Doctor(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -2404,6 +2406,77 @@ func (a *App) handlePermissionsSlash(args []string) {
 	}
 	a.Config.PermissionMode = mode
 	fmt.Fprintf(a.Err, "permission_mode=%s\n", a.Config.PermissionMode)
+}
+
+func (a *App) handleAllowedToolsSlash(args []string) {
+	action := "list"
+	if len(args) > 0 {
+		action = strings.ToLower(args[0])
+	}
+	switch action {
+	case "list", "show":
+	case "add":
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /allowed-tools add TOOL [TOOL...]")
+			return
+		}
+		a.Config.PermissionRules.Allow = addRuleValues(a.Config.PermissionRules.Allow, args[1:])
+	case "remove", "rm", "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /allowed-tools remove TOOL [TOOL...]")
+			return
+		}
+		a.Config.PermissionRules.Allow = removeRuleValues(a.Config.PermissionRules.Allow, args[1:])
+	case "clear":
+		a.Config.PermissionRules.Allow = nil
+	default:
+		fmt.Fprintf(a.Err, "unknown /allowed-tools action: %s\n", args[0])
+		return
+	}
+	renderAllowedTools(a.Out, a.Config.PermissionRules.Allow)
+}
+
+func renderAllowedTools(out io.Writer, rules []string) {
+	fmt.Fprintln(out, "Allowed tools")
+	if len(rules) == 0 {
+		fmt.Fprintln(out, "  Result           no allow rules configured")
+		return
+	}
+	fmt.Fprintf(out, "  Count            %d\n", len(rules))
+	fmt.Fprintln(out)
+	for index, rule := range rules {
+		fmt.Fprintf(out, "  %d. %s\n", index+1, rule)
+	}
+}
+
+func addRuleValues(current []string, values []string) []string {
+	next := append([]string(nil), current...)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || containsFold(next, value) {
+			continue
+		}
+		next = append(next, value)
+	}
+	return next
+}
+
+func removeRuleValues(current []string, values []string) []string {
+	remove := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			remove[value] = struct{}{}
+		}
+	}
+	next := make([]string, 0, len(current))
+	for _, value := range current {
+		if _, ok := remove[strings.ToLower(value)]; ok {
+			continue
+		}
+		next = append(next, value)
+	}
+	return next
 }
 
 func (a *App) runtimeConfigPayload(args []string) (any, error) {

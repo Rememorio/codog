@@ -265,6 +265,38 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
 }
 
+func TestAllowedToolsSlashMutatesRuntimeAllowRules(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			PermissionRules: config.PermissionRules{Allow: []string{"read_file"}},
+		},
+		Out: &out,
+		Err: &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.True(t, app.handleSlash(context.Background(), "/allowed-tools", sess))
+	require.Contains(t, out.String(), "read_file")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/allowed-tools add bash grep bash", sess))
+	require.ElementsMatch(t, []string{"read_file", "bash", "grep"}, app.Config.PermissionRules.Allow)
+	require.Contains(t, out.String(), "bash")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/allowed-tools remove read_file", sess))
+	require.ElementsMatch(t, []string{"bash", "grep"}, app.Config.PermissionRules.Allow)
+	require.NotContains(t, out.String(), "read_file")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/allowed-tools clear", sess))
+	require.Empty(t, app.Config.PermissionRules.Allow)
+	require.Contains(t, out.String(), "no allow rules configured")
+	require.Empty(t, errOut.String())
+}
+
 func TestDoctorCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

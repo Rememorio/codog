@@ -23,6 +23,7 @@ func Specs() []Spec {
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/permissions", Usage: "/permissions [mode]", Description: "Show or switch the current permission mode."},
+		{Name: "/allowed-tools", Usage: "/allowed-tools [list|add|remove|clear]", Description: "Show or modify runtime allow rules."},
 		{Name: "/clear", Usage: "/clear [--confirm]", Description: "Start a fresh local session."},
 		{Name: "/doctor", Usage: "/doctor", Description: "Run local auth, config, workspace, and runtime diagnostics."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
