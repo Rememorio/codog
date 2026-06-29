@@ -4,7 +4,7 @@ Codog is a Go-native coding agent CLI. The project is intentionally clean-room:
 it uses public API contracts and its own tests rather than translating leaked
 Claude Code source.
 
-## MVP surface
+## Features
 
 - Single Go binary: `codog`
 - One-shot prompt mode
@@ -15,10 +15,6 @@ Claude Code source.
   `danger-full-access`, `prompt`, and `allow` modes
 - JSONL session persistence and resume
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags
-
-## Practical surface
-
-Codog also includes the first practical-layer surfaces:
 
 - `codog tui` starts a Bubble Tea prompt composer.
 - REPL slash commands: `/help`, `/status`, `/cost`, `/compact`, `/skills`, `/mcp`.
@@ -40,6 +36,9 @@ Codog also includes the first practical-layer surfaces:
 - `codog sandbox` reports the detected local sandbox strategy.
 - `codog code-intel symbols` scans Go symbols, and `notebook-edit` updates
   `.ipynb` cells.
+- `codog remote serve [addr]` starts a local HTTP session-control API.
+- `codog bridge serve` starts a stdio JSON-RPC bridge.
+- `codog updater check URL` checks a release manifest.
 
 ## Quick start
 
@@ -81,6 +80,8 @@ codog --permission-mode prompt prompt "inspect the repo"
   },
   "future": {
     "sandbox_strategy": "detect",
+    "editor_bridge_socket": "",
+    "updater_manifest_url": "",
     "plugin_marketplaces": []
   }
 }
@@ -95,18 +96,3 @@ Environment overrides:
 - `CODOG_MODEL`
 - `CODOG_PERMISSION_MODE`
 - `CODOG_CONFIG_HOME`
-
-## Roadmap
-
-The repository is organized around three delivery horizons:
-
-1. MVP: single binary, core agent loop, core tools, permissions, sessions, config.
-2. Practical: TUI, slash commands, MCP, skills, hooks, cost tracking,
-   auto-compaction, and a mock parity harness.
-3. Long-term: IDE bridge, remote sessions, multi-agent orchestration,
-   background tasks, notebook/LSP, OAuth, enterprise policy, plugin marketplace,
-   sandboxing, and updater surfaces.
-
-See [docs/roadmap.md](docs/roadmap.md), [docs/capabilities.md](docs/capabilities.md),
-and [docs/claude-code-coverage.md](docs/claude-code-coverage.md) for the current
-capability matrix.

@@ -26,11 +26,10 @@ Codog follows a small-core layout:
 - `internal/oauth`: OAuth helper primitives such as PKCE.
 - `internal/sandbox`: local sandbox strategy detection.
 - `internal/codeintel`: lightweight code intelligence and notebook helpers.
-
-Long-horizon commands read from `internal/future` and configures future-facing
-knobs under the `future` config object. The contract is intentionally
-machine-readable before the production implementations land.
+- `internal/control`: HTTP session-control API.
+- `internal/bridge`: stdio JSON-RPC bridge.
+- `internal/updater`: release manifest check.
 
 The project deliberately keeps model-provider contracts and tool behavior
-separate from UI surfaces. That lets the one-shot CLI, REPL, TUI, future IDE
-bridge, and remote session transport share the same runtime loop.
+separate from UI surfaces. That lets the one-shot CLI, REPL, TUI, bridge, and
+remote session transport share the same runtime loop.

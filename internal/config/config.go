@@ -34,6 +34,13 @@ type FutureConfig struct {
 	BackgroundStatePath string   `json:"background_state_path,omitempty"`
 }
 
+type PermissionRules struct {
+	Allow       []string `json:"allow,omitempty"`
+	Deny        []string `json:"deny,omitempty"`
+	Ask         []string `json:"ask,omitempty"`
+	DeniedTools []string `json:"denied_tools,omitempty"`
+}
+
 type Config struct {
 	APIKey              string                     `json:"api_key,omitempty"`
 	AuthToken           string                     `json:"auth_token,omitempty"`
@@ -42,6 +49,7 @@ type Config struct {
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
+	PermissionRules     PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
@@ -182,6 +190,9 @@ func merge(dst *Config, src Config) {
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
 	}
+	if permissionRulesSet(src.PermissionRules) {
+		dst.PermissionRules = src.PermissionRules
+	}
 	if src.ConfigHome != "" {
 		dst.ConfigHome = expandHome(src.ConfigHome)
 	}
@@ -218,6 +229,13 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.UpdaterManifestURL != "" ||
 		cfg.EditorBridgeSocket != "" ||
 		cfg.BackgroundStatePath != ""
+}
+
+func permissionRulesSet(rules PermissionRules) bool {
+	return len(rules.Allow) != 0 ||
+		len(rules.Deny) != 0 ||
+		len(rules.Ask) != 0 ||
+		len(rules.DeniedTools) != 0
 }
 
 func applyEnv(cfg *Config) {

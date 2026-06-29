@@ -37,3 +37,23 @@ func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "appears 2 times")
 }
+
+func TestPrompterRules(t *testing.T) {
+	p := &Prompter{
+		Mode:      PermissionAllow,
+		DenyRules: []string{"bash:rm -rf"},
+	}
+	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`)))
+
+	p = &Prompter{
+		Mode:       PermissionReadOnly,
+		AllowRules: []string{"bash:go test"},
+	}
+	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"go test ./..."}`)))
+
+	p = &Prompter{
+		Mode:        PermissionAllow,
+		DeniedTools: []string{"bash"},
+	}
+	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"pwd"}`)))
+}

@@ -36,9 +36,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "IDE bridge",
 			Command:     "bridge",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Editor protocol bridge for VS Code, JetBrains, and other clients.",
+			Description: "Stdio JSON-RPC bridge is available; editor-specific integrations remain planned.",
 			DependsOn:   []string{"remote", "enterprise"},
 			NextSteps: []string{
 				"Define a local JSON-RPC control plane.",
@@ -49,9 +49,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Remote sessions",
 			Command:     "remote",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Durable remote agent sessions with resumable transport and explicit lifecycle state.",
+			Description: "Local HTTP session control server is available; durable remote transport remains planned.",
 			DependsOn:   []string{"background", "enterprise"},
 			NextSteps: []string{
 				"Add session control API above terminal transport.",
@@ -151,9 +151,9 @@ func Surfaces() []Surface {
 		{
 			Name:        "Updater",
 			Command:     "updater",
-			Status:      StatusPlanned,
+			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Release check, binary provenance, and safe self-update flow.",
+			Description: "Manifest check is available; verified binary replacement remains planned.",
 			NextSteps: []string{
 				"Add version manifest format.",
 				"Verify checksums before replacement.",

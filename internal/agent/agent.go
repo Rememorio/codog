@@ -17,8 +17,10 @@ import (
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/future"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
@@ -32,6 +34,7 @@ import (
 	"github.com/Rememorio/codog/internal/slash"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
+	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
 )
 
@@ -143,7 +146,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "skills":
 		return app.ListSkills()
 	case "mcp":
-		return app.ListMCP(ctx)
+		return app.MCP(ctx, rest)
 	case "cost":
 		return app.ShowCost(overrides)
 	case "background":
@@ -158,21 +161,64 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Sandbox()
 	case "code-intel":
 		return app.CodeIntel(rest)
-	case "enterprise", "bridge", "remote", "updater":
-		if surface, ok := future.Find(command); ok {
-			if hasFlag(rest, "--json") {
-				return future.RenderJSON(app.Out, []future.Surface{surface})
-			}
-			future.RenderText(app.Out, []future.Surface{surface})
-			return nil
-		}
-		return fmt.Errorf("unknown capability %q", command)
+	case "remote":
+		return app.Remote(rest)
+	case "bridge":
+		return app.Bridge(rest)
+	case "updater":
+		return app.Updater(ctx, rest)
+	case "enterprise":
+		return app.FutureStatus(command, rest)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
 		}
 		return app.REPL(ctx, overrides)
 	}
+}
+
+func (a *App) FutureStatus(command string, args []string) error {
+	surface, ok := future.Find(command)
+	if !ok {
+		return fmt.Errorf("unknown capability %q", command)
+	}
+	if hasFlag(args, "--json") {
+		return future.RenderJSON(a.Out, []future.Surface{surface})
+	}
+	future.RenderText(a.Out, []future.Surface{surface})
+	return nil
+}
+
+func (a *App) Remote(args []string) error {
+	if len(args) == 0 || args[0] != "serve" {
+		return a.FutureStatus("remote", args)
+	}
+	addr := "127.0.0.1:8791"
+	if len(args) > 1 {
+		addr = args[1]
+	}
+	fmt.Fprintf(a.Err, "codog remote control listening on http://%s\n", addr)
+	return http.ListenAndServe(addr, control.Server{Sessions: a.Sessions}.Handler())
+}
+
+func (a *App) Bridge(args []string) error {
+	if len(args) == 0 || args[0] != "serve" {
+		return a.FutureStatus("bridge", args)
+	}
+	return bridge.Server{Sessions: a.Sessions, Version: version}.Serve(a.In, a.Out)
+}
+
+func (a *App) Updater(ctx context.Context, args []string) error {
+	if len(args) < 2 || args[0] != "check" {
+		return a.FutureStatus("updater", args)
+	}
+	result, err := updater.Check(ctx, version, args[1])
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
 }
 
 func (a *App) Background(args []string) error {
@@ -274,7 +320,7 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 		Config:    a.Config,
 		Client:    a.Client,
 		Tools:     a.Tools,
-		Prompter:  &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
+		Prompter:  a.prompter(),
 		Workspace: a.Workspace,
 		Out:       a.Out,
 		System:    a.systemPrompt(),
@@ -323,7 +369,7 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			Config:    a.Config,
 			Client:    a.Client,
 			Tools:     a.Tools,
-			Prompter:  &tools.Prompter{Mode: tools.Permission(a.Config.PermissionMode), In: a.In, Err: a.Err},
+			Prompter:  a.prompter(),
 			Workspace: a.Workspace,
 			Out:       a.Out,
 			System:    a.systemPrompt(),
@@ -363,7 +409,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/skills":
 		_ = a.ListSkills()
 	case "/mcp":
-		_ = a.ListMCP(ctx)
+		_ = a.MCP(ctx, nil)
 	default:
 		if _, ok := slash.Lookup(fields[0]); !ok {
 			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
@@ -402,13 +448,43 @@ func (a *App) ListSkills() error {
 	return nil
 }
 
-func (a *App) ListMCP(ctx context.Context) error {
+func (a *App) MCP(ctx context.Context, args []string) error {
 	if len(a.Config.MCPServers) == 0 {
 		fmt.Fprintln(a.Out, "No MCP servers configured.")
 		return nil
 	}
-	statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
-	data, _ := json.MarshalIndent(statuses, "", "  ")
+	if len(args) == 0 || args[0] == "list" {
+		statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
+		data, _ := json.MarshalIndent(statuses, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if len(args) < 2 {
+		return errors.New("usage: codog mcp list | call SERVER TOOL JSON | resources SERVER | read SERVER URI")
+	}
+	serverName := args[1]
+	server, ok := a.Config.MCPServers[serverName]
+	if !ok {
+		return fmt.Errorf("unknown MCP server %q", serverName)
+	}
+	var payload any
+	switch args[0] {
+	case "call":
+		if len(args) < 4 {
+			return errors.New("usage: codog mcp call SERVER TOOL JSON")
+		}
+		payload = mcp.CallTool(ctx, serverName, server, args[2], json.RawMessage(args[3]))
+	case "resources":
+		payload = mcp.ListResources(ctx, serverName, server)
+	case "read":
+		if len(args) < 3 {
+			return errors.New("usage: codog mcp read SERVER URI")
+		}
+		payload = mcp.ReadResource(ctx, serverName, server, args[2])
+	default:
+		return fmt.Errorf("unknown mcp command %q", args[0])
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
@@ -433,6 +509,18 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 		}
 	}
 	return a.Sessions.Open(id)
+}
+
+func (a *App) prompter() *tools.Prompter {
+	return &tools.Prompter{
+		Mode:        tools.Permission(a.Config.PermissionMode),
+		AllowRules:  append([]string(nil), a.Config.PermissionRules.Allow...),
+		DenyRules:   append([]string(nil), a.Config.PermissionRules.Deny...),
+		AskRules:    append([]string(nil), a.Config.PermissionRules.Ask...),
+		DeniedTools: append([]string(nil), a.Config.PermissionRules.DeniedTools...),
+		In:          a.In,
+		Err:         a.Err,
+	}
 }
 
 func (a *App) systemPrompt() string {
@@ -513,7 +601,8 @@ Usage:
   %s capabilities [--json]
   %s background run "command" | background list
   %s agents | marketplace | oauth pkce | sandbox | code-intel symbols
-  %s bridge|remote|enterprise|updater [--json]
+  %s remote serve [addr] | bridge serve | updater check URL
+  %s enterprise [--json]
   %s config
 
 Flags:
@@ -528,7 +617,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

@@ -40,9 +40,13 @@ type Registry struct {
 }
 
 type Prompter struct {
-	Mode Permission
-	In   io.Reader
-	Err  io.Writer
+	Mode        Permission
+	AllowRules  []string
+	DenyRules   []string
+	AskRules    []string
+	DeniedTools []string
+	In          io.Reader
+	Err         io.Writer
 }
 
 func NewRegistry(workspace string) *Registry {
@@ -87,7 +91,18 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 	if mode == "" {
 		mode = PermissionWorkspace
 	}
-	if mode == PermissionAllow || permissionRank(mode) >= permissionRank(required) {
+	inputText := string(input)
+	if ruleMatchesTool(p.DeniedTools, name) {
+		return fmt.Errorf("permission denied for tool %s by denied_tools", name)
+	}
+	if ruleMatches(p.DenyRules, name, inputText) {
+		return fmt.Errorf("permission denied for tool %s by deny rule", name)
+	}
+	if ruleMatches(p.AllowRules, name, inputText) {
+		return nil
+	}
+	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
+	if !ask && (mode == PermissionAllow || permissionRank(mode) >= permissionRank(required)) {
 		return nil
 	}
 	if p.In == nil {
@@ -104,6 +119,28 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 		return nil
 	}
 	return fmt.Errorf("permission denied for tool %s", name)
+}
+
+func ruleMatches(rules []string, toolName, input string) bool {
+	for _, rule := range rules {
+		if rule == "*" || strings.EqualFold(rule, toolName) {
+			return true
+		}
+		prefix, needle, ok := strings.Cut(rule, ":")
+		if ok && strings.EqualFold(prefix, toolName) && strings.Contains(input, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func ruleMatchesTool(rules []string, toolName string) bool {
+	for _, rule := range rules {
+		if rule == "*" || strings.EqualFold(rule, toolName) {
+			return true
+		}
+	}
+	return false
 }
 
 func permissionRank(p Permission) int {
