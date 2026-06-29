@@ -23,6 +23,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -155,6 +156,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.MCP(ctx, rest)
 	case "cost":
 		return app.ShowCost(overrides)
+	case "git":
+		return app.Git(rest)
 	case "background":
 		return app.BackgroundWithOverrides(rest, overrides)
 	case "agents":
@@ -1615,6 +1618,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		before := len(sess.Messages)
 		sess.Messages = runloop.CompactMessages(sess.Messages, a.Config.AutoCompactMessages)
 		fmt.Fprintf(a.Err, "compacted request context from %d to %d messages\n", before, len(sess.Messages))
+	case "/diff":
+		a.handleDiffSlash(fields[1:])
+	case "/commit":
+		a.handleCommitSlash(fields[1:])
 	case "/skills":
 		_ = a.ListSkills()
 	case "/mcp":
@@ -1627,6 +1634,78 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	}
 	return true
+}
+
+func (a *App) Git(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: codog git status | git diff [--staged] | git commit [--all] MESSAGE")
+	}
+	switch args[0] {
+	case "status":
+		status, err := gitops.Status(a.Workspace)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, status)
+	case "diff":
+		diff, err := gitops.Diff(a.Workspace, containsFold(args[1:], "--staged") || containsFold(args[1:], "--cached"))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, diff)
+	case "commit":
+		options := parseGitCommitArgs(args[1:])
+		result, err := gitops.Commit(a.Workspace, options)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	default:
+		return fmt.Errorf("unknown git command %q", args[0])
+	}
+	return nil
+}
+
+func (a *App) handleDiffSlash(args []string) {
+	diff, err := gitops.Diff(a.Workspace, containsFold(args, "--staged") || containsFold(args, "--cached"))
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if diff == "" {
+		fmt.Fprintln(a.Out, "No diff.")
+		return
+	}
+	fmt.Fprintln(a.Out, diff)
+}
+
+func (a *App) handleCommitSlash(args []string) {
+	options := parseGitCommitArgs(args)
+	result, err := gitops.Commit(a.Workspace, options)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	fmt.Fprintf(a.Err, "commit %s\n", result.Commit)
+	if result.Summary != "" {
+		fmt.Fprintln(a.Out, result.Summary)
+	}
+}
+
+func parseGitCommitArgs(args []string) gitops.CommitOptions {
+	options := gitops.CommitOptions{}
+	message := []string{}
+	for _, arg := range args {
+		switch arg {
+		case "--all", "-a":
+			options.All = true
+		default:
+			message = append(message, arg)
+		}
+	}
+	options.Message = strings.Join(message, " ")
+	return options
 }
 
 func (a *App) handleSessionSlash(args []string, sess *session.Session) {
@@ -1957,6 +2036,7 @@ Usage:
   %s [flags] skills
   %s [flags] mcp
   %s [flags] cost --resume latest
+  %s [flags] git status | git diff [--staged] | git commit [--all] MESSAGE
   %s mock-server :8089
   %s self-test
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
@@ -1980,7 +2060,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

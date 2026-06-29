@@ -9,9 +9,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -118,6 +120,43 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	require.Contains(t, errOut.String(), "session deleted: "+forkedID)
 }
 
+func TestGitCommandStatusDiffAndCommit(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\n"), 0o644))
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.Git([]string{"status"}))
+	require.Contains(t, out.String(), "notes.txt")
+	out.Reset()
+
+	require.NoError(t, app.Git([]string{"commit", "--all", "add", "notes"}))
+	require.Contains(t, out.String(), `"commit":`)
+	require.Contains(t, out.String(), "add notes")
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\nagain\n"), 0o644))
+	require.NoError(t, app.Git([]string{"diff"}))
+	require.Contains(t, out.String(), "+again")
+}
+
+func TestGitSlashDiffAndCommit(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	sess := &session.Session{ID: "session"}
+
+	require.True(t, app.handleSlash(context.Background(), "/commit --all slash commit", sess))
+	require.Contains(t, errOut.String(), "commit ")
+	errOut.Reset()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\nchanged\n"), 0o644))
+	require.True(t, app.handleSlash(context.Background(), "/diff", sess))
+	require.Contains(t, out.String(), "+changed")
+}
+
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	command := buildAgentCommand("/tmp/codog", agentdefs.Definition{
 		Name:   "reviewer",
@@ -129,6 +168,26 @@ func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	require.Contains(t, command, "--model 'mock-model'")
 	require.Contains(t, command, "prompt 'review carefully")
 	require.Contains(t, command, "'\"'\"'$HOME'\"'\"'")
+}
+
+func initGitRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	return workspace
+}
+
+func runGit(t *testing.T, workspace string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	data, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(data))
 }
 
 func TestParseAgentRunArgs(t *testing.T) {

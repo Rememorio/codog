@@ -19,6 +19,8 @@ func Specs() []Spec {
 		{Name: "/status", Usage: "/status", Description: "Show session, model, and permission status."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/compact", Usage: "/compact", Description: "Compact in-memory request context for long sessions."},
+		{Name: "/diff", Usage: "/diff [--staged]", Description: "Show git working tree or staged diff."},
+		{Name: "/commit", Usage: "/commit [--all] MESSAGE", Description: "Create a git commit from staged changes."},
 		{Name: "/session", Usage: "/session [list|exists|switch|fork|delete]", Description: "Manage saved sessions."},
 		{Name: "/skills", Usage: "/skills", Description: "List discovered Markdown skills."},
 		{Name: "/mcp", Usage: "/mcp", Description: "Inspect configured stdio MCP servers."},
