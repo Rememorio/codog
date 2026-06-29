@@ -165,7 +165,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	app := &App{
 		Config:    cfg,
-		Client:    anthropic.New(cfg.BaseURL, cfg.APIKey, cfg.AuthToken),
+		Client:    anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
 		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy}),
 		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace: workspace,
@@ -221,6 +221,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ShowCost(overrides)
 	case "usage":
 		return app.Usage(rest, overrides)
+	case "rate-limit-options":
+		return app.RateLimitOptions(rest)
 	case "export":
 		return app.Export(rest)
 	case "git":
@@ -320,6 +322,15 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 		token = refreshed
 	}
 	cfg.AuthToken = token.AccessToken
+}
+
+func anthropicRateLimitOptions(cfg config.RateLimitConfig) anthropic.RateLimitOptions {
+	cfg = config.NormalizeRateLimitConfig(cfg)
+	return anthropic.RateLimitOptions{
+		MaxRetries:     cfg.MaxRetries,
+		InitialBackoff: time.Duration(cfg.InitialBackoffMS) * time.Millisecond,
+		MaxBackoff:     time.Duration(cfg.MaxBackoffMS) * time.Millisecond,
+	}
 }
 
 func (a *App) Remote(args []string) error {
@@ -3525,6 +3536,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/rate-limit-options":
+		if err := a.RateLimitOptions(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/config":
 		a.handleConfigSlash(fields[1:])
 	case "/model":
@@ -4762,6 +4777,60 @@ func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type rateLimitOptionsReport struct {
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	MaxRetries        int    `json:"max_retries"`
+	InitialBackoffMS  int    `json:"initial_backoff_ms"`
+	MaxBackoffMS      int    `json:"max_backoff_ms"`
+	RetryableStatuses []int  `json:"retryable_statuses"`
+}
+
+func (a *App) RateLimitOptions(args []string) error {
+	format, err := parseSimpleOutputFormat("rate-limit-options", args)
+	if err != nil {
+		return err
+	}
+	report := buildRateLimitOptionsReport(a.Config.RateLimit)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderRateLimitOptionsReport(a.Out, report)
+	return nil
+}
+
+func buildRateLimitOptionsReport(cfg config.RateLimitConfig) rateLimitOptionsReport {
+	snapshot := anthropicRateLimitOptions(cfg).Report()
+	return rateLimitOptionsReport{
+		Kind:              "rate_limit_options",
+		Action:            "show",
+		Status:            "ok",
+		MaxRetries:        snapshot.MaxRetries,
+		InitialBackoffMS:  snapshot.InitialBackoffMS,
+		MaxBackoffMS:      snapshot.MaxBackoffMS,
+		RetryableStatuses: append([]int(nil), snapshot.RetryableStatuses...),
+	}
+}
+
+func renderRateLimitOptionsReport(out io.Writer, report rateLimitOptionsReport) {
+	fmt.Fprintln(out, "Rate Limit Options")
+	fmt.Fprintf(out, "  Max retries      %d\n", report.MaxRetries)
+	fmt.Fprintf(out, "  Initial backoff  %dms\n", report.InitialBackoffMS)
+	fmt.Fprintf(out, "  Max backoff      %dms\n", report.MaxBackoffMS)
+	fmt.Fprintf(out, "  Retry statuses   %s\n", joinInts(report.RetryableStatuses))
+}
+
+func joinInts(values []int) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.Itoa(value))
+	}
+	return strings.Join(parts, ",")
+}
+
 func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, error) {
 	id := overrides.SessionID
 	if overrides.Resume != "" {
@@ -4949,6 +5018,7 @@ Usage:
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
@@ -4980,7 +5050,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

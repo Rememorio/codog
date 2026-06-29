@@ -786,6 +786,35 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: t.TempDir(),
+			RateLimit: config.RateLimitConfig{
+				MaxRetries:       4,
+				InitialBackoffMS: 250,
+				MaxBackoffMS:     2000,
+			},
+		},
+		Out: &out,
+		Err: &errOut,
+	}
+
+	require.NoError(t, app.RateLimitOptions([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "rate_limit_options"`)
+	require.Contains(t, out.String(), `"max_retries": 4`)
+	require.Contains(t, out.String(), `"initial_backoff_ms": 250`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/rate-limit-options", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Rate Limit Options")
+	require.Contains(t, out.String(), "Max retries      4")
+	require.Contains(t, out.String(), "429,500,502,503,504")
+	require.Empty(t, errOut.String())
+}
+
 func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

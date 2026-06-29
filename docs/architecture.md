@@ -8,13 +8,15 @@ Codog follows a small-core layout:
 - `internal/runloop`: provider-agnostic model/tool turn loop shared by CLI,
   REPL, TUI, and remote transports.
 - `internal/anthropic`: Anthropic-compatible streaming client and event parser.
+  The client owns provider retry/backoff behavior for transport, 429, and
+  selected 5xx failures.
 - `internal/tools`: built-in tool registry and permission gate.
 - `internal/session`: workspace-scoped JSONL session persistence, export
   rendering, and legacy flat-session compatibility.
 - `internal/prompthistory`: prompt-history report shaping and text rendering for
   CLI and REPL slash surfaces.
 - `internal/config`: config merge from user file, project file, environment, and
-  flags.
+  flags, including provider rate-limit retry settings.
 - `internal/contextview`: prompt-context report shaping and rendering for
   memory, focus, session, token, git, and local preflight signals.
 - `internal/projectinit`: idempotent project bootstrap for `.codog`

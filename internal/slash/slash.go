@@ -33,6 +33,7 @@ func Specs() []Spec {
 		{Name: "/doctor", Usage: "/doctor", Description: "Run local auth, config, workspace, and runtime diagnostics."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/usage", Usage: "/usage", Description: "Show detailed token, role, block, and tool usage for the current session."},
+		{Name: "/rate-limit-options", Usage: "/rate-limit-options", Description: "Show provider retry and backoff settings."},
 		{Name: "/compact", Usage: "/compact", Description: "Compact in-memory request context for long sessions."},
 		{Name: "/diff", Usage: "/diff [--staged]", Description: "Show git working tree or staged diff."},
 		{Name: "/commit", Usage: "/commit [--all] MESSAGE", Description: "Create a git commit from staged changes."},

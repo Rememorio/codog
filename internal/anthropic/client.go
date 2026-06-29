@@ -20,9 +20,28 @@ type Client struct {
 	BaseURL   string
 	APIKey    string
 	AuthToken string
+	RateLimit RateLimitOptions
+	Sleep     func(context.Context, time.Duration) error
+}
+
+type RateLimitOptions struct {
+	MaxRetries     int           `json:"max_retries"`
+	InitialBackoff time.Duration `json:"initial_backoff"`
+	MaxBackoff     time.Duration `json:"max_backoff"`
+}
+
+type RateLimitReport struct {
+	MaxRetries        int   `json:"max_retries"`
+	InitialBackoffMS  int   `json:"initial_backoff_ms"`
+	MaxBackoffMS      int   `json:"max_backoff_ms"`
+	RetryableStatuses []int `json:"retryable_statuses"`
 }
 
 func New(baseURL, apiKey, authToken string) *Client {
+	return NewWithRateLimit(baseURL, apiKey, authToken, DefaultRateLimitOptions())
+}
+
+func NewWithRateLimit(baseURL, apiKey, authToken string, rateLimit RateLimitOptions) *Client {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}
@@ -33,6 +52,25 @@ func New(baseURL, apiKey, authToken string) *Client {
 		BaseURL:   strings.TrimRight(baseURL, "/"),
 		APIKey:    apiKey,
 		AuthToken: authToken,
+		RateLimit: normalizeRateLimit(rateLimit),
+	}
+}
+
+func DefaultRateLimitOptions() RateLimitOptions {
+	return RateLimitOptions{
+		MaxRetries:     2,
+		InitialBackoff: 500 * time.Millisecond,
+		MaxBackoff:     5 * time.Second,
+	}
+}
+
+func (o RateLimitOptions) Report() RateLimitReport {
+	o = normalizeRateLimit(o)
+	return RateLimitReport{
+		MaxRetries:        o.MaxRetries,
+		InitialBackoffMS:  int(o.InitialBackoff / time.Millisecond),
+		MaxBackoffMS:      int(o.MaxBackoff / time.Millisecond),
+		RetryableStatuses: []int{429, 500, 502, 503, 504},
 	}
 }
 
@@ -43,9 +81,48 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 		return AssistantMessage{}, err
 	}
 
+	options := normalizeRateLimit(c.RateLimit)
+	var lastErr error
+	for attempt := 0; attempt <= options.MaxRetries; attempt++ {
+		httpReq, err := c.newRequest(ctx, body)
+		if err != nil {
+			return AssistantMessage{}, err
+		}
+		resp, err := c.http().Do(httpReq)
+		if err != nil {
+			lastErr = err
+			if attempt < options.MaxRetries {
+				if sleepErr := c.sleep(ctx, backoffDelay(options, attempt, 0)); sleepErr != nil {
+					return AssistantMessage{}, sleepErr
+				}
+				continue
+			}
+			return AssistantMessage{}, err
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			defer resp.Body.Close()
+			return parseStream(resp.Body, onText)
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		retryAfter := retryAfterDelay(resp.Header.Get("retry-after"), time.Now())
+		statusErr := fmt.Errorf("anthropic request failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		_ = resp.Body.Close()
+		lastErr = statusErr
+		if attempt < options.MaxRetries && retryableStatus(resp.StatusCode) {
+			if sleepErr := c.sleep(ctx, backoffDelay(options, attempt, retryAfter)); sleepErr != nil {
+				return AssistantMessage{}, sleepErr
+			}
+			continue
+		}
+		return AssistantMessage{}, statusErr
+	}
+	return AssistantMessage{}, lastErr
+}
+
+func (c *Client) newRequest(ctx context.Context, body []byte) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
-		return AssistantMessage{}, err
+		return nil, err
 	}
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("accept", "text/event-stream")
@@ -56,18 +133,7 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 	if c.AuthToken != "" {
 		httpReq.Header.Set("authorization", "Bearer "+c.AuthToken)
 	}
-
-	resp, err := c.http().Do(httpReq)
-	if err != nil {
-		return AssistantMessage{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return AssistantMessage{}, fmt.Errorf("anthropic request failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
-	}
-	return parseStream(resp.Body, onText)
+	return httpReq, nil
 }
 
 func (c *Client) http() *http.Client {
@@ -75,6 +141,83 @@ func (c *Client) http() *http.Client {
 		return c.HTTP
 	}
 	return http.DefaultClient
+}
+
+func (c *Client) sleep(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	if c.Sleep != nil {
+		return c.Sleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func normalizeRateLimit(options RateLimitOptions) RateLimitOptions {
+	defaults := DefaultRateLimitOptions()
+	if options.MaxRetries < 0 {
+		options.MaxRetries = 0
+	}
+	if options.MaxRetries == 0 {
+		options.MaxRetries = defaults.MaxRetries
+	}
+	if options.InitialBackoff <= 0 {
+		options.InitialBackoff = defaults.InitialBackoff
+	}
+	if options.MaxBackoff <= 0 {
+		options.MaxBackoff = defaults.MaxBackoff
+	}
+	if options.MaxBackoff < options.InitialBackoff {
+		options.MaxBackoff = options.InitialBackoff
+	}
+	return options
+}
+
+func retryableStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func backoffDelay(options RateLimitOptions, attempt int, retryAfter time.Duration) time.Duration {
+	if retryAfter > 0 {
+		if retryAfter > options.MaxBackoff {
+			return options.MaxBackoff
+		}
+		return retryAfter
+	}
+	delay := options.InitialBackoff
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+		if delay >= options.MaxBackoff {
+			return options.MaxBackoff
+		}
+	}
+	return delay
+}
+
+func retryAfterDelay(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := time.ParseDuration(value + "s"); err == nil {
+		return seconds
+	}
+	if when, err := http.ParseTime(value); err == nil && when.After(now) {
+		return when.Sub(now)
+	}
+	return 0
 }
 
 type streamEnvelope struct {

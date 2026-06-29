@@ -22,7 +22,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
-  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/usage`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/usage`, `/rate-limit-options`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
@@ -68,6 +68,9 @@ Claude Code source.
 - Hook commands can run before and after tool use.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
+- `codog rate-limit-options` reports provider retry/backoff settings; Anthropic
+  streaming retries transport errors, 429, and selected 5xx responses according
+  to `rate_limit`.
 - Request context is automatically compacted for long sessions.
 - `codog mock-server :8089` starts a deterministic Anthropic-compatible
   streaming server for harness tests.
@@ -158,6 +161,11 @@ codog --permission-mode prompt prompt "inspect the repo"
   "permission_rules": {
     "deny": ["bash:rm -rf"],
     "denied_tools": []
+  },
+  "rate_limit": {
+    "max_retries": 2,
+    "initial_backoff_ms": 500,
+    "max_backoff_ms": 5000
   },
   "max_turns": 8,
   "max_tokens": 4096,

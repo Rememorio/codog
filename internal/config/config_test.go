@@ -95,6 +95,30 @@ func TestLoadRemoteAuthToken(t *testing.T) {
 	require.Equal(t, 30, cfg.Future.RemoteLeaseSeconds)
 }
 
+func TestLoadRateLimitConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rate_limit":{"max_retries":4,"initial_backoff_ms":250,"max_backoff_ms":2000}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, 4, cfg.RateLimit.MaxRetries)
+	require.Equal(t, 250, cfg.RateLimit.InitialBackoffMS)
+	require.Equal(t, 2000, cfg.RateLimit.MaxBackoffMS)
+}
+
+func TestLoadRateLimitEnvOverrides(t *testing.T) {
+	t.Setenv("CODOG_RATE_LIMIT_MAX_RETRIES", "5")
+	t.Setenv("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS", "100")
+	t.Setenv("CODOG_RATE_LIMIT_MAX_BACKOFF_MS", "300")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, 5, cfg.RateLimit.MaxRetries)
+	require.Equal(t, 100, cfg.RateLimit.InitialBackoffMS)
+	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
+}
+
 func TestLoadEditorBridgeToken(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

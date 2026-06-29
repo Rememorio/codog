@@ -21,6 +21,12 @@ type HookConfig struct {
 	PostToolUse []string `json:"post_tool_use,omitempty"`
 }
 
+type RateLimitConfig struct {
+	MaxRetries       int `json:"max_retries,omitempty"`
+	InitialBackoffMS int `json:"initial_backoff_ms,omitempty"`
+	MaxBackoffMS     int `json:"max_backoff_ms,omitempty"`
+}
+
 type MCPServerConfig struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
@@ -67,6 +73,7 @@ type Config struct {
 	PermissionRules     PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
+	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
 	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
 	Hooks               HookConfig                 `json:"hooks,omitempty"`
 	MCPServers          map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
@@ -92,6 +99,7 @@ func Load(overrides FlagOverrides) (Config, error) {
 		MaxTurns:            8,
 		PermissionMode:      "workspace-write",
 		AutoCompactMessages: 40,
+		RateLimit:           DefaultRateLimitConfig(),
 		MCPServers:          map[string]MCPServerConfig{},
 	}
 
@@ -127,6 +135,7 @@ func Load(overrides FlagOverrides) (Config, error) {
 	if cfg.AutoCompactMessages <= 0 {
 		cfg.AutoCompactMessages = 40
 	}
+	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
 	return cfg, nil
 }
 
@@ -138,6 +147,7 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 		MaxTurns:            8,
 		PermissionMode:      "workspace-write",
 		AutoCompactMessages: 40,
+		RateLimit:           DefaultRateLimitConfig(),
 		MCPServers:          map[string]MCPServerConfig{},
 	}
 	home, err := defaultConfigHome()
@@ -161,6 +171,7 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	if err := applyManagedPolicy(&cfg); err != nil {
 		return Config{}, paths, err
 	}
+	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
 	return cfg, paths, nil
 }
 
@@ -221,6 +232,9 @@ func merge(dst *Config, src Config) {
 	if src.AutoCompactMessages != 0 {
 		dst.AutoCompactMessages = src.AutoCompactMessages
 	}
+	if rateLimitConfigSet(src.RateLimit) {
+		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
+	}
 	if len(src.EnabledSkills) != 0 {
 		dst.EnabledSkills = append([]string(nil), src.EnabledSkills...)
 	}
@@ -265,6 +279,50 @@ func permissionRulesSet(rules PermissionRules) bool {
 		len(rules.DeniedTools) != 0
 }
 
+func DefaultRateLimitConfig() RateLimitConfig {
+	return RateLimitConfig{
+		MaxRetries:       2,
+		InitialBackoffMS: 500,
+		MaxBackoffMS:     5000,
+	}
+}
+
+func NormalizeRateLimitConfig(cfg RateLimitConfig) RateLimitConfig {
+	defaults := DefaultRateLimitConfig()
+	if cfg.MaxRetries < 0 {
+		cfg.MaxRetries = 0
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = defaults.MaxRetries
+	}
+	if cfg.InitialBackoffMS <= 0 {
+		cfg.InitialBackoffMS = defaults.InitialBackoffMS
+	}
+	if cfg.MaxBackoffMS <= 0 {
+		cfg.MaxBackoffMS = defaults.MaxBackoffMS
+	}
+	if cfg.MaxBackoffMS < cfg.InitialBackoffMS {
+		cfg.MaxBackoffMS = cfg.InitialBackoffMS
+	}
+	return cfg
+}
+
+func rateLimitConfigSet(cfg RateLimitConfig) bool {
+	return cfg.MaxRetries != 0 || cfg.InitialBackoffMS != 0 || cfg.MaxBackoffMS != 0
+}
+
+func mergeRateLimitConfig(dst *RateLimitConfig, src RateLimitConfig) {
+	if src.MaxRetries != 0 {
+		dst.MaxRetries = src.MaxRetries
+	}
+	if src.InitialBackoffMS != 0 {
+		dst.InitialBackoffMS = src.InitialBackoffMS
+	}
+	if src.MaxBackoffMS != 0 {
+		dst.MaxBackoffMS = src.MaxBackoffMS
+	}
+}
+
 func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
 	dst.Allow = append(dst.Allow, src.Allow...)
 	dst.Deny = append(dst.Deny, src.Deny...)
@@ -297,6 +355,21 @@ func applyEnv(cfg *Config) {
 	if value := os.Getenv("CODOG_MAX_TURNS"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.MaxTurns = parsed
+		}
+	}
+	if value := os.Getenv("CODOG_RATE_LIMIT_MAX_RETRIES"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.RateLimit.MaxRetries = parsed
+		}
+	}
+	if value := os.Getenv("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.RateLimit.InitialBackoffMS = parsed
+		}
+	}
+	if value := os.Getenv("CODOG_RATE_LIMIT_MAX_BACKOFF_MS"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.RateLimit.MaxBackoffMS = parsed
 		}
 	}
 }
