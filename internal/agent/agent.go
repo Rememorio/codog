@@ -7122,10 +7122,31 @@ func containsFold(values []string, target string) bool {
 	return false
 }
 
+type stringListFlag []string
+
+func (v *stringListFlag) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*v = append(*v, part)
+		}
+	}
+	return nil
+}
+
+func (v *stringListFlag) String() string {
+	if v == nil {
+		return ""
+	}
+	return strings.Join(*v, ",")
+}
+
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	printMode := false
+	allowedTools := stringListFlag(base.AllowedTools)
+	disallowedTools := stringListFlag(base.DisallowedTools)
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
@@ -7136,11 +7157,17 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
+	flags.Var(&allowedTools, "allowed-tools", "allow a tool or tool rule; repeat or comma-separate")
+	flags.Var(&allowedTools, "allowedTools", "allow a tool or tool rule; repeat or comma-separate")
+	flags.Var(&disallowedTools, "disallowed-tools", "deny a tool; repeat or comma-separate")
+	flags.Var(&disallowedTools, "disallowedTools", "deny a tool; repeat or comma-separate")
 	flags.IntVar(&base.MaxTurns, "max-turns", base.MaxTurns, "max model/tool loop iterations")
 	flags.IntVar(&base.MaxTokens, "max-tokens", base.MaxTokens, "maximum output tokens")
 	if err := flags.Parse(args); err != nil {
 		return base, "", nil, err
 	}
+	base.AllowedTools = []string(allowedTools)
+	base.DisallowedTools = []string(disallowedTools)
 	rest := flags.Args()
 	if printMode {
 		if len(rest) > 0 && rest[0] == "prompt" {
@@ -7226,6 +7253,8 @@ Flags:
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions
+  --allowed-tools TOOL[,TOOL]
+  --disallowed-tools TOOL[,TOOL]
   --max-turns N
   --max-tokens N
   --config PATH

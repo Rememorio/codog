@@ -127,6 +127,21 @@ func TestParseFlagsSupportsPrintAliases(t *testing.T) {
 	require.False(t, overrides.SkipPermissions)
 }
 
+func TestParseFlagsSupportsToolRuleOverrides(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{
+		"--allowed-tools", "read_file,grep",
+		"--allowedTools", "glob",
+		"--disallowed-tools", "bash",
+		"--disallowedTools", "write_file,edit_file",
+		"prompt", "hello",
+	}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"read_file", "grep", "glob"}, overrides.AllowedTools)
+	require.Equal(t, []string{"bash", "write_file", "edit_file"}, overrides.DisallowedTools)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+}
+
 func TestDumpManifestsCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

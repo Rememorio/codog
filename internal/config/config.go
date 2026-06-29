@@ -124,6 +124,8 @@ type FlagOverrides struct {
 	BaseURL         string
 	PermissionMode  string
 	SkipPermissions bool
+	AllowedTools    []string
+	DisallowedTools []string
 	MaxTurns        int
 	MaxTokens       int
 }
@@ -658,6 +660,12 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.SkipPermissions {
 		cfg.PermissionMode = "allow"
+	}
+	if len(overrides.AllowedTools) > 0 {
+		cfg.PermissionRules.Allow = append(cfg.PermissionRules.Allow, overrides.AllowedTools...)
+	}
+	if len(overrides.DisallowedTools) > 0 {
+		cfg.PermissionRules.DeniedTools = append(cfg.PermissionRules.DeniedTools, overrides.DisallowedTools...)
 	}
 	if overrides.MaxTurns != 0 {
 		cfg.MaxTurns = overrides.MaxTurns

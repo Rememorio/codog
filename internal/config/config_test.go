@@ -129,6 +129,21 @@ func TestLoadSkipPermissionsFlagOverridesPermissionMode(t *testing.T) {
 	require.Equal(t, "allow", cfg.PermissionMode)
 }
 
+func TestLoadPermissionRuleFlagOverrides(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_rules":{"allow":["read_file"],"denied_tools":["bash"]}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath:      configPath,
+		AllowedTools:    []string{"grep", "glob"},
+		DisallowedTools: []string{"write_file"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"read_file", "grep", "glob"}, cfg.PermissionRules.Allow)
+	require.Equal(t, []string{"bash", "write_file"}, cfg.PermissionRules.DeniedTools)
+}
+
 func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
