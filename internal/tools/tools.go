@@ -155,6 +155,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(REPLTool{Workspace: workspace})
 	reg.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(MCPDispatchTool{Servers: opts.MCPServers})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
@@ -178,6 +179,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
+	r.Register(MCPDispatchTool{Servers: opts.MCPServers})
 	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 }
@@ -414,6 +416,75 @@ func (t MCPTool) Permission() Permission {
 
 func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	result := mcp.CallTool(ctx, t.ServerName, t.Server, t.RemoteName, input)
+	if result.Error != "" {
+		return "", errors.New(result.Error)
+	}
+	if len(result.Result) == 0 {
+		return "{}", nil
+	}
+	return string(result.Result), nil
+}
+
+type MCPDispatchTool struct {
+	Servers map[string]config.MCPServerConfig
+}
+
+type mcpDispatchInput struct {
+	Server    string          `json:"server"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+func (MCPDispatchTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "mcp",
+		Description: "Call a tool on a configured MCP server by server and tool name.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"server": map[string]any{
+					"type":        "string",
+					"description": "Configured MCP server name.",
+				},
+				"tool": map[string]any{
+					"type":        "string",
+					"description": "Remote MCP tool name to call.",
+				},
+				"arguments": map[string]any{
+					"type":                 "object",
+					"description":          "Arguments passed to the remote MCP tool.",
+					"additionalProperties": true,
+				},
+			},
+			"required": []string{"server", "tool"},
+		},
+	}
+}
+
+func (MCPDispatchTool) Permission() Permission {
+	return PermissionWorkspace
+}
+
+func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload mcpDispatchInput
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.Server) == "" {
+		return "", errors.New("server is required")
+	}
+	if strings.TrimSpace(payload.Tool) == "" {
+		return "", errors.New("tool is required")
+	}
+	server, ok := t.Servers[payload.Server]
+	if !ok {
+		return "", fmt.Errorf("unknown MCP server %q", payload.Server)
+	}
+	if len(payload.Arguments) == 0 {
+		payload.Arguments = json.RawMessage(`{}`)
+	}
+	result := mcp.CallTool(ctx, payload.Server, server, payload.Tool, payload.Arguments)
 	if result.Error != "" {
 		return "", errors.New(result.Error)
 	}

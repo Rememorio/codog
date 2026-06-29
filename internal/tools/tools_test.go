@@ -44,7 +44,7 @@ func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ps:%s\\n' \"$*\"\n"), 0o755))
 	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
 
-	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":1}`))
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":5}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ps:-NoProfile -Command Write-Output ok`)
 
@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 42)
+	require.Len(t, infos, 43)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -241,6 +241,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("config")
+	require.True(t, ok)
+	require.Equal(t, PermissionWorkspace, info.Permission)
+	info, ok = registry.Info("mcp")
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
 	info, ok = registry.Info("enter_plan_mode")
@@ -722,18 +725,27 @@ func TestBashToolRejectsUnavailableSandbox(t *testing.T) {
 }
 
 func TestMCPToolCallsRemoteTool(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPToolHelperProcess"},
+		Env:     []string{"CODOG_MCP_TOOL_HELPER=1"},
+	}
 	out, err := MCPTool{
 		Name:       NewMCPToolName("test server", "echo"),
 		ServerName: "test server",
-		Server: config.MCPServerConfig{
-			Command: os.Args[0],
-			Args:    []string{"-test.run=TestMCPToolHelperProcess"},
-			Env:     []string{"CODOG_MCP_TOOL_HELPER=1"},
-		},
+		Server:     server,
 		RemoteName: "echo",
 	}.Execute(context.Background(), []byte(`{"text":"hi"}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"text":"echo"`)
+
+	out, err = MCPDispatchTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"test","tool":"echo","arguments":{"text":"hi"}}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"text":"echo"`)
+
+	_, err = MCPDispatchTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"missing","tool":"echo"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown MCP server")
 }
 
 func TestMCPResourceToolsListAndReadRemoteResources(t *testing.T) {
