@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 49)
+	require.Len(t, infos, 50)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -223,6 +223,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	_, ok = registry.Info("tool_search")
 	require.True(t, ok)
 	info, ok = registry.Info("brief")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("send_user_message")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("structured_output")
@@ -638,6 +641,12 @@ func TestBriefToolReturnsAttachmentMetadata(t *testing.T) {
 	require.Contains(t, out, `"status": "normal"`)
 	require.Contains(t, out, `"is_image": true`)
 	require.Contains(t, out, `"size": 3`)
+
+	out, err = SendUserMessageTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"message":"Heads up","status":"proactive","attachments":["image.png"]}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"message": "Heads up"`)
+	require.Contains(t, out, `"status": "proactive"`)
+	require.Contains(t, out, `"is_image": true`)
 }
 
 func TestStructuredOutputToolReturnsPayload(t *testing.T) {

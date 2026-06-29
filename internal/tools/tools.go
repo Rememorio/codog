@@ -151,6 +151,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TodoReadTool{Workspace: workspace})
 	reg.Register(TodoWriteTool{Workspace: workspace})
 	reg.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(SendUserMessageTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(StructuredOutputTool{})
 	reg.Register(SleepTool{})
 	reg.Register(REPLTool{Workspace: workspace})
@@ -182,6 +183,8 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(SendUserMessageTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(LSPTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
@@ -3045,6 +3048,37 @@ func (t BriefTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		"attachments": attachments,
 		"sent_at":     time.Now().UTC().Format(time.RFC3339),
 	}), nil
+}
+
+type SendUserMessageTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+func (SendUserMessageTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "send_user_message",
+		Description: "Send a user-facing message with optional workspace attachment metadata.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"message": map[string]any{"type": "string"},
+				"attachments": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+				"status": map[string]any{"type": "string", "enum": []string{"normal", "proactive"}},
+			},
+			"required":             []string{"message", "status"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (SendUserMessageTool) Permission() Permission { return PermissionReadOnly }
+
+func (t SendUserMessageTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	return BriefTool{Workspace: t.Workspace, AdditionalDirs: t.AdditionalDirs}.Execute(ctx, input)
 }
 
 func isImageAttachment(path string) bool {
