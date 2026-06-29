@@ -49,6 +49,8 @@ Codog follows a small-core layout:
 - `internal/worktree`: git worktree allocation for isolated local agent workers.
 - `internal/gitops`: local git status, diff, and commit helpers for CLI and
   slash-command workflows.
+- `internal/releasenotes`: structured git-log parsing and Markdown/JSON release
+  note generation.
 - `internal/plugins`: local plugin discovery, remote marketplace index fetch,
   verified zip install/update, enable/disable, and removal.
 - `internal/oauth`: PKCE, provider metadata discovery/profile storage, device

@@ -23,7 +23,7 @@ Claude Code source.
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
   `/security-review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
-  `/references`, `/definition`, `/hover`, `/templates`, `/output-style`, `/skills`, `/mcp`.
+  `/references`, `/definition`, `/hover`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -44,9 +44,12 @@ Claude Code source.
 - `/focus` and `codog focus [PATH...]` maintain focused context paths in
   `.codog/focus.json` and inject focused file contents into future prompts;
   `/unfocus` and `codog unfocus [PATH...|--all]` remove them.
-- `/diff`, `/commit`, `/log`, `/changelog`, `/blame`, `/stash`, `/git`, and
+- `/diff`, `/commit`, `/log`, `/changelog`, `/release-notes`, `/blame`, `/stash`, `/git`, and
   `codog git` provide local git status, diff, log, changelog, blame, stash, and
   commit workflows.
+- `codog release-notes [FROM [TO]] [--format markdown|json]` generates grouped
+  release notes from git commits, defaulting to the latest tag through `HEAD`
+  when a tag exists.
 - `/run`, `/test`, `/build`, `/lint`, and matching CLI commands run workspace
   commands with captured stdout/stderr and text or JSON reports.
 - `codog skills` lists Markdown skills from `~/.codog/skills` and

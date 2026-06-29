@@ -32,6 +32,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/git")
 	require.Contains(t, out.String(), "/log")
 	require.Contains(t, out.String(), "/changelog")
+	require.Contains(t, out.String(), "/release-notes")
 	require.Contains(t, out.String(), "/stash")
 	require.Contains(t, out.String(), "/blame")
 	require.Contains(t, out.String(), "/run")

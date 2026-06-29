@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
+	"github.com/Rememorio/codog/internal/releasenotes"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/securityreview"
@@ -225,6 +226,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Stash(rest)
 	case "changelog":
 		return app.Changelog(rest)
+	case "release-notes":
+		return app.ReleaseNotes(rest)
 	case "run":
 		return app.RunCommand(ctx, rest)
 	case "test":
@@ -3459,6 +3462,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleLogSlash(fields[1:])
 	case "/changelog":
 		a.handleChangelogSlash(fields[1:])
+	case "/release-notes":
+		if err := a.ReleaseNotes(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/blame":
 		a.handleBlameSlash(fields[1:])
 	case "/stash":
@@ -3874,6 +3881,108 @@ func (a *App) Changelog(args []string) error {
 	}
 	fmt.Fprintln(a.Out, log)
 	return nil
+}
+
+type releaseNotesRequest struct {
+	Format string
+	From   string
+	To     string
+	Limit  int
+}
+
+func (a *App) ReleaseNotes(args []string) error {
+	req, err := parseReleaseNotesArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := releasenotes.Generate(a.Workspace, releasenotes.Options{
+		From:  req.From,
+		To:    req.To,
+		Limit: req.Limit,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	releasenotes.RenderMarkdown(a.Out, report)
+	return nil
+}
+
+func parseReleaseNotesArgs(args []string) (releaseNotesRequest, error) {
+	req := releaseNotesRequest{Format: "markdown", Limit: 50}
+	var positional []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--format" || arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return releaseNotesRequest{}, errors.New("release-notes format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--format="):
+			req.Format = strings.TrimPrefix(arg, "--format=")
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--from":
+			index++
+			if index >= len(args) {
+				return releaseNotesRequest{}, errors.New("release-notes from ref is required")
+			}
+			req.From = args[index]
+		case strings.HasPrefix(arg, "--from="):
+			req.From = strings.TrimPrefix(arg, "--from=")
+		case arg == "--to":
+			index++
+			if index >= len(args) {
+				return releaseNotesRequest{}, errors.New("release-notes to ref is required")
+			}
+			req.To = args[index]
+		case strings.HasPrefix(arg, "--to="):
+			req.To = strings.TrimPrefix(arg, "--to=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return releaseNotesRequest{}, errors.New("release-notes limit is required")
+			}
+			limit, err := strconv.Atoi(args[index])
+			if err != nil {
+				return releaseNotesRequest{}, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return releaseNotesRequest{}, err
+			}
+			req.Limit = limit
+		default:
+			positional = append(positional, arg)
+		}
+	}
+	if len(positional) > 2 {
+		return releaseNotesRequest{}, errors.New("usage: codog release-notes [FROM [TO]] [--from REF] [--to REF] [--limit N] [--format markdown|json]")
+	}
+	if len(positional) > 0 && req.From == "" {
+		req.From = positional[0]
+	}
+	if len(positional) > 1 && req.To == "" {
+		req.To = positional[1]
+	}
+	switch req.Format {
+	case "markdown", "text":
+		req.Format = "markdown"
+	case "json":
+	default:
+		return releaseNotesRequest{}, fmt.Errorf("unknown release-notes format %q", req.Format)
+	}
+	return req, nil
 }
 
 func (a *App) Stash(args []string) error {
@@ -4728,6 +4837,7 @@ Usage:
   %s [flags] git status | git diff [--staged] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
+  %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
   %s [flags] symbols|diagnostics|map|references|definition|hover [ARGS...] [--json]
@@ -4754,7 +4864,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

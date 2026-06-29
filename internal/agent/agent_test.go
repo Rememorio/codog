@@ -233,6 +233,16 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "notes.txt")
 	out.Reset()
 
+	runGit(t, workspace, "tag", "v0.1.0")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "feat: add feature")
+	require.NoError(t, app.ReleaseNotes([]string{"--from", "v0.1.0", "--json"}))
+	require.Contains(t, out.String(), `"kind": "release_notes"`)
+	require.Contains(t, out.String(), `"name": "Features"`)
+	require.Contains(t, out.String(), `"subject": "feat: add feature"`)
+	out.Reset()
+
 	require.NoError(t, app.Git([]string{"blame", "notes.txt", "1"}))
 	require.Contains(t, out.String(), "hello")
 	out.Reset()
@@ -268,6 +278,15 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/changelog 1", sess))
 	require.Contains(t, out.String(), "slash commit")
+	out.Reset()
+
+	runGit(t, workspace, "tag", "v0.2.0")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "feat: add slash feature")
+	require.True(t, app.handleSlash(context.Background(), "/release-notes v0.2.0", sess))
+	require.Contains(t, out.String(), "# Release Notes")
+	require.Contains(t, out.String(), "feat: add slash feature")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/blame notes.txt 1", sess))
