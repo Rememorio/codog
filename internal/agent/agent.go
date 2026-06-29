@@ -8,14 +8,21 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/hooks"
+	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/tui"
+	"github.com/Rememorio/codog/internal/usage"
 )
 
 const version = "0.1.0"
@@ -55,6 +62,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		fmt.Fprintln(os.Stdout, string(data))
 		return nil
 	}
+	if command == "mock-server" {
+		addr := ":8089"
+		if len(rest) > 0 {
+			addr = rest[0]
+		}
+		fmt.Fprintf(os.Stderr, "mock Anthropic-compatible server listening on %s\n", addr)
+		return http.ListenAndServe(addr, mockanthropic.Server{Text: "mock response from codog"}.Handler())
+	}
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
@@ -78,6 +93,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	switch command {
 	case "", "repl":
 		return app.REPL(ctx, overrides)
+	case "tui":
+		result, err := tui.Prompt()
+		if err != nil {
+			return err
+		}
+		if !result.Submitted || result.Prompt == "" {
+			return nil
+		}
+		return app.Prompt(ctx, result.Prompt, overrides)
 	case "prompt":
 		input := strings.Join(rest, " ")
 		if strings.TrimSpace(input) == "" {
@@ -90,6 +114,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Prompt(ctx, input, overrides)
 	case "sessions":
 		return app.ListSessions()
+	case "skills":
+		return app.ListSkills()
+	case "mcp":
+		return app.ListMCP(ctx)
+	case "cost":
+		return app.ShowCost(overrides)
 	default:
 		if command != "" {
 			return fmt.Errorf("unknown command %q", command)
@@ -147,7 +177,10 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 			return nil
 		}
 		if line == "/help" {
-			fmt.Fprintln(a.Err, "Commands: /help, /exit. Ask normally to run an agent turn.")
+			fmt.Fprintln(a.Err, "Commands: /help, /exit, /status, /cost, /compact, /skills, /mcp. Ask normally to run an agent turn.")
+			continue
+		}
+		if a.handleSlash(ctx, line, sess) {
 			continue
 		}
 		runner := Runner{
@@ -172,6 +205,33 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 	return scanner.Err()
 }
 
+func (a *App) handleSlash(ctx context.Context, line string, sess *session.Session) bool {
+	if !strings.HasPrefix(line, "/") {
+		return false
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return true
+	}
+	switch fields[0] {
+	case "/status":
+		fmt.Fprintf(a.Err, "session=%s messages=%d model=%s permission=%s\n", sess.ID, len(sess.Messages), a.Config.Model, a.Config.PermissionMode)
+	case "/cost":
+		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
+	case "/compact":
+		before := len(sess.Messages)
+		sess.Messages = compactMessages(sess.Messages, a.Config.AutoCompactMessages)
+		fmt.Fprintf(a.Err, "compacted request context from %d to %d messages\n", before, len(sess.Messages))
+	case "/skills":
+		_ = a.ListSkills()
+	case "/mcp":
+		_ = a.ListMCP(ctx)
+	default:
+		fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
+	}
+	return true
+}
+
 func (a *App) ListSessions() error {
 	sessions, err := a.Sessions.List()
 	if err != nil {
@@ -180,6 +240,43 @@ func (a *App) ListSessions() error {
 	for _, sess := range sessions {
 		fmt.Fprintf(a.Out, "%s\t%d messages\t%s\n", sess.ID, len(sess.Messages), sess.Path)
 	}
+	return nil
+}
+
+func (a *App) ListSkills() error {
+	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return err
+	}
+	if len(all) == 0 {
+		fmt.Fprintln(a.Out, "No skills found.")
+		return nil
+	}
+	for _, skill := range all {
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\n", skill.Name, skill.Source, skill.Path)
+	}
+	return nil
+}
+
+func (a *App) ListMCP(ctx context.Context) error {
+	if len(a.Config.MCPServers) == 0 {
+		fmt.Fprintln(a.Out, "No MCP servers configured.")
+		return nil
+	}
+	statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
+	data, _ := json.MarshalIndent(statuses, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func (a *App) ShowCost(overrides config.FlagOverrides) error {
+	sess, err := a.openSession(overrides)
+	if err != nil {
+		return err
+	}
+	summary := usage.Estimate(sess.Messages, a.Config.Model)
+	data, _ := json.MarshalIndent(summary, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
 
@@ -208,11 +305,12 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	system := "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
 
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
+		requestMessages := compactMessages(messages, r.Config.AutoCompactMessages)
 		req := anthropic.Request{
 			Model:     r.Config.Model,
 			MaxTokens: r.Config.MaxTokens,
 			System:    system,
-			Messages:  messages,
+			Messages:  requestMessages,
 			Tools:     r.Tools.Definitions(),
 		}
 		assistant, err := r.Client.Stream(ctx, req, func(delta string) {
@@ -231,16 +329,37 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			return messages, nil
 		}
 		for _, block := range toolUses {
+			hookRunner := hooks.Runner{Config: r.Config.Hooks}
+			if err := hookRunner.PreToolUse(ctx, block.Name, block.Input); err != nil {
+				messages = append(messages, anthropic.ToolResultMessage(block.ID, err.Error(), true))
+				continue
+			}
 			output, err := r.Tools.Execute(ctx, block.Name, block.Input, r.Prompter)
 			isErr := false
 			if err != nil {
 				output = err.Error()
 				isErr = true
 			}
+			if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, output, isErr); hookErr != nil && !isErr {
+				output = hookErr.Error()
+				isErr = true
+			}
 			messages = append(messages, anthropic.ToolResultMessage(block.ID, output, isErr))
 		}
 	}
 	return messages, errors.New("conversation exceeded max turns")
+}
+
+func compactMessages(messages []anthropic.Message, keep int) []anthropic.Message {
+	if keep <= 0 || len(messages) <= keep {
+		return messages
+	}
+	omitted := len(messages) - keep
+	summary := anthropic.TextMessage("user", fmt.Sprintf("Previous Codog context was auto-compacted. %d older messages were omitted; recent context is retained.", omitted))
+	out := make([]anthropic.Message, 0, keep+1)
+	out = append(out, summary)
+	out = append(out, messages[len(messages)-keep:]...)
+	return out
 }
 
 func toolUseBlocks(blocks []anthropic.ContentBlock) []anthropic.ContentBlock {
@@ -281,7 +400,12 @@ func printHelp(out io.Writer) {
 Usage:
   %s [flags] prompt "explain this repo"
   %s [flags] repl
+  %s [flags] tui
   %s [flags] sessions
+  %s [flags] skills
+  %s [flags] mcp
+  %s [flags] cost --resume latest
+  %s mock-server :8089
   %s config
 
 Flags:
@@ -296,7 +420,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

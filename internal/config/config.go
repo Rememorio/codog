@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,9 +80,6 @@ func Load(overrides FlagOverrides) (Config, error) {
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
 
-	if cfg.APIKey == "" && cfg.AuthToken == "" {
-		return cfg, errors.New("missing credentials: set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN")
-	}
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = 4096
 	}
