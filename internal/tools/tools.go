@@ -22,6 +22,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -126,6 +127,9 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(EnterPlanModeTool{Workspace: workspace})
 	reg.Register(ExitPlanModeTool{Workspace: workspace})
 	reg.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(CronCreateTool{ConfigHome: opts.ConfigHome})
+	reg.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
+	reg.Register(CronListTool{ConfigHome: opts.ConfigHome})
 	reg.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1549,6 +1553,117 @@ func buildAgentToolCommand(executable string, def agentdefs.Definition, descript
 
 func shellQuoteToolArg(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+type CronCreateTool struct {
+	ConfigHome string
+}
+
+func (CronCreateTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "cron_create",
+		Description: "Create a scheduled recurring Codog task registry entry.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"schedule":    map[string]any{"type": "string"},
+				"prompt":      map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+			},
+			"required":             []string{"schedule", "prompt"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (CronCreateTool) Permission() Permission { return PermissionDanger }
+
+func (t CronCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Schedule    string `json:"schedule"`
+		Prompt      string `json:"prompt"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	entry, err := cron.NewStore(t.ConfigHome).Create(payload.Schedule, payload.Prompt, payload.Description)
+	if err != nil {
+		return "", err
+	}
+	return pretty(entry), nil
+}
+
+type CronDeleteTool struct {
+	ConfigHome string
+}
+
+func (CronDeleteTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "cron_delete",
+		Description: "Delete a scheduled recurring Codog task by cron id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"cron_id": map[string]any{"type": "string"},
+			},
+			"required":             []string{"cron_id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (CronDeleteTool) Permission() Permission { return PermissionDanger }
+
+func (t CronDeleteTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		CronID string `json:"cron_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	entry, err := cron.NewStore(t.ConfigHome).Delete(payload.CronID)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"cron_id":  entry.ID,
+		"schedule": entry.Schedule,
+		"status":   "deleted",
+		"message":  "Cron entry removed",
+	}), nil
+}
+
+type CronListTool struct {
+	ConfigHome string
+}
+
+func (CronListTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "cron_list",
+		Description: "List scheduled recurring Codog tasks.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (CronListTool) Permission() Permission { return PermissionReadOnly }
+
+func (t CronListTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	if len(input) != 0 {
+		var payload map[string]any
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	entries, err := cron.NewStore(t.ConfigHome).List()
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"crons": entries, "count": len(entries)}), nil
 }
 
 type TaskCreateTool struct {

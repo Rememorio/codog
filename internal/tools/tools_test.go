@@ -136,7 +136,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 29)
+	require.Len(t, infos, 32)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -150,6 +150,15 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("agent")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("cron_create")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("cron_delete")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("cron_list")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	_, ok = registry.Info("multi_edit")
 	require.True(t, ok)
 	_, ok = registry.Info("task_create")
@@ -354,6 +363,32 @@ func TestAgentToolLaunchesBackgroundAgent(t *testing.T) {
 		logs, err := store.Logs(payload.Task.ID, 4096)
 		return err == nil && strings.Contains(logs, "agent-model") && strings.Contains(logs, "Base review instructions") && strings.Contains(logs, "check auth flow")
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestCronToolsCreateListAndDeleteEntries(t *testing.T) {
+	configHome := t.TempDir()
+
+	createOut, err := CronCreateTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"schedule":"0 9 * * 1","prompt":"review weekly status","description":"weekly review"}`))
+	require.NoError(t, err)
+	require.Contains(t, createOut, `"schedule": "0 9 * * 1"`)
+	require.Contains(t, createOut, `"prompt": "review weekly status"`)
+	var entry struct {
+		ID string `json:"cron_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(createOut), &entry))
+	require.NotEmpty(t, entry.ID)
+
+	listOut, err := CronListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"count": 1`)
+	require.Contains(t, listOut, entry.ID)
+
+	deleteOut, err := CronDeleteTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"cron_id":"`+entry.ID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, deleteOut, `"status": "deleted"`)
+	listOut, err = CronListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"count": 0`)
 }
 
 func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
