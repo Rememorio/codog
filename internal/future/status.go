@@ -103,11 +103,11 @@ func Surfaces() []Surface {
 			Command:     "oauth",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "PKCE helper, provider metadata discovery/profile storage, device authorization, and keychain-backed token storage with local file fallback are available; browser authorization remains planned.",
+			Description: "PKCE helper, provider metadata discovery/profile storage, device authorization, refresh-token renewal, and keychain-backed token storage with local file fallback are available; browser authorization remains planned.",
 			NextSteps: []string{
 				"Add localhost browser authorization callback flow.",
-				"Refresh tokens before model requests when provider metadata is configured.",
 				"Use provider profiles as defaults for OAuth commands.",
+				"Add refresh failure recovery guidance.",
 			},
 		},
 		{

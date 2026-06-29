@@ -78,6 +78,27 @@ func LoadProviderProfile(configHome, name string) (ProviderProfile, error) {
 	return profile, nil
 }
 
+func ResolveProviderProfile(configHome, name string) (ProviderProfile, error) {
+	if strings.TrimSpace(name) != "" {
+		return LoadProviderProfile(configHome, name)
+	}
+	profile, err := LoadProviderProfile(configHome, "default")
+	if err == nil {
+		return profile, nil
+	}
+	profiles, listErr := ListProviderProfiles(configHome)
+	if listErr != nil {
+		return ProviderProfile{}, listErr
+	}
+	if len(profiles) == 1 {
+		return profiles[0], nil
+	}
+	if len(profiles) == 0 {
+		return ProviderProfile{}, errors.New("no oauth provider profiles configured")
+	}
+	return ProviderProfile{}, errors.New("multiple oauth provider profiles configured; pass a profile name")
+}
+
 func ListProviderProfiles(configHome string) ([]ProviderProfile, error) {
 	dir := providerProfilesDir(configHome)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

@@ -285,6 +285,31 @@ func TestOAuthProviderCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
+func TestOAuthTokenRefreshCommand(t *testing.T) {
+	server := oauthRefreshTestServer(t)
+	defer server.Close()
+	configHome := t.TempDir()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "old-access",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	require.NoError(t, app.OAuth([]string{"token", "refresh"}))
+	require.Contains(t, out.String(), `"access_token": "refr...cess"`)
+	loaded, err := oauth.LoadToken(configHome)
+	require.NoError(t, err)
+	require.Equal(t, "refreshed-access", loaded.AccessToken)
+}
+
 func TestApplyStoredOAuthToken(t *testing.T) {
 	configHome := t.TempDir()
 	now := time.Now().UTC()
@@ -301,6 +326,46 @@ func TestApplyStoredOAuthToken(t *testing.T) {
 	cfg = config.Config{ConfigHome: configHome, AuthToken: "explicit-token"}
 	applyStoredOAuthToken(&cfg, now)
 	require.Equal(t, "explicit-token", cfg.AuthToken)
+}
+
+func TestApplyStoredOAuthTokenRefreshesExpiredToken(t *testing.T) {
+	server := oauthRefreshTestServer(t)
+	defer server.Close()
+	configHome := t.TempDir()
+	now := time.Now().UTC()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "expired-access",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    now.Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	cfg := config.Config{ConfigHome: configHome}
+	applyStoredOAuthToken(&cfg, now)
+	require.Equal(t, "refreshed-access", cfg.AuthToken)
+}
+
+func oauthRefreshTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"token_endpoint":"` + server.URL + `/token"}`))
+		case "/token":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "refresh_token", r.Form.Get("grant_type"))
+			require.Equal(t, "refresh-1", r.Form.Get("refresh_token"))
+			require.Equal(t, "client-1", r.Form.Get("client_id"))
+			_, _ = w.Write([]byte(`{"access_token":"refreshed-access","refresh_token":"refresh-2","expires_in":3600}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {

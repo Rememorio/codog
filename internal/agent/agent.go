@@ -208,8 +208,18 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 		return
 	}
 	token, err := oauth.LoadToken(cfg.ConfigHome)
-	if err != nil || token.Expired(now) {
+	if err != nil {
 		return
+	}
+	if token.Expired(now) {
+		if token.RefreshToken == "" {
+			return
+		}
+		refreshed, err := oauth.RefreshStoredToken(context.Background(), cfg.ConfigHome, "")
+		if err != nil || refreshed.Expired(now) {
+			return
+		}
+		token = refreshed
 	}
 	cfg.AuthToken = token.AccessToken
 }
@@ -1029,7 +1039,7 @@ func (a *App) OAuth(args []string) error {
 		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|delete")
 	}
 	if len(args) < 2 {
-		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | delete")
+		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | refresh [PROFILE] | delete")
 	}
 	switch args[1] {
 	case "save":
@@ -1056,6 +1066,18 @@ func (a *App) OAuth(args []string) error {
 		return nil
 	case "show":
 		token, err := oauth.LoadToken(a.Config.ConfigHome)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "refresh":
+		profile := ""
+		if len(args) > 2 {
+			profile = args[2]
+		}
+		token, err := oauth.RefreshStoredToken(context.Background(), a.Config.ConfigHome, profile)
 		if err != nil {
 			return err
 		}
@@ -1642,7 +1664,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
-  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|delete
+  %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth token save|show|refresh|delete
   %s sandbox | code-intel symbols|diagnostics|lsp
   %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
