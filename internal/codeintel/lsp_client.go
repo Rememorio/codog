@@ -27,21 +27,23 @@ type LSPQueryRequest struct {
 }
 
 type LSPQueryResult struct {
-	Kind      string `json:"kind"`
-	Language  string `json:"language"`
-	Action    string `json:"action"`
-	Method    string `json:"method"`
-	Path      string `json:"path"`
-	Result    any    `json:"result,omitempty"`
-	TextEdits int    `json:"text_edits,omitempty"`
-	Changed   bool   `json:"changed,omitempty"`
-	Content   string `json:"content,omitempty"`
+	Kind        string          `json:"kind"`
+	Language    string          `json:"language"`
+	Action      string          `json:"action"`
+	Method      string          `json:"method"`
+	Path        string          `json:"path"`
+	Result      any             `json:"result,omitempty"`
+	Diagnostics []LSPDiagnostic `json:"diagnostics,omitempty"`
+	TextEdits   int             `json:"text_edits,omitempty"`
+	Changed     bool            `json:"changed,omitempty"`
+	Content     string          `json:"content,omitempty"`
 }
 
 type lspClient struct {
-	stdin  io.Writer
-	stdout *bufio.Reader
-	nextID int
+	stdin         io.Writer
+	stdout        *bufio.Reader
+	nextID        int
+	notifications []lspRPCMessage
 }
 
 type lspRPCMessage struct {
@@ -60,15 +62,31 @@ type lspRPCError struct {
 
 type lspTextEdit struct {
 	Range struct {
-		Start lspPosition `json:"start"`
-		End   lspPosition `json:"end"`
+		Start LSPPosition `json:"start"`
+		End   LSPPosition `json:"end"`
 	} `json:"range"`
 	NewText string `json:"newText"`
 }
 
-type lspPosition struct {
+type LSPPosition struct {
 	Line      int `json:"line"`
 	Character int `json:"character"`
+}
+
+type LSPDiagnostic struct {
+	Range struct {
+		Start LSPPosition `json:"start"`
+		End   LSPPosition `json:"end"`
+	} `json:"range"`
+	Severity int    `json:"severity,omitempty"`
+	Code     any    `json:"code,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Message  string `json:"message"`
+}
+
+type lspPublishDiagnosticsParams struct {
+	URI         string          `json:"uri"`
+	Diagnostics []LSPDiagnostic `json:"diagnostics"`
 }
 
 func NormalizeLSPAction(action string) (string, error) {
@@ -119,15 +137,16 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 	if err != nil {
 		return LSPQueryResult{}, err
 	}
-	if action == "diagnostics" {
-		return LSPQueryResult{}, errors.New("lsp diagnostics are delivered as notifications; use codog diagnostics for now")
-	}
 	if strings.TrimSpace(command) == "" {
 		return LSPQueryResult{}, errors.New("lsp command is required")
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		timeout := 10 * time.Second
+		if action == "diagnostics" {
+			timeout = 3 * time.Second
+		}
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	path, rel, err := resolveWorkspaceFile(workspace, request.Path)
@@ -193,6 +212,25 @@ func runLSPQuery(ctx context.Context, workspace string, command string, language
 	}); err != nil {
 		return LSPQueryResult{}, err
 	}
+	if action == "diagnostics" {
+		diagnostics, err := client.waitForDiagnostics(uri)
+		if err != nil {
+			if ctx.Err() != nil {
+				diagnostics = []LSPDiagnostic{}
+			} else {
+				return LSPQueryResult{}, err
+			}
+		}
+		return LSPQueryResult{
+			Kind:        "lsp_query",
+			Language:    language,
+			Action:      action,
+			Method:      "textDocument/publishDiagnostics",
+			Path:        rel,
+			Result:      diagnostics,
+			Diagnostics: diagnostics,
+		}, nil
+	}
 	method, params, err := lspMethodParams(action, uri, request.Line, request.Character)
 	if err != nil {
 		return LSPQueryResult{}, err
@@ -247,6 +285,9 @@ func (c *lspClient) request(method string, params any) (json.RawMessage, error) 
 			return nil, err
 		}
 		if !sameLSPID(msg.ID, id) {
+			if msg.Method != "" {
+				c.notifications = append(c.notifications, msg)
+			}
 			continue
 		}
 		if msg.Error != nil {
@@ -258,6 +299,52 @@ func (c *lspClient) request(method string, params any) (json.RawMessage, error) 
 
 func (c *lspClient) notify(method string, params any) error {
 	return writeLSPMessage(c.stdin, lspRPCMessage{JSONRPC: "2.0", Method: method, Params: params})
+}
+
+func (c *lspClient) waitForDiagnostics(uri string) ([]LSPDiagnostic, error) {
+	for {
+		if diagnostics, ok, err := c.popDiagnostics(uri); ok || err != nil {
+			return diagnostics, err
+		}
+		raw, err := readLSPMessage(c.stdout)
+		if err != nil {
+			return nil, err
+		}
+		var msg lspRPCMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return nil, err
+		}
+		c.notifications = append(c.notifications, msg)
+	}
+}
+
+func (c *lspClient) popDiagnostics(uri string) ([]LSPDiagnostic, bool, error) {
+	for i, msg := range c.notifications {
+		if msg.Method != "textDocument/publishDiagnostics" {
+			continue
+		}
+		var params lspPublishDiagnosticsParams
+		if err := decodeLSPParams(msg.Params, &params); err != nil {
+			return nil, true, err
+		}
+		if params.URI != "" && params.URI != uri {
+			continue
+		}
+		c.notifications = append(c.notifications[:i], c.notifications[i+1:]...)
+		if params.Diagnostics == nil {
+			params.Diagnostics = []LSPDiagnostic{}
+		}
+		return params.Diagnostics, true, nil
+	}
+	return nil, false, nil
+}
+
+func decodeLSPParams(params any, out any) error {
+	data, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }
 
 func lspMethodParams(action string, uri string, line int, character int) (string, any, error) {

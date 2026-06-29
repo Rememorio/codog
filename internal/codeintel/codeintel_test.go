@@ -241,13 +241,20 @@ func TestLSPStoreQueryUsesStdioProtocol(t *testing.T) {
 	require.Equal(t, 1, result.TextEdits)
 	require.True(t, result.Changed)
 	require.Contains(t, result.Content, "func main() {}")
+
+	result, err = store.Query(context.Background(), "go", LSPQueryRequest{Action: "diagnostics", Path: "main.go"})
+	require.NoError(t, err)
+	require.Equal(t, "diagnostics", result.Action)
+	require.Equal(t, "textDocument/publishDiagnostics", result.Method)
+	require.Len(t, result.Diagnostics, 1)
+	require.Equal(t, "fake diagnostic", result.Diagnostics[0].Message)
 }
 
 func TestApplyLSPTextEdits(t *testing.T) {
 	source := "alpha\nbeta\n"
 	var edit lspTextEdit
-	edit.Range.Start = lspPosition{Line: 1, Character: 0}
-	edit.Range.End = lspPosition{Line: 1, Character: 4}
+	edit.Range.Start = LSPPosition{Line: 1, Character: 0}
+	edit.Range.End = LSPPosition{Line: 1, Character: 4}
 	edit.NewText = "gamma"
 
 	out, err := applyLSPTextEdits(source, []lspTextEdit{edit})
@@ -291,6 +298,26 @@ func TestFakeLSPServer(t *testing.T) {
 			return
 		}
 		if msg.ID == nil {
+			if msg.Method == "textDocument/didOpen" {
+				var params struct {
+					TextDocument struct {
+						URI string `json:"uri"`
+					} `json:"textDocument"`
+				}
+				_ = decodeLSPParams(msg.Params, &params)
+				_ = writeLSPMessage(os.Stdout, lspRPCMessage{JSONRPC: "2.0", Method: "textDocument/publishDiagnostics", Params: map[string]any{
+					"uri": params.TextDocument.URI,
+					"diagnostics": []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 5},
+							"end":   map[string]any{"line": 2, "character": 9},
+						},
+						"severity": 1,
+						"source":   "fake-lsp",
+						"message":  "fake diagnostic",
+					}},
+				}})
+			}
 			continue
 		}
 		switch msg.Method {
