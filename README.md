@@ -10,7 +10,8 @@ Claude Code source.
 - One-shot prompt mode
 - Interactive REPL
 - Anthropic-compatible streaming through `/v1/messages`
-- Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`, `grep`, `glob`
+- Built-in tools: `bash`, `read_file`, `write_file`, `edit_file`, `grep`,
+  `glob`, `todo_read`, `todo_write`
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes
 - JSONL session persistence and resume
@@ -21,7 +22,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/version`, `/sandbox`, `/project`, `/env`, `/search`,
-  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/review`, `/context`, `/focus`, `/unfocus`, `/cost`, `/usage`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/release-notes`, `/templates`, `/output-style`, `/skills`, `/mcp`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
@@ -65,7 +66,8 @@ Claude Code source.
 - `codog mcp` inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls.
 - Hook commands can run before and after tool use.
-- `codog cost --resume latest` estimates session token usage and rough cost.
+- `codog cost --resume latest` estimates session token usage and rough cost;
+  `codog usage --resume latest` adds role, block, and tool-use breakdowns.
 - Request context is automatically compacted for long sessions.
 - `codog mock-server :8089` starts a deterministic Anthropic-compatible
   streaming server for harness tests.

@@ -746,6 +746,46 @@ func TestContextCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestUsageCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("usage-session", anthropic.TextMessage("user", "hello usage")))
+	require.NoError(t, store.Append("usage-session", anthropic.Message{
+		Role: "assistant",
+		Content: []anthropic.ContentBlock{{
+			Type:  "tool_use",
+			Name:  "read_file",
+			Input: json.RawMessage(`{"path":"README.md"}`),
+		}},
+	}))
+	require.NoError(t, store.Append("usage-session", anthropic.ToolResultMessage("tool-1", "ok", false)))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, Model: "claude-haiku"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Usage([]string{"--json"}, config.FlagOverrides{SessionID: "usage-session"}))
+	require.Contains(t, out.String(), `"kind": "usage"`)
+	require.Contains(t, out.String(), `"session_id": "usage-session"`)
+	require.Contains(t, out.String(), `"tool_uses": 1`)
+	require.Contains(t, out.String(), `"tool_results": 1`)
+	out.Reset()
+
+	sess, err := store.Open("usage-session")
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/usage", sess))
+	require.Contains(t, out.String(), "Usage")
+	require.Contains(t, out.String(), "Session          usage-session")
+	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=0")
+	require.Empty(t, errOut.String())
+}
+
 func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

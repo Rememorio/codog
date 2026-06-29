@@ -219,6 +219,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.MCP(ctx, rest)
 	case "cost":
 		return app.ShowCost(overrides)
+	case "usage":
+		return app.Usage(rest, overrides)
 	case "export":
 		return app.Export(rest)
 	case "git":
@@ -3519,6 +3521,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/tokens":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
+	case "/usage":
+		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/config":
 		a.handleConfigSlash(fields[1:])
 	case "/model":
@@ -4737,6 +4743,25 @@ func (a *App) ShowCost(overrides config.FlagOverrides) error {
 	return nil
 }
 
+func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
+	format, err := parseSimpleOutputFormat("usage", args)
+	if err != nil {
+		return err
+	}
+	sess, err := a.openSession(overrides)
+	if err != nil {
+		return err
+	}
+	report := usage.BuildReport(sess.ID, a.Config.Model, sess.Messages)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	usage.RenderText(a.Out, report)
+	return nil
+}
+
 func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, error) {
 	id := overrides.SessionID
 	if overrides.Resume != "" {
@@ -4923,6 +4948,7 @@ Usage:
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] cost --resume latest
+  %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] git status | git diff [--staged] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
@@ -4954,7 +4980,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

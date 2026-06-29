@@ -43,7 +43,8 @@ Codog follows a small-core layout:
   active-style persistence, reporting, and system prompt injection.
 - `internal/mcp`: stdio MCP discovery plus tool/resource calls.
 - `internal/tui`: Bubble Tea prompt composer.
-- `internal/usage`: approximate token and cost accounting.
+- `internal/usage`: approximate token/cost accounting plus session usage
+  breakdowns by role, content block, and tool call.
 - `internal/background`: background process metadata, session attachment, log
   registry, restart policy supervision, retention pruning, and watch event
   streaming.
