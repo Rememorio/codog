@@ -1451,6 +1451,45 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	require.Equal(t, "hello", history[0].Text)
 }
 
+func TestPromptExpandsFileReferencesForModelInput(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("note body"), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Prompt(context.Background(), "summarize @notes.md", config.FlagOverrides{SessionID: "prompt-refs"}))
+	loaded, err := app.Sessions.Open("prompt-refs")
+	require.NoError(t, err)
+	require.Len(t, loaded.Messages, 2)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "<codog_file_references>")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "note body")
+	history, err := app.Sessions.PromptHistory("prompt-refs")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, "summarize @notes.md", history[0].Text)
+}
+
 func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Always run focused tests."), 0o644))

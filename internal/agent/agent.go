@@ -43,6 +43,7 @@ import (
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
+	"github.com/Rememorio/codog/internal/promptrefs"
 	"github.com/Rememorio/codog/internal/releasenotes"
 	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
@@ -4206,6 +4207,7 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 	if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
 		return err
 	}
+	modelInput := a.expandPromptReferences(input)
 	a.writeWorkerState(mode, "running", sess, "")
 	effectiveConfig := a.effectiveConfig()
 	runner := runloop.Runner{
@@ -4218,7 +4220,7 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 		System:    a.systemPrompt(),
 		OnToolUse: a.auditToolUse(sess.ID),
 	}
-	result, err := runner.Run(ctx, sess.Messages, input)
+	result, err := runner.Run(ctx, sess.Messages, modelInput)
 	if err != nil {
 		a.writeWorkerState(mode, "error", sess, err.Error())
 		return err
@@ -4231,6 +4233,14 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 	sess.Messages = result.Messages
 	a.writeWorkerState(mode, successStatus, sess, "")
 	return nil
+}
+
+func (a *App) expandPromptReferences(input string) string {
+	additionalDirs, err := pathscope.EffectiveDirs(a.Workspace, a.Config.AdditionalDirs)
+	if err != nil {
+		additionalDirs = nil
+	}
+	return promptrefs.Expand(input, a.Workspace, additionalDirs)
 }
 
 func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {

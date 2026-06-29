@@ -31,6 +31,8 @@ Codog follows a small-core layout:
   and memory report rendering.
 - `internal/focus`: focused context path persistence, report rendering, and
   system prompt injection for selected files/directories.
+- `internal/promptrefs`: scoped `@path` prompt reference expansion before model
+  turns.
 - `internal/todos`: workspace todo persistence shared by CLI, slash commands,
   and model-facing todo tools.
 - `internal/securityreview`: local heuristic scanner for credential and

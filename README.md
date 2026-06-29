@@ -60,6 +60,8 @@ Claude Code source.
 - `/focus` and `codog focus [PATH...]` maintain focused context paths in
   `.codog/focus.json` and inject focused file contents into future prompts;
   `/unfocus` and `codog unfocus [PATH...|--all]` remove them.
+- Prompt text can reference files as `@path`; Codog appends scoped file
+  contents for paths inside the workspace or configured additional directories.
 - `/add-dir` and `codog add-dir [PATH...|remove PATH|clear]` persist
   workspace-local extra directories that `read_file`, `write_file`,
   `edit_file`, `grep`, and `glob` can access after path-scope validation.
