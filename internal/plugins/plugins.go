@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,38 @@ type RemoteInstallResult struct {
 	Manifest       Manifest `json:"manifest"`
 }
 
+type MarketplaceUpdate struct {
+	MarketplaceURL  string `json:"marketplace_url"`
+	ID              string `json:"id"`
+	CurrentVersion  string `json:"current_version,omitempty"`
+	LatestVersion   string `json:"latest_version,omitempty"`
+	UpdateAvailable bool   `json:"update_available"`
+	URL             string `json:"url"`
+	SHA256          string `json:"sha256"`
+	SignatureValid  bool   `json:"signature_valid,omitempty"`
+}
+
+type RemoteUpdateResult struct {
+	MarketplaceURL  string   `json:"marketplace_url"`
+	ID              string   `json:"id"`
+	PreviousVersion string   `json:"previous_version,omitempty"`
+	Version         string   `json:"version,omitempty"`
+	URL             string   `json:"url"`
+	SHA256          string   `json:"sha256"`
+	ChecksumValid   bool     `json:"checksum_valid"`
+	SignatureValid  bool     `json:"signature_valid,omitempty"`
+	BackupPath      string   `json:"backup_path"`
+	Manifest        Manifest `json:"manifest"`
+	Updated         bool     `json:"updated"`
+}
+
+type preparedRemotePlugin struct {
+	Entry       RemotePlugin
+	ResolvedURL string
+	SHA256      string
+	SourceDir   string
+}
+
 type rawManifest struct {
 	ID          string            `json:"id"`
 	Name        string            `json:"name"`
@@ -98,7 +131,7 @@ func Load(workspace string) ([]Manifest, error) {
 	}
 	manifests := []Manifest{}
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		manifest, err := LoadManifest(filepath.Join(root, entry.Name()))
@@ -184,67 +217,254 @@ func InstallRemote(ctx context.Context, workspace, indexURL, id, publicKey strin
 }
 
 func InstallRemoteFromIndex(ctx context.Context, workspace string, index MarketplaceIndex, id string) (RemoteInstallResult, error) {
-	entry, ok := index.Find(id)
-	if !ok {
-		return RemoteInstallResult{}, fmt.Errorf("plugin %q not found in marketplace", id)
-	}
-	if err := validateID(entry.ID); err != nil {
-		return RemoteInstallResult{}, err
-	}
-	if strings.TrimSpace(entry.URL) == "" {
-		return RemoteInstallResult{}, fmt.Errorf("remote plugin %q URL is required", entry.ID)
-	}
-	if strings.TrimSpace(entry.SHA256) == "" {
-		return RemoteInstallResult{}, fmt.Errorf("remote plugin %q sha256 is required", entry.ID)
-	}
-	resolvedURL, err := resolveMarketplaceURL(index.Source, entry.URL)
+	prepared, cleanup, err := prepareRemotePlugin(ctx, index, id)
 	if err != nil {
 		return RemoteInstallResult{}, err
 	}
-	tmpDir, err := os.MkdirTemp("", "codog-plugin-*")
-	if err != nil {
-		return RemoteInstallResult{}, err
-	}
-	defer os.RemoveAll(tmpDir)
-
-	archivePath := filepath.Join(tmpDir, "plugin.zip")
-	actual, err := downloadArchive(ctx, resolvedURL, archivePath)
-	if err != nil {
-		return RemoteInstallResult{}, err
-	}
-	expected := normalizeChecksum(entry.SHA256)
-	if !strings.EqualFold(expected, actual) {
-		return RemoteInstallResult{}, fmt.Errorf("checksum mismatch: expected %s got %s", expected, actual)
-	}
-	extractDir := filepath.Join(tmpDir, "extract")
-	if err := extractZip(archivePath, extractDir); err != nil {
-		return RemoteInstallResult{}, err
-	}
-	sourceDir, err := findPluginDir(extractDir)
-	if err != nil {
-		return RemoteInstallResult{}, err
-	}
-	sourceManifest, err := LoadManifest(sourceDir)
-	if err != nil {
-		return RemoteInstallResult{}, err
-	}
-	if !strings.EqualFold(sourceManifest.ID, entry.ID) {
-		return RemoteInstallResult{}, fmt.Errorf("remote plugin id mismatch: index %q archive %q", entry.ID, sourceManifest.ID)
-	}
-	manifest, err := Install(workspace, sourceDir)
+	defer cleanup()
+	manifest, err := Install(workspace, prepared.SourceDir)
 	if err != nil {
 		return RemoteInstallResult{}, err
 	}
 	return RemoteInstallResult{
 		MarketplaceURL: index.Source,
-		ID:             entry.ID,
-		Version:        entry.Version,
-		URL:            resolvedURL,
-		SHA256:         actual,
+		ID:             prepared.Entry.ID,
+		Version:        prepared.Entry.Version,
+		URL:            prepared.ResolvedURL,
+		SHA256:         prepared.SHA256,
 		ChecksumValid:  true,
 		SignatureValid: index.SignatureValid,
 		Manifest:       manifest,
 	}, nil
+}
+
+func CheckUpdates(ctx context.Context, workspace string, sources []MarketplaceSource) ([]MarketplaceUpdate, error) {
+	installed, err := Load(workspace)
+	if err != nil {
+		return nil, err
+	}
+	updates := []MarketplaceUpdate{}
+	for _, source := range sources {
+		index, err := FetchMarketplace(ctx, source.URL, source.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		for _, local := range installed {
+			remote, ok := index.Find(local.ID)
+			if !ok || !versionNewer(remote.Version, local.Version) {
+				continue
+			}
+			resolvedURL, err := resolveMarketplaceURL(index.Source, remote.URL)
+			if err != nil {
+				return nil, err
+			}
+			updates = append(updates, MarketplaceUpdate{
+				MarketplaceURL:  index.Source,
+				ID:              local.ID,
+				CurrentVersion:  local.Version,
+				LatestVersion:   remote.Version,
+				UpdateAvailable: true,
+				URL:             resolvedURL,
+				SHA256:          remote.SHA256,
+				SignatureValid:  index.SignatureValid,
+			})
+		}
+	}
+	sort.Slice(updates, func(i, j int) bool {
+		if updates[i].ID == updates[j].ID {
+			return updates[i].MarketplaceURL < updates[j].MarketplaceURL
+		}
+		return updates[i].ID < updates[j].ID
+	})
+	return updates, nil
+}
+
+func UpdateRemote(ctx context.Context, workspace string, sources []MarketplaceSource, id string) (RemoteUpdateResult, error) {
+	if strings.TrimSpace(id) == "" {
+		return RemoteUpdateResult{}, errors.New("plugin id is required")
+	}
+	if err := validateID(id); err != nil {
+		return RemoteUpdateResult{}, err
+	}
+	local, err := LoadManifest(filepath.Join(Root(workspace), id))
+	if err != nil {
+		return RemoteUpdateResult{}, err
+	}
+	foundCurrentOrOlder := false
+	for _, source := range sources {
+		index, err := FetchMarketplace(ctx, source.URL, source.PublicKey)
+		if err != nil {
+			return RemoteUpdateResult{}, err
+		}
+		remote, ok := index.Find(id)
+		if !ok {
+			continue
+		}
+		if !versionNewer(remote.Version, local.Version) {
+			foundCurrentOrOlder = true
+			continue
+		}
+		return UpdateRemoteFromIndex(ctx, workspace, index, id, local.Version)
+	}
+	if foundCurrentOrOlder {
+		return RemoteUpdateResult{}, fmt.Errorf("plugin %q is already up to date", id)
+	}
+	return RemoteUpdateResult{}, fmt.Errorf("plugin %q not found in configured marketplaces", id)
+}
+
+func UpdateRemoteFromIndex(ctx context.Context, workspace string, index MarketplaceIndex, id, previousVersion string) (RemoteUpdateResult, error) {
+	prepared, cleanup, err := prepareRemotePlugin(ctx, index, id)
+	if err != nil {
+		return RemoteUpdateResult{}, err
+	}
+	defer cleanup()
+	manifest, backupPath, err := replaceInstalled(workspace, prepared.SourceDir, prepared.Entry.ID)
+	if err != nil {
+		return RemoteUpdateResult{}, err
+	}
+	return RemoteUpdateResult{
+		MarketplaceURL:  index.Source,
+		ID:              prepared.Entry.ID,
+		PreviousVersion: previousVersion,
+		Version:         prepared.Entry.Version,
+		URL:             prepared.ResolvedURL,
+		SHA256:          prepared.SHA256,
+		ChecksumValid:   true,
+		SignatureValid:  index.SignatureValid,
+		BackupPath:      backupPath,
+		Manifest:        manifest,
+		Updated:         true,
+	}, nil
+}
+
+func prepareRemotePlugin(ctx context.Context, index MarketplaceIndex, id string) (preparedRemotePlugin, func(), error) {
+	cleanup := func() {}
+	entry, ok := index.Find(id)
+	if !ok {
+		return preparedRemotePlugin{}, cleanup, fmt.Errorf("plugin %q not found in marketplace", id)
+	}
+	if err := validateID(entry.ID); err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	if strings.TrimSpace(entry.URL) == "" {
+		return preparedRemotePlugin{}, cleanup, fmt.Errorf("remote plugin %q URL is required", entry.ID)
+	}
+	if strings.TrimSpace(entry.SHA256) == "" {
+		return preparedRemotePlugin{}, cleanup, fmt.Errorf("remote plugin %q sha256 is required", entry.ID)
+	}
+	resolvedURL, err := resolveMarketplaceURL(index.Source, entry.URL)
+	if err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	tmpDir, err := os.MkdirTemp("", "codog-plugin-*")
+	if err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	cleanup = func() { _ = os.RemoveAll(tmpDir) }
+
+	archivePath := filepath.Join(tmpDir, "plugin.zip")
+	actual, err := downloadArchive(ctx, resolvedURL, archivePath)
+	if err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	expected := normalizeChecksum(entry.SHA256)
+	if !strings.EqualFold(expected, actual) {
+		return preparedRemotePlugin{}, cleanup, fmt.Errorf("checksum mismatch: expected %s got %s", expected, actual)
+	}
+	extractDir := filepath.Join(tmpDir, "extract")
+	if err := extractZip(archivePath, extractDir); err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	sourceDir, err := findPluginDir(extractDir)
+	if err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	sourceManifest, err := LoadManifest(sourceDir)
+	if err != nil {
+		return preparedRemotePlugin{}, cleanup, err
+	}
+	if !strings.EqualFold(sourceManifest.ID, entry.ID) {
+		return preparedRemotePlugin{}, cleanup, fmt.Errorf("remote plugin id mismatch: index %q archive %q", entry.ID, sourceManifest.ID)
+	}
+	if entry.Version != "" && sourceManifest.Version != "" && entry.Version != sourceManifest.Version {
+		return preparedRemotePlugin{}, cleanup, fmt.Errorf("remote plugin version mismatch: index %q archive %q", entry.Version, sourceManifest.Version)
+	}
+	return preparedRemotePlugin{
+		Entry:       entry,
+		ResolvedURL: resolvedURL,
+		SHA256:      actual,
+		SourceDir:   sourceDir,
+	}, cleanup, nil
+}
+
+func replaceInstalled(workspace, sourceDir, id string) (Manifest, string, error) {
+	root := Root(workspace)
+	target := filepath.Join(root, id)
+	info, err := os.Stat(target)
+	if err != nil {
+		return Manifest{}, "", err
+	}
+	if !info.IsDir() {
+		return Manifest{}, "", fmt.Errorf("installed plugin target is not a directory")
+	}
+	wasDisabled := Disabled(target)
+	staging, err := os.MkdirTemp(root, ".update-"+id+"-*")
+	if err != nil {
+		return Manifest{}, "", err
+	}
+	if err := copyDir(sourceDir, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return Manifest{}, "", err
+	}
+	backupPath, err := nextBackupPath(workspace, id)
+	if err != nil {
+		_ = os.RemoveAll(staging)
+		return Manifest{}, "", err
+	}
+	if err := os.Rename(target, backupPath); err != nil {
+		_ = os.RemoveAll(staging)
+		return Manifest{}, "", err
+	}
+	if err := os.Rename(staging, target); err != nil {
+		_ = os.Rename(backupPath, target)
+		_ = os.RemoveAll(staging)
+		return Manifest{}, "", err
+	}
+	if wasDisabled {
+		if err := os.WriteFile(filepath.Join(target, DisabledMarker), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+			_ = os.RemoveAll(target)
+			_ = os.Rename(backupPath, target)
+			return Manifest{}, "", err
+		}
+	}
+	manifest, err := LoadManifest(target)
+	if err != nil {
+		_ = os.RemoveAll(target)
+		_ = os.Rename(backupPath, target)
+		return Manifest{}, "", err
+	}
+	return manifest, backupPath, nil
+}
+
+func nextBackupPath(workspace, id string) (string, error) {
+	root := filepath.Join(workspace, ".codog", "plugin-backups")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", err
+	}
+	stamp := time.Now().UTC().Format("20060102150405")
+	for i := 0; i < 100; i++ {
+		name := id + "-" + stamp
+		if i > 0 {
+			name = fmt.Sprintf("%s-%02d", name, i)
+		}
+		path := filepath.Join(root, name)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return path, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("could not allocate plugin backup path")
 }
 
 func Root(workspace string) string {
@@ -599,4 +819,60 @@ func findPluginDir(root string) (string, error) {
 
 func normalizeChecksum(value string) string {
 	return strings.TrimPrefix(strings.TrimSpace(value), "sha256:")
+}
+
+func versionNewer(latest, current string) bool {
+	latest = strings.TrimSpace(latest)
+	current = strings.TrimSpace(current)
+	if latest == "" || latest == current {
+		return false
+	}
+	return compareVersions(latest, current) > 0
+}
+
+func compareVersions(a, b string) int {
+	aParts, aOK := versionParts(a)
+	bParts, bOK := versionParts(b)
+	if aOK && bOK {
+		maxLen := len(aParts)
+		if len(bParts) > maxLen {
+			maxLen = len(bParts)
+		}
+		for i := 0; i < maxLen; i++ {
+			var av, bv int
+			if i < len(aParts) {
+				av = aParts[i]
+			}
+			if i < len(bParts) {
+				bv = bParts[i]
+			}
+			if av > bv {
+				return 1
+			}
+			if av < bv {
+				return -1
+			}
+		}
+		return 0
+	}
+	return strings.Compare(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func versionParts(value string) ([]int, bool) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r < '0' || r > '9'
+	})
+	parts := make([]int, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		n, err := strconv.Atoi(field)
+		if err != nil {
+			return nil, false
+		}
+		parts = append(parts, n)
+	}
+	return parts, len(parts) > 0
 }

@@ -128,12 +128,12 @@ func Surfaces() []Surface {
 			Command:     "marketplace",
 			Status:      StatusExperimental,
 			Horizon:     "6-12 months",
-			Description: "Local plugin inventory supports install, enable, disable, remove, remote index fetching, signed index verification, and SHA-256 verified remote zip installs.",
+			Description: "Local plugin inventory supports install, update, enable, disable, remove, remote index fetching, signed index verification, and SHA-256 verified remote zip installs.",
 			DependsOn:   []string{"enterprise", "sandbox"},
 			NextSteps: []string{
-				"Add plugin update checks and apply flows.",
 				"Add organization-scoped marketplace allowlists.",
 				"Add plugin compatibility and version constraints.",
+				"Add plugin release channels and rollback pruning.",
 			},
 		},
 		{

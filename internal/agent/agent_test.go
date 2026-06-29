@@ -193,6 +193,61 @@ func TestMarketplaceInstallRemoteCommandUsesConfiguredMarketplace(t *testing.T) 
 	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "demo", "tool.sh"))
 }
 
+func TestMarketplaceUpdateCommandUsesConfiguredMarketplace(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","name":"Demo","version":"0.1.0"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tool.sh"), []byte("echo old\n"), 0o755))
+	archive := makeAgentPluginZip(t, map[string]string{
+		"demo/plugin.json": `{"id":"demo","name":"Demo","version":"0.2.0"}`,
+		"demo/tool.sh":     "echo new\n",
+	})
+	sum := sha256.Sum256(archive)
+	index := plugins.MarketplaceIndex{
+		Plugins: []plugins.RemotePlugin{
+			{ID: "demo", URL: "demo.zip", Version: "0.2.0", SHA256: hex.EncodeToString(sum[:])},
+		},
+	}
+	payload, err := json.Marshal(index)
+	require.NoError(t, err)
+	index.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.json":
+			require.NoError(t, json.NewEncoder(w).Encode(index))
+		case "/demo.zip":
+			_, _ = w.Write(archive)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	indexURL := server.URL + "/index.json"
+	app := &App{
+		Config: config.Config{Future: config.FutureConfig{
+			PluginMarketplaces:    []string{indexURL},
+			PluginMarketplaceKeys: map[string]string{indexURL: base64.StdEncoding.EncodeToString(publicKey)},
+		}},
+		Workspace: workspace,
+	}
+
+	var out bytes.Buffer
+	app.Out = &out
+	require.NoError(t, app.Marketplace([]string{"updates"}))
+	require.Contains(t, out.String(), `"latest_version": "0.2.0"`)
+
+	out.Reset()
+	require.NoError(t, app.Marketplace([]string{"update", "demo"}))
+	require.Contains(t, out.String(), `"updated": true`)
+	require.Contains(t, out.String(), `"signature_valid": true`)
+	data, err := os.ReadFile(filepath.Join(dir, "tool.sh"))
+	require.NoError(t, err)
+	require.Equal(t, "echo new\n", string(data))
+}
+
 func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	dir := t.TempDir()
 	artifact := filepath.Join(dir, "codog-new")

@@ -161,6 +161,66 @@ func TestInstallRemoteRejectsChecksumMismatch(t *testing.T) {
 	require.Contains(t, err.Error(), "checksum mismatch")
 }
 
+func TestCheckUpdatesFindsNewerRemoteVersion(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","name":"Demo","version":"0.1.0"}`), 0o644))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"plugins":[{"id":"demo","version":"0.2.0","url":"demo.zip","sha256":"abc"}]}`))
+	}))
+	defer server.Close()
+
+	updates, err := CheckUpdates(context.Background(), workspace, []MarketplaceSource{{URL: server.URL}})
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	require.Equal(t, "demo", updates[0].ID)
+	require.Equal(t, "0.1.0", updates[0].CurrentVersion)
+	require.Equal(t, "0.2.0", updates[0].LatestVersion)
+	require.True(t, updates[0].UpdateAvailable)
+}
+
+func TestUpdateRemoteReplacesInstalledPluginAndBacksUpOldVersion(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","name":"Demo","version":"0.1.0"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tool.sh"), []byte("echo old\n"), 0o755))
+	archive := makePluginZip(t, map[string]string{
+		"demo/plugin.json": `{"id":"demo","name":"Demo","version":"0.2.0"}`,
+		"demo/tool.sh":     "echo new\n",
+	})
+	sum := sha256.Sum256(archive)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.json":
+			_, _ = fmt.Fprintf(w, `{"plugins":[{"id":"demo","name":"Demo","version":"0.2.0","url":"demo.zip","sha256":"%s"}]}`, hex.EncodeToString(sum[:]))
+		case "/demo.zip":
+			_, _ = w.Write(archive)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := UpdateRemote(context.Background(), workspace, []MarketplaceSource{{URL: server.URL + "/index.json"}}, "demo")
+	require.NoError(t, err)
+	require.True(t, result.Updated)
+	require.Equal(t, "0.1.0", result.PreviousVersion)
+	require.Equal(t, "0.2.0", result.Version)
+	require.DirExists(t, result.BackupPath)
+	require.FileExists(t, filepath.Join(result.BackupPath, "plugin.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "tool.sh"))
+	require.NoError(t, err)
+	require.Equal(t, "echo new\n", string(data))
+}
+
+func TestVersionNewerComparesNumericSegments(t *testing.T) {
+	require.True(t, versionNewer("v1.10.0", "1.2.0"))
+	require.False(t, versionNewer("1.2.0", "1.2"))
+	require.False(t, versionNewer("1.0.0", "1.0.1"))
+}
+
 func makePluginZip(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
