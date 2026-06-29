@@ -21,7 +21,8 @@ Claude Code source.
   `mcp`, `mcp_auth`, `list_mcp_resources`,
   `read_mcp_resource`, `task_create`, `task_list`,
   `task_status`, `task_get`, `task_update`, `task_stop`, `task_output`,
-  `todo_read`, `todo_write`
+  `todo_read`, `todo_write`, `git_status`, `git_diff`, `git_log`,
+  `git_show`, `git_blame`
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes; compatibility flags
   `--dangerously-skip-permissions` and `--skip-permissions` select `allow`,

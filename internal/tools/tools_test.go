@@ -166,7 +166,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 44)
+	require.Len(t, infos, 49)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -249,6 +249,11 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("mcp_auth")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	for _, name := range []string{"git_status", "git_diff", "git_log", "git_show", "git_blame"} {
+		info, ok = registry.Info(name)
+		require.True(t, ok)
+		require.Equal(t, PermissionReadOnly, info.Permission)
+	}
 	info, ok = registry.Info("enter_plan_mode")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -418,6 +423,49 @@ func TestWorktreeToolsAllocateAndRemove(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, exitOut, `"removed": true`)
 	require.NoDirExists(t, payload.Allocation.Path)
+}
+
+func TestGitToolsReadRepositoryState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	workspace := t.TempDir()
+	runToolTestGit(t, workspace, "init", "-q")
+	runToolTestGit(t, workspace, "config", "user.email", "codog@example.test")
+	runToolTestGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\n"), 0o644))
+	runToolTestGit(t, workspace, "add", "notes.txt")
+	runToolTestGit(t, workspace, "commit", "-q", "-m", "initial notes")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\nbeta\n"), 0o644))
+
+	statusOut, err := GitStatusTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, statusOut, `"output"`)
+	require.Contains(t, statusOut, "notes.txt")
+
+	diffOut, err := GitDiffTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"notes.txt"}`))
+	require.NoError(t, err)
+	require.Contains(t, diffOut, "+beta")
+
+	logOut, err := GitLogTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"count":1,"oneline":true}`))
+	require.NoError(t, err)
+	require.Contains(t, logOut, "initial notes")
+
+	showOut, err := GitShowTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"commit":"HEAD","format":"metadata"}`))
+	require.NoError(t, err)
+	require.Contains(t, showOut, "initial notes")
+
+	blameOut, err := GitBlameTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"notes.txt","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.Contains(t, blameOut, "alpha")
+
+	_, err = GitDiffTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"../outside.txt"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes workspace")
+
+	_, err = GitShowTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"commit":"--help"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "safe git ref")
 }
 
 func runToolTestGit(t *testing.T, workspace string, args ...string) {

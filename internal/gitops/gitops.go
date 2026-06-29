@@ -46,6 +46,10 @@ func Status(workspace string) (string, error) {
 	return git(workspace, "status", "--short", "--branch")
 }
 
+func Run(workspace string, args ...string) (string, error) {
+	return git(workspace, args...)
+}
+
 func Diff(workspace string, staged bool) (string, error) {
 	args := []string{"diff"}
 	if staged {

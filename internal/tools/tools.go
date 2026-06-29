@@ -24,6 +24,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/cron"
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -159,6 +160,11 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(MCPAuthTool{Servers: opts.MCPServers})
 	reg.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	reg.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
+	reg.Register(GitStatusTool{Workspace: workspace})
+	reg.Register(GitDiffTool{Workspace: workspace})
+	reg.Register(GitLogTool{Workspace: workspace})
+	reg.Register(GitShowTool{Workspace: workspace})
+	reg.Register(GitBlameTool{Workspace: workspace})
 	reg.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
 	reg.Register(ToolSearchTool{Registry: reg})
 	return reg
@@ -184,6 +190,11 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(MCPAuthTool{Servers: opts.MCPServers})
 	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
+	r.Register(GitStatusTool{Workspace: workspace})
+	r.Register(GitDiffTool{Workspace: workspace})
+	r.Register(GitLogTool{Workspace: workspace})
+	r.Register(GitShowTool{Workspace: workspace})
+	r.Register(GitBlameTool{Workspace: workspace})
 }
 
 func (r *Registry) Has(name string) bool {
@@ -664,6 +675,339 @@ func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage)
 		return "", errors.New(result.Error)
 	}
 	return pretty(result), nil
+}
+
+type GitStatusTool struct {
+	Workspace string
+}
+
+func (GitStatusTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "git_status",
+		Description: "Show working tree status with structured JSON output.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"short": map[string]any{"type": "boolean", "description": "Use --short --branch output. Defaults to true."},
+			},
+		},
+	}
+}
+
+func (GitStatusTool) Permission() Permission { return PermissionReadOnly }
+
+func (t GitStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Short *bool `json:"short,omitempty"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	args := []string{"status"}
+	if payload.Short == nil || *payload.Short {
+		args = append(args, "--short", "--branch")
+	}
+	output, err := gitops.Run(t.Workspace, args...)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"output": output}), nil
+}
+
+type GitDiffTool struct {
+	Workspace string
+}
+
+func (GitDiffTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "git_diff",
+		Description: "Show git diff output for the working tree, index, commits, and optional path filters.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"path":    map[string]any{"type": "string"},
+				"staged":  map[string]any{"type": "boolean"},
+				"commit":  map[string]any{"type": "string"},
+				"commit2": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (GitDiffTool) Permission() Permission { return PermissionReadOnly }
+
+func (t GitDiffTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Path    string `json:"path,omitempty"`
+		Staged  bool   `json:"staged,omitempty"`
+		Commit  string `json:"commit,omitempty"`
+		Commit2 string `json:"commit2,omitempty"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	args := []string{"diff"}
+	if payload.Staged {
+		args = append(args, "--cached")
+	}
+	if strings.TrimSpace(payload.Commit) != "" {
+		commit, err := safeGitRef(payload.Commit, "commit")
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(payload.Commit2) != "" {
+			commit2, err := safeGitRef(payload.Commit2, "commit2")
+			if err != nil {
+				return "", err
+			}
+			args = append(args, commit+"..."+commit2)
+		} else {
+			args = append(args, commit)
+		}
+	}
+	if strings.TrimSpace(payload.Path) != "" {
+		path, err := gitPathArg(t.Workspace, payload.Path, true)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--", path)
+	}
+	output, err := gitops.Run(t.Workspace, args...)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"output": output}), nil
+}
+
+type GitLogTool struct {
+	Workspace string
+}
+
+func (GitLogTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "git_log",
+		Description: "Show commit history with optional count, author, date, and path filters.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"path":    map[string]any{"type": "string"},
+				"count":   map[string]any{"type": "integer", "minimum": 1},
+				"oneline": map[string]any{"type": "boolean"},
+				"author":  map[string]any{"type": "string"},
+				"since":   map[string]any{"type": "string"},
+				"until":   map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (GitLogTool) Permission() Permission { return PermissionReadOnly }
+
+func (t GitLogTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Path    string `json:"path,omitempty"`
+		Count   int    `json:"count,omitempty"`
+		Oneline bool   `json:"oneline,omitempty"`
+		Author  string `json:"author,omitempty"`
+		Since   string `json:"since,omitempty"`
+		Until   string `json:"until,omitempty"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	count := payload.Count
+	if count <= 0 {
+		count = 20
+	}
+	args := []string{"log", fmt.Sprintf("-n%d", count)}
+	if payload.Oneline {
+		args = append(args, "--oneline")
+	}
+	if strings.TrimSpace(payload.Author) != "" {
+		args = append(args, "--author="+payload.Author)
+	}
+	if strings.TrimSpace(payload.Since) != "" {
+		args = append(args, "--since="+payload.Since)
+	}
+	if strings.TrimSpace(payload.Until) != "" {
+		args = append(args, "--until="+payload.Until)
+	}
+	if strings.TrimSpace(payload.Path) != "" {
+		path, err := gitPathArg(t.Workspace, payload.Path, true)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--", path)
+	}
+	output, err := gitops.Run(t.Workspace, args...)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"output": output}), nil
+}
+
+type GitShowTool struct {
+	Workspace string
+}
+
+func (GitShowTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "git_show",
+		Description: "Show a commit, tag, or tree object in patch, stat, or metadata format.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"commit": map[string]any{"type": "string"},
+				"path":   map[string]any{"type": "string"},
+				"stat":   map[string]any{"type": "boolean"},
+				"format": map[string]any{"type": "string", "enum": []string{"patch", "stat", "metadata"}},
+			},
+			"required": []string{"commit"},
+		},
+	}
+}
+
+func (GitShowTool) Permission() Permission { return PermissionReadOnly }
+
+func (t GitShowTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Commit string `json:"commit"`
+		Path   string `json:"path,omitempty"`
+		Stat   bool   `json:"stat,omitempty"`
+		Format string `json:"format,omitempty"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	commit, err := safeGitRef(payload.Commit, "commit")
+	if err != nil {
+		return "", err
+	}
+	args := []string{"show"}
+	switch strings.TrimSpace(payload.Format) {
+	case "metadata":
+		if strings.TrimSpace(payload.Path) != "" {
+			return "", errors.New(`git_show format "metadata" cannot be combined with path`)
+		}
+		args = append(args, "--format=medium", "--no-patch")
+	case "stat":
+		args = append(args, "--stat")
+	case "", "patch":
+		if payload.Format == "" && payload.Stat {
+			args = append(args, "--stat")
+		}
+	default:
+		return "", fmt.Errorf("unknown git_show format %q", payload.Format)
+	}
+	if strings.TrimSpace(payload.Path) != "" {
+		path, err := gitPathArg(t.Workspace, payload.Path, true)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, commit+":"+path)
+	} else {
+		args = append(args, commit)
+	}
+	output, err := gitops.Run(t.Workspace, args...)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"output": output}), nil
+}
+
+type GitBlameTool struct {
+	Workspace string
+}
+
+func (GitBlameTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "git_blame",
+		Description: "Show revision and author information for each line of a file.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"path":       map[string]any{"type": "string"},
+				"start_line": map[string]any{"type": "integer", "minimum": 1},
+				"end_line":   map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required": []string{"path"},
+		},
+	}
+}
+
+func (GitBlameTool) Permission() Permission { return PermissionReadOnly }
+
+func (t GitBlameTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Path      string `json:"path"`
+		StartLine int    `json:"start_line,omitempty"`
+		EndLine   int    `json:"end_line,omitempty"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	path, err := gitPathArg(t.Workspace, payload.Path, false)
+	if err != nil {
+		return "", err
+	}
+	args := []string{"blame"}
+	if payload.StartLine > 0 && payload.EndLine > 0 {
+		if payload.EndLine < payload.StartLine {
+			return "", errors.New("end_line must be greater than or equal to start_line")
+		}
+		args = append(args, fmt.Sprintf("-L%d,%d", payload.StartLine, payload.EndLine))
+	}
+	args = append(args, "--", path)
+	output, err := gitops.Run(t.Workspace, args...)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"output": output}), nil
+}
+
+func safeGitRef(value, field string) (string, error) {
+	ref := strings.TrimSpace(value)
+	if ref == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if strings.HasPrefix(ref, "-") || strings.ContainsRune(ref, '\x00') {
+		return "", fmt.Errorf("%s is not a safe git ref", field)
+	}
+	return ref, nil
+}
+
+func gitPathArg(workspace, requested string, allowMissing bool) (string, error) {
+	path, err := safePath(workspace, requested, allowMissing)
+	if err != nil {
+		return "", err
+	}
+	root, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path escapes workspace scope: %s", requested)
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 type BashTool struct {
