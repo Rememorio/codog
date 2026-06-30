@@ -231,6 +231,13 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("powershell")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("Read")
+	require.True(t, ok)
+	require.Equal(t, "read_file", info.Name)
+	info, ok = registry.Info("TodoWrite")
+	require.True(t, ok)
+	require.Equal(t, "todo_write", info.Name)
+	require.True(t, registry.Has("MultiEdit"))
 	_, ok = registry.Info("ask_user_question")
 	require.True(t, ok)
 	_, ok = registry.Info("notebook_edit")
@@ -360,6 +367,20 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("get_mcp_prompt")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+}
+
+func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\n"), 0o644))
+	registry := NewRegistry(workspace)
+
+	out, err := registry.Execute(context.Background(), "Read", []byte(`{"path":"notes.txt"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "alpha")
+
+	out, err = registry.Execute(context.Background(), "Bash", []byte(`{"command":"printf alias-ok"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "alias-ok"`)
 }
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {

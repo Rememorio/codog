@@ -29,6 +29,10 @@ Claude Code source.
   `task_supervise`,
   `todo_read`, `todo_write`, `testing_permission`, `git_status`, `git_diff`, `git_log`,
   `git_show`, `git_blame`
+- Claude Code-style model tool names such as `Bash`, `Read`, `Write`, `Edit`,
+  `MultiEdit`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
+  as execution aliases while Codog keeps one canonical tool definition per
+  capability.
 - Permission confirmation with `read-only`, `workspace-write`,
   `danger-full-access`, `prompt`, and `allow` modes; compatibility flags
   `--dangerously-skip-permissions` and `--skip-permissions` select `allow`,

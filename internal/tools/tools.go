@@ -97,6 +97,51 @@ type RegistryOptions struct {
 	QuestionOut     io.Writer
 }
 
+var claudeToolAliases = map[string]string{
+	"askuserquestion":          "ask_user_question",
+	"bash":                     "bash",
+	"brief":                    "brief",
+	"config":                   "config",
+	"edit":                     "edit_file",
+	"editfile":                 "edit_file",
+	"enterplanmode":            "enter_plan_mode",
+	"exitplanmode":             "exit_plan_mode",
+	"exitplanmodev2":           "exit_plan_mode",
+	"gitblame":                 "git_blame",
+	"gitdiff":                  "git_diff",
+	"gitlog":                   "git_log",
+	"gitshow":                  "git_show",
+	"gitstatus":                "git_status",
+	"glob":                     "glob",
+	"grep":                     "grep",
+	"listmcpprompts":           "list_mcp_prompts",
+	"listmcpresources":         "list_mcp_resources",
+	"listmcpresourcetemplates": "list_mcp_resource_templates",
+	"mcp":                      "mcp",
+	"mcpauth":                  "mcp_auth",
+	"multiedit":                "multi_edit",
+	"multieditfile":            "multi_edit",
+	"notebookedit":             "notebook_edit",
+	"powershell":               "powershell",
+	"read":                     "read_file",
+	"readfile":                 "read_file",
+	"readmcpresource":          "read_mcp_resource",
+	"repl":                     "repl",
+	"sendusermessage":          "send_user_message",
+	"skill":                    "skill",
+	"sleep":                    "sleep",
+	"structuredoutput":         "structured_output",
+	"task":                     "agent",
+	"testingpermission":        "testing_permission",
+	"todowrite":                "todo_write",
+	"todoread":                 "todo_read",
+	"toolsearch":               "tool_search",
+	"webfetch":                 "web_fetch",
+	"websearch":                "web_search",
+	"write":                    "write_file",
+	"writefile":                "write_file",
+}
+
 type Prompter struct {
 	Mode        Permission
 	AllowRules  []string
@@ -227,7 +272,8 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 }
 
 func (r *Registry) Has(name string) bool {
-	return r.tools[name] != nil
+	_, _, ok := r.resolve(name)
+	return ok
 }
 
 func (r *Registry) Definitions() []anthropic.ToolDefinition {
@@ -255,28 +301,57 @@ func (r *Registry) Infos() []ToolInfo {
 }
 
 func (r *Registry) Info(name string) (ToolInfo, bool) {
-	for _, info := range r.Infos() {
-		if strings.EqualFold(info.Name, name) {
-			return info, true
-		}
+	_, tool, ok := r.resolve(name)
+	if !ok {
+		return ToolInfo{}, false
 	}
-	return ToolInfo{}, false
+	def := tool.Definition()
+	return ToolInfo{
+		Name:        def.Name,
+		Description: def.Description,
+		Permission:  tool.Permission(),
+		InputSchema: def.InputSchema,
+	}, true
 }
 
 func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessage, prompter *Prompter) (string, error) {
-	tool := r.tools[name]
-	if tool == nil {
+	canonical, tool, ok := r.resolve(name)
+	if !ok {
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
-	if strings.EqualFold(name, "testing_permission") {
+	if strings.EqualFold(canonical, "testing_permission") {
 		return r.executeTestingPermission(input, prompter)
 	}
 	if prompter != nil {
-		if err := prompter.Authorize(name, tool.Permission(), input); err != nil {
+		if err := prompter.Authorize(canonical, tool.Permission(), input); err != nil {
 			return "", err
 		}
 	}
 	return tool.Execute(ctx, input)
+}
+
+func (r *Registry) resolve(name string) (string, Tool, bool) {
+	if r == nil {
+		return "", nil, false
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil, false
+	}
+	if tool := r.tools[name]; tool != nil {
+		return name, tool, true
+	}
+	if canonical := claudeToolAliases[strings.ToLower(name)]; canonical != "" {
+		if tool := r.tools[canonical]; tool != nil {
+			return canonical, tool, true
+		}
+	}
+	for candidate, tool := range r.tools {
+		if strings.EqualFold(candidate, name) {
+			return candidate, tool, true
+		}
+	}
+	return "", nil, false
 }
 
 func (p *Prompter) Authorize(name string, required Permission, input json.RawMessage) error {
