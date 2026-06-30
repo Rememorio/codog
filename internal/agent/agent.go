@@ -14330,15 +14330,11 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
-		status, err := gitops.Status(a.Workspace)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(a.Out, status)
+		return a.GitStatus(args[1:])
 	case "diff":
 		return a.Diff(args[1:])
 	case "log":
@@ -14381,6 +14377,134 @@ func (a *App) Git(args []string) error {
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
 	return nil
+}
+
+type gitStatusRequest struct {
+	Format string
+}
+
+type gitStatusEntry struct {
+	Code         string `json:"code"`
+	Index        string `json:"index"`
+	Worktree     string `json:"worktree"`
+	Path         string `json:"path"`
+	OriginalPath string `json:"original_path,omitempty"`
+}
+
+type gitStatusReport struct {
+	Kind       string           `json:"kind"`
+	Action     string           `json:"action"`
+	Status     string           `json:"status"`
+	Clean      bool             `json:"clean"`
+	BranchLine string           `json:"branch_line,omitempty"`
+	Branch     string           `json:"branch,omitempty"`
+	Entries    []gitStatusEntry `json:"entries"`
+	Raw        string           `json:"raw"`
+}
+
+func (a *App) GitStatus(args []string) error {
+	req, err := parseGitStatusArgs(args)
+	if err != nil {
+		return err
+	}
+	raw, err := gitops.Status(a.Workspace)
+	if err != nil {
+		return err
+	}
+	report := buildGitStatusReport(raw)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, raw)
+	return nil
+}
+
+func parseGitStatusArgs(args []string) (gitStatusRequest, error) {
+	req := gitStatusRequest{Format: "text"}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("git status output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--short" || arg == "-s" || arg == "--branch" || arg == "-b" || arg == "-sb" || arg == "-bs" || arg == "--porcelain":
+		case strings.HasPrefix(arg, "--porcelain="):
+		default:
+			return req, fmt.Errorf("unknown git status flag %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "git status"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func buildGitStatusReport(raw string) gitStatusReport {
+	report := gitStatusReport{
+		Kind:    "git_status",
+		Action:  "show",
+		Status:  "ok",
+		Entries: []gitStatusEntry{},
+		Raw:     raw,
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "## ") {
+			report.BranchLine = strings.TrimSpace(strings.TrimPrefix(line, "## "))
+			report.Branch = parseGitStatusBranch(report.BranchLine)
+			continue
+		}
+		if entry, ok := parseGitStatusEntry(line); ok {
+			report.Entries = append(report.Entries, entry)
+		}
+	}
+	report.Clean = len(report.Entries) == 0
+	return report
+}
+
+func parseGitStatusBranch(line string) string {
+	branch := strings.TrimSpace(line)
+	if index := strings.Index(branch, "..."); index >= 0 {
+		branch = branch[:index]
+	}
+	if index := strings.Index(branch, " ["); index >= 0 {
+		branch = branch[:index]
+	}
+	return strings.TrimSpace(branch)
+}
+
+func parseGitStatusEntry(line string) (gitStatusEntry, bool) {
+	if len(line) < 3 {
+		return gitStatusEntry{}, false
+	}
+	code := line[:2]
+	path := strings.TrimSpace(line[3:])
+	if path == "" {
+		return gitStatusEntry{}, false
+	}
+	entry := gitStatusEntry{
+		Code:     code,
+		Index:    strings.TrimSpace(string(code[0])),
+		Worktree: strings.TrimSpace(string(code[1])),
+		Path:     path,
+	}
+	if before, after, ok := strings.Cut(path, " -> "); ok {
+		entry.OriginalPath = strings.TrimSpace(before)
+		entry.Path = strings.TrimSpace(after)
+	}
+	return entry, true
 }
 
 type diffRequest struct {
@@ -18190,7 +18314,7 @@ Usage:
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] | blame FILE [line] | commit [--all] MESSAGE
-  %s [flags] git status | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]

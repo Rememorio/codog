@@ -676,6 +676,19 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "notes.txt")
 	out.Reset()
 
+	require.NoError(t, app.Git([]string{"status", "--json"}))
+	var statusJSON gitStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusJSON))
+	require.Equal(t, "git_status", statusJSON.Kind)
+	require.Equal(t, "show", statusJSON.Action)
+	require.Equal(t, "ok", statusJSON.Status)
+	require.False(t, statusJSON.Clean)
+	require.NotEmpty(t, statusJSON.BranchLine)
+	require.Len(t, statusJSON.Entries, 1)
+	require.Equal(t, "??", statusJSON.Entries[0].Code)
+	require.Equal(t, "notes.txt", statusJSON.Entries[0].Path)
+	out.Reset()
+
 	require.NoError(t, app.Git([]string{"commit", "--all", "add", "notes"}))
 	require.Contains(t, out.String(), `"commit":`)
 	require.Contains(t, out.String(), "add notes")
@@ -822,6 +835,15 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/git status", sess))
 	require.Contains(t, out.String(), "## ")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/git status --json", sess))
+	var statusJSON gitStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusJSON))
+	require.Equal(t, "git_status", statusJSON.Kind)
+	require.Equal(t, "ok", statusJSON.Status)
+	require.True(t, statusJSON.Clean)
+	require.Empty(t, statusJSON.Entries)
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\nchanged\n"), 0o644))
