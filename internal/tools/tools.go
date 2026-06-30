@@ -3253,7 +3253,9 @@ func (ExitWorktreeTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"id": map[string]any{"type": "string"},
+				"id":      map[string]any{"type": "string"},
+				"task_id": map[string]any{"type": "string"},
+				"taskId":  map[string]any{"type": "string"},
 			},
 			"required":             []string{"id"},
 			"additionalProperties": false,
@@ -4625,12 +4627,18 @@ func (TaskStatusTool) Permission() Permission { return PermissionReadOnly }
 
 func (t TaskStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		TaskID string `json:"task_id"`
+		TaskId string `json:"taskId"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).Status(payload.ID)
+	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId)
+	if id == "" {
+		return "", errors.New("task_id is required")
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Status(id)
 	if err != nil {
 		return "", err
 	}
@@ -4650,6 +4658,7 @@ func (TaskGetTool) Definition() anthropic.ToolDefinition {
 			"type": "object",
 			"properties": map[string]any{
 				"task_id": map[string]any{"type": "string"},
+				"taskId":  map[string]any{"type": "string"},
 				"id":      map[string]any{"type": "string"},
 			},
 			"required":             []string{"task_id"},
@@ -4663,15 +4672,13 @@ func (TaskGetTool) Permission() Permission { return PermissionReadOnly }
 func (t TaskGetTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		TaskID string `json:"task_id"`
+		TaskId string `json:"taskId"`
 		ID     string `json:"id"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := payload.TaskID
-	if id == "" {
-		id = payload.ID
-	}
+	id := firstNonEmpty(payload.TaskID, payload.TaskId, payload.ID)
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -4695,6 +4702,7 @@ func (TaskUpdateTool) Definition() anthropic.ToolDefinition {
 			"type": "object",
 			"properties": map[string]any{
 				"task_id": map[string]any{"type": "string"},
+				"taskId":  map[string]any{"type": "string"},
 				"id":      map[string]any{"type": "string"},
 				"message": map[string]any{"type": "string"},
 			},
@@ -4709,16 +4717,14 @@ func (TaskUpdateTool) Permission() Permission { return PermissionDanger }
 func (t TaskUpdateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		TaskID  string `json:"task_id"`
+		TaskId  string `json:"taskId"`
 		ID      string `json:"id"`
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := payload.TaskID
-	if id == "" {
-		id = payload.ID
-	}
+	id := firstNonEmpty(payload.TaskID, payload.TaskId, payload.ID)
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -4750,7 +4756,10 @@ func (TaskStopTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"id": map[string]any{"type": "string"},
+				"id":       map[string]any{"type": "string"},
+				"task_id":  map[string]any{"type": "string"},
+				"taskId":   map[string]any{"type": "string"},
+				"shell_id": map[string]any{"type": "string"},
 			},
 			"required":             []string{"id"},
 			"additionalProperties": false,
@@ -4762,12 +4771,19 @@ func (TaskStopTool) Permission() Permission { return PermissionWorkspace }
 
 func (t TaskStopTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		ID string `json:"id"`
+		ID      string `json:"id"`
+		TaskID  string `json:"task_id"`
+		TaskId  string `json:"taskId"`
+		ShellID string `json:"shell_id"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).Stop(payload.ID)
+	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId, payload.ShellID)
+	if id == "" {
+		return "", errors.New("task_id is required")
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).Stop(id)
 	if err != nil {
 		return "", err
 	}
@@ -4787,7 +4803,11 @@ func (TaskOutputTool) Definition() anthropic.ToolDefinition {
 			"type": "object",
 			"properties": map[string]any{
 				"id":          map[string]any{"type": "string"},
+				"task_id":     map[string]any{"type": "string"},
+				"taskId":      map[string]any{"type": "string"},
 				"limit_bytes": map[string]any{"type": "integer", "minimum": 1},
+				"block":       map[string]any{"type": "boolean"},
+				"timeout":     map[string]any{"type": "integer", "minimum": 0},
 			},
 			"required":             []string{"id"},
 			"additionalProperties": false,
@@ -4800,6 +4820,8 @@ func (TaskOutputTool) Permission() Permission { return PermissionReadOnly }
 func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		ID         string `json:"id"`
+		TaskID     string `json:"task_id"`
+		TaskId     string `json:"taskId"`
 		LimitBytes int64  `json:"limit_bytes"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
@@ -4809,16 +4831,21 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		payload.LimitBytes = 64 * 1024
 	}
 	store := taskStore(t.ConfigHome, t.Workspace)
-	task, err := store.Status(payload.ID)
+	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId)
+	if id == "" {
+		return "", errors.New("task_id is required")
+	}
+	task, err := store.Status(id)
 	if err != nil {
 		return "", err
 	}
-	output, err := store.Logs(payload.ID, payload.LimitBytes)
+	output, err := store.Logs(id, payload.LimitBytes)
 	if err != nil {
 		return "", err
 	}
 	return pretty(map[string]any{
-		"id":        payload.ID,
+		"id":        id,
+		"task_id":   id,
 		"status":    task.Status,
 		"exit_code": task.ExitCode,
 		"error":     task.Error,

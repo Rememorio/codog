@@ -1128,7 +1128,7 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 
 	var completed background.Task
 	require.Eventually(t, func() bool {
-		statusOut, err := TaskStatusTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
+		statusOut, err := TaskStatusTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`"}`))
 		if err != nil {
 			return false
 		}
@@ -1140,18 +1140,19 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.NotNil(t, completed.ExitCode)
 	require.Equal(t, 0, *completed.ExitCode)
 
-	outputOut, err := TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
+	outputOut, err := TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","block":true,"timeout":1000}`))
 	require.NoError(t, err)
 	require.Contains(t, outputOut, "task-output")
+	require.Contains(t, outputOut, `"task_id": "`)
 	require.Contains(t, outputOut, `"status": "completed"`)
 	require.Contains(t, outputOut, `"exit_code": 0`)
 
-	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","message":"review logs"}`))
+	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`","message":"review logs"}`))
 	require.NoError(t, err)
 	require.Contains(t, updateOut, `"message_count": 1`)
 	require.Contains(t, updateOut, `"last_message": "review logs"`)
 
-	getOut, err := TaskGetTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`"}`))
+	getOut, err := TaskGetTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, getOut, `"messages": [`)
 	require.Contains(t, getOut, "review logs")
@@ -1161,7 +1162,7 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.Contains(t, listOut, task.ID)
 	require.Contains(t, listOut, `"total": 1`)
 
-	stopOut, err := TaskStopTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"id":"`+task.ID+`"}`))
+	stopOut, err := TaskStopTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, stopOut, task.ID)
 
