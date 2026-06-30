@@ -638,6 +638,62 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
+func TestUpdateBuiltinScopeRefreshesCompleteBuiltinRegistry(t *testing.T) {
+	workspace := t.TempDir()
+	extra := t.TempDir()
+	configHome := t.TempDir()
+	servers := map[string]config.MCPServerConfig{
+		"demo": {Command: "demo-mcp"},
+	}
+	questionIn := strings.NewReader("answer\n")
+	registry := &Registry{}
+	registry.Register(CommandTool{
+		Name:        "plugin_demo",
+		Description: "plugin tool",
+		Required:    PermissionReadOnly,
+		Workspace:   workspace,
+	})
+
+	registry.UpdateBuiltinScope(workspace, RegistryOptions{
+		SandboxStrategy: "none",
+		AdditionalDirs:  []string{extra},
+		ConfigHome:      configHome,
+		MCPServers:      servers,
+		QuestionIn:      questionIn,
+		QuestionOut:     io.Discard,
+	})
+
+	require.True(t, registry.Has("plugin_demo"))
+	require.Len(t, registry.Infos(), len(NewRegistryWithOptions(workspace, RegistryOptions{}).Infos())+1)
+	for _, name := range []string{
+		"powershell",
+		"list_mcp_resource_templates",
+		"list_mcp_prompts",
+		"get_mcp_prompt",
+		"tool_search",
+		"agent",
+		"task_create",
+		"ask_user_question",
+	} {
+		require.True(t, registry.Has(name), "missing %s", name)
+	}
+
+	_, tool, ok := registry.resolve("task_create")
+	require.True(t, ok)
+	require.Equal(t, configHome, tool.(TaskCreateTool).ConfigHome)
+	_, tool, ok = registry.resolve("list_mcp_prompts")
+	require.True(t, ok)
+	require.Equal(t, servers, tool.(ListMCPPromptsTool).Servers)
+	_, tool, ok = registry.resolve("ask_user_question")
+	require.True(t, ok)
+	questionTool := tool.(AskUserQuestionTool)
+	require.Same(t, questionIn, questionTool.In)
+	require.Equal(t, io.Discard, questionTool.Out)
+	_, tool, ok = registry.resolve("tool_search")
+	require.True(t, ok)
+	require.Same(t, registry, tool.(ToolSearchTool).Registry)
+}
+
 func TestFileToolSchemasAllowClaudeFilePathAlias(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
 	tests := []struct {

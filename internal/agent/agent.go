@@ -6039,10 +6039,21 @@ func (a *App) refreshBuiltinToolScope() error {
 	if err != nil {
 		return err
 	}
+	questionIn := a.In
+	if questionIn == nil {
+		questionIn = os.Stdin
+	}
+	questionOut := a.Err
+	if questionOut == nil {
+		questionOut = io.Discard
+	}
 	a.Tools.UpdateBuiltinScope(a.Workspace, tools.RegistryOptions{
 		SandboxStrategy: a.Config.Future.SandboxStrategy,
 		AdditionalDirs:  additionalDirs,
+		ConfigHome:      a.Config.ConfigHome,
 		MCPServers:      a.Config.MCPServers,
+		QuestionIn:      questionIn,
+		QuestionOut:     questionOut,
 	})
 	return nil
 }
