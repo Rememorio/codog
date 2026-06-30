@@ -34,8 +34,10 @@ import (
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
+	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/updater"
@@ -3389,6 +3391,45 @@ Disabled body.
 	prompt := app.systemPrompt()
 	require.Contains(t, prompt, "Visible body.")
 	require.NotContains(t, prompt, "Disabled body.")
+}
+
+func TestSkillAllowedToolsApplyOnlyToActiveTurn(t *testing.T) {
+	workspace := t.TempDir()
+	app := &App{
+		Config: config.Config{
+			PermissionMode: "read-only",
+		},
+		Workspace: workspace,
+		Err:       io.Discard,
+	}
+	active := &skills.Skill{AllowedTools: []string{"Bash(go test:*)", "Read"}}
+
+	prompter := app.prompterWithSkill("session", active)
+	require.Contains(t, prompter.AllowRules, "bash:go test")
+	require.Contains(t, prompter.AllowRules, "read_file")
+	require.NoError(t, prompter.Authorize("bash", tools.PermissionDanger, []byte(`{"command":"go test ./..."}`)))
+	require.Error(t, prompter.Authorize("bash", tools.PermissionDanger, []byte(`{"command":"go build ./..."}`)))
+	require.Empty(t, app.Config.PermissionRules.Allow)
+}
+
+func TestSkillAllowedToolsDoNotBypassPlanMode(t *testing.T) {
+	workspace := t.TempDir()
+	_, err := planmode.Enter(workspace, "inspect before changing anything")
+	require.NoError(t, err)
+	app := &App{
+		Config: config.Config{
+			PermissionMode: "workspace-write",
+		},
+		Workspace: workspace,
+		Err:       io.Discard,
+	}
+	active := &skills.Skill{AllowedTools: []string{"Bash(go test:*)"}}
+
+	prompter := app.prompterWithSkill("session", active)
+
+	require.Equal(t, tools.PermissionReadOnly, prompter.Mode)
+	require.NotContains(t, prompter.AllowRules, "bash:go test")
+	require.Error(t, prompter.Authorize("bash", tools.PermissionDanger, []byte(`{"command":"go test ./..."}`)))
 }
 
 func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {

@@ -192,6 +192,28 @@ var claudeToolAliases = map[string]string{
 	"writefile":                    "write_file",
 }
 
+func CanonicalToolName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if canonical := claudeToolAliases[toolAliasKey(name)]; canonical != "" {
+		return canonical
+	}
+	return name
+}
+
+func toolAliasKey(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var builder strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
 type Prompter struct {
 	Mode        Permission
 	AllowRules  []string
@@ -399,7 +421,7 @@ func (r *Registry) resolve(name string) (string, Tool, bool) {
 	if tool := r.tools[name]; tool != nil {
 		return name, tool, true
 	}
-	if canonical := claudeToolAliases[strings.ToLower(name)]; canonical != "" {
+	if canonical := CanonicalToolName(name); canonical != name {
 		if tool := r.tools[canonical]; tool != nil {
 			return canonical, tool, true
 		}

@@ -143,6 +143,9 @@ Claude Code source.
   directory skills with `SKILL.md`; skill frontmatter such as `description`,
   `allowed-tools`, `argument-hint`, `arguments`, `paths`, `when_to_use`,
   `model`, `context`, `agent`, and `effort` is parsed into prompt metadata.
+  During direct skill invocation, `allowed-tools` is converted into temporary
+  per-turn permission allow rules, including Claude-style entries such as
+  `Bash(go test:*)` and aliases such as `Read`.
   `user-invocable: false` hides skills from direct slash/bare invocation, and
   `disable-model-invocation: true` prevents enabled skills from entering the
   system prompt.

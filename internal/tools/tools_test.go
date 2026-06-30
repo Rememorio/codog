@@ -254,6 +254,15 @@ func TestPrompterRules(t *testing.T) {
 	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"pwd"}`)))
 }
 
+func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
+	require.Equal(t, "read_file", CanonicalToolName("Read"))
+	require.Equal(t, "read_file", CanonicalToolName("read_file"))
+	require.Equal(t, "write_file", CanonicalToolName("Write"))
+	require.Equal(t, "multi_edit", CanonicalToolName("MultiEdit"))
+	require.Equal(t, "bash_output", CanonicalToolName("BashOutput"))
+	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
+}
+
 func TestPrompterEmitsDecision(t *testing.T) {
 	var decision PermissionDecision
 	p := &Prompter{

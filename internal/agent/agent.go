@@ -11289,7 +11289,15 @@ func (a *App) btwSideSession(source *session.Session) (*session.Session, error) 
 	return side, nil
 }
 
+type turnOptions struct {
+	Skill *skills.Skill
+}
+
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
+	return a.runSessionTurnWithOptions(ctx, mode, sess, input, successStatus, turnOptions{})
+}
+
+func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *session.Session, input string, successStatus string, opts turnOptions) error {
 	if a.promptHistoryEnabled() {
 		if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
 			return err
@@ -11299,7 +11307,11 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 			return err
 		}
 	}
-	modelInput := a.expandSkillInvocation(input)
+	modelInput := input
+	activeSkill := opts.Skill
+	if activeSkill == nil {
+		modelInput, activeSkill = a.expandSkillInvocationWithSkill(input)
+	}
 	modelInput = a.expandPromptReferences(modelInput)
 	a.writeWorkerState(mode, "running", sess, "")
 	effectiveConfig := a.effectiveConfig()
@@ -11307,7 +11319,7 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 		Config:           effectiveConfig,
 		Client:           a.Client,
 		Tools:            a.Tools,
-		Prompter:         a.prompter(sess.ID),
+		Prompter:         a.prompterWithSkill(sess.ID, activeSkill),
 		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
 		Workspace:        a.Workspace,
 		Out:              a.Out,
@@ -11394,23 +11406,29 @@ func (a *App) expandPromptReferences(input string) string {
 }
 
 func (a *App) expandSkillInvocation(input string) string {
+	rendered, _ := a.expandSkillInvocationWithSkill(input)
+	return rendered
+}
+
+func (a *App) expandSkillInvocationWithSkill(input string) (string, *skills.Skill) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" || strings.HasPrefix(trimmed, "/") {
-		return input
+		return input, nil
 	}
 	fields := strings.Fields(trimmed)
 	if len(fields) == 0 {
-		return input
+		return input, nil
 	}
 	skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, fields[0])
 	if err != nil {
-		return input
+		return input, nil
 	}
 	if !skill.UserInvocable {
-		return input
+		return input, nil
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
-	return skills.RenderInvocation(skill, args)
+	rendered := skills.RenderInvocation(skill, args)
+	return rendered, &skill
 }
 
 func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
@@ -12111,7 +12129,7 @@ func (a *App) handleSkillSlash(ctx context.Context, line string, sess *session.S
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
 	rendered := skills.RenderInvocation(skill, args)
-	if err := a.runSessionTurn(ctx, "repl", sess, rendered, "idle"); err != nil {
+	if err := a.runSessionTurnWithOptions(ctx, "repl", sess, rendered, "idle", turnOptions{Skill: &skill}); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 	}
 	return true
@@ -15813,10 +15831,18 @@ func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, er
 }
 
 func (a *App) prompter(sessionID string) *tools.Prompter {
+	return a.prompterWithSkill(sessionID, nil)
+}
+
+func (a *App) prompterWithSkill(sessionID string, activeSkill *skills.Skill) *tools.Prompter {
 	cfg := a.effectiveConfig()
+	allowRules := append([]string(nil), cfg.PermissionRules.Allow...)
+	if activeSkill != nil && !a.planModeActive() {
+		allowRules = addRuleValues(allowRules, skillAllowedToolRules(activeSkill.AllowedTools))
+	}
 	return &tools.Prompter{
 		Mode:        tools.Permission(cfg.PermissionMode),
-		AllowRules:  append([]string(nil), cfg.PermissionRules.Allow...),
+		AllowRules:  allowRules,
 		DenyRules:   append([]string(nil), cfg.PermissionRules.Deny...),
 		AskRules:    append([]string(nil), cfg.PermissionRules.Ask...),
 		DeniedTools: append([]string(nil), cfg.PermissionRules.DeniedTools...),
@@ -15827,14 +15853,50 @@ func (a *App) prompter(sessionID string) *tools.Prompter {
 	}
 }
 
+func skillAllowedToolRules(values []string) []string {
+	rules := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if value == "*" {
+			rules = append(rules, value)
+			continue
+		}
+		toolName := value
+		inputNeedle := ""
+		if open := strings.Index(value, "("); open > 0 && strings.HasSuffix(value, ")") {
+			toolName = strings.TrimSpace(value[:open])
+			inputNeedle = strings.TrimSpace(strings.TrimSuffix(value[open+1:], ")"))
+			inputNeedle = strings.TrimSpace(strings.TrimSuffix(inputNeedle, "*"))
+			inputNeedle = strings.TrimSpace(strings.TrimSuffix(inputNeedle, ":"))
+		}
+		canonical := strings.TrimSpace(tools.CanonicalToolName(toolName))
+		if canonical == "" {
+			continue
+		}
+		if inputNeedle != "" {
+			rules = append(rules, canonical+":"+inputNeedle)
+			continue
+		}
+		rules = append(rules, canonical)
+	}
+	return addRuleValues(nil, rules)
+}
+
 func (a *App) effectiveConfig() config.Config {
 	cfg := a.Config
-	state, err := planmode.Load(a.Workspace)
-	if err == nil && state.Active {
+	if a.planModeActive() {
 		cfg.PermissionMode = string(tools.PermissionReadOnly)
 		cfg.PermissionRules.Allow = nil
 	}
 	return cfg
+}
+
+func (a *App) planModeActive() bool {
+	state, err := planmode.Load(a.Workspace)
+	return err == nil && state.Active
 }
 
 func (a *App) auditToolUse(sessionID string) func(runloop.ToolCall) {
