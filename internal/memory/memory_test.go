@@ -17,16 +17,20 @@ func TestDiscoverBetweenLoadsBoundaryToWorkspace(t *testing.T) {
 	workspace := filepath.Join(root, "cmd", "tool")
 	require.NoError(t, os.MkdirAll(workspace, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("root instructions"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".claude", "CLAUDE.md"), []byte("claude scoped instructions"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "CLAUDE.md"), []byte("workspace instructions"), 0o644))
 
 	files, err := discoverBetween(workspace, root)
 
 	require.NoError(t, err)
-	require.Len(t, files, 2)
+	require.Len(t, files, 3)
 	require.Equal(t, "AGENTS.md", files[0].Name)
 	require.Equal(t, "root instructions", strings.TrimSpace(files[0].Body))
-	require.Equal(t, "CLAUDE.md", files[1].Name)
-	require.Equal(t, "workspace instructions", strings.TrimSpace(files[1].Body))
+	require.Equal(t, ".claude/CLAUDE.md", files[1].Name)
+	require.Equal(t, "claude scoped instructions", strings.TrimSpace(files[1].Body))
+	require.Equal(t, "CLAUDE.md", files[2].Name)
+	require.Equal(t, "workspace instructions", strings.TrimSpace(files[2].Body))
 }
 
 func TestDiscoverUsesGitRootAsBoundary(t *testing.T) {

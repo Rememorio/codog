@@ -1914,6 +1914,8 @@ func TestPromptExpandsFileReferencesForModelInput(t *testing.T) {
 func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Always run focused tests."), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "CLAUDE.md"), []byte("Prefer Claude-compatible workflows."), 0o644))
 	app := &App{
 		Config:    config.Config{ConfigHome: t.TempDir()},
 		Workspace: workspace,
@@ -1924,6 +1926,8 @@ func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	require.Contains(t, prompt, "<project_memory>")
 	require.Contains(t, prompt, "AGENTS.md")
 	require.Contains(t, prompt, "Always run focused tests.")
+	require.Contains(t, prompt, ".claude/CLAUDE.md")
+	require.Contains(t, prompt, "Prefer Claude-compatible workflows.")
 }
 
 func TestSystemPromptSupportsOverrideAndAppend(t *testing.T) {

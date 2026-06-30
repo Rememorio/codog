@@ -160,9 +160,9 @@ Claude Code source.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog init [--json]` initializes `.codog/instructions.md`, `.codog.json`,
   and `.gitignore` entries for project-local setup.
-- Project memory files (`AGENTS.md`, `CLAUDE.md`, `CLAW.md`, and
-  `.codog/instructions.md`) are loaded from the git root to the workspace and
-  injected into the system prompt.
+- Project memory files (`AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`,
+  `CLAW.md`, and `.codog/instructions.md`) are loaded from the git root to the
+  workspace and injected into the system prompt.
 - `codog memory list|show|add` lists discovered project memory metadata, shows
   a selected memory file, or appends workspace-local notes to `AGENTS.md`.
 - `codog project [--json]` reports workspace, git, Go module, Codog directory,

@@ -15,6 +15,7 @@ const MaxFileBytes = 64 * 1024
 var CandidateNames = []string{
 	"AGENTS.md",
 	"CLAUDE.md",
+	filepath.Join(".claude", "CLAUDE.md"),
 	"CLAW.md",
 	filepath.Join(".codog", "instructions.md"),
 }
@@ -224,7 +225,7 @@ func RenderReport(w io.Writer, report Report) {
 	fmt.Fprintf(w, "  Instruction files %d\n", report.InstructionFiles)
 	fmt.Fprintln(w, "Discovered files")
 	if report.InstructionFiles == 0 {
-		fmt.Fprintln(w, "  No AGENTS.md, CLAUDE.md, CLAW.md, or .codog/instructions.md files discovered in the current workspace ancestry.")
+		fmt.Fprintln(w, "  No AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, CLAW.md, or .codog/instructions.md files discovered in the current workspace ancestry.")
 		return
 	}
 	for i, file := range report.Files {
