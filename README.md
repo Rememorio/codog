@@ -63,7 +63,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -212,8 +212,11 @@ Claude Code source.
 - `codog status [--json]` prints a local workspace/config/session/git/sandbox
   runtime snapshot for humans or scripts.
 - `codog statusline [--json]` and `/statusline` print a compact one-line
-  workspace, git, model, permission, session, and plan summary for shell or IDE
-  integrations.
+  workspace, git, model, fast mode, permission, session, and plan summary for
+  shell or IDE integrations.
+- `codog terminal-setup status|snippet|install|uninstall` and
+  `/terminal-setup` inspect or manage idempotent shell integration snippets for
+  zsh, bash, fish, and PowerShell.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and
   one-shot prompt runs update for local observability.
 - `codog version [--json]` reports version, Go runtime, target, build metadata,

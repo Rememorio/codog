@@ -60,6 +60,7 @@ import (
 	"github.com/Rememorio/codog/internal/slash"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
+	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
@@ -333,6 +334,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Status(rest, overrides)
 	case "statusline":
 		return app.Statusline(rest, overrides)
+	case "terminal-setup", "terminalSetup":
+		return app.TerminalSetup(rest)
 	case "context":
 		return app.Context(rest, overrides)
 	case "files":
@@ -5641,6 +5644,107 @@ func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type terminalSetupRequest struct {
+	Action string
+	Format string
+	Shell  string
+	Path   string
+	Force  bool
+}
+
+func (a *App) TerminalSetup(args []string) error {
+	req, err := parseTerminalSetupArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := terminalsetup.Run(terminalsetup.Options{
+		Action: req.Action,
+		Shell:  req.Shell,
+		Path:   req.Path,
+		Force:  req.Force,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTerminalSetupReport(a.Out, report)
+	return nil
+}
+
+func parseTerminalSetupArgs(args []string) (terminalSetupRequest, error) {
+	req := terminalSetupRequest{Action: "status", Format: "text"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("terminal-setup output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--shell":
+			index++
+			if index >= len(args) {
+				return req, errors.New("terminal-setup shell is required")
+			}
+			req.Shell = args[index]
+		case strings.HasPrefix(arg, "--shell="):
+			req.Shell = strings.TrimPrefix(arg, "--shell=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("terminal-setup path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--force":
+			req.Force = true
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "terminal-setup"); err != nil {
+		return req, err
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected terminal-setup argument %q", rest[1])
+	}
+	if len(rest) == 1 {
+		req.Action = strings.ToLower(rest[0])
+	}
+	return req, nil
+}
+
+func renderTerminalSetupReport(out io.Writer, report terminalsetup.Report) {
+	fmt.Fprintln(out, "Terminal Setup")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Shell            %s\n", report.Shell)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Path             %s\n", report.Path)
+	}
+	fmt.Fprintf(out, "  Installed        %t\n", report.Installed)
+	if report.Action == "install" || report.Action == "uninstall" {
+		fmt.Fprintf(out, "  Changed          %t\n", report.Changed)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	if report.Action == "snippet" && report.Snippet != "" {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, report.Snippet)
+	}
+}
+
 func buildStatuslineReport(snapshot localstatus.Snapshot) statuslineReport {
 	workspace := snapshot.Workspace.Name
 	if strings.TrimSpace(workspace) == "" {
@@ -7589,6 +7693,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.renderStatus("text", sess)
 	case "/statusline":
 		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/terminal-setup", "/terminalSetup":
+		if err := a.TerminalSetup(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/context":
@@ -11169,6 +11277,7 @@ Usage:
   %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
+  %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
@@ -11242,7 +11351,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

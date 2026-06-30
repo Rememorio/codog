@@ -1529,6 +1529,26 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestTerminalSetupCommandAndSlash(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	path := filepath.Join(t.TempDir(), ".zshrc")
+	app := &App{Out: &out, Err: &errOut}
+
+	require.NoError(t, app.TerminalSetup([]string{"install", "--shell", "zsh", "--path", path, "--json"}))
+	require.Contains(t, out.String(), `"kind": "terminal_setup"`)
+	require.Contains(t, out.String(), `"installed": true`)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "codog_statusline")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/terminal-setup status --shell zsh --path "+path, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Terminal Setup")
+	require.Contains(t, out.String(), "Installed        true")
+	require.Empty(t, errOut.String())
+}
+
 func TestPromptHistoryPreferenceSkipsInputRecords(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
 	defer server.Close()
