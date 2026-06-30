@@ -24,8 +24,20 @@ type HookConfig struct {
 }
 
 type HookCommand struct {
-	Matcher string
-	Command string
+	Matcher        string
+	Type           string
+	Command        string
+	URL            string
+	Prompt         string
+	If             string
+	Shell          string
+	TimeoutSeconds float64
+	Headers        map[string]string
+	AllowedEnvVars []string
+	StatusMessage  string
+	Once           bool
+	Async          bool
+	AsyncRewake    bool
 }
 
 func (h *HookConfig) UnmarshalJSON(data []byte) error {
@@ -429,12 +441,13 @@ func parseHookCommandListWithMatcher(data json.RawMessage, inheritedMatcher stri
 func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookCommand, error) {
 	var command string
 	if err := json.Unmarshal(data, &command); err == nil {
-		return []HookCommand{{Matcher: inheritedMatcher, Command: command}}, nil
+		return []HookCommand{{Matcher: inheritedMatcher, Type: "command", Command: command}}, nil
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(data, &object); err != nil {
 		return nil, err
 	}
+	hook := HookCommand{Matcher: inheritedMatcher, Type: "command"}
 	matcher := inheritedMatcher
 	if rawMatcher, ok := object["matcher"]; ok {
 		var parsed string
@@ -442,21 +455,65 @@ func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookComman
 			matcher = parsed
 		}
 	}
+	hook.Matcher = matcher
+	if rawType, ok := object["type"]; ok {
+		if value, ok := parseJSONString(rawType); ok {
+			hook.Type = strings.ToLower(strings.TrimSpace(value))
+		}
+	}
+	if hook.Type == "" {
+		hook.Type = "command"
+	}
+	if rawIf, ok := object["if"]; ok {
+		hook.If, _ = parseJSONString(rawIf)
+	}
+	if rawShell, ok := object["shell"]; ok {
+		hook.Shell, _ = parseJSONString(rawShell)
+	}
+	if rawStatus, ok := object["statusMessage"]; ok {
+		hook.StatusMessage, _ = parseJSONString(rawStatus)
+	}
+	if rawTimeout, ok := object["timeout"]; ok {
+		hook.TimeoutSeconds, _ = parseJSONFloat(rawTimeout)
+	}
+	if rawOnce, ok := object["once"]; ok {
+		hook.Once, _ = parseJSONBool(rawOnce)
+	}
+	if rawAsync, ok := object["async"]; ok {
+		hook.Async, _ = parseJSONBool(rawAsync)
+	}
+	if rawAsyncRewake, ok := object["asyncRewake"]; ok {
+		hook.AsyncRewake, _ = parseJSONBool(rawAsyncRewake)
+	}
+	if rawHeaders, ok := object["headers"]; ok {
+		hook.Headers = parseJSONStringMap(rawHeaders)
+	}
+	if rawAllowed, ok := object["allowedEnvVars"]; ok {
+		hook.AllowedEnvVars = parseJSONStringSlice(rawAllowed)
+	}
 	if rawCommand, ok := object["command"]; ok {
 		if err := json.Unmarshal(rawCommand, &command); err == nil {
-			return []HookCommand{{Matcher: matcher, Command: command}}, nil
+			hook.Type = "command"
+			hook.Command = command
+			return []HookCommand{hook}, nil
 		}
+	}
+	if rawURL, ok := object["url"]; ok {
+		hook.URL, _ = parseJSONString(rawURL)
+	}
+	if rawPrompt, ok := object["prompt"]; ok {
+		hook.Prompt, _ = parseJSONString(rawPrompt)
 	}
 	if rawHooks, ok := object["hooks"]; ok {
 		return parseHookCommandListWithMatcher(rawHooks, matcher)
 	}
-	return nil, nil
+	return []HookCommand{hook}, nil
 }
 
 func hookCommandStrings(values []HookCommand) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
-		command := strings.TrimSpace(value.Command)
+		command := HookCommandDisplay(value)
 		if command != "" {
 			out = append(out, command)
 		}
@@ -468,10 +525,115 @@ func compactHookCommands(values []HookCommand) []HookCommand {
 	out := make([]HookCommand, 0, len(values))
 	for _, value := range values {
 		value.Matcher = strings.TrimSpace(value.Matcher)
+		value.Type = strings.ToLower(strings.TrimSpace(value.Type))
+		if value.Type == "" {
+			value.Type = "command"
+		}
 		value.Command = strings.TrimSpace(value.Command)
-		if value.Command != "" {
+		value.URL = strings.TrimSpace(value.URL)
+		value.Prompt = strings.TrimSpace(value.Prompt)
+		value.If = strings.TrimSpace(value.If)
+		value.Shell = strings.TrimSpace(value.Shell)
+		value.StatusMessage = strings.TrimSpace(value.StatusMessage)
+		if HookCommandDisplay(value) != "" {
 			out = append(out, value)
 		}
+	}
+	return out
+}
+
+func HookCommandDisplay(value HookCommand) string {
+	switch strings.ToLower(strings.TrimSpace(value.Type)) {
+	case "", "command":
+		return strings.TrimSpace(value.Command)
+	case "http":
+		url := strings.TrimSpace(value.URL)
+		if url == "" {
+			return ""
+		}
+		return "http POST " + url
+	case "prompt":
+		prompt := strings.TrimSpace(value.Prompt)
+		if prompt == "" {
+			return ""
+		}
+		return "prompt " + prompt
+	case "agent":
+		prompt := strings.TrimSpace(value.Prompt)
+		if prompt == "" {
+			return ""
+		}
+		return "agent " + prompt
+	default:
+		if command := strings.TrimSpace(value.Command); command != "" {
+			return command
+		}
+		if url := strings.TrimSpace(value.URL); url != "" {
+			return value.Type + " " + url
+		}
+		return ""
+	}
+}
+
+func parseJSONString(data json.RawMessage) (string, bool) {
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func parseJSONBool(data json.RawMessage) (bool, bool) {
+	var value bool
+	if err := json.Unmarshal(data, &value); err != nil {
+		return false, false
+	}
+	return value, true
+}
+
+func parseJSONFloat(data json.RawMessage) (float64, bool) {
+	var value float64
+	if err := json.Unmarshal(data, &value); err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func parseJSONStringMap(data json.RawMessage) map[string]string {
+	var values map[string]string
+	if err := json.Unmarshal(data, &values); err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseJSONStringSlice(data json.RawMessage) []string {
+	var values []string
+	if err := json.Unmarshal(data, &values); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }
@@ -683,7 +845,7 @@ func hookCommandsFromStrings(values []string) []HookCommand {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value != "" {
-			commands = append(commands, HookCommand{Command: value})
+			commands = append(commands, HookCommand{Type: "command", Command: value})
 		}
 	}
 	return commands
@@ -707,7 +869,11 @@ func mergeHookCommands(dst []HookCommand, src []HookCommand) []HookCommand {
 }
 
 func hookCommandKey(command HookCommand) string {
-	return strings.ToLower(strings.TrimSpace(command.Matcher)) + "\x00" + strings.TrimSpace(command.Command)
+	data, err := json.Marshal(command)
+	if err != nil {
+		return strings.ToLower(strings.TrimSpace(command.Matcher)) + "\x00" + HookCommandDisplay(command)
+	}
+	return string(data)
 }
 
 func mergePermissionRules(dst *PermissionRules, src PermissionRules) {

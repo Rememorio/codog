@@ -263,6 +263,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"pre_tool_use": ["echo simple-pre"],
 			"PostToolUse": [
 				{"matcher": "Write", "hooks": [{"type": "command", "command": "echo documented-post"}]},
+				{"matcher": "Bash", "hooks": [{"type": "http", "url": "https://example.test/hook", "if": "Bash(git *)", "headers": {"Authorization": "Bearer $HOOK_TOKEN"}, "allowedEnvVars": ["HOOK_TOKEN"], "timeout": 1.5}]},
 				{"command": "echo direct-post"}
 			]
 		}
@@ -271,11 +272,12 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, []string{"echo simple-pre"}, cfg.Hooks.PreToolUse)
-	require.Equal(t, []string{"echo documented-post", "echo direct-post"}, cfg.Hooks.PostToolUse)
-	require.Equal(t, []HookCommand{{Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
+	require.Equal(t, []string{"echo documented-post", "http POST https://example.test/hook", "echo direct-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
 	require.Equal(t, []HookCommand{
-		{Matcher: "Write", Command: "echo documented-post"},
-		{Command: "echo direct-post"},
+		{Matcher: "Write", Type: "command", Command: "echo documented-post"},
+		{Matcher: "Bash", Type: "http", URL: "https://example.test/hook", If: "Bash(git *)", TimeoutSeconds: 1.5, Headers: map[string]string{"Authorization": "Bearer $HOOK_TOKEN"}, AllowedEnvVars: []string{"HOOK_TOKEN"}},
+		{Type: "command", Command: "echo direct-post"},
 	}, cfg.Hooks.PostToolUseCommands)
 }
 
@@ -312,9 +314,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-pre", "echo project-pre", "echo local-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo user-post"}, cfg.Hooks.PostToolUse)
 	require.Equal(t, []HookCommand{
-		{Command: "echo user-pre"},
-		{Matcher: "Write", Command: "echo project-pre"},
-		{Command: "echo local-pre"},
+		{Type: "command", Command: "echo user-pre"},
+		{Matcher: "Write", Type: "command", Command: "echo project-pre"},
+		{Type: "command", Command: "echo local-pre"},
 	}, cfg.Hooks.PreToolUseCommands)
 }
 

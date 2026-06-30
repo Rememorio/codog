@@ -4271,6 +4271,8 @@ type hooksListReport struct {
 
 type hookCommandSummary struct {
 	Matcher string `json:"matcher,omitempty"`
+	Type    string `json:"type,omitempty"`
+	If      string `json:"if,omitempty"`
 	Command string `json:"command"`
 }
 
@@ -4305,9 +4307,9 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Output:  req.Output,
 			IsError: req.IsError,
 		}
-		commands := hooks.CommandsForEvent(a.Config.Hooks, req.Event, req.Tool)
+		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
-		report, runErr := hooks.Runner{Config: a.Config.Hooks, Workspace: a.Workspace, Timeout: timeout}.RunPayload(ctx, commands, payload)
+		report, runErr := hooks.Runner{Config: a.Config.Hooks, Workspace: a.Workspace, Timeout: timeout}.RunHooks(ctx, hookList, payload)
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -4423,12 +4425,15 @@ func normalizeHookEvent(value string) (string, error) {
 func summarizeHookCommands(commands []config.HookCommand) []hookCommandSummary {
 	out := make([]hookCommandSummary, 0, len(commands))
 	for _, command := range commands {
-		if strings.TrimSpace(command.Command) == "" {
+		display := config.HookCommandDisplay(command)
+		if display == "" {
 			continue
 		}
 		out = append(out, hookCommandSummary{
 			Matcher: strings.TrimSpace(command.Matcher),
-			Command: strings.TrimSpace(command.Command),
+			Type:    strings.TrimSpace(command.Type),
+			If:      strings.TrimSpace(command.If),
+			Command: display,
 		})
 	}
 	return out
@@ -4462,10 +4467,17 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 }
 
 func renderHookCommandSummary(command hookCommandSummary) string {
-	if strings.TrimSpace(command.Matcher) == "" {
+	var labels []string
+	if strings.TrimSpace(command.Matcher) != "" {
+		labels = append(labels, strings.TrimSpace(command.Matcher))
+	}
+	if strings.TrimSpace(command.If) != "" {
+		labels = append(labels, "if "+strings.TrimSpace(command.If))
+	}
+	if len(labels) == 0 {
 		return command.Command
 	}
-	return fmt.Sprintf("[%s] %s", command.Matcher, command.Command)
+	return fmt.Sprintf("[%s] %s", strings.Join(labels, ", "), command.Command)
 }
 
 func renderHooksRun(out io.Writer, report hooks.RunReport) {
@@ -4474,7 +4486,14 @@ func renderHooksRun(out io.Writer, report hooks.RunReport) {
 	fmt.Fprintf(out, "  Tool             %s\n", report.Tool)
 	fmt.Fprintf(out, "  Commands         %d\n", report.Count)
 	for _, result := range report.Results {
-		fmt.Fprintf(out, "  %s success=%t duration_ms=%d\n", result.Command, result.Success, result.DurationMS)
+		name := result.Command
+		if result.Type == "http" && result.URL != "" {
+			name = result.URL
+		}
+		fmt.Fprintf(out, "  %s success=%t duration_ms=%d\n", name, result.Success, result.DurationMS)
+		if result.StatusCode != 0 {
+			fmt.Fprintf(out, "    status: %d\n", result.StatusCode)
+		}
 		if strings.TrimSpace(result.Stdout) != "" {
 			fmt.Fprintf(out, "    stdout: %s\n", strings.ReplaceAll(strings.TrimSpace(result.Stdout), "\n", "\n            "))
 		}

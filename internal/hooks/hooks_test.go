@@ -2,6 +2,9 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,17 +58,52 @@ func TestRunPayloadReturnsPartialFailureReport(t *testing.T) {
 	require.Equal(t, "ok\n", string(data))
 }
 
+func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
+	t.Setenv("HOOK_TOKEN", "secret-token")
+	t.Setenv("HOOK_IGNORED", "ignored")
+	var gotAuth string
+	var gotIgnored string
+	var gotPayload Payload
+	var decodeErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotIgnored = r.Header.Get("X-Ignored")
+		decodeErr = json.NewDecoder(r.Body).Decode(&gotPayload)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("accepted"))
+	}))
+	t.Cleanup(server.Close)
+
+	report, err := Runner{Workspace: t.TempDir()}.RunHooks(context.Background(), []config.HookCommand{{
+		Type:           "http",
+		URL:            server.URL,
+		Headers:        map[string]string{"Authorization": "Bearer $HOOK_TOKEN", "X-Ignored": "$HOOK_IGNORED"},
+		AllowedEnvVars: []string{"HOOK_TOKEN"},
+	}}, Payload{Event: "post_tool_use", Tool: "bash", Input: `{"command":"git status"}`, Output: "done"})
+	require.NoError(t, err)
+	require.NoError(t, decodeErr)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, "http", report.Results[0].Type)
+	require.Equal(t, http.StatusAccepted, report.Results[0].StatusCode)
+	require.Contains(t, report.Results[0].Stdout, "accepted")
+	require.Equal(t, "Bearer secret-token", gotAuth)
+	require.Empty(t, gotIgnored)
+	require.Equal(t, "post_tool_use", gotPayload.Event)
+	require.Equal(t, "bash", gotPayload.Tool)
+	require.Equal(t, "done", gotPayload.Output)
+}
+
 func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	cfg := config.HookConfig{
 		PreToolUse: []string{"legacy"},
 		PreToolUseCommands: []config.HookCommand{
-			{Matcher: "Write", Command: "write-only"},
-			{Matcher: "Bash|Glob", Command: "regex"},
-			{Matcher: "read_*", Command: "glob"},
-			{Command: "all"},
+			{Matcher: "Write", Type: "command", Command: "write-only"},
+			{Matcher: "Bash|Glob", Type: "command", Command: "regex"},
+			{Matcher: "read_*", Type: "command", Command: "glob"},
+			{Type: "command", Command: "all"},
 		},
 		PostToolUseCommands: []config.HookCommand{
-			{Matcher: "Edit,MultiEdit", Command: "edits"},
+			{Matcher: "Edit,MultiEdit", Type: "command", Command: "edits"},
 		},
 	}
 
@@ -74,4 +112,19 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"regex", "all"}, CommandsForEvent(cfg, "pre_tool_use", "bash"))
 	require.Equal(t, []string{"edits"}, CommandsForEvent(cfg, "post", "multi_edit"))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
+}
+
+func TestHooksForPayloadFiltersIfConditions(t *testing.T) {
+	cfg := config.HookConfig{PreToolUseCommands: []config.HookCommand{
+		{Matcher: "Bash", Type: "command", If: "Bash(git *)", Command: "git-hook"},
+		{Matcher: "Bash", Type: "http", If: "Bash(npm *)", URL: "https://example.test/hook"},
+	}}
+
+	matched := HooksForPayload(cfg, Payload{Event: "pre_tool_use", Tool: "bash", Input: `{"command":"git status"}`})
+	require.Len(t, matched, 1)
+	require.Equal(t, "git-hook", matched[0].Command)
+
+	matched = HooksForPayload(cfg, Payload{Event: "pre_tool_use", Tool: "bash", Input: `{"command":"npm test"}`})
+	require.Len(t, matched, 1)
+	require.Equal(t, "http", matched[0].Type)
 }

@@ -67,7 +67,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		system = defaultSystemPrompt
 	}
 	hookRunner := r.Hooks
-	if len(hookRunner.Config.PreToolUse) == 0 && len(hookRunner.Config.PostToolUse) == 0 {
+	if !hasHookConfig(hookRunner.Config) {
 		hookRunner.Config = r.Config.Hooks
 	}
 	if hookRunner.Workspace == "" {
@@ -145,6 +145,13 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		ToolCalls:     toolCalls,
 		Iterations:    r.Config.MaxTurns,
 	}, errors.New("conversation exceeded max turns")
+}
+
+func hasHookConfig(cfg config.HookConfig) bool {
+	return len(cfg.PreToolUse) != 0 ||
+		len(cfg.PostToolUse) != 0 ||
+		len(cfg.PreToolUseCommands) != 0 ||
+		len(cfg.PostToolUseCommands) != 0
 }
 
 func (r Runner) emitToolUse(call ToolCall) {

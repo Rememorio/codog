@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -33,6 +35,9 @@ type Payload struct {
 
 type CommandResult struct {
 	Command    string `json:"command"`
+	Type       string `json:"type,omitempty"`
+	URL        string `json:"url,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
 	Stdout     string `json:"stdout,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
 	ExitCode   int    `json:"exit_code"`
@@ -50,48 +55,76 @@ type RunReport struct {
 }
 
 func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error {
-	return r.run(ctx, CommandsForEvent(r.Config, "pre_tool_use", tool), Payload{
+	payload := Payload{
 		Event: "pre_tool_use",
 		Tool:  tool,
 		Input: string(input),
-	})
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, output string, isError bool) error {
-	return r.run(ctx, CommandsForEvent(r.Config, "post_tool_use", tool), Payload{
+	payload := Payload{
 		Event:   "post_tool_use",
 		Tool:    tool,
 		Input:   string(input),
 		Output:  output,
 		IsError: isError,
-	})
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
-	switch normalizeEvent(event) {
+	payload := Payload{Event: event, Tool: tool}
+	hooks := HooksForPayload(cfg, payload)
+	commands := make([]string, 0, len(hooks))
+	for _, hook := range hooks {
+		if hookType(hook) == "command" {
+			command := strings.TrimSpace(hook.Command)
+			if command != "" {
+				commands = append(commands, command)
+			}
+		}
+	}
+	return commands
+}
+
+func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookCommand {
+	switch normalizeEvent(payload.Event) {
 	case "pre_tool_use":
-		return matchingCommands(cfg.PreToolUseCommands, cfg.PreToolUse, tool)
+		return matchingHooks(cfg.PreToolUseCommands, cfg.PreToolUse, payload)
 	case "post_tool_use":
-		return matchingCommands(cfg.PostToolUseCommands, cfg.PostToolUse, tool)
+		return matchingHooks(cfg.PostToolUseCommands, cfg.PostToolUse, payload)
 	default:
 		return nil
 	}
 }
 
-func (r Runner) run(ctx context.Context, commands []string, payload Payload) error {
-	_, err := r.RunPayload(ctx, commands, payload)
+func (r Runner) run(ctx context.Context, hookList []config.HookCommand, payload Payload) error {
+	_, err := r.RunHooks(ctx, hookList, payload)
 	return err
 }
 
 func (r Runner) RunPayload(ctx context.Context, commands []string, payload Payload) (RunReport, error) {
+	hookList := make([]config.HookCommand, 0, len(commands))
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			hookList = append(hookList, config.HookCommand{Type: "command", Command: command})
+		}
+	}
+	return r.RunHooks(ctx, hookList, payload)
+}
+
+func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, payload Payload) (RunReport, error) {
 	report := RunReport{
 		Kind:    "hooks",
 		Event:   payload.Event,
 		Tool:    payload.Tool,
-		Count:   len(commands),
+		Count:   len(hookList),
 		Results: []CommandResult{},
 	}
-	if len(commands) == 0 {
+	if len(hookList) == 0 {
 		return report, nil
 	}
 	timeout := r.Timeout
@@ -102,51 +135,174 @@ func (r Runner) RunPayload(ctx context.Context, commands []string, payload Paylo
 	if err != nil {
 		return report, err
 	}
-	for _, command := range commands {
-		hookCtx, cancel := context.WithTimeout(ctx, timeout)
-		cmd := exec.CommandContext(hookCtx, "sh", "-lc", command)
-		cmd.Dir = r.Workspace
-		cmd.Env = append(os.Environ(),
-			"CODOG_HOOK_EVENT="+payload.Event,
-			"CODOG_HOOK_TOOL="+payload.Tool,
-			"CODOG_HOOK_INPUT="+payload.Input,
-			"CODOG_HOOK_OUTPUT="+payload.Output,
-			"CODOG_HOOK_IS_ERROR="+strconv.FormatBool(payload.IsError),
-		)
-		cmd.Stdin = bytes.NewReader(data)
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		started := time.Now()
-		err := cmd.Run()
-		duration := time.Since(started).Milliseconds()
-		cancel()
-		result := CommandResult{
-			Command:    command,
-			Stdout:     stdout.String(),
-			Stderr:     stderr.String(),
-			ExitCode:   0,
-			DurationMS: duration,
-			Success:    true,
-		}
-		if hookCtx.Err() == context.DeadlineExceeded {
-			result.Success = false
-			result.ExitCode = -1
-			result.Error = "timeout"
-			report.Results = append(report.Results, result)
-			return report, fmt.Errorf("hook timed out: %s", command)
-		}
-		if err != nil {
-			result.Success = false
-			result.ExitCode = hookExitCode(err)
-			result.Error = err.Error()
-			report.Results = append(report.Results, result)
-			return report, fmt.Errorf("hook failed: %s: %s", command, stderr.String())
-		}
+	for _, hook := range hookList {
+		result, err := r.runOneHook(ctx, hook, payload, data, timeout)
 		report.Results = append(report.Results, result)
+		if err != nil {
+			return report, err
+		}
 	}
 	return report, nil
+}
+
+func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+	switch hookType(hook) {
+	case "command":
+		return r.runCommandHook(ctx, hook, payload, data, defaultTimeout)
+	case "http":
+		return r.runHTTPHook(ctx, hook, data, defaultTimeout)
+	case "prompt", "agent":
+		result := CommandResult{
+			Type:     hookType(hook),
+			Command:  config.HookCommandDisplay(hook),
+			ExitCode: -1,
+			Success:  false,
+			Error:    "hook type is parsed but not executable in this Go runner",
+		}
+		return result, fmt.Errorf("%s hook execution is not supported", hookType(hook))
+	default:
+		result := CommandResult{
+			Type:     hookType(hook),
+			Command:  config.HookCommandDisplay(hook),
+			ExitCode: -1,
+			Success:  false,
+			Error:    "unknown hook type",
+		}
+		return result, fmt.Errorf("unknown hook type %q", hookType(hook))
+	}
+}
+
+func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+	command := strings.TrimSpace(hook.Command)
+	hookCtx, cancel := context.WithTimeout(ctx, hookTimeout(hook, defaultTimeout))
+	defer cancel()
+	name, args := hookShell(hook, command)
+	cmd := exec.CommandContext(hookCtx, name, args...)
+	cmd.Dir = r.Workspace
+	cmd.Env = append(os.Environ(),
+		"CODOG_HOOK_EVENT="+payload.Event,
+		"CODOG_HOOK_TOOL="+payload.Tool,
+		"CODOG_HOOK_INPUT="+payload.Input,
+		"CODOG_HOOK_OUTPUT="+payload.Output,
+		"CODOG_HOOK_IS_ERROR="+strconv.FormatBool(payload.IsError),
+	)
+	cmd.Stdin = bytes.NewReader(data)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	started := time.Now()
+	err := cmd.Run()
+	duration := time.Since(started).Milliseconds()
+	result := CommandResult{
+		Command:    command,
+		Type:       "command",
+		Stdout:     stdout.String(),
+		Stderr:     stderr.String(),
+		ExitCode:   0,
+		DurationMS: duration,
+		Success:    true,
+	}
+	if hookCtx.Err() == context.DeadlineExceeded {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = "timeout"
+		return result, fmt.Errorf("hook timed out: %s", command)
+	}
+	if err != nil {
+		result.Success = false
+		result.ExitCode = hookExitCode(err)
+		result.Error = err.Error()
+		return result, fmt.Errorf("hook failed: %s: %s", command, stderr.String())
+	}
+	return result, nil
+}
+
+func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+	url := strings.TrimSpace(hook.URL)
+	hookCtx, cancel := context.WithTimeout(ctx, hookTimeout(hook, defaultTimeout))
+	defer cancel()
+	req, err := http.NewRequestWithContext(hookCtx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		result := CommandResult{Type: "http", URL: url, Command: config.HookCommandDisplay(hook), ExitCode: -1, Success: false, Error: err.Error()}
+		return result, err
+	}
+	req.Header.Set("content-type", "application/json")
+	for key, value := range hook.Headers {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		req.Header.Set(key, expandAllowedEnv(value, hook.AllowedEnvVars))
+	}
+	started := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	duration := time.Since(started).Milliseconds()
+	result := CommandResult{
+		Command:    config.HookCommandDisplay(hook),
+		Type:       "http",
+		URL:        url,
+		ExitCode:   0,
+		DurationMS: duration,
+		Success:    true,
+	}
+	if hookCtx.Err() == context.DeadlineExceeded {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = "timeout"
+		return result, fmt.Errorf("hook timed out: %s", url)
+	}
+	if err != nil {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = err.Error()
+		return result, fmt.Errorf("http hook failed: %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	result.StatusCode = resp.StatusCode
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if readErr != nil {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = readErr.Error()
+		return result, readErr
+	}
+	result.Stdout = string(body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		result.Success = false
+		result.ExitCode = resp.StatusCode
+		result.Error = resp.Status
+		return result, fmt.Errorf("http hook failed: %s: %s", url, resp.Status)
+	}
+	return result, nil
+}
+
+func hookShell(hook config.HookCommand, command string) (string, []string) {
+	switch strings.ToLower(strings.TrimSpace(hook.Shell)) {
+	case "bash":
+		return "bash", []string{"-lc", command}
+	case "zsh":
+		return "zsh", []string{"-lc", command}
+	case "powershell", "pwsh":
+		return "pwsh", []string{"-NoLogo", "-NoProfile", "-Command", command}
+	default:
+		return "sh", []string{"-lc", command}
+	}
+}
+
+func hookTimeout(hook config.HookCommand, fallback time.Duration) time.Duration {
+	if hook.TimeoutSeconds > 0 {
+		return time.Duration(hook.TimeoutSeconds * float64(time.Second))
+	}
+	return fallback
+}
+
+func hookType(hook config.HookCommand) string {
+	value := strings.ToLower(strings.TrimSpace(hook.Type))
+	if value == "" {
+		return "command"
+	}
+	return value
 }
 
 func hookExitCode(err error) int {
@@ -157,20 +313,27 @@ func hookExitCode(err error) int {
 	return -1
 }
 
-func matchingCommands(entries []config.HookCommand, fallback []string, tool string) []string {
+func matchingHooks(entries []config.HookCommand, fallback []string, payload Payload) []config.HookCommand {
 	if len(entries) == 0 {
-		return compactStrings(fallback)
+		return hookCommandsFromStrings(fallback)
 	}
-	commands := []string{}
+	hookList := []config.HookCommand{}
 	for _, entry := range entries {
-		if matcherMatches(entry.Matcher, tool) {
-			command := strings.TrimSpace(entry.Command)
-			if command != "" {
-				commands = append(commands, command)
+		if matcherMatches(entry.Matcher, payload.Tool) && conditionMatches(entry.If, payload) {
+			if strings.TrimSpace(config.HookCommandDisplay(entry)) != "" {
+				hookList = append(hookList, entry)
 			}
 		}
 	}
-	return commands
+	return hookList
+}
+
+func hookCommandsFromStrings(values []string) []config.HookCommand {
+	out := make([]config.HookCommand, 0, len(values))
+	for _, value := range compactStrings(values) {
+		out = append(out, config.HookCommand{Type: "command", Command: value})
+	}
+	return out
 }
 
 func matcherMatches(matcher string, tool string) bool {
@@ -222,6 +385,98 @@ func toolCandidates(tool string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func conditionMatches(condition string, payload Payload) bool {
+	condition = strings.TrimSpace(condition)
+	if condition == "" {
+		return true
+	}
+	open := strings.Index(condition, "(")
+	close := strings.LastIndex(condition, ")")
+	if open <= 0 || close <= open {
+		return matcherMatches(condition, payload.Tool)
+	}
+	tool := strings.TrimSpace(condition[:open])
+	pattern := strings.TrimSpace(condition[open+1 : close])
+	if !matcherMatches(tool, payload.Tool) {
+		return false
+	}
+	if pattern == "" || pattern == "*" {
+		return true
+	}
+	for _, value := range payloadMatchValues(payload) {
+		if valueMatchesPattern(pattern, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func payloadMatchValues(payload Payload) []string {
+	values := []string{payload.Input, payload.Output}
+	var decoded any
+	if err := json.Unmarshal([]byte(payload.Input), &decoded); err == nil {
+		collectJSONStrings(decoded, &values)
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func collectJSONStrings(value any, out *[]string) {
+	switch typed := value.(type) {
+	case string:
+		*out = append(*out, typed)
+	case []any:
+		for _, item := range typed {
+			collectJSONStrings(item, out)
+		}
+	case map[string]any:
+		for _, item := range typed {
+			collectJSONStrings(item, out)
+		}
+	}
+}
+
+func valueMatchesPattern(pattern string, value string) bool {
+	if ok, _ := path.Match(pattern, value); ok {
+		return true
+	}
+	if strings.Contains(value, pattern) {
+		return true
+	}
+	if re, err := regexp.Compile(pattern); err == nil && re.MatchString(value) {
+		return true
+	}
+	return false
+}
+
+func expandAllowedEnv(value string, allowed []string) string {
+	allow := map[string]struct{}{}
+	for _, name := range allowed {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			allow[name] = struct{}{}
+		}
+	}
+	return os.Expand(value, func(name string) string {
+		if _, ok := allow[name]; !ok {
+			return ""
+		}
+		return os.Getenv(name)
+	})
 }
 
 func normalizeTool(tool string) string {
