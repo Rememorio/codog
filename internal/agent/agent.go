@@ -235,8 +235,19 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := app.RegisterPluginTools(); err != nil {
 		return err
 	}
+	if strings.HasPrefix(command, "/") {
+		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
+		if err != nil {
+			return err
+		}
+		command, rest = mappedCommand, mappedRest
+	}
 
 	switch command {
+	case "help":
+		return renderHelpCommand(app.Out, rest)
+	case "version":
+		return renderVersion(app.Out, app.Workspace, rest)
 	case "", "repl":
 		return app.REPL(ctx, overrides)
 	case "tui":
@@ -11405,6 +11416,90 @@ type commandNotFoundReport struct {
 	Args      []string `json:"args,omitempty"`
 	Message   string   `json:"message"`
 	Hint      string   `json:"hint"`
+}
+
+type slashErrorReport struct {
+	Kind      string `json:"kind"`
+	ErrorKind string `json:"error_kind"`
+	Status    string `json:"status"`
+	Command   string `json:"command"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+}
+
+func normalizeDirectSlashInvocation(out io.Writer, command string, args []string, format string) (string, []string, error) {
+	name := strings.TrimSpace(command)
+	if !strings.HasPrefix(name, "/") {
+		return command, args, nil
+	}
+	if directSlashInteractiveOnly(name) {
+		return "", nil, renderInteractiveOnly(out, name, format)
+	}
+	mapped := directSlashCommandName(name)
+	if mapped == "" {
+		return "", nil, renderUnknownSlashCommand(out, name, format)
+	}
+	return mapped, injectGlobalOutputFormat(mapped, args, format), nil
+}
+
+func directSlashCommandName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "/exit_plan_mode":
+		return "exit-plan"
+	case "/tokens":
+		return "cost"
+	case "/session":
+		return "sessions"
+	}
+	if _, ok := slash.Lookup(name); !ok {
+		return ""
+	}
+	return strings.TrimPrefix(name, "/")
+}
+
+func directSlashInteractiveOnly(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "/approve", "/yes", "/deny", "/no", "/clear", "/resume", "/exit":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderUnknownSlashCommand(out io.Writer, command string, format string) error {
+	report := slashErrorReport{
+		Kind:      "unknown_slash_command",
+		ErrorKind: "unknown_slash_command",
+		Status:    "error",
+		Command:   command,
+		Message:   fmt.Sprintf("unknown slash command %q", command),
+		Hint:      "Run `codog repl` and use `/help` to list interactive slash commands.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
+}
+
+func renderInteractiveOnly(out io.Writer, command string, format string) error {
+	report := slashErrorReport{
+		Kind:      "interactive_only",
+		ErrorKind: "interactive_only",
+		Status:    "error",
+		Command:   command,
+		Message:   fmt.Sprintf("%s is only available in an interactive REPL session", command),
+		Hint:      "Run `codog repl` and use the command there.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
 }
 
 func renderCommandNotFound(out io.Writer, command string, args []string, format string) error {

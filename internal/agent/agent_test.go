@@ -205,6 +205,44 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Contains(t, err.Error(), "codog prompt")
 }
 
+func TestDirectSlashCLIContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var statusReport map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &statusReport))
+	require.Equal(t, "status", statusReport["kind"])
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/statuz"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var slashReport slashErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
+	require.Equal(t, "/statuz", slashReport.Command)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/approve"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "interactive_only", slashReport.ErrorKind)
+	require.Equal(t, "/approve", slashReport.Command)
+}
+
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 	for _, tool := range report.Tools {
 		if tool.Name == name {
