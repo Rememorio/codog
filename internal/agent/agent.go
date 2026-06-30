@@ -252,6 +252,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OutputStyle(rest)
 	case "model":
 		return app.Model(rest)
+	case "advisor":
+		return app.Advisor(rest)
 	case "max-tokens":
 		return app.MaxTokens(rest)
 	case "max-turns":
@@ -10743,6 +10745,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.handleConfigSlash(fields[1:])
 	case "/model":
 		a.handleModelSlash(fields[1:])
+	case "/advisor":
+		if err := a.Advisor(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/max-tokens":
 		a.handleMaxTokensSlash(fields[1:])
 	case "/max-turns":
@@ -11121,6 +11127,24 @@ func (a *App) handleConfigSlash(args []string) {
 	fmt.Fprintln(a.Out, string(data))
 }
 
+type advisorRequest struct {
+	Action string
+	Model  string
+	Format string
+	Target string
+	Path   string
+}
+
+type advisorReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	Model     string `json:"model,omitempty"`
+	MainModel string `json:"main_model,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
 func (a *App) Model(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
@@ -11133,6 +11157,154 @@ func (a *App) Model(args []string) error {
 	a.Config.Model = model
 	fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
 	return nil
+}
+
+func (a *App) Advisor(args []string) error {
+	req, err := parseAdvisorArgs(args)
+	if err != nil {
+		return err
+	}
+	report := advisorReport{
+		Kind:      "advisor",
+		Action:    req.Action,
+		Status:    "ok",
+		Model:     a.Config.AdvisorModel,
+		MainModel: a.Config.Model,
+	}
+	switch req.Action {
+	case "show":
+		if report.Model == "" {
+			report.Message = "Advisor is not set. Use advisor MODEL to enable it."
+		} else {
+			report.Message = "Advisor model preference is set."
+		}
+	case "set":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "advisor_model", req.Model); err != nil {
+			return err
+		}
+		a.Config.AdvisorModel = req.Model
+		report.Model = req.Model
+		report.Path = path
+		report.Message = "Advisor model preference saved."
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "advisor_model"); err != nil {
+			return err
+		}
+		previous := a.Config.AdvisorModel
+		a.Config.AdvisorModel = ""
+		report.Model = ""
+		report.Path = path
+		if previous == "" {
+			report.Message = "Advisor was already unset."
+		} else {
+			report.Message = "Advisor model preference cleared."
+		}
+	default:
+		return fmt.Errorf("unknown advisor command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderAdvisorReport(a.Out, report)
+	return nil
+}
+
+func parseAdvisorArgs(args []string) (advisorRequest, error) {
+	req := advisorRequest{Action: "show", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("advisor output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("advisor target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("advisor config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "advisor"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "show", "status":
+		req.Action = "show"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected advisor argument %q", rest[1])
+		}
+	case "unset", "off", "disable", "disabled", "clear", "reset":
+		req.Action = "clear"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected advisor argument %q", rest[1])
+		}
+	case "set":
+		req.Action = "set"
+		if len(rest) < 2 {
+			return req, errors.New("advisor model is required")
+		}
+		req.Model = strings.TrimSpace(strings.Join(rest[1:], " "))
+	default:
+		req.Action = "set"
+		req.Model = strings.TrimSpace(strings.Join(rest, " "))
+	}
+	if req.Action == "set" && req.Model == "" {
+		return req, errors.New("advisor model is required")
+	}
+	return req, nil
+}
+
+func renderAdvisorReport(out io.Writer, report advisorReport) {
+	fmt.Fprintln(out, "Advisor")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.MainModel != "" {
+		fmt.Fprintf(out, "  Main model       %s\n", report.MainModel)
+	}
+	if report.Model != "" {
+		fmt.Fprintf(out, "  Advisor model    %s\n", report.Model)
+	} else {
+		fmt.Fprintln(out, "  Advisor model    unset")
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
 }
 
 func (a *App) handleModelSlash(args []string) {
@@ -11669,7 +11841,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	}
 	switch strings.ToLower(args[0]) {
 	case "model":
-		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
+		return map[string]any{"model": cfg.Model, "advisor_model": cfg.AdvisorModel, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
 	case "interface", "ui":
 		return map[string]any{"theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
 	case "privacy", "privacy-settings":
@@ -14491,6 +14663,7 @@ Usage:
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
+  %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]
   %s [flags] max-turns [N]
   %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
@@ -14591,8 +14764,8 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

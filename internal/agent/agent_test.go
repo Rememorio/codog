@@ -727,6 +727,44 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Allowed tools")
 }
 
+func TestAdvisorCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Model:      "claude-sonnet-main",
+		},
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Advisor([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "advisor"`)
+	require.Contains(t, out.String(), `"main_model": "claude-sonnet-main"`)
+	require.NotContains(t, out.String(), `"model":`)
+	out.Reset()
+
+	require.NoError(t, app.Advisor([]string{"claude-opus-advisor", "--json"}))
+	require.Equal(t, "claude-opus-advisor", app.Config.AdvisorModel)
+	require.Contains(t, out.String(), `"model": "claude-opus-advisor"`)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"advisor_model": "claude-opus-advisor"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/advisor off", &session.Session{ID: "session"}))
+	require.Empty(t, app.Config.AdvisorModel)
+	require.Contains(t, out.String(), "Advisor")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "advisor_model")
+	require.Empty(t, errOut.String())
+}
+
 func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

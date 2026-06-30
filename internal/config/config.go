@@ -104,6 +104,7 @@ type Config struct {
 	AuthToken           string                     `json:"auth_token,omitempty"`
 	BaseURL             string                     `json:"base_url,omitempty"`
 	Model               string                     `json:"model,omitempty"`
+	AdvisorModel        string                     `json:"advisor_model,omitempty"`
 	SystemPrompt        string                     `json:"system_prompt,omitempty"`
 	AppendSystemPrompt  string                     `json:"append_system_prompt,omitempty"`
 	Theme               string                     `json:"theme,omitempty"`
@@ -509,6 +510,9 @@ func merge(dst *Config, src Config) {
 	if src.EditorMode != "" {
 		dst.EditorMode = src.EditorMode
 	}
+	if src.AdvisorModel != "" {
+		dst.AdvisorModel = src.AdvisorModel
+	}
 	if src.ReasoningEffort != "" {
 		dst.ReasoningEffort = src.ReasoningEffort
 	}
@@ -581,7 +585,9 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.EditorBridgeToken != "" ||
 		cfg.BackgroundStatePath != "" ||
 		cfg.ChromeDefaultEnabled != nil ||
-		cfg.SlackAppInstallCount != 0
+		cfg.SlackAppInstallCount != 0 ||
+		cfg.StickerOrderCount != 0 ||
+		cfg.ExtraUsageVisitCount != 0
 }
 
 func permissionRulesSet(rules PermissionRules) bool {
@@ -734,6 +740,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_MODEL"); value != "" {
 		cfg.Model = value
+	}
+	if value := os.Getenv("CODOG_ADVISOR_MODEL"); value != "" {
+		cfg.AdvisorModel = value
 	}
 	if value := os.Getenv("CODOG_SYSTEM_PROMPT"); value != "" {
 		cfg.SystemPrompt = value

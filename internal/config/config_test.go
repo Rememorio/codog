@@ -125,6 +125,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"theme": "dark",
 		"editorMode": "vim",
+		"advisor_model": "claude-opus-test",
 		"reasoning_effort": "high",
 		"fast_mode": true,
 		"voice_enabled": true,
@@ -146,6 +147,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "dark", cfg.Theme)
 	require.Equal(t, "vim", cfg.EditorMode)
+	require.Equal(t, "claude-opus-test", cfg.AdvisorModel)
 	require.Equal(t, "high", cfg.ReasoningEffort)
 	require.NotNil(t, cfg.FastMode)
 	require.True(t, *cfg.FastMode)
@@ -166,6 +168,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 
 	t.Setenv("CODOG_THEME", "light")
 	t.Setenv("CODOG_EDITOR_MODE", "default")
+	t.Setenv("CODOG_ADVISOR_MODEL", "claude-sonnet-advisor")
 	t.Setenv("CODOG_REASONING_EFFORT", "low")
 	t.Setenv("CODOG_FAST_MODE", "false")
 	t.Setenv("CODOG_VOICE_ENABLED", "false")
@@ -175,6 +178,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "light", cfg.Theme)
 	require.Equal(t, "default", cfg.EditorMode)
+	require.Equal(t, "claude-sonnet-advisor", cfg.AdvisorModel)
 	require.Equal(t, "low", cfg.ReasoningEffort)
 	require.NotNil(t, cfg.FastMode)
 	require.False(t, *cfg.FastMode)
@@ -183,6 +187,22 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "printf", cfg.VoiceCommand)
 	require.NotNil(t, cfg.Privacy.PromptHistoryEnabled)
 	require.True(t, *cfg.Privacy.PromptHistoryEnabled)
+}
+
+func TestLoadFutureClickCountersOnly(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"future": {
+			"sticker_order_count": 2,
+			"extra_usage_visit_count": 4
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, 2, cfg.Future.StickerOrderCount)
+	require.Equal(t, 4, cfg.Future.ExtraUsageVisitCount)
 }
 
 func TestLoadSkipPermissionsFlagOverridesPermissionMode(t *testing.T) {

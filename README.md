@@ -60,7 +60,7 @@ Claude Code source.
   built-in/custom slash commands, skill shortcuts, common subcommands, the
   current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
-  `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
+  `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
@@ -141,7 +141,7 @@ Claude Code source.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
-- `codog model`, `codog max-tokens`, `codog max-turns`,
+- `codog model`, `codog advisor`, `codog max-tokens`, `codog max-turns`,
   `codog permissions`, and `codog allowed-tools` expose the matching runtime
   slash controls as scriptable CLI commands.
 - `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, and `/privacy-settings`
