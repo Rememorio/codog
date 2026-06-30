@@ -5893,6 +5893,24 @@ type hooksListReport struct {
 	FileChangedCommands        []hookCommandSummary `json:"file_changed_commands,omitempty"`
 }
 
+type hooksHealthReport struct {
+	Kind            string               `json:"kind"`
+	Action          string               `json:"action"`
+	Status          string               `json:"status"`
+	Workspace       string               `json:"workspace"`
+	Event           string               `json:"event"`
+	MatcherTarget   string               `json:"matcher_target"`
+	ConfiguredCount int                  `json:"configured_count"`
+	MatchedCount    int                  `json:"matched_count"`
+	Matched         []hookCommandSummary `json:"matched"`
+	Events          []hookEventHealth    `json:"events"`
+}
+
+type hookEventHealth struct {
+	Event      string `json:"event"`
+	Configured int    `json:"configured"`
+}
+
 type hookCommandSummary struct {
 	Matcher string `json:"matcher,omitempty"`
 	Type    string `json:"type,omitempty"`
@@ -5964,6 +5982,17 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			return nil
 		}
 		renderHooksList(a.Out, report)
+		return nil
+	case "health":
+		payload := hooksPayloadForHealth(req)
+		matched := hooks.HooksForPayload(a.Config.Hooks, payload)
+		report := buildHooksHealthReport(a.Config.Hooks, a.Workspace, payload, matched)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderHooksHealth(a.Out, report)
 		return nil
 	case "run":
 		payload := hooks.Payload{
@@ -6215,6 +6244,213 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		return runErr
 	default:
 		return fmt.Errorf("unknown hooks action %q", req.Action)
+	}
+}
+
+func hooksPayloadForHealth(req hooksRequest) hooks.Payload {
+	payload := hooks.Payload{
+		Event:            req.Event,
+		Tool:             req.Tool,
+		ToolName:         req.Tool,
+		ToolInput:        json.RawMessage(req.Input),
+		Input:            req.Input,
+		Output:           req.Output,
+		IsError:          req.IsError,
+		Reason:           req.Reason,
+		Message:          req.Input,
+		Title:            req.Title,
+		NotificationType: req.NotificationType,
+		AgentID:          req.AgentID,
+		AgentType:        req.AgentType,
+		TranscriptPath:   req.TranscriptPath,
+		LastAssistant:    req.LastAssistant,
+		WorktreeID:       req.WorktreeID,
+		WorktreePath:     req.WorktreePath,
+		Ref:              req.Ref,
+		OldCWD:           req.OldCWD,
+		NewCWD:           req.NewCWD,
+		TaskID:           req.TaskID,
+		TaskKind:         req.TaskKind,
+		TaskStatus:       req.TaskStatus,
+		FilePath:         req.FilePath,
+		Operation:        req.Operation,
+		MemoryType:       req.MemoryType,
+		LoadReason:       req.LoadReason,
+		Globs:            append([]string(nil), req.Globs...),
+		TriggerFilePath:  req.TriggerFilePath,
+		ParentFilePath:   req.ParentFilePath,
+		StopHookActive:   req.StopHookActive,
+	}
+	switch req.Event {
+	case "notification":
+		payload.NotificationType = firstNonEmpty(req.NotificationType, req.Tool, "generic")
+		payload.Tool = payload.NotificationType
+	case "subagent_start", "subagent_stop":
+		payload.AgentType = firstNonEmpty(req.AgentType, req.Tool, "general")
+		payload.Tool = payload.AgentType
+	case "worktree_create", "worktree_remove":
+		payload.WorktreeID = firstNonEmpty(req.WorktreeID, req.Tool)
+		payload.Tool = payload.WorktreeID
+	case "cwd_changed":
+		payload.NewCWD = firstNonEmpty(req.NewCWD, req.Tool)
+		payload.Tool = payload.NewCWD
+	case "task_created", "task_completed":
+		payload.TaskID = firstNonEmpty(req.TaskID, req.Tool)
+		payload.TaskKind = firstNonEmpty(req.TaskKind, req.AgentType, "background")
+		payload.Tool = payload.TaskKind
+	case "file_changed":
+		payload.Operation = firstNonEmpty(req.Operation, req.Tool, "write_file")
+		payload.Tool = payload.Operation
+		payload.ToolName = payload.Operation
+	case "instructions_loaded":
+		payload.LoadReason = firstNonEmpty(req.LoadReason, req.Tool, "session_start")
+		payload.Tool = payload.LoadReason
+		payload.MemoryType = firstNonEmpty(req.MemoryType, "Project")
+	}
+	return payload
+}
+
+func buildHooksHealthReport(cfg config.HookConfig, workspace string, payload hooks.Payload, matched []config.HookCommand) hooksHealthReport {
+	events := make([]hookEventHealth, 0, len(allHookEvents()))
+	configured := 0
+	for _, event := range allHookEvents() {
+		count := hookConfiguredCount(cfg, event)
+		configured += count
+		events = append(events, hookEventHealth{Event: event, Configured: count})
+	}
+	return hooksHealthReport{
+		Kind:            "hooks",
+		Action:          "health",
+		Status:          "ok",
+		Workspace:       workspace,
+		Event:           payload.Event,
+		MatcherTarget:   hookMatcherTarget(payload),
+		ConfiguredCount: configured,
+		MatchedCount:    len(matched),
+		Matched:         summarizeHookCommands(matched),
+		Events:          events,
+	}
+}
+
+func hookMatcherTarget(payload hooks.Payload) string {
+	switch payload.Event {
+	case "notification":
+		if strings.TrimSpace(payload.NotificationType) != "" {
+			return payload.NotificationType
+		}
+	case "subagent_start", "subagent_stop":
+		if strings.TrimSpace(payload.AgentType) != "" {
+			return payload.AgentType
+		}
+	}
+	return payload.Tool
+}
+
+func allHookEvents() []string {
+	return []string{
+		"pre_tool_use",
+		"post_tool_use",
+		"post_tool_use_failure",
+		"permission_request",
+		"permission_denied",
+		"user_prompt_submit",
+		"session_start",
+		"session_end",
+		"setup",
+		"stop",
+		"stop_failure",
+		"pre_compact",
+		"post_compact",
+		"notification",
+		"subagent_start",
+		"subagent_stop",
+		"worktree_create",
+		"worktree_remove",
+		"cwd_changed",
+		"task_created",
+		"task_completed",
+		"instructions_loaded",
+		"file_changed",
+	}
+}
+
+func hookConfiguredCount(cfg config.HookConfig, event string) int {
+	switch event {
+	case "pre_tool_use":
+		return len(hookCommandsForList(cfg.PreToolUseCommands, cfg.PreToolUse))
+	case "post_tool_use":
+		return len(hookCommandsForList(cfg.PostToolUseCommands, cfg.PostToolUse))
+	case "post_tool_use_failure":
+		return len(hookCommandsForList(cfg.PostToolUseFailureCommands, cfg.PostToolUseFailure))
+	case "permission_request":
+		return len(hookCommandsForList(cfg.PermissionRequestCommands, cfg.PermissionRequest))
+	case "permission_denied":
+		return len(hookCommandsForList(cfg.PermissionDeniedCommands, cfg.PermissionDenied))
+	case "user_prompt_submit":
+		return len(hookCommandsForList(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit))
+	case "session_start":
+		return len(hookCommandsForList(cfg.SessionStartCommands, cfg.SessionStart))
+	case "session_end":
+		return len(hookCommandsForList(cfg.SessionEndCommands, cfg.SessionEnd))
+	case "setup":
+		return len(hookCommandsForList(cfg.SetupCommands, cfg.Setup))
+	case "stop":
+		return len(hookCommandsForList(cfg.StopCommands, cfg.Stop))
+	case "stop_failure":
+		return len(hookCommandsForList(cfg.StopFailureCommands, cfg.StopFailure))
+	case "pre_compact":
+		return len(hookCommandsForList(cfg.PreCompactCommands, cfg.PreCompact))
+	case "post_compact":
+		return len(hookCommandsForList(cfg.PostCompactCommands, cfg.PostCompact))
+	case "notification":
+		return len(hookCommandsForList(cfg.NotificationCommands, cfg.Notification))
+	case "subagent_start":
+		return len(hookCommandsForList(cfg.SubagentStartCommands, cfg.SubagentStart))
+	case "subagent_stop":
+		return len(hookCommandsForList(cfg.SubagentStopCommands, cfg.SubagentStop))
+	case "worktree_create":
+		return len(hookCommandsForList(cfg.WorktreeCreateCommands, cfg.WorktreeCreate))
+	case "worktree_remove":
+		return len(hookCommandsForList(cfg.WorktreeRemoveCommands, cfg.WorktreeRemove))
+	case "cwd_changed":
+		return len(hookCommandsForList(cfg.CwdChangedCommands, cfg.CwdChanged))
+	case "task_created":
+		return len(hookCommandsForList(cfg.TaskCreatedCommands, cfg.TaskCreated))
+	case "task_completed":
+		return len(hookCommandsForList(cfg.TaskCompletedCommands, cfg.TaskCompleted))
+	case "instructions_loaded":
+		return len(hookCommandsForList(cfg.InstructionsLoadedCommands, cfg.InstructionsLoaded))
+	case "file_changed":
+		return len(hookCommandsForList(cfg.FileChangedCommands, cfg.FileChanged))
+	default:
+		return 0
+	}
+}
+
+func renderHooksHealth(out io.Writer, report hooksHealthReport) {
+	fmt.Fprintln(out, "Hooks Health")
+	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
+	fmt.Fprintf(out, "  Event            %s\n", report.Event)
+	fmt.Fprintf(out, "  Matcher target   %s\n", emptyAsNone(report.MatcherTarget))
+	fmt.Fprintf(out, "  Configured       %d\n", report.ConfiguredCount)
+	fmt.Fprintf(out, "  Matched          %d\n", report.MatchedCount)
+	for _, event := range report.Events {
+		if event.Configured > 0 {
+			fmt.Fprintf(out, "  Event hook       %s=%d\n", event.Event, event.Configured)
+		}
+	}
+	for _, hook := range report.Matched {
+		fmt.Fprintf(out, "  Match            %s", hook.Command)
+		if hook.Matcher != "" {
+			fmt.Fprintf(out, " matcher=%s", hook.Matcher)
+		}
+		if hook.Type != "" {
+			fmt.Fprintf(out, " type=%s", hook.Type)
+		}
+		if hook.If != "" {
+			fmt.Fprintf(out, " if=%s", hook.If)
+		}
+		fmt.Fprintln(out)
 	}
 }
 
@@ -6475,6 +6711,15 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	switch action {
 	case "list", "show":
 		req.Action = "list"
+	case "health", "status", "match", "matches", "diagnose":
+		req.Action = "health"
+		if len(positionals) > 1 {
+			event, err := normalizeHookEvent(positionals[1])
+			if err != nil {
+				return req, err
+			}
+			req.Event = event
+		}
 	case "run", "test":
 		req.Action = "run"
 		if len(positionals) > 1 {
@@ -21830,7 +22075,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|cwd-changed|task-created|task-completed|instructions-loaded|file-changed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
+  %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

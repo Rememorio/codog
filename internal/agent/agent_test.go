@@ -4524,6 +4524,18 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "write_file", hooksList.FileChangedCommands[0].Matcher)
 	out.Reset()
 
+	require.NoError(t, app.Hooks(context.Background(), []string{"health", "pre", "--tool", "read_file", "--json"}))
+	var health hooksHealthReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &health))
+	require.Equal(t, "health", health.Action)
+	require.Equal(t, "pre_tool_use", health.Event)
+	require.Equal(t, "read_file", health.MatcherTarget)
+	require.Equal(t, 1, health.MatchedCount)
+	require.Len(t, health.Matched, 1)
+	require.Contains(t, health.Matched[0].Command, prePath)
+	require.Greater(t, health.ConfiguredCount, 0)
+	out.Reset()
+
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
 	data, err := os.ReadFile(promptPath)
 	require.NoError(t, err)

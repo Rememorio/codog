@@ -165,6 +165,9 @@ func TestHookCandidatesIncludeCurrentEvents(t *testing.T) {
 	} {
 		require.Contains(t, candidates, candidate)
 	}
+	healthCandidates := Candidates("/hooks health ")
+	require.Contains(t, healthCandidates, "/hooks health pre")
+	require.Contains(t, healthCandidates, "/hooks health notification")
 }
 
 func TestCandidatesWithOptionsIncludeModelAndSessions(t *testing.T) {

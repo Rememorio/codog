@@ -208,8 +208,9 @@ Claude Code source.
   `pre_compact`, `post_compact`, `notification`, `subagent_start`,
   `subagent_stop`, `worktree_create`, `worktree_remove`, `cwd_changed`,
   `task_created`, `task_completed`, `instructions_loaded`, and `file_changed`;
-  `codog hooks list|run` inspects and test-runs configured hooks with the same
-  JSON payload shape used by live sessions. Hook config accepts simple string arrays and the
+  `codog hooks list|health|run` inspects configured hooks, shows matcher
+  health for a probe event, and test-runs hooks with the same JSON payload
+  shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
   agent hooks,
   matcher filtering, `if` conditions, per-hook timeouts, shell selection, and
