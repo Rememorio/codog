@@ -89,14 +89,15 @@ const version = "0.1.0"
 const maxSystemGitStatusChars = 2000
 
 type App struct {
-	Config    config.Config
-	Client    *anthropic.Client
-	Tools     *tools.Registry
-	Sessions  *session.Store
-	Workspace string
-	Out       io.Writer
-	Err       io.Writer
-	In        io.Reader
+	Config     config.Config
+	Client     *anthropic.Client
+	Tools      *tools.Registry
+	Sessions   *session.Store
+	Workspace  string
+	Executable string
+	Out        io.Writer
+	Err        io.Writer
+	In         io.Reader
 
 	mcpToolsLoaded bool
 }
@@ -2273,16 +2274,18 @@ type cronRequest struct {
 	Prompt      string
 	Description string
 	ID          string
+	Now         time.Time
 }
 
 type cronCommandReport struct {
-	Kind    string       `json:"kind"`
-	Action  string       `json:"action"`
-	Status  string       `json:"status"`
-	Count   int          `json:"count,omitempty"`
-	Entries []cron.Entry `json:"entries,omitempty"`
-	Entry   *cron.Entry  `json:"entry,omitempty"`
-	Message string       `json:"message,omitempty"`
+	Kind    string            `json:"kind"`
+	Action  string            `json:"action"`
+	Status  string            `json:"status"`
+	Count   int               `json:"count,omitempty"`
+	Entries []cron.Entry      `json:"entries,omitempty"`
+	Entry   *cron.Entry       `json:"entry,omitempty"`
+	Tasks   []background.Task `json:"tasks,omitempty"`
+	Message string            `json:"message,omitempty"`
 }
 
 func (a *App) Cron(args []string) error {
@@ -2291,6 +2294,10 @@ func (a *App) Cron(args []string) error {
 		return err
 	}
 	store := cron.NewStore(a.Config.ConfigHome)
+	now := req.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	report := cronCommandReport{Kind: "cron", Action: req.Action, Status: "ok"}
 	switch req.Action {
 	case "list":
@@ -2316,6 +2323,46 @@ func (a *App) Cron(args []string) error {
 		report.Entry = &entry
 		report.Count = 1
 		report.Message = "Cron entry deleted"
+	case "due":
+		entries, err := store.Due(now)
+		if err != nil {
+			return err
+		}
+		report.Entries = entries
+		report.Count = len(entries)
+	case "mark-run":
+		entry, err := store.MarkRun(req.ID, now)
+		if err != nil {
+			return err
+		}
+		report.Entry = &entry
+		report.Count = 1
+		report.Message = "Cron entry marked as run"
+	case "run-due":
+		entries, err := store.Due(now)
+		if err != nil {
+			return err
+		}
+		exe, err := a.cronExecutable()
+		if err != nil {
+			return err
+		}
+		taskStore := background.NewStore(a.Config.ConfigHome)
+		for _, entry := range entries {
+			task, err := taskStore.RunWithOptions(buildCronPromptCommand(exe, entry.Prompt), a.Workspace, background.RunOptions{Kind: "cron"})
+			if err != nil {
+				return err
+			}
+			updated, err := store.MarkRun(entry.ID, now)
+			if err != nil {
+				return err
+			}
+			report.Tasks = append(report.Tasks, task)
+			report.Entries = append(report.Entries, updated)
+			a.runTaskCreatedHook(context.Background(), task)
+			a.runNotificationHook(context.Background(), "cron_task_started", "Cron task started", fmt.Sprintf("Cron entry %s started background task %s", entry.ID, task.ID))
+		}
+		report.Count = len(report.Tasks)
 	default:
 		return fmt.Errorf("unknown cron command %q", req.Action)
 	}
@@ -2353,6 +2400,22 @@ func parseCronArgs(args []string) (cronRequest, error) {
 			req.Description = args[i]
 		case strings.HasPrefix(arg, "--description="):
 			req.Description = strings.TrimPrefix(arg, "--description=")
+		case arg == "--now":
+			i++
+			if i >= len(args) {
+				return req, errors.New("cron now timestamp is required")
+			}
+			parsed, err := time.Parse(time.RFC3339, args[i])
+			if err != nil {
+				return req, fmt.Errorf("invalid cron now timestamp: %w", err)
+			}
+			req.Now = parsed
+		case strings.HasPrefix(arg, "--now="):
+			parsed, err := time.Parse(time.RFC3339, strings.TrimPrefix(arg, "--now="))
+			if err != nil {
+				return req, fmt.Errorf("invalid cron now timestamp: %w", err)
+			}
+			req.Now = parsed
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown cron flag %q", arg)
 		case !actionSet && isCronAction(arg):
@@ -2378,11 +2441,18 @@ func parseCronArgs(args []string) (cronRequest, error) {
 		}
 		req.Schedule = positionals[0]
 		req.Prompt = strings.Join(positionals[1:], " ")
-	case "delete":
+	case "delete", "mark-run":
 		if len(positionals) != 1 {
-			return req, errors.New("usage: codog cron delete CRON_ID [--json|--output-format text|json]")
+			if req.Action == "delete" {
+				return req, errors.New("usage: codog cron delete CRON_ID [--json|--output-format text|json]")
+			}
+			return req, errors.New("usage: codog cron mark-run CRON_ID [--now RFC3339] [--json|--output-format text|json]")
 		}
 		req.ID = positionals[0]
+	case "due", "run-due":
+		if len(positionals) != 0 {
+			return req, fmt.Errorf("usage: codog cron %s [--now RFC3339] [--json|--output-format text|json]", req.Action)
+		}
 	default:
 		return req, fmt.Errorf("unknown cron command %q", req.Action)
 	}
@@ -2391,7 +2461,7 @@ func parseCronArgs(args []string) (cronRequest, error) {
 
 func isCronAction(value string) bool {
 	switch normalizeCronAction(value) {
-	case "list", "create", "delete":
+	case "list", "create", "delete", "due", "mark-run", "run-due":
 		return true
 	default:
 		return false
@@ -2406,6 +2476,12 @@ func normalizeCronAction(value string) string {
 		return "create"
 	case "delete", "remove", "rm":
 		return "delete"
+	case "due":
+		return "due"
+	case "mark-run", "mark", "touch":
+		return "mark-run"
+	case "run-due", "run":
+		return "run-due"
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
@@ -2427,7 +2503,7 @@ func renderCronReport(out io.Writer, report cronCommandReport) {
 			}
 			fmt.Fprintf(out, "  %s  %s  %s  %s\n", entry.ID, entry.Schedule, state, description)
 		}
-	case "create", "delete":
+	case "create", "delete", "mark-run":
 		if report.Entry == nil {
 			return
 		}
@@ -2440,7 +2516,28 @@ func renderCronReport(out io.Writer, report cronCommandReport) {
 		if report.Message != "" {
 			fmt.Fprintf(out, "  Message          %s\n", report.Message)
 		}
+	case "due":
+		fmt.Fprintf(out, "  Due              %d\n", report.Count)
+		for _, entry := range report.Entries {
+			fmt.Fprintf(out, "  %s  %s  %s\n", entry.ID, entry.Schedule, entry.Description)
+		}
+	case "run-due":
+		fmt.Fprintf(out, "  Started          %d\n", report.Count)
+		for _, task := range report.Tasks {
+			fmt.Fprintf(out, "  %s  %s\n", task.ID, task.Status)
+		}
 	}
+}
+
+func (a *App) cronExecutable() (string, error) {
+	if strings.TrimSpace(a.Executable) != "" {
+		return a.Executable, nil
+	}
+	return os.Executable()
+}
+
+func buildCronPromptCommand(exe string, prompt string) string {
+	return strings.Join([]string{shellQuote(exe), "prompt", shellQuote(prompt)}, " ")
 }
 
 func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverrides) error {
@@ -21104,7 +21201,7 @@ Usage:
   %s debug-tool-call TOOL JSON [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s tasks|bashes list|status|stop|restart|logs|watch ID
-  %s cron list|create|delete [ARGS...] [--json|--output-format text|json]
+  %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set

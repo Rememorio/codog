@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -107,6 +108,188 @@ func (s Store) Delete(id string) (Entry, error) {
 		return Entry{}, err
 	}
 	return entry, nil
+}
+
+func (s Store) Due(now time.Time) ([]Entry, error) {
+	entries, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	out := []Entry{}
+	for _, entry := range entries {
+		if IsDue(entry, now) {
+			out = append(out, entry)
+		}
+	}
+	return out, nil
+}
+
+func (s Store) MarkRun(id string, now time.Time) (Entry, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Entry{}, errors.New("cron_id is required")
+	}
+	if !safeID(id) {
+		return Entry{}, fmt.Errorf("invalid cron_id %q", id)
+	}
+	entry, err := s.read(s.path(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Entry{}, fmt.Errorf("cron not found: %s", id)
+		}
+		return Entry{}, err
+	}
+	runAt := now.UTC()
+	entry.LastRunAt = &runAt
+	entry.RunCount++
+	entry.UpdatedAt = runAt
+	if err := s.save(entry); err != nil {
+		return Entry{}, err
+	}
+	return entry, nil
+}
+
+func IsDue(entry Entry, now time.Time) bool {
+	if !entry.Enabled {
+		return false
+	}
+	now = now.UTC().Truncate(time.Minute)
+	if entry.LastRunAt != nil && !entry.LastRunAt.UTC().Truncate(time.Minute).Before(now) {
+		return false
+	}
+	return scheduleDue(entry.Schedule, now, entry.LastRunAt)
+}
+
+func scheduleDue(schedule string, now time.Time, lastRun *time.Time) bool {
+	schedule = strings.TrimSpace(schedule)
+	if schedule == "" {
+		return false
+	}
+	lower := strings.ToLower(schedule)
+	switch lower {
+	case "@hourly":
+		return now.Minute() == 0
+	case "@daily", "@midnight":
+		return now.Hour() == 0 && now.Minute() == 0
+	case "@weekly":
+		return now.Weekday() == time.Sunday && now.Hour() == 0 && now.Minute() == 0
+	case "@monthly":
+		return now.Day() == 1 && now.Hour() == 0 && now.Minute() == 0
+	case "@yearly", "@annually":
+		return now.Month() == time.January && now.Day() == 1 && now.Hour() == 0 && now.Minute() == 0
+	}
+	if strings.HasPrefix(lower, "@every ") {
+		interval, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(lower, "@every ")))
+		if err != nil || interval <= 0 {
+			return false
+		}
+		if lastRun == nil {
+			return true
+		}
+		return !now.Before(lastRun.UTC().Add(interval))
+	}
+	fields := strings.Fields(schedule)
+	if len(fields) != 5 {
+		return false
+	}
+	return matchCronField(now.Minute(), fields[0], 0, 59, false) &&
+		matchCronField(now.Hour(), fields[1], 0, 23, false) &&
+		matchCronField(now.Day(), fields[2], 1, 31, false) &&
+		matchCronField(int(now.Month()), fields[3], 1, 12, false) &&
+		matchCronField(int(now.Weekday()), fields[4], 0, 7, true)
+}
+
+func matchCronField(value int, expr string, min int, max int, weekday bool) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return false
+	}
+	if weekday && value == 7 {
+		value = 0
+	}
+	allowed := map[int]bool{}
+	for _, part := range strings.Split(expr, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return false
+		}
+		if err := expandCronPart(part, min, max, weekday, allowed); err != nil {
+			return false
+		}
+	}
+	if weekday && value == 0 && allowed[7] {
+		return true
+	}
+	return allowed[value]
+}
+
+func expandCronPart(part string, min int, max int, weekday bool, allowed map[int]bool) error {
+	step := 1
+	if base, rawStep, ok := strings.Cut(part, "/"); ok {
+		part = base
+		parsed, err := strconv.Atoi(rawStep)
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("invalid cron step")
+		}
+		step = parsed
+	}
+	start, end, err := cronPartRange(part, min, max)
+	if err != nil {
+		return err
+	}
+	add := func(v int) {
+		if weekday && v == 7 {
+			allowed[0] = true
+		}
+		allowed[v] = true
+	}
+	if start <= end {
+		for v := start; v <= end; v += step {
+			add(v)
+		}
+		return nil
+	}
+	for v := start; v <= max; v += step {
+		add(v)
+	}
+	for v := min; v <= end; v += step {
+		add(v)
+	}
+	return nil
+}
+
+func cronPartRange(part string, min int, max int) (int, int, error) {
+	part = strings.TrimSpace(part)
+	if part == "*" {
+		return min, max, nil
+	}
+	if left, right, ok := strings.Cut(part, "-"); ok {
+		start, err := parseCronNumber(left, min, max)
+		if err != nil {
+			return 0, 0, err
+		}
+		end, err := parseCronNumber(right, min, max)
+		if err != nil {
+			return 0, 0, err
+		}
+		return start, end, nil
+	}
+	value, err := parseCronNumber(part, min, max)
+	if err != nil {
+		return 0, 0, err
+	}
+	return value, value, nil
+}
+
+func parseCronNumber(value string, min int, max int) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, err
+	}
+	if parsed < min || parsed > max {
+		return 0, fmt.Errorf("cron value %d out of range", parsed)
+	}
+	return parsed, nil
 }
 
 func (s Store) dir() string {

@@ -289,8 +289,9 @@ Claude Code source.
   restarts tasks, prunes retained records, and streams status/log events.
   `codog tasks`, `codog bashes`, `/tasks`, and `/bashes` are aliases for the
   same task-management commands.
-- `codog cron list|create|delete` and `/cron` manage scheduled recurring prompt
-  entries stored under the Codog config directory for agent-trigger workflows.
+- `codog cron list|create|delete|due|run-due` and `/cron` manage scheduled
+  recurring prompt entries and can start due prompts as background tasks for
+  agent-trigger workflows.
 - `codog agents list|run|worktrees` lists `.codog/agents/*.json` definitions,
   launches named background workers, and can isolate them in git worktrees with
   `agents run --worktree`.

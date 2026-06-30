@@ -28,6 +28,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -6512,14 +6513,21 @@ func TestBackgroundSlashAliases(t *testing.T) {
 }
 
 func TestCronCommandAndSlash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
 	configHome := t.TempDir()
+	workspace := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\"\n"), 0o755))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
-		Config:    config.Config{ConfigHome: configHome},
-		Workspace: t.TempDir(),
-		Out:       &out,
-		Err:       &errOut,
+		Config:     config.Config{ConfigHome: configHome},
+		Workspace:  workspace,
+		Executable: script,
+		Out:        &out,
+		Err:        &errOut,
 	}
 
 	require.NoError(t, app.Cron([]string{"create", "0 9 * * 1", "review", "weekly", "--description", "weekly review", "--json"}))
@@ -6546,11 +6554,53 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 	out.Reset()
 
+	require.NoError(t, app.Cron([]string{"create", "@every 1h", "check", "due", "--json"}))
+	var dueCreated cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &dueCreated))
+	require.NotNil(t, dueCreated.Entry)
+	out.Reset()
+
+	now := "2026-06-30T09:30:00Z"
+	require.NoError(t, app.Cron([]string{"due", "--now", now, "--json"}))
+	var due cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &due))
+	require.Equal(t, "due", due.Action)
+	require.Equal(t, 1, due.Count)
+	require.Equal(t, dueCreated.Entry.ID, due.Entries[0].ID)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"run-due", "--now", now, "--json"}))
+	var runDue cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runDue))
+	require.Equal(t, "run-due", runDue.Action)
+	require.Equal(t, 1, runDue.Count)
+	require.Len(t, runDue.Tasks, 1)
+	require.Len(t, runDue.Entries, 1)
+	require.Equal(t, 1, runDue.Entries[0].RunCount)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"list", "--json"}))
+	var afterRun cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &afterRun))
+	require.Len(t, afterRun.Entries, 2)
+	var ran cron.Entry
+	for _, entry := range afterRun.Entries {
+		if entry.ID == dueCreated.Entry.ID {
+			ran = entry
+		}
+	}
+	require.Equal(t, 1, ran.RunCount)
+	require.NotNil(t, ran.LastRunAt)
+	out.Reset()
+
 	require.NoError(t, app.Cron([]string{"delete", created.Entry.ID, "--json"}))
 	var deleted cronCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &deleted))
 	require.Equal(t, "delete", deleted.Action)
 	require.Equal(t, created.Entry.ID, deleted.Entry.ID)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"delete", dueCreated.Entry.ID, "--json"}))
 	out.Reset()
 
 	require.NoError(t, app.Cron([]string{"list", "--json"}))
