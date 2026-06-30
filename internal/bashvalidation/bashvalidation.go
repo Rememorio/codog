@@ -53,6 +53,13 @@ func Validate(command string, mode string, workspace string) Result {
 		}
 		return Result{Severity: SeverityConfirm, Intent: intent, Reason: reason}
 	}
+	if intent == IntentDestructive || intent == IntentSystemAdmin {
+		reason := "destructive or system-level command detected"
+		if mode == "read-only" {
+			return Result{Severity: SeverityBlock, Intent: intent, Reason: reason}
+		}
+		return Result{Severity: SeverityConfirm, Intent: intent, Reason: reason}
+	}
 	if reason := sedReason(command, mode); reason != "" {
 		return Result{Severity: SeverityBlock, Intent: IntentWrite, Reason: reason}
 	}
@@ -93,6 +100,9 @@ func Classify(command string) Intent {
 
 func classifySingle(command string) Intent {
 	first := firstCommand(command)
+	if intent := patternIntent(command, first); intent != "" {
+		return intent
+	}
 	switch {
 	case readOnlyCommands[first]:
 		if hasWriteRedirection(command) {
@@ -117,6 +127,30 @@ func classifySingle(command string) Intent {
 		}
 		return IntentUnknown
 	}
+}
+
+func patternIntent(command string, first string) Intent {
+	normalized := " " + strings.Join(strings.Fields(command), " ") + " "
+	switch first {
+	case "find":
+		if strings.Contains(normalized, " -delete ") || strings.Contains(normalized, " -exec rm ") {
+			return IntentWrite
+		}
+	case "git":
+		switch {
+		case strings.Contains(normalized, " reset --hard "):
+			return IntentDestructive
+		case strings.Contains(normalized, " clean ") && hasForceFlag(normalized):
+			return IntentDestructive
+		case strings.Contains(normalized, " checkout -- ") || strings.Contains(normalized, " restore "):
+			return IntentWrite
+		}
+	case "xargs":
+		if strings.Contains(normalized, " rm ") || strings.Contains(normalized, " mv ") {
+			return IntentDestructive
+		}
+	}
+	return ""
 }
 
 func commandSegments(command string) []string {
@@ -267,6 +301,15 @@ func hasRecursiveForceFlags(command string) bool {
 	fields := strings.Fields(command)
 	for _, field := range fields {
 		if strings.HasPrefix(field, "-") && strings.Contains(field, "r") && strings.Contains(field, "f") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasForceFlag(command string) bool {
+	for _, field := range strings.Fields(command) {
+		if strings.HasPrefix(field, "-") && strings.Contains(field, "f") {
 			return true
 		}
 	}
