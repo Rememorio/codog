@@ -61,6 +61,7 @@ type ConfigSummary struct {
 	PermissionRequestHookCount int    `json:"permission_request_hook_count"`
 	PermissionDeniedHookCount  int    `json:"permission_denied_hook_count"`
 	StopHookCount              int    `json:"stop_hook_count"`
+	StopFailureHookCount       int    `json:"stop_failure_hook_count"`
 	PreCompactHookCount        int    `json:"pre_compact_hook_count"`
 	PostCompactHookCount       int    `json:"post_compact_hook_count"`
 	NotificationHookCount      int    `json:"notification_hook_count"`
@@ -163,6 +164,7 @@ func Build(options Options) Report {
 			PermissionRequestHookCount: options.Status.Config.PermissionRequestHookCount,
 			PermissionDeniedHookCount:  options.Status.Config.PermissionDeniedHookCount,
 			StopHookCount:              options.Status.Config.StopHookCount,
+			StopFailureHookCount:       options.Status.Config.StopFailureHookCount,
 			PreCompactHookCount:        options.Status.Config.PreCompactHookCount,
 			PostCompactHookCount:       options.Status.Config.PostCompactHookCount,
 			NotificationHookCount:      options.Status.Config.NotificationHookCount,

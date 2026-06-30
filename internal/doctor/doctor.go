@@ -39,6 +39,7 @@ type Options struct {
 	PermissionRequest  []string
 	PermissionDenied   []string
 	Stop               []string
+	StopFailure        []string
 	SessionEnd         []string
 	Setup              []string
 	PreCompact         []string
@@ -257,12 +258,13 @@ func checkHooks(opts Options) Check {
 	sessionEnd := compactHookCommands(opts.SessionEnd)
 	setup := compactHookCommands(opts.Setup)
 	stop := compactHookCommands(opts.Stop)
+	stopFailure := compactHookCommands(opts.StopFailure)
 	preCompact := compactHookCommands(opts.PreCompact)
 	postCompact := compactHookCommands(opts.PostCompact)
 	notification := compactHookCommands(opts.Notification)
 	subagentStart := compactHookCommands(opts.SubagentStart)
 	subagentStop := compactHookCommands(opts.SubagentStop)
-	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
+	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
@@ -274,6 +276,7 @@ func checkHooks(opts Options) Check {
 		fmt.Sprintf("PermissionRequest hooks: %d", len(permissionRequest)),
 		fmt.Sprintf("PermissionDenied hooks: %d", len(permissionDenied)),
 		fmt.Sprintf("Stop hooks: %d", len(stop)),
+		fmt.Sprintf("StopFailure hooks: %d", len(stopFailure)),
 		fmt.Sprintf("PreCompact hooks: %d", len(preCompact)),
 		fmt.Sprintf("PostCompact hooks: %d", len(postCompact)),
 		fmt.Sprintf("Notification hooks: %d", len(notification)),
@@ -296,6 +299,7 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "PermissionRequest", permissionRequest)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PermissionDenied", permissionDenied)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Stop", stop)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "StopFailure", stopFailure)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreCompact", preCompact)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostCompact", postCompact)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Notification", notification)...)

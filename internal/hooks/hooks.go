@@ -172,6 +172,16 @@ func (r Runner) Stop(ctx context.Context, output string, isError bool) error {
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) StopFailure(ctx context.Context, output string, reason string) error {
+	payload := Payload{
+		Event:   "stop_failure",
+		Output:  output,
+		IsError: true,
+		Reason:  reason,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func (r Runner) PreCompact(ctx context.Context, input string) error {
 	payload := Payload{
 		Event: "pre_compact",
@@ -264,6 +274,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.SetupCommands, cfg.Setup, payload)
 	case "stop":
 		return matchingHooks(cfg.StopCommands, cfg.Stop, payload)
+	case "stop_failure":
+		return matchingHooks(cfg.StopFailureCommands, cfg.StopFailure, payload)
 	case "pre_compact":
 		return matchingHooks(cfg.PreCompactCommands, cfg.PreCompact, payload)
 	case "post_compact":
@@ -793,6 +805,8 @@ func normalizeEvent(event string) string {
 		return "setup"
 	case "stop":
 		return "stop"
+	case "stopfailure", "stop_failure", "stop-failure":
+		return "stop_failure"
 	case "precompact", "pre_compact", "pre-compact":
 		return "pre_compact"
 	case "postcompact", "post_compact", "post-compact":

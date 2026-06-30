@@ -3,6 +3,7 @@ package runloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"runtime"
 	"strings"
@@ -29,6 +30,17 @@ func (c *scriptedClient) Stream(_ context.Context, req anthropic.Request, onText
 		}
 	}
 	return next, nil
+}
+
+type errorClient struct {
+	err error
+}
+
+func (c errorClient) Stream(context.Context, anthropic.Request, func(string)) (anthropic.AssistantMessage, error) {
+	if c.err != nil {
+		return anthropic.AssistantMessage{}, c.err
+	}
+	return anthropic.AssistantMessage{}, errors.New("model failed")
 }
 
 func TestRunnerExecutesToolLoop(t *testing.T) {
@@ -227,6 +239,42 @@ func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {
 	require.Equal(t, "post_tool_use_failure", hookPayload.Event)
 	require.Equal(t, "missing_tool", hookPayload.Tool)
 	require.True(t, hookPayload.IsError)
+}
+
+func TestRunnerExecutesStopFailureHookOnModelError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	_, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  1,
+			Hooks: config.HookConfig{
+				StopFailureCommands: []config.HookCommand{{Command: "cat > stop-failure.json"}},
+			},
+		},
+		Client:    errorClient{err: errors.New("rate limited")},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "hello")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "rate limited")
+
+	payload, err := os.ReadFile(workspace + "/stop-failure.json")
+	require.NoError(t, err)
+	var hookPayload struct {
+		Event   string `json:"event"`
+		Output  string `json:"output"`
+		IsError bool   `json:"is_error"`
+		Reason  string `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &hookPayload))
+	require.Equal(t, "stop_failure", hookPayload.Event)
+	require.Equal(t, "rate limited", hookPayload.Output)
+	require.True(t, hookPayload.IsError)
+	require.Equal(t, "model_error", hookPayload.Reason)
 }
 
 func TestCompactMessagesKeepsRecentContext(t *testing.T) {

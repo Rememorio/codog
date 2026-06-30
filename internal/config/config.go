@@ -27,6 +27,7 @@ type HookConfig struct {
 	SessionEnd                 []string      `json:"session_end,omitempty"`
 	Setup                      []string      `json:"setup,omitempty"`
 	Stop                       []string      `json:"stop,omitempty"`
+	StopFailure                []string      `json:"stop_failure,omitempty"`
 	PreCompact                 []string      `json:"pre_compact,omitempty"`
 	PostCompact                []string      `json:"post_compact,omitempty"`
 	Notification               []string      `json:"notification,omitempty"`
@@ -42,6 +43,7 @@ type HookConfig struct {
 	SessionEndCommands         []HookCommand `json:"-"`
 	SetupCommands              []HookCommand `json:"-"`
 	StopCommands               []HookCommand `json:"-"`
+	StopFailureCommands        []HookCommand `json:"-"`
 	PreCompactCommands         []HookCommand `json:"-"`
 	PostCompactCommands        []HookCommand `json:"-"`
 	NotificationCommands       []HookCommand `json:"-"`
@@ -112,6 +114,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	stopFailure, err := hookCommands(raw, "stop_failure", "StopFailure")
+	if err != nil {
+		return err
+	}
 	preCompact, err := hookCommands(raw, "pre_compact", "PreCompact")
 	if err != nil {
 		return err
@@ -142,6 +148,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.SessionEndCommands = sessionEnd
 	h.SetupCommands = setup
 	h.StopCommands = stop
+	h.StopFailureCommands = stopFailure
 	h.PreCompactCommands = preCompact
 	h.PostCompactCommands = postCompact
 	h.NotificationCommands = notification
@@ -157,6 +164,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.SessionEnd = hookCommandStrings(sessionEnd)
 	h.Setup = hookCommandStrings(setup)
 	h.Stop = hookCommandStrings(stop)
+	h.StopFailure = hookCommandStrings(stopFailure)
 	h.PreCompact = hookCommandStrings(preCompact)
 	h.PostCompact = hookCommandStrings(postCompact)
 	h.Notification = hookCommandStrings(notification)
@@ -985,6 +993,11 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.Stop) != 0 {
 		dst.StopCommands = mergeHookCommands(dst.StopCommands, hookCommandsFromStrings(src.Stop))
 	}
+	if len(src.StopFailureCommands) != 0 {
+		dst.StopFailureCommands = mergeHookCommands(dst.StopFailureCommands, src.StopFailureCommands)
+	} else if len(src.StopFailure) != 0 {
+		dst.StopFailureCommands = mergeHookCommands(dst.StopFailureCommands, hookCommandsFromStrings(src.StopFailure))
+	}
 	if len(src.PreCompactCommands) != 0 {
 		dst.PreCompactCommands = mergeHookCommands(dst.PreCompactCommands, src.PreCompactCommands)
 	} else if len(src.PreCompact) != 0 {
@@ -1020,6 +1033,7 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.SessionEnd = hookCommandStrings(dst.SessionEndCommands)
 	dst.Setup = hookCommandStrings(dst.SetupCommands)
 	dst.Stop = hookCommandStrings(dst.StopCommands)
+	dst.StopFailure = hookCommandStrings(dst.StopFailureCommands)
 	dst.PreCompact = hookCommandStrings(dst.PreCompactCommands)
 	dst.PostCompact = hookCommandStrings(dst.PostCompactCommands)
 	dst.Notification = hookCommandStrings(dst.NotificationCommands)

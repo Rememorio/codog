@@ -2857,6 +2857,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	sessionEndPath := filepath.Join(workspace, "session-end.json")
 	setupPath := filepath.Join(workspace, "setup.json")
 	stopPath := filepath.Join(workspace, "stop.json")
+	stopFailurePath := filepath.Join(workspace, "stop-failure.json")
 	compactPath := filepath.Join(workspace, "compact.json")
 	postCompactPath := filepath.Join(workspace, "post-compact.json")
 	notificationPath := filepath.Join(workspace, "notification.json")
@@ -2877,6 +2878,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				SessionEnd:         []string{"cat > " + shellQuote(sessionEndPath)},
 				Setup:              []string{"cat > " + shellQuote(setupPath)},
 				Stop:               []string{"cat > " + shellQuote(stopPath)},
+				StopFailure:        []string{"cat > " + shellQuote(stopFailurePath)},
 				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
 				PostCompact:        []string{"cat > " + shellQuote(postCompactPath)},
 				Notification:       []string{"cat > " + shellQuote(notificationPath)},
@@ -2912,6 +2914,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				StopCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(stopPath)},
 				},
+				StopFailureCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(stopFailurePath)},
+				},
 				PreCompactCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(compactPath)},
 				},
@@ -2946,6 +2951,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"session_end"`)
 	require.Contains(t, out.String(), `"setup"`)
 	require.Contains(t, out.String(), `"stop"`)
+	require.Contains(t, out.String(), `"stop_failure"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
 	require.Contains(t, out.String(), `"post_compact"`)
 	require.Contains(t, out.String(), `"notification"`)
@@ -2963,6 +2969,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, hooksList.SessionEndCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.SetupCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
+	require.Contains(t, hooksList.StopFailureCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PostCompactCommands[0].Command, "cat >")
 	require.Equal(t, "background_*", hooksList.NotificationCommands[0].Matcher)
@@ -3057,6 +3064,22 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"stop"`)
 	require.Contains(t, string(data), `"output":"done"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run stop-failure --output=rate_limited --reason=model_error", sess))
+	data, err = os.ReadFile(stopFailurePath)
+	require.NoError(t, err)
+	var stopFailureHook struct {
+		Event   string `json:"event"`
+		Output  string `json:"output"`
+		IsError bool   `json:"is_error"`
+		Reason  string `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(data, &stopFailureHook))
+	require.Equal(t, "stop_failure", stopFailureHook.Event)
+	require.Equal(t, "rate_limited", stopFailureHook.Output)
+	require.True(t, stopFailureHook.IsError)
+	require.Equal(t, "model_error", stopFailureHook.Reason)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/hooks run pre-compact --input={\"source\":\"manual\"}", sess))

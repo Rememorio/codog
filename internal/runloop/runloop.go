@@ -110,6 +110,9 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 		})
 		if err != nil {
+			if hookErr := hookRunner.StopFailure(ctx, err.Error(), "model_error"); hookErr != nil {
+				return TurnResult{}, fmt.Errorf("%w; stop failure hook: %v", err, hookErr)
+			}
 			return TurnResult{}, err
 		}
 		assistantMsg := anthropic.Message{Role: "assistant", Content: assistant.Blocks}
@@ -170,12 +173,17 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, call.IsError))
 		}
 	}
-	return TurnResult{
+	result := TurnResult{
 		Messages:      messages,
 		MessageUsages: messageUsages,
 		ToolCalls:     toolCalls,
 		Iterations:    r.Config.MaxTurns,
-	}, errors.New("conversation exceeded max turns")
+	}
+	err := errors.New("conversation exceeded max turns")
+	if hookErr := hookRunner.StopFailure(ctx, err.Error(), "max_turns"); hookErr != nil {
+		return result, fmt.Errorf("%w; stop failure hook: %v", err, hookErr)
+	}
+	return result, err
 }
 
 func hasHookConfig(cfg config.HookConfig) bool {
@@ -189,6 +197,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SessionEnd) != 0 ||
 		len(cfg.Setup) != 0 ||
 		len(cfg.Stop) != 0 ||
+		len(cfg.StopFailure) != 0 ||
 		len(cfg.PreCompact) != 0 ||
 		len(cfg.PostCompact) != 0 ||
 		len(cfg.Notification) != 0 ||
@@ -204,6 +213,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SessionEndCommands) != 0 ||
 		len(cfg.SetupCommands) != 0 ||
 		len(cfg.StopCommands) != 0 ||
+		len(cfg.StopFailureCommands) != 0 ||
 		len(cfg.PreCompactCommands) != 0 ||
 		len(cfg.PostCompactCommands) != 0 ||
 		len(cfg.NotificationCommands) != 0 ||

@@ -274,6 +274,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"SessionEnd": [{"command": "echo session-end"}],
 			"Setup": [{"command": "echo setup"}],
 			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
+			"StopFailure": ["echo stop-failure"],
 			"PreCompact": ["echo pre-compact"],
 			"PostCompact": ["echo post-compact"],
 			"Notification": [{"matcher": "background_*", "command": "echo notify"}],
@@ -294,6 +295,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo session-end"}, cfg.Hooks.SessionEnd)
 	require.Equal(t, []string{"echo setup"}, cfg.Hooks.Setup)
 	require.Equal(t, []string{"echo stop"}, cfg.Hooks.Stop)
+	require.Equal(t, []string{"echo stop-failure"}, cfg.Hooks.StopFailure)
 	require.Equal(t, []string{"echo pre-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []string{"echo post-compact"}, cfg.Hooks.PostCompact)
 	require.Equal(t, []string{"echo notify"}, cfg.Hooks.Notification)
@@ -313,6 +315,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo session-end"}}, cfg.Hooks.SessionEndCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo setup"}}, cfg.Hooks.SetupCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop"}}, cfg.Hooks.StopCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop-failure"}}, cfg.Hooks.StopFailureCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo pre-compact"}}, cfg.Hooks.PreCompactCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo post-compact"}}, cfg.Hooks.PostCompactCommands)
 	require.Equal(t, []HookCommand{{Matcher: "background_*", Type: "command", Command: "echo notify"}}, cfg.Hooks.NotificationCommands)
@@ -341,6 +344,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"session_end": ["echo user-session-end"],
 			"setup": ["echo user-setup"],
 			"stop": ["echo user-stop"],
+			"stop_failure": ["echo user-stop-failure"],
 			"pre_compact": ["echo user-compact"],
 			"post_compact": ["echo user-post-compact"],
 			"notification": ["echo user-notification"],
@@ -361,6 +365,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"SessionEnd": [{"command": "echo project-session-end"}],
 			"Setup": [{"command": "echo project-setup"}],
 			"Stop": [{"command": "echo project-stop"}],
+			"StopFailure": [{"command": "echo project-stop-failure"}],
 			"PreCompact": [{"command": "echo project-compact"}],
 			"PostCompact": [{"command": "echo project-post-compact"}],
 			"Notification": [{"matcher": "background_task_started", "command": "echo project-notification"}],
@@ -379,6 +384,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"session_end": ["echo user-session-end", "echo local-session-end"],
 			"setup": ["echo user-setup", "echo local-setup"],
 			"stop": ["echo user-stop", "echo local-stop"],
+			"stop_failure": ["echo user-stop-failure", "echo local-stop-failure"],
 			"pre_compact": ["echo user-compact", "echo local-compact"],
 			"post_compact": ["echo user-post-compact", "echo local-post-compact"],
 			"notification": ["echo user-notification", "echo local-notification"],
@@ -399,6 +405,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-session-end", "echo project-session-end", "echo local-session-end"}, cfg.Hooks.SessionEnd)
 	require.Equal(t, []string{"echo user-setup", "echo project-setup", "echo local-setup"}, cfg.Hooks.Setup)
 	require.Equal(t, []string{"echo user-stop", "echo project-stop", "echo local-stop"}, cfg.Hooks.Stop)
+	require.Equal(t, []string{"echo user-stop-failure", "echo project-stop-failure", "echo local-stop-failure"}, cfg.Hooks.StopFailure)
 	require.Equal(t, []string{"echo user-compact", "echo project-compact", "echo local-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []string{"echo user-post-compact", "echo project-post-compact", "echo local-post-compact"}, cfg.Hooks.PostCompact)
 	require.Equal(t, []string{"echo user-notification", "echo project-notification", "echo local-notification"}, cfg.Hooks.Notification)
@@ -449,6 +456,11 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Type: "command", Command: "echo project-stop"},
 		{Type: "command", Command: "echo local-stop"},
 	}, cfg.Hooks.StopCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-stop-failure"},
+		{Type: "command", Command: "echo project-stop-failure"},
+		{Type: "command", Command: "echo local-stop-failure"},
+	}, cfg.Hooks.StopFailureCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-compact"},
 		{Type: "command", Command: "echo project-compact"},

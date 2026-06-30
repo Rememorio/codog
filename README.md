@@ -191,8 +191,8 @@ Claude Code source.
 - Hook commands can run on `session_start`, `session_end`, `setup`,
   `user_prompt_submit`,
   `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`,
-  `permission_request`, `permission_denied`, `stop`, `pre_compact`,
-  `post_compact`, `notification`, `subagent_start`, and `subagent_stop`; `codog hooks
+  `permission_request`, `permission_denied`, `stop`, `stop_failure`,
+  `pre_compact`, `post_compact`, `notification`, `subagent_start`, and `subagent_stop`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -426,6 +426,7 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "permission_request": ["echo permission-request >&2"],
     "permission_denied": ["echo permission-denied >&2"],
     "stop": ["echo stop >&2"],
+    "stop_failure": ["echo stop-failure >&2"],
     "pre_compact": ["echo compact >&2"],
     "post_compact": ["echo compacted >&2"],
     "notification": ["echo notify >&2"],

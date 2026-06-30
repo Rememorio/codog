@@ -4481,6 +4481,7 @@ type hooksListReport struct {
 	SessionEnd                 []string             `json:"session_end"`
 	Setup                      []string             `json:"setup"`
 	Stop                       []string             `json:"stop"`
+	StopFailure                []string             `json:"stop_failure"`
 	PreCompact                 []string             `json:"pre_compact"`
 	PostCompact                []string             `json:"post_compact"`
 	Notification               []string             `json:"notification"`
@@ -4496,6 +4497,7 @@ type hooksListReport struct {
 	SessionEndCommands         []hookCommandSummary `json:"session_end_commands,omitempty"`
 	SetupCommands              []hookCommandSummary `json:"setup_commands,omitempty"`
 	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
+	StopFailureCommands        []hookCommandSummary `json:"stop_failure_commands,omitempty"`
 	PreCompactCommands         []hookCommandSummary `json:"pre_compact_commands,omitempty"`
 	PostCompactCommands        []hookCommandSummary `json:"post_compact_commands,omitempty"`
 	NotificationCommands       []hookCommandSummary `json:"notification_commands,omitempty"`
@@ -4531,6 +4533,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SessionEnd:                 append([]string(nil), a.Config.Hooks.SessionEnd...),
 			Setup:                      append([]string(nil), a.Config.Hooks.Setup...),
 			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
+			StopFailure:                append([]string(nil), a.Config.Hooks.StopFailure...),
 			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
 			PostCompact:                append([]string(nil), a.Config.Hooks.PostCompact...),
 			Notification:               append([]string(nil), a.Config.Hooks.Notification...),
@@ -4546,6 +4549,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SessionEndCommands:         hookCommandsForList(a.Config.Hooks.SessionEndCommands, a.Config.Hooks.SessionEnd),
 			SetupCommands:              hookCommandsForList(a.Config.Hooks.SetupCommands, a.Config.Hooks.Setup),
 			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
+			StopFailureCommands:        hookCommandsForList(a.Config.Hooks.StopFailureCommands, a.Config.Hooks.StopFailure),
 			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
 			PostCompactCommands:        hookCommandsForList(a.Config.Hooks.PostCompactCommands, a.Config.Hooks.PostCompact),
 			NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
@@ -4626,6 +4630,19 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			if req.Event == "setup" {
 				payload.Reason = ""
 			}
+		} else if req.Event == "stop_failure" {
+			payload.Tool = ""
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.ToolName = ""
+			payload.ToolInput = nil
+			payload.IsError = true
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4841,6 +4858,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "setup", nil
 	case "stop":
 		return "stop", nil
+	case "stop-failure", "stopfailure", "stop_failure":
+		return "stop_failure", nil
 	case "compact", "precompact", "pre_compact", "pre-compact":
 		return "pre_compact", nil
 	case "postcompact", "post_compact", "post-compact":
@@ -4928,6 +4947,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Stop             %d\n", len(report.Stop))
 	for _, command := range report.StopCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Stop failure     %d\n", len(report.StopFailure))
+	for _, command := range report.StopFailureCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  Pre compact      %d\n", len(report.PreCompact))
@@ -10250,6 +10273,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		PermissionRequestHookCount: len(a.Config.Hooks.PermissionRequest),
 		PermissionDeniedHookCount:  len(a.Config.Hooks.PermissionDenied),
 		StopHookCount:              len(a.Config.Hooks.Stop),
+		StopFailureHookCount:       len(a.Config.Hooks.StopFailure),
 		PreCompactHookCount:        len(a.Config.Hooks.PreCompact),
 		PostCompactHookCount:       len(a.Config.Hooks.PostCompact),
 		NotificationHookCount:      len(a.Config.Hooks.Notification),
@@ -10811,6 +10835,7 @@ func (a *App) Doctor(args []string) error {
 		SessionEnd:         a.Config.Hooks.SessionEnd,
 		Setup:              a.Config.Hooks.Setup,
 		Stop:               a.Config.Hooks.Stop,
+		StopFailure:        a.Config.Hooks.StopFailure,
 		PreCompact:         a.Config.Hooks.PreCompact,
 		PostCompact:        a.Config.Hooks.PostCompact,
 		Notification:       a.Config.Hooks.Notification,
@@ -16845,7 +16870,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
