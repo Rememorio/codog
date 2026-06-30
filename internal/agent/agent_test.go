@@ -768,6 +768,36 @@ func TestBranchCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestBranchFreshnessCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	base, err := gitops.Branch(workspace)
+	require.NoError(t, err)
+	runGit(t, workspace, "switch", "-c", "topic")
+	runGit(t, workspace, "switch", base)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "fix: main update")
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	require.NoError(t, app.Branch([]string{"freshness", "topic", base, "--json"}))
+	require.Contains(t, out.String(), `"action": "freshness"`)
+	require.Contains(t, out.String(), `"status": "stale"`)
+	require.Contains(t, out.String(), `"behind": 1`)
+	require.Contains(t, out.String(), `"fix: main update"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/branch freshness topic "+base, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Freshness        stale")
+	require.Contains(t, out.String(), "Behind           1")
+	require.Contains(t, out.String(), "fix: main update")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))

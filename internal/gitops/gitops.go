@@ -31,6 +31,16 @@ type BranchList struct {
 	Branches []BranchInfo `json:"branches"`
 }
 
+type BranchFreshness struct {
+	Branch       string   `json:"branch"`
+	Base         string   `json:"base"`
+	Status       string   `json:"status"`
+	Fresh        bool     `json:"fresh"`
+	Ahead        int      `json:"ahead"`
+	Behind       int      `json:"behind"`
+	MissingFixes []string `json:"missing_fixes,omitempty"`
+}
+
 type TagInfo struct {
 	Name    string `json:"name"`
 	Commit  string `json:"commit,omitempty"`
@@ -147,6 +157,60 @@ func ListBranches(workspace string) (BranchList, error) {
 		})
 	}
 	return BranchList{Current: strings.TrimSpace(current), Branches: branches}, nil
+}
+
+func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		current, err := Branch(workspace)
+		if err != nil {
+			return BranchFreshness{}, err
+		}
+		branch = current
+	}
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "main"
+	}
+	if err := validateSafeRef(branch, "branch"); err != nil {
+		return BranchFreshness{}, err
+	}
+	if err := validateSafeRef(base, "base"); err != nil {
+		return BranchFreshness{}, err
+	}
+	if _, err := git(workspace, "rev-parse", "--verify", branch+"^{commit}"); err != nil {
+		return BranchFreshness{}, fmt.Errorf("branch %q does not resolve to a commit: %w", branch, err)
+	}
+	if _, err := git(workspace, "rev-parse", "--verify", base+"^{commit}"); err != nil {
+		return BranchFreshness{}, fmt.Errorf("base %q does not resolve to a commit: %w", base, err)
+	}
+	behind, err := revListCount(workspace, branch+".."+base)
+	if err != nil {
+		return BranchFreshness{}, err
+	}
+	ahead, err := revListCount(workspace, base+".."+branch)
+	if err != nil {
+		return BranchFreshness{}, err
+	}
+	missing, err := logSubjects(workspace, branch+".."+base)
+	if err != nil {
+		return BranchFreshness{}, err
+	}
+	status := "fresh"
+	if behind > 0 && ahead > 0 {
+		status = "diverged"
+	} else if behind > 0 {
+		status = "stale"
+	}
+	return BranchFreshness{
+		Branch:       branch,
+		Base:         base,
+		Status:       status,
+		Fresh:        behind == 0,
+		Ahead:        ahead,
+		Behind:       behind,
+		MissingFixes: missing,
+	}, nil
 }
 
 func CreateBranch(workspace, name, startPoint string, checkout bool) (string, error) {
@@ -317,8 +381,8 @@ func validateBranchName(workspace, name string) error {
 	if name == "" {
 		return errors.New("branch name is required")
 	}
-	if strings.HasPrefix(name, "-") {
-		return errors.New("branch name may not start with '-'")
+	if err := validateSafeRef(name, "branch name"); err != nil {
+		return err
 	}
 	if _, err := git(workspace, "check-ref-format", "--branch", name); err != nil {
 		return fmt.Errorf("invalid branch name %q: %w", name, err)
@@ -330,13 +394,50 @@ func validateTagName(workspace, name string) error {
 	if name == "" {
 		return errors.New("tag name is required")
 	}
-	if strings.HasPrefix(name, "-") {
-		return errors.New("tag name may not start with '-'")
+	if err := validateSafeRef(name, "tag name"); err != nil {
+		return err
 	}
 	if _, err := git(workspace, "check-ref-format", "refs/tags/"+name); err != nil {
 		return fmt.Errorf("invalid tag name %q: %w", name, err)
 	}
 	return nil
+}
+
+func validateSafeRef(ref, field string) error {
+	if strings.TrimSpace(ref) == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	if strings.HasPrefix(ref, "-") || strings.ContainsRune(ref, '\x00') {
+		return fmt.Errorf("%s is not a safe git ref", field)
+	}
+	return nil
+}
+
+func revListCount(workspace, revRange string) (int, error) {
+	out, err := git(workspace, "rev-list", "--count", revRange)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &count); err != nil {
+		return 0, fmt.Errorf("parse git rev-list count: %w", err)
+	}
+	return count, nil
+}
+
+func logSubjects(workspace, revRange string) ([]string, error) {
+	out, err := git(workspace, "log", "--format=%s", revRange)
+	if err != nil {
+		return nil, err
+	}
+	var subjects []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			subjects = append(subjects, line)
+		}
+	}
+	return subjects, nil
 }
 
 func git(workspace string, args ...string) (string, error) {

@@ -150,6 +150,56 @@ func TestBranchWorkflows(t *testing.T) {
 	require.Contains(t, output, "Deleted branch")
 }
 
+func TestCheckBranchFreshness(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	runGit(t, workspace, "switch", "-c", "topic")
+
+	freshness, err := CheckBranchFreshness(workspace, "topic", "main")
+	require.NoError(t, err)
+	require.Equal(t, "fresh", freshness.Status)
+	require.True(t, freshness.Fresh)
+	require.Zero(t, freshness.Ahead)
+	require.Zero(t, freshness.Behind)
+
+	runGit(t, workspace, "switch", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "fix: resolve timeout")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs.txt"), []byte("docs\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "docs: update notes")
+
+	freshness, err = CheckBranchFreshness(workspace, "topic", "main")
+	require.NoError(t, err)
+	require.Equal(t, "stale", freshness.Status)
+	require.False(t, freshness.Fresh)
+	require.Zero(t, freshness.Ahead)
+	require.Equal(t, 2, freshness.Behind)
+	require.ElementsMatch(t, []string{"fix: resolve timeout", "docs: update notes"}, freshness.MissingFixes)
+
+	runGit(t, workspace, "switch", "topic")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "topic.txt"), []byte("topic\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "feat: topic work")
+
+	freshness, err = CheckBranchFreshness(workspace, "topic", "main")
+	require.NoError(t, err)
+	require.Equal(t, "diverged", freshness.Status)
+	require.False(t, freshness.Fresh)
+	require.Equal(t, 1, freshness.Ahead)
+	require.Equal(t, 2, freshness.Behind)
+	require.ElementsMatch(t, []string{"fix: resolve timeout", "docs: update notes"}, freshness.MissingFixes)
+}
+
 func TestTagWorkflows(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")

@@ -14013,18 +14013,20 @@ type branchRequest struct {
 	Action     string
 	Name       string
 	NewName    string
+	Base       string
 	StartPoint string
 	Switch     bool
 	Force      bool
 }
 
 type branchReport struct {
-	Kind     string              `json:"kind"`
-	Action   string              `json:"action"`
-	Status   string              `json:"status"`
-	Current  string              `json:"current"`
-	Branches []gitops.BranchInfo `json:"branches,omitempty"`
-	Output   string              `json:"output,omitempty"`
+	Kind      string                  `json:"kind"`
+	Action    string                  `json:"action"`
+	Status    string                  `json:"status"`
+	Current   string                  `json:"current"`
+	Branches  []gitops.BranchInfo     `json:"branches,omitempty"`
+	Freshness *gitops.BranchFreshness `json:"freshness,omitempty"`
+	Output    string                  `json:"output,omitempty"`
 }
 
 func (a *App) Branch(args []string) error {
@@ -14095,6 +14097,13 @@ func (a *App) Branch(args []string) error {
 		}
 		report.Current = list.Current
 		report.Branches = list.Branches
+	case "freshness":
+		freshness, err := gitops.CheckBranchFreshness(a.Workspace, req.Name, req.Base)
+		if err != nil {
+			return err
+		}
+		report.Current = freshness.Branch
+		report.Freshness = &freshness
 	default:
 		return fmt.Errorf("unknown branch action %q", req.Action)
 	}
@@ -14127,6 +14136,14 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 			req.Switch = true
 		case arg == "--force" || arg == "-f":
 			req.Force = true
+		case arg == "--base":
+			i++
+			if i >= len(args) {
+				return req, errors.New("branch base is required")
+			}
+			req.Base = args[i]
+		case strings.HasPrefix(arg, "--base="):
+			req.Base = strings.TrimPrefix(arg, "--base=")
 		default:
 			positionals = append(positionals, arg)
 		}
@@ -14177,6 +14194,14 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 			req.Name = rest[0]
 			req.NewName = rest[1]
 		}
+	case "freshness", "fresh", "stale":
+		req.Action = "freshness"
+		if len(rest) > 0 {
+			req.Name = rest[0]
+		}
+		if len(rest) > 1 {
+			req.Base = rest[1]
+		}
 	default:
 		return req, fmt.Errorf("unknown branch action %q", positionals[0])
 	}
@@ -14189,6 +14214,19 @@ func renderBranchReport(out io.Writer, report branchReport) {
 	fmt.Fprintf(out, "  Current          %s\n", report.Current)
 	if strings.TrimSpace(report.Output) != "" {
 		fmt.Fprintf(out, "  Output           %s\n", strings.ReplaceAll(strings.TrimSpace(report.Output), "\n", "\n                   "))
+	}
+	if report.Freshness != nil {
+		freshness := report.Freshness
+		fmt.Fprintf(out, "  Base             %s\n", freshness.Base)
+		fmt.Fprintf(out, "  Freshness        %s\n", freshness.Status)
+		fmt.Fprintf(out, "  Ahead            %d\n", freshness.Ahead)
+		fmt.Fprintf(out, "  Behind           %d\n", freshness.Behind)
+		if len(freshness.MissingFixes) > 0 {
+			fmt.Fprintln(out, "  Missing commits")
+			for _, subject := range freshness.MissingFixes {
+				fmt.Fprintf(out, "    - %s\n", subject)
+			}
+		}
 	}
 	if len(report.Branches) == 0 {
 		return
@@ -17513,7 +17551,7 @@ Usage:
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
-  %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]
+  %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] | log [count] | blame FILE [line] | commit [--all] MESSAGE
   %s [flags] git status | git diff [--staged] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
