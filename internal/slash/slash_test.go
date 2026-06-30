@@ -36,6 +36,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/sandbox-toggle")
 	require.Contains(t, out.String(), "/heapdump")
 	require.Contains(t, out.String(), "/compact")
+	require.Contains(t, out.String(), "/undo")
 	require.Contains(t, out.String(), "/usage")
 	require.Contains(t, out.String(), "/stats")
 	require.Contains(t, out.String(), "/think-back")
@@ -136,6 +137,7 @@ func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, candidates, "/commands")
 	require.Contains(t, candidates, "/config auth")
 	require.NotContains(t, candidates, "/status")
+	require.Contains(t, Candidates("/un"), "/undo")
 	require.Empty(t, Candidates("co"))
 }
 

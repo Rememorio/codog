@@ -72,6 +72,7 @@ func Specs() []Spec {
 		{Name: "/ultraplan", Usage: "/ultraplan [TEXT]", Description: "Alias for local plan mode."},
 		{Name: "/exit-plan", Usage: "/exit-plan", Description: "Leave read-only planning mode."},
 		{Name: "/compact", Usage: "/compact", Description: "Compact in-memory request context for long sessions."},
+		{Name: "/undo", Usage: "/undo", Description: "Restore the most recent write_file, edit_file, or multi_edit change."},
 		{Name: "/diff", Usage: "/diff [--staged]", Description: "Show git working tree or staged diff."},
 		{Name: "/commit", Usage: "/commit [--all] MESSAGE", Description: "Create a git commit from staged changes."},
 		{Name: "/branch", Usage: "/branch [list|current|create|switch|delete|rename]", Description: "Manage local git branches."},

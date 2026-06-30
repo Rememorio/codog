@@ -73,6 +73,7 @@ import (
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
+	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
 	"github.com/Rememorio/codog/internal/verifiers"
@@ -336,6 +337,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ThinkBack(rest)
 	case "compact":
 		return app.Compact(rest, overrides)
+	case "undo":
+		return app.Undo(rest)
 	case "extra-usage":
 		return app.ExtraUsage(rest)
 	case "rate-limit-options":
@@ -10599,6 +10602,34 @@ func (a *App) renderRewindReport(format string, result session.RewindResult) {
 	fmt.Fprintf(a.Out, "  Path             %s\n", result.Path)
 }
 
+func (a *App) Undo(args []string) error {
+	format, err := parseSimpleOutputFormat("undo", args)
+	if err != nil {
+		return err
+	}
+	report, err := undo.RestoreLast(a.Workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Undo")
+	fmt.Fprintf(a.Out, "  Tool             %s\n", emptyAsNone(report.Tool))
+	fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+	if report.Restored {
+		fmt.Fprintf(a.Out, "  Restored         true\n")
+		fmt.Fprintf(a.Out, "  Bytes            %d\n", report.Bytes)
+	}
+	if report.Removed {
+		fmt.Fprintf(a.Out, "  Removed          true\n")
+	}
+	fmt.Fprintf(a.Out, "  Remaining        %d\n", report.Remaining)
+	return nil
+}
+
 func (a *App) renderPromptHistory(format string, sessionID string, entries []session.PromptEntry, limit int) error {
 	report := prompthistory.Build(sessionID, entries, limit)
 	if format == "json" {
@@ -12833,6 +12864,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		} else if current, err := a.Sessions.Open(sess.ID); err == nil {
 			*sess = *current
+		}
+	case "/undo":
+		if err := a.Undo(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/diff":
 		a.handleDiffSlash(fields[1:])
@@ -17575,6 +17610,7 @@ Usage:
   %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
+  %s [flags] undo [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]

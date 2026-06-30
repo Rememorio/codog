@@ -42,6 +42,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
+	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/webaccess"
 	"github.com/Rememorio/codog/internal/workers"
 	"github.com/Rememorio/codog/internal/worktree"
@@ -2091,17 +2092,31 @@ func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
+	existed, original, undoAvailable, err := fileUndoSnapshot(path)
+	if err != nil {
+		return "", err
+	}
+	undoID := ""
+	if undoAvailable {
+		record, err := undo.Push(t.Workspace, "write_file", path, existed, original)
+		if err != nil {
+			return "", err
+		}
+		undoID = record.ID
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
 	kind := "update"
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if !existed {
 		kind = "create"
 	}
 	if err := os.WriteFile(path, []byte(payload.Content), 0o644); err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{"path": path, "kind": kind, "bytes": len(payload.Content)}), nil
+	result := map[string]any{"path": path, "kind": kind, "bytes": len(payload.Content)}
+	addUndoFields(result, undoAvailable, undoID)
+	return pretty(result), nil
 }
 
 type EditFileTool struct {
@@ -2171,6 +2186,10 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if payload.ReplaceAll {
 		next = strings.ReplaceAll(content, payload.OldString, payload.NewString)
 	}
+	record, err := undo.Push(t.Workspace, "edit_file", path, true, data)
+	if err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, []byte(next), 0o644); err != nil {
 		return "", err
 	}
@@ -2178,7 +2197,7 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if payload.ReplaceAll {
 		replaced = count
 	}
-	return pretty(map[string]any{"path": path, "replacements": replaced}), nil
+	return pretty(map[string]any{"path": path, "replacements": replaced, "undo_available": true, "undo_id": record.ID}), nil
 }
 
 type MultiEditTool struct {
@@ -2270,10 +2289,39 @@ func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string
 		}
 		total += replacements
 	}
+	record, err := undo.Push(t.Workspace, "multi_edit", path, true, data)
+	if err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{"path": path, "edits": len(payload.Edits), "replacements": total}), nil
+	return pretty(map[string]any{"path": path, "edits": len(payload.Edits), "replacements": total, "undo_available": true, "undo_id": record.ID}), nil
+}
+
+func fileUndoSnapshot(path string) (bool, []byte, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil, true, nil
+		}
+		return false, nil, false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxFileToolBytes {
+		return true, nil, false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil, false, err
+	}
+	return true, data, true, nil
+}
+
+func addUndoFields(result map[string]any, available bool, id string) {
+	result["undo_available"] = available
+	if id != "" {
+		result["undo_id"] = id
+	}
 }
 
 func pathOrFilePathRequirement() []map[string]any {

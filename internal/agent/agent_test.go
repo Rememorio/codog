@@ -40,6 +40,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/stretchr/testify/require"
@@ -1808,6 +1809,37 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 	require.NoError(t, json.Unmarshal(postHookPayload, &postCompactHook))
 	require.Equal(t, "post_compact", postCompactHook.Event)
 	require.Contains(t, postCompactHook.Input, `"session_id":"compact-session"`)
+}
+
+func TestUndoCommandAndSlashRestoreFile(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "notes.txt")
+	require.NoError(t, os.WriteFile(path, []byte("old\n"), 0o644))
+
+	_, err := undo.Push(workspace, "edit_file", path, true, []byte("old\n"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte("new\n"), 0o644))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	require.NoError(t, app.Undo([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "undo"`)
+	require.Contains(t, out.String(), `"restored": true`)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "old\n", string(data))
+
+	out.Reset()
+	_, err = undo.Push(workspace, "edit_file", path, true, []byte("old\n"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte("newer\n"), 0o644))
+	require.True(t, app.handleSlash(context.Background(), "/undo", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Undo")
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "old\n", string(data))
+	require.Empty(t, errOut.String())
 }
 
 func TestRateLimitOptionsCommandAndSlash(t *testing.T) {

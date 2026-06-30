@@ -21,6 +21,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/planmode"
+	"github.com/Rememorio/codog/internal/undo"
 	"github.com/stretchr/testify/require"
 )
 
@@ -723,6 +724,41 @@ func TestFileToolsAcceptClaudeFilePathParameter(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "delta gamma delta\n", string(data))
+}
+
+func TestFileToolsRecordUndoSnapshots(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+
+	out, err := registry.Execute(context.Background(), "Write", []byte(`{"file_path":"created.txt","content":"created\n"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"undo_available": true`)
+	require.Contains(t, out, `"undo_id":`)
+	report, err := undo.RestoreLast(workspace)
+	require.NoError(t, err)
+	require.True(t, report.Removed)
+	require.NoFileExists(t, filepath.Join(workspace, "created.txt"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha beta alpha\n"), 0o644))
+	out, err = registry.Execute(context.Background(), "Edit", []byte(`{"file_path":"notes.txt","old_string":"beta","new_string":"gamma"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"undo_id":`)
+	report, err = undo.RestoreLast(workspace)
+	require.NoError(t, err)
+	require.True(t, report.Restored)
+	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "alpha beta alpha\n", string(data))
+
+	out, err = registry.Execute(context.Background(), "MultiEdit", []byte(`{"file_path":"notes.txt","edits":[{"old_string":"alpha","new_string":"delta","replace_all":true}]}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"undo_id":`)
+	report, err = undo.RestoreLast(workspace)
+	require.NoError(t, err)
+	require.True(t, report.Restored)
+	data, err = os.ReadFile(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "alpha beta alpha\n", string(data))
 }
 
 func TestReadFileToolReadsImages(t *testing.T) {
