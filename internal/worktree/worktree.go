@@ -78,6 +78,10 @@ func List(workspace string) ([]Allocation, error) {
 	return allocations, nil
 }
 
+func Load(workspace, id string) (Allocation, error) {
+	return load(workspace, id)
+}
+
 func Remove(workspace, id string) error {
 	if err := validateID(id); err != nil {
 		return err

@@ -67,6 +67,8 @@ type ConfigSummary struct {
 	NotificationHookCount      int    `json:"notification_hook_count"`
 	SubagentStartHookCount     int    `json:"subagent_start_hook_count"`
 	SubagentStopHookCount      int    `json:"subagent_stop_hook_count"`
+	WorktreeCreateHookCount    int    `json:"worktree_create_hook_count"`
+	WorktreeRemoveHookCount    int    `json:"worktree_remove_hook_count"`
 }
 
 type SessionSummary struct {
@@ -170,6 +172,8 @@ func Build(options Options) Report {
 			NotificationHookCount:      options.Status.Config.NotificationHookCount,
 			SubagentStartHookCount:     options.Status.Config.SubagentStartHookCount,
 			SubagentStopHookCount:      options.Status.Config.SubagentStopHookCount,
+			WorktreeCreateHookCount:    options.Status.Config.WorktreeCreateHookCount,
+			WorktreeRemoveHookCount:    options.Status.Config.WorktreeRemoveHookCount,
 		},
 		Git: options.Status.Git,
 		Session: SessionSummary{

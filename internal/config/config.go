@@ -33,6 +33,8 @@ type HookConfig struct {
 	Notification               []string      `json:"notification,omitempty"`
 	SubagentStart              []string      `json:"subagent_start,omitempty"`
 	SubagentStop               []string      `json:"subagent_stop,omitempty"`
+	WorktreeCreate             []string      `json:"worktree_create,omitempty"`
+	WorktreeRemove             []string      `json:"worktree_remove,omitempty"`
 	PreToolUseCommands         []HookCommand `json:"-"`
 	PostToolUseCommands        []HookCommand `json:"-"`
 	PostToolUseFailureCommands []HookCommand `json:"-"`
@@ -49,6 +51,8 @@ type HookConfig struct {
 	NotificationCommands       []HookCommand `json:"-"`
 	SubagentStartCommands      []HookCommand `json:"-"`
 	SubagentStopCommands       []HookCommand `json:"-"`
+	WorktreeCreateCommands     []HookCommand `json:"-"`
+	WorktreeRemoveCommands     []HookCommand `json:"-"`
 }
 
 type HookCommand struct {
@@ -138,6 +142,14 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	worktreeCreate, err := hookCommands(raw, "worktree_create", "WorktreeCreate")
+	if err != nil {
+		return err
+	}
+	worktreeRemove, err := hookCommands(raw, "worktree_remove", "WorktreeRemove")
+	if err != nil {
+		return err
+	}
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
 	h.PostToolUseFailureCommands = postFailure
@@ -154,6 +166,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.NotificationCommands = notification
 	h.SubagentStartCommands = subagentStart
 	h.SubagentStopCommands = subagentStop
+	h.WorktreeCreateCommands = worktreeCreate
+	h.WorktreeRemoveCommands = worktreeRemove
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
 	h.PostToolUseFailure = hookCommandStrings(postFailure)
@@ -170,6 +184,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.Notification = hookCommandStrings(notification)
 	h.SubagentStart = hookCommandStrings(subagentStart)
 	h.SubagentStop = hookCommandStrings(subagentStop)
+	h.WorktreeCreate = hookCommandStrings(worktreeCreate)
+	h.WorktreeRemove = hookCommandStrings(worktreeRemove)
 	return nil
 }
 
@@ -1023,6 +1039,16 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.SubagentStop) != 0 {
 		dst.SubagentStopCommands = mergeHookCommands(dst.SubagentStopCommands, hookCommandsFromStrings(src.SubagentStop))
 	}
+	if len(src.WorktreeCreateCommands) != 0 {
+		dst.WorktreeCreateCommands = mergeHookCommands(dst.WorktreeCreateCommands, src.WorktreeCreateCommands)
+	} else if len(src.WorktreeCreate) != 0 {
+		dst.WorktreeCreateCommands = mergeHookCommands(dst.WorktreeCreateCommands, hookCommandsFromStrings(src.WorktreeCreate))
+	}
+	if len(src.WorktreeRemoveCommands) != 0 {
+		dst.WorktreeRemoveCommands = mergeHookCommands(dst.WorktreeRemoveCommands, src.WorktreeRemoveCommands)
+	} else if len(src.WorktreeRemove) != 0 {
+		dst.WorktreeRemoveCommands = mergeHookCommands(dst.WorktreeRemoveCommands, hookCommandsFromStrings(src.WorktreeRemove))
+	}
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
 	dst.PostToolUseFailure = hookCommandStrings(dst.PostToolUseFailureCommands)
@@ -1039,6 +1065,8 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.Notification = hookCommandStrings(dst.NotificationCommands)
 	dst.SubagentStart = hookCommandStrings(dst.SubagentStartCommands)
 	dst.SubagentStop = hookCommandStrings(dst.SubagentStopCommands)
+	dst.WorktreeCreate = hookCommandStrings(dst.WorktreeCreateCommands)
+	dst.WorktreeRemove = hookCommandStrings(dst.WorktreeRemoveCommands)
 }
 
 func hookCommandsFromStrings(values []string) []HookCommand {

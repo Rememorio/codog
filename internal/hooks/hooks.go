@@ -53,6 +53,9 @@ type Payload struct {
 	TranscriptPath   string          `json:"agent_transcript_path,omitempty"`
 	StopHookActive   bool            `json:"stop_hook_active,omitempty"`
 	LastAssistant    string          `json:"last_assistant_message,omitempty"`
+	WorktreeID       string          `json:"worktree_id,omitempty"`
+	WorktreePath     string          `json:"worktree_path,omitempty"`
+	Ref              string          `json:"ref,omitempty"`
 }
 
 type CommandResult struct {
@@ -237,6 +240,31 @@ func (r Runner) SubagentStop(ctx context.Context, agentID string, agentType stri
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) WorktreeCreate(ctx context.Context, id string, worktreePath string, ref string, input string) error {
+	payload := Payload{
+		Event:        "worktree_create",
+		Tool:         id,
+		Input:        input,
+		WorktreeID:   id,
+		WorktreePath: worktreePath,
+		Ref:          ref,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) WorktreeRemove(ctx context.Context, id string, worktreePath string, ref string, reason string, input string) error {
+	payload := Payload{
+		Event:        "worktree_remove",
+		Tool:         id,
+		Input:        input,
+		Reason:       reason,
+		WorktreeID:   id,
+		WorktreePath: worktreePath,
+		Ref:          ref,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
 	payload := Payload{Event: event, Tool: tool}
 	hooks := HooksForPayload(cfg, payload)
@@ -286,6 +314,10 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.SubagentStartCommands, cfg.SubagentStart, payload)
 	case "subagent_stop":
 		return matchingHooks(cfg.SubagentStopCommands, cfg.SubagentStop, payload)
+	case "worktree_create":
+		return matchingHooks(cfg.WorktreeCreateCommands, cfg.WorktreeCreate, payload)
+	case "worktree_remove":
+		return matchingHooks(cfg.WorktreeRemoveCommands, cfg.WorktreeRemove, payload)
 	default:
 		return nil
 	}
@@ -421,6 +453,9 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 		"CODOG_HOOK_AGENT_TRANSCRIPT_PATH="+payload.TranscriptPath,
 		"CODOG_HOOK_STOP_HOOK_ACTIVE="+strconv.FormatBool(payload.StopHookActive),
 		"CODOG_HOOK_LAST_ASSISTANT_MESSAGE="+payload.LastAssistant,
+		"CODOG_HOOK_WORKTREE_ID="+payload.WorktreeID,
+		"CODOG_HOOK_WORKTREE_PATH="+payload.WorktreePath,
+		"CODOG_HOOK_REF="+payload.Ref,
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -670,7 +705,7 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref}
 	if len(payload.ToolInput) != 0 {
 		values = append(values, string(payload.ToolInput))
 	}
@@ -817,6 +852,10 @@ func normalizeEvent(event string) string {
 		return "subagent_start"
 	case "subagentstop", "subagent_stop", "subagent-stop":
 		return "subagent_stop"
+	case "worktreecreate", "worktree_create", "worktree-create":
+		return "worktree_create"
+	case "worktreeremove", "worktree_remove", "worktree-remove":
+		return "worktree_remove"
 	default:
 		return event
 	}

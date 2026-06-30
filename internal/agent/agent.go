@@ -2644,7 +2644,14 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		if len(args) < 2 {
 			return errors.New("usage: codog agents worktree-remove ID")
 		}
+		allocation, err := worktree.Load(a.Workspace, args[1])
+		if err != nil {
+			return err
+		}
 		if err := worktree.Remove(a.Workspace, args[1]); err != nil {
+			return err
+		}
+		if err := a.runWorktreeRemoveHook(context.Background(), allocation, "manual"); err != nil {
 			return err
 		}
 		data, _ := json.MarshalIndent(map[string]any{"removed": true, "id": args[1]}, "", "  ")
@@ -2685,19 +2692,23 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		allocation = &next
 		runWorkspace = next.Path
+		if err := a.runWorktreeCreateHook(context.Background(), next, "agent"); err != nil {
+			_ = a.removeAllocatedWorktree(context.Background(), next, "create_hook_failed")
+			return err
+		}
 	}
 	command := buildAgentCommand(exe, *selected, req.Prompt)
 	sessionID, err := a.sessionIDFromOverrides(overrides)
 	if err != nil {
 		if allocation != nil {
-			_ = worktree.Remove(a.Workspace, allocation.ID)
+			_ = a.removeAllocatedWorktree(context.Background(), *allocation, "run_failed")
 		}
 		return err
 	}
 	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, runWorkspace, background.RunOptions{Kind: "agent", AgentType: selected.Name, SessionID: sessionID})
 	if err != nil {
 		if allocation != nil {
-			_ = worktree.Remove(a.Workspace, allocation.ID)
+			_ = a.removeAllocatedWorktree(context.Background(), *allocation, "run_failed")
 		}
 		return err
 	}
@@ -4463,6 +4474,9 @@ type hooksRequest struct {
 	AgentType        string
 	TranscriptPath   string
 	LastAssistant    string
+	WorktreeID       string
+	WorktreePath     string
+	Ref              string
 	StopHookActive   bool
 	Reason           string
 }
@@ -4487,6 +4501,8 @@ type hooksListReport struct {
 	Notification               []string             `json:"notification"`
 	SubagentStart              []string             `json:"subagent_start"`
 	SubagentStop               []string             `json:"subagent_stop"`
+	WorktreeCreate             []string             `json:"worktree_create"`
+	WorktreeRemove             []string             `json:"worktree_remove"`
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
@@ -4503,6 +4519,8 @@ type hooksListReport struct {
 	NotificationCommands       []hookCommandSummary `json:"notification_commands,omitempty"`
 	SubagentStartCommands      []hookCommandSummary `json:"subagent_start_commands,omitempty"`
 	SubagentStopCommands       []hookCommandSummary `json:"subagent_stop_commands,omitempty"`
+	WorktreeCreateCommands     []hookCommandSummary `json:"worktree_create_commands,omitempty"`
+	WorktreeRemoveCommands     []hookCommandSummary `json:"worktree_remove_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4539,6 +4557,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Notification:               append([]string(nil), a.Config.Hooks.Notification...),
 			SubagentStart:              append([]string(nil), a.Config.Hooks.SubagentStart...),
 			SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
+			WorktreeCreate:             append([]string(nil), a.Config.Hooks.WorktreeCreate...),
+			WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
@@ -4555,6 +4575,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
 			SubagentStartCommands:      hookCommandsForList(a.Config.Hooks.SubagentStartCommands, a.Config.Hooks.SubagentStart),
 			SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
+			WorktreeCreateCommands:     hookCommandsForList(a.Config.Hooks.WorktreeCreateCommands, a.Config.Hooks.WorktreeCreate),
+			WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4580,6 +4602,9 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			AgentType:        req.AgentType,
 			TranscriptPath:   req.TranscriptPath,
 			LastAssistant:    req.LastAssistant,
+			WorktreeID:       req.WorktreeID,
+			WorktreePath:     req.WorktreePath,
+			Ref:              req.Ref,
 			StopHookActive:   req.StopHookActive,
 		}
 		if req.Event == "notification" {
@@ -4643,6 +4668,22 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.ToolName = ""
 			payload.ToolInput = nil
 			payload.IsError = true
+		} else if req.Event == "worktree_create" || req.Event == "worktree_remove" {
+			payload.WorktreeID = firstNonEmpty(req.WorktreeID, req.Tool)
+			payload.Tool = payload.WorktreeID
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.ToolName = ""
+			payload.ToolInput = nil
+			if req.Event == "worktree_create" {
+				payload.Reason = ""
+			}
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4655,6 +4696,14 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.Reason = ""
 			payload.ToolName = ""
 			payload.ToolInput = nil
+			payload.WorktreeID = ""
+			payload.WorktreePath = ""
+			payload.Ref = ""
+		}
+		if req.Event != "worktree_create" && req.Event != "worktree_remove" {
+			payload.WorktreeID = ""
+			payload.WorktreePath = ""
+			payload.Ref = ""
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4768,6 +4817,30 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.LastAssistant = args[i]
 		case strings.HasPrefix(arg, "--last-assistant-message="):
 			req.LastAssistant = strings.TrimPrefix(arg, "--last-assistant-message=")
+		case arg == "--worktree-id":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks worktree id is required")
+			}
+			req.WorktreeID = args[i]
+		case strings.HasPrefix(arg, "--worktree-id="):
+			req.WorktreeID = strings.TrimPrefix(arg, "--worktree-id=")
+		case arg == "--worktree-path":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks worktree path is required")
+			}
+			req.WorktreePath = args[i]
+		case strings.HasPrefix(arg, "--worktree-path="):
+			req.WorktreePath = strings.TrimPrefix(arg, "--worktree-path=")
+		case arg == "--ref":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks ref is required")
+			}
+			req.Ref = args[i]
+		case strings.HasPrefix(arg, "--ref="):
+			req.Ref = strings.TrimPrefix(arg, "--ref=")
 		case arg == "--stop-hook-active":
 			req.StopHookActive = true
 		case arg == "--reason":
@@ -4870,6 +4943,10 @@ func normalizeHookEvent(value string) (string, error) {
 		return "subagent_start", nil
 	case "subagent-stop", "subagentstop", "subagent_stop":
 		return "subagent_stop", nil
+	case "worktree-create", "worktreecreate", "worktree_create":
+		return "worktree_create", nil
+	case "worktree-remove", "worktreeremove", "worktree_remove":
+		return "worktree_remove", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -4971,6 +5048,14 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Subagent stop    %d\n", len(report.SubagentStop))
 	for _, command := range report.SubagentStopCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Worktree create  %d\n", len(report.WorktreeCreate))
+	for _, command := range report.WorktreeCreateCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Worktree remove  %d\n", len(report.WorktreeRemove))
+	for _, command := range report.WorktreeRemoveCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -10279,6 +10364,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		NotificationHookCount:      len(a.Config.Hooks.Notification),
 		SubagentStartHookCount:     len(a.Config.Hooks.SubagentStart),
 		SubagentStopHookCount:      len(a.Config.Hooks.SubagentStop),
+		WorktreeCreateHookCount:    len(a.Config.Hooks.WorktreeCreate),
+		WorktreeRemoveHookCount:    len(a.Config.Hooks.WorktreeRemove),
 		EnabledSkillCount:          len(a.Config.EnabledSkills),
 		PlanActive:                 planState.Active,
 		PlanText:                   planState.Plan,
@@ -10841,6 +10928,8 @@ func (a *App) Doctor(args []string) error {
 		Notification:       a.Config.Hooks.Notification,
 		SubagentStart:      a.Config.Hooks.SubagentStart,
 		SubagentStop:       a.Config.Hooks.SubagentStop,
+		WorktreeCreate:     a.Config.Hooks.WorktreeCreate,
+		WorktreeRemove:     a.Config.Hooks.WorktreeRemove,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
 	})
@@ -16371,6 +16460,50 @@ func (a *App) runSubagentStartHook(ctx context.Context, agentID string, agentTyp
 	}
 }
 
+func (a *App) runWorktreeCreateHook(ctx context.Context, allocation worktree.Allocation, source string) error {
+	input, err := worktreeHookInput(allocation, source, "")
+	if err != nil {
+		return err
+	}
+	return a.lifecycleHookRunner().WorktreeCreate(ctx, allocation.ID, allocation.Path, allocation.Ref, input)
+}
+
+func (a *App) runWorktreeRemoveHook(ctx context.Context, allocation worktree.Allocation, reason string) error {
+	input, err := worktreeHookInput(allocation, "", reason)
+	if err != nil {
+		return err
+	}
+	return a.lifecycleHookRunner().WorktreeRemove(ctx, allocation.ID, allocation.Path, allocation.Ref, reason, input)
+}
+
+func (a *App) removeAllocatedWorktree(ctx context.Context, allocation worktree.Allocation, reason string) error {
+	removeErr := worktree.Remove(a.Workspace, allocation.ID)
+	hookErr := a.runWorktreeRemoveHook(ctx, allocation, reason)
+	if removeErr != nil {
+		return removeErr
+	}
+	return hookErr
+}
+
+func worktreeHookInput(allocation worktree.Allocation, source string, reason string) (string, error) {
+	payload := map[string]string{
+		"worktree_id":   allocation.ID,
+		"worktree_path": allocation.Path,
+		"ref":           allocation.Ref,
+	}
+	if strings.TrimSpace(source) != "" {
+		payload["source"] = strings.TrimSpace(source)
+	}
+	if strings.TrimSpace(reason) != "" {
+		payload["reason"] = strings.TrimSpace(reason)
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 func (a *App) runSubagentStopHook(ctx context.Context, agentID string, agentType string, transcriptPath string, lastAssistant string, stopHookActive bool) {
 	if strings.TrimSpace(agentID) == "" {
 		return
@@ -16870,7 +17003,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

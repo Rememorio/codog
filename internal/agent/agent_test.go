@@ -2863,6 +2863,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	notificationPath := filepath.Join(workspace, "notification.json")
 	subagentStartPath := filepath.Join(workspace, "subagent-start.json")
 	subagentStopPath := filepath.Join(workspace, "subagent-stop.json")
+	worktreeCreatePath := filepath.Join(workspace, "worktree-create.json")
+	worktreeRemovePath := filepath.Join(workspace, "worktree-remove.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -2884,6 +2886,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				Notification:       []string{"cat > " + shellQuote(notificationPath)},
 				SubagentStart:      []string{"cat > " + shellQuote(subagentStartPath)},
 				SubagentStop:       []string{"cat > " + shellQuote(subagentStopPath)},
+				WorktreeCreate:     []string{"cat > " + shellQuote(worktreeCreatePath)},
+				WorktreeRemove:     []string{"cat > " + shellQuote(worktreeRemovePath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
 				},
@@ -2932,6 +2936,12 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				SubagentStopCommands: []config.HookCommand{
 					{Matcher: "reviewer", Command: "cat > " + shellQuote(subagentStopPath)},
 				},
+				WorktreeCreateCommands: []config.HookCommand{
+					{Matcher: "agent-*", Command: "cat > " + shellQuote(worktreeCreatePath)},
+				},
+				WorktreeRemoveCommands: []config.HookCommand{
+					{Matcher: "agent-*", Command: "cat > " + shellQuote(worktreeRemovePath)},
+				},
 			},
 		},
 		Workspace: workspace,
@@ -2957,6 +2967,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"notification"`)
 	require.Contains(t, out.String(), `"subagent_start"`)
 	require.Contains(t, out.String(), `"subagent_stop"`)
+	require.Contains(t, out.String(), `"worktree_create"`)
+	require.Contains(t, out.String(), `"worktree_remove"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
 	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
@@ -2975,6 +2987,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "background_*", hooksList.NotificationCommands[0].Matcher)
 	require.Equal(t, "reviewer", hooksList.SubagentStartCommands[0].Matcher)
 	require.Equal(t, "reviewer", hooksList.SubagentStopCommands[0].Matcher)
+	require.Equal(t, "agent-*", hooksList.WorktreeCreateCommands[0].Matcher)
+	require.Equal(t, "agent-*", hooksList.WorktreeRemoveCommands[0].Matcher)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
@@ -3158,6 +3172,41 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "logs/task-1.log", subagentStopHook.TranscriptPath)
 	require.Equal(t, "done", subagentStopHook.LastAssistant)
 	require.True(t, subagentStopHook.StopHookActive)
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "worktree-create", "--worktree-id", "agent-1", "--worktree-path", filepath.Join(workspace, "wt"), "--ref", "abc123", "--input", `{"source":"agent"}`}))
+	data, err = os.ReadFile(worktreeCreatePath)
+	require.NoError(t, err)
+	var worktreeCreateHook struct {
+		Event        string `json:"event"`
+		Tool         string `json:"tool"`
+		WorktreeID   string `json:"worktree_id"`
+		WorktreePath string `json:"worktree_path"`
+		Ref          string `json:"ref"`
+	}
+	require.NoError(t, json.Unmarshal(data, &worktreeCreateHook))
+	require.Equal(t, "worktree_create", worktreeCreateHook.Event)
+	require.Equal(t, "agent-1", worktreeCreateHook.Tool)
+	require.Equal(t, "agent-1", worktreeCreateHook.WorktreeID)
+	require.Equal(t, filepath.Join(workspace, "wt"), worktreeCreateHook.WorktreePath)
+	require.Equal(t, "abc123", worktreeCreateHook.Ref)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "worktree-remove", "--worktree-id", "agent-1", "--worktree-path", filepath.Join(workspace, "wt"), "--ref", "abc123", "--reason", "manual"}))
+	data, err = os.ReadFile(worktreeRemovePath)
+	require.NoError(t, err)
+	var worktreeRemoveHook struct {
+		Event        string `json:"event"`
+		Reason       string `json:"reason"`
+		WorktreeID   string `json:"worktree_id"`
+		WorktreePath string `json:"worktree_path"`
+		Ref          string `json:"ref"`
+	}
+	require.NoError(t, json.Unmarshal(data, &worktreeRemoveHook))
+	require.Equal(t, "worktree_remove", worktreeRemoveHook.Event)
+	require.Equal(t, "manual", worktreeRemoveHook.Reason)
+	require.Equal(t, "agent-1", worktreeRemoveHook.WorktreeID)
+	require.Equal(t, filepath.Join(workspace, "wt"), worktreeRemoveHook.WorktreePath)
+	require.Equal(t, "abc123", worktreeRemoveHook.Ref)
 	require.Empty(t, errOut.String())
 }
 

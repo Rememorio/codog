@@ -279,7 +279,9 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"PostCompact": ["echo post-compact"],
 			"Notification": [{"matcher": "background_*", "command": "echo notify"}],
 			"SubagentStart": [{"matcher": "reviewer", "command": "echo agent-start"}],
-			"SubagentStop": [{"matcher": "reviewer", "command": "echo agent-stop"}]
+			"SubagentStop": [{"matcher": "reviewer", "command": "echo agent-stop"}],
+			"WorktreeCreate": [{"matcher": "agent-*", "command": "echo worktree-create"}],
+			"WorktreeRemove": [{"matcher": "agent-*", "command": "echo worktree-remove"}]
 		}
 	}`), 0o644))
 
@@ -301,6 +303,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo notify"}, cfg.Hooks.Notification)
 	require.Equal(t, []string{"echo agent-start"}, cfg.Hooks.SubagentStart)
 	require.Equal(t, []string{"echo agent-stop"}, cfg.Hooks.SubagentStop)
+	require.Equal(t, []string{"echo worktree-create"}, cfg.Hooks.WorktreeCreate)
+	require.Equal(t, []string{"echo worktree-remove"}, cfg.Hooks.WorktreeRemove)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo prompt-submit"}}, cfg.Hooks.UserPromptSubmitCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo session-start"}}, cfg.Hooks.SessionStartCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
@@ -321,6 +325,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Matcher: "background_*", Type: "command", Command: "echo notify"}}, cfg.Hooks.NotificationCommands)
 	require.Equal(t, []HookCommand{{Matcher: "reviewer", Type: "command", Command: "echo agent-start"}}, cfg.Hooks.SubagentStartCommands)
 	require.Equal(t, []HookCommand{{Matcher: "reviewer", Type: "command", Command: "echo agent-stop"}}, cfg.Hooks.SubagentStopCommands)
+	require.Equal(t, []HookCommand{{Matcher: "agent-*", Type: "command", Command: "echo worktree-create"}}, cfg.Hooks.WorktreeCreateCommands)
+	require.Equal(t, []HookCommand{{Matcher: "agent-*", Type: "command", Command: "echo worktree-remove"}}, cfg.Hooks.WorktreeRemoveCommands)
 }
 
 func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
@@ -349,7 +355,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"post_compact": ["echo user-post-compact"],
 			"notification": ["echo user-notification"],
 			"subagent_start": ["echo user-subagent-start"],
-			"subagent_stop": ["echo user-subagent-stop"]
+			"subagent_stop": ["echo user-subagent-stop"],
+			"worktree_create": ["echo user-worktree-create"],
+			"worktree_remove": ["echo user-worktree-remove"]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
@@ -370,7 +378,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"PostCompact": [{"command": "echo project-post-compact"}],
 			"Notification": [{"matcher": "background_task_started", "command": "echo project-notification"}],
 			"SubagentStart": [{"matcher": "reviewer", "command": "echo project-subagent-start"}],
-			"SubagentStop": [{"matcher": "reviewer", "command": "echo project-subagent-stop"}]
+			"SubagentStop": [{"matcher": "reviewer", "command": "echo project-subagent-stop"}],
+			"WorktreeCreate": [{"matcher": "agent-*", "command": "echo project-worktree-create"}],
+			"WorktreeRemove": [{"matcher": "agent-*", "command": "echo project-worktree-remove"}]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{
@@ -389,7 +399,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"post_compact": ["echo user-post-compact", "echo local-post-compact"],
 			"notification": ["echo user-notification", "echo local-notification"],
 			"subagent_start": ["echo user-subagent-start", "echo local-subagent-start"],
-			"subagent_stop": ["echo user-subagent-stop", "echo local-subagent-stop"]
+			"subagent_stop": ["echo user-subagent-stop", "echo local-subagent-stop"],
+			"worktree_create": ["echo user-worktree-create", "echo local-worktree-create"],
+			"worktree_remove": ["echo user-worktree-remove", "echo local-worktree-remove"]
 		}
 	}`), 0o644))
 
@@ -411,6 +423,8 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-notification", "echo project-notification", "echo local-notification"}, cfg.Hooks.Notification)
 	require.Equal(t, []string{"echo user-subagent-start", "echo project-subagent-start", "echo local-subagent-start"}, cfg.Hooks.SubagentStart)
 	require.Equal(t, []string{"echo user-subagent-stop", "echo project-subagent-stop", "echo local-subagent-stop"}, cfg.Hooks.SubagentStop)
+	require.Equal(t, []string{"echo user-worktree-create", "echo project-worktree-create", "echo local-worktree-create"}, cfg.Hooks.WorktreeCreate)
+	require.Equal(t, []string{"echo user-worktree-remove", "echo project-worktree-remove", "echo local-worktree-remove"}, cfg.Hooks.WorktreeRemove)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-prompt"},
 		{Type: "command", Command: "echo project-prompt"},
@@ -486,6 +500,16 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Matcher: "reviewer", Type: "command", Command: "echo project-subagent-stop"},
 		{Type: "command", Command: "echo local-subagent-stop"},
 	}, cfg.Hooks.SubagentStopCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-worktree-create"},
+		{Matcher: "agent-*", Type: "command", Command: "echo project-worktree-create"},
+		{Type: "command", Command: "echo local-worktree-create"},
+	}, cfg.Hooks.WorktreeCreateCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-worktree-remove"},
+		{Matcher: "agent-*", Type: "command", Command: "echo project-worktree-remove"},
+		{Type: "command", Command: "echo local-worktree-remove"},
+	}, cfg.Hooks.WorktreeRemoveCommands)
 }
 
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {
