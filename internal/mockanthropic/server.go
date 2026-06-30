@@ -22,9 +22,10 @@ type Turn struct {
 }
 
 type ToolUse struct {
-	ID    string
-	Name  string
-	Input json.RawMessage
+	ID          string
+	Name        string
+	Input       json.RawMessage
+	InputDeltas []string
 }
 
 func (s Server) Handler() http.Handler {
@@ -55,6 +56,9 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)
 		}
+		if len(toolUse.InputDeltas) > 0 {
+			input = json.RawMessage(`null`)
+		}
 		writeEvent(w, map[string]any{
 			"type":  "content_block_start",
 			"index": index,
@@ -65,6 +69,16 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 				"input": input,
 			},
 		})
+		for _, delta := range toolUse.InputDeltas {
+			writeEvent(w, map[string]any{
+				"type":  "content_block_delta",
+				"index": index,
+				"delta": map[string]any{
+					"type":         "input_json_delta",
+					"partial_json": delta,
+				},
+			})
+		}
 		writeEvent(w, map[string]any{"type": "content_block_stop", "index": index})
 		index++
 	}

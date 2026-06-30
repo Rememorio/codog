@@ -23,6 +23,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	writeDenied := findScenario(t, report, "write_file_denied")
 	require.True(t, writeDenied.OK)
 	require.Equal(t, 1, writeDenied.ToolCalls)
+
+	grepChunks := findScenario(t, report, "grep_chunk_assembly")
+	require.True(t, grepChunks.OK)
+	require.Equal(t, 1, grepChunks.ToolCalls)
+	require.Contains(t, grepChunks.Output, "grep chunk harness ok")
 }
 
 func findScenario(t *testing.T, report Report, name string) ScenarioReport {

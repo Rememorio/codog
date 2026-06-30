@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -44,6 +45,7 @@ type scenario struct {
 	name       string
 	turns      []mockanthropic.Turn
 	prompt     string
+	promptIn   string
 	permission tools.Permission
 	setup      func(string) error
 	verify     func(string, runloop.TurnResult, string) error
@@ -123,7 +125,8 @@ func Run(ctx context.Context) (Report, error) {
 				}}},
 				{Text: "denied harness ok"},
 			},
-			prompt: "deny write",
+			prompt:   "deny write",
+			promptIn: "n\n",
 			verify: func(workspace string, result runloop.TurnResult, _ string) error {
 				if err := expectToolCalls(result, 1, true); err != nil {
 					return err
@@ -152,6 +155,33 @@ func Run(ctx context.Context) (Report, error) {
 					return fmt.Errorf("missing multi-tool final response")
 				}
 				return expectToolCalls(result, 2, false)
+			},
+		},
+		{
+			name: "grep_chunk_assembly",
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:          "tool-1",
+					Name:        "grep",
+					InputDeltas: []string{`{"pattern":"Need`, `le","path":"."}`},
+				}}},
+				{Text: "grep chunk harness ok"},
+			},
+			prompt: "grep chunks",
+			setup: func(workspace string) error {
+				return os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Harness\nNeedle\n"), 0o644)
+			},
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "grep chunk harness ok") {
+					return fmt.Errorf("missing grep chunk final response")
+				}
+				if err := expectToolCalls(result, 1, false); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "Needle") {
+					return fmt.Errorf("missing grep match in tool output")
+				}
+				return nil
 			},
 		},
 		{
@@ -224,7 +254,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		},
 		Client:    client,
 		Tools:     tools.NewRegistry(workspace),
-		Prompter:  &tools.Prompter{Mode: permission},
+		Prompter:  &tools.Prompter{Mode: permission, In: strings.NewReader(item.promptIn), Err: io.Discard},
 		Workspace: workspace,
 		Out:       &out,
 	}.Run(ctx, nil, item.prompt)
