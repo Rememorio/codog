@@ -275,6 +275,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "diff", command)
 	require.Equal(t, []string{"--output-format", "json"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "log", "1"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "log", command)
+	require.Equal(t, []string{"1", "--output-format", "json"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -698,6 +703,20 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "add notes")
 	out.Reset()
 
+	require.NoError(t, app.Git([]string{"log", "1", "--json"}))
+	var logJSON gitLogReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &logJSON))
+	require.Equal(t, "git_log", logJSON.Kind)
+	require.Equal(t, "show", logJSON.Action)
+	require.Equal(t, "ok", logJSON.Status)
+	require.Equal(t, 1, logJSON.Limit)
+	require.Equal(t, 1, logJSON.Count)
+	require.Len(t, logJSON.Entries, 1)
+	require.Equal(t, "add notes", logJSON.Entries[0].Subject)
+	require.NotEmpty(t, logJSON.Entries[0].Commit)
+	require.Contains(t, logJSON.Raw, "add notes")
+	out.Reset()
+
 	require.NoError(t, app.Changelog([]string{"1"}))
 	require.Contains(t, out.String(), "add notes")
 	require.Contains(t, out.String(), "notes.txt")
@@ -777,6 +796,17 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.Contains(t, out, "cli alias commit")
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "log", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var logJSON gitLogReport
+	require.NoError(t, json.Unmarshal([]byte(out), &logJSON))
+	require.Equal(t, "git_log", logJSON.Kind)
+	require.Equal(t, "ok", logJSON.Status)
+	require.Equal(t, 1, logJSON.Count)
+	require.Equal(t, "cli alias commit", logJSON.Entries[0].Subject)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "blame", "notes.txt", "1"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
@@ -814,6 +844,15 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/log 1", sess))
 	require.Contains(t, out.String(), "slash commit")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/log --json 1", sess))
+	var logJSON gitLogReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &logJSON))
+	require.Equal(t, "git_log", logJSON.Kind)
+	require.Equal(t, "ok", logJSON.Status)
+	require.Equal(t, 1, logJSON.Count)
+	require.Equal(t, "slash commit", logJSON.Entries[0].Subject)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/changelog 1", sess))

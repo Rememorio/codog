@@ -14330,7 +14330,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -14338,15 +14338,7 @@ func (a *App) Git(args []string) error {
 	case "diff":
 		return a.Diff(args[1:])
 	case "log":
-		limit, err := parseOptionalPositiveInt(args[1:], 20, "git log count")
-		if err != nil {
-			return err
-		}
-		log, err := gitops.Log(a.Workspace, limit)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(a.Out, log)
+		return a.GitLog(args[1:])
 	case "changelog":
 		return a.Changelog(args[1:])
 	case "blame":
@@ -14588,6 +14580,90 @@ func parseDiffArgs(args []string) (diffRequest, error) {
 	if err := validateTextOrJSON(req.Format, "diff"); err != nil {
 		return req, err
 	}
+	return req, nil
+}
+
+type gitLogRequest struct {
+	Format string
+	Limit  int
+}
+
+type gitLogReport struct {
+	Kind    string            `json:"kind"`
+	Action  string            `json:"action"`
+	Status  string            `json:"status"`
+	Limit   int               `json:"limit"`
+	Count   int               `json:"count"`
+	Entries []gitops.LogEntry `json:"entries"`
+	Raw     string            `json:"raw"`
+}
+
+func (a *App) GitLog(args []string) error {
+	req, err := parseGitLogArgs(args)
+	if err != nil {
+		return err
+	}
+	raw, err := gitops.Log(a.Workspace, req.Limit)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		entries, err := gitops.LogEntries(a.Workspace, req.Limit)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(gitLogReport{
+			Kind:    "git_log",
+			Action:  "show",
+			Status:  "ok",
+			Limit:   req.Limit,
+			Count:   len(entries),
+			Entries: entries,
+			Raw:     raw,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, raw)
+	return nil
+}
+
+func parseGitLogArgs(args []string) (gitLogRequest, error) {
+	req := gitLogRequest{Format: "text", Limit: 20}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("git log output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown git log flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "git log"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog git log [count] [--json|--output-format text|json]")
+	}
+	limit, err := strconv.Atoi(positionals[0])
+	if err != nil || limit <= 0 {
+		return req, errors.New("git log count must be a positive integer")
+	}
+	req.Limit = limit
 	return req, nil
 }
 
@@ -15248,17 +15324,9 @@ func (a *App) handleDiffSlash(args []string) {
 }
 
 func (a *App) handleLogSlash(args []string) {
-	limit, err := parseOptionalPositiveInt(args, 20, "/log count")
-	if err != nil {
+	if err := a.GitLog(args); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
-		return
 	}
-	log, err := gitops.Log(a.Workspace, limit)
-	if err != nil {
-		fmt.Fprintln(a.Err, "error:", err)
-		return
-	}
-	fmt.Fprintln(a.Out, log)
 }
 
 func (a *App) handleChangelogSlash(args []string) {
@@ -18140,7 +18208,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
-		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
+		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "log", "marketplace",
 		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
@@ -18313,8 +18381,8 @@ Usage:
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
-  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] | blame FILE [line] | commit [--all] MESSAGE
-  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] | commit [--all] MESSAGE
+  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]

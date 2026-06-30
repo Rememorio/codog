@@ -41,6 +41,15 @@ type BranchFreshness struct {
 	MissingFixes []string `json:"missing_fixes,omitempty"`
 }
 
+type LogEntry struct {
+	Commit      string `json:"commit"`
+	ShortCommit string `json:"short_commit"`
+	AuthorName  string `json:"author_name"`
+	AuthorEmail string `json:"author_email"`
+	Date        string `json:"date"`
+	Subject     string `json:"subject"`
+}
+
 type TagInfo struct {
 	Name    string `json:"name"`
 	Commit  string `json:"commit,omitempty"`
@@ -86,6 +95,36 @@ func Log(workspace string, limit int) (string, error) {
 		limit = 20
 	}
 	return git(workspace, "log", "--oneline", "--decorate", fmt.Sprintf("--max-count=%d", limit))
+}
+
+func LogEntries(workspace string, limit int) ([]LogEntry, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	raw, err := git(workspace, "log", "--format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x1e", fmt.Sprintf("--max-count=%d", limit))
+	if err != nil {
+		return nil, err
+	}
+	var entries []LogEntry
+	for _, record := range strings.Split(raw, "\x1e") {
+		record = strings.Trim(record, "\r\n")
+		if record == "" {
+			continue
+		}
+		parts := strings.Split(record, "\x00")
+		if len(parts) < 6 {
+			continue
+		}
+		entries = append(entries, LogEntry{
+			Commit:      strings.TrimSpace(parts[0]),
+			ShortCommit: strings.TrimSpace(parts[1]),
+			AuthorName:  strings.TrimSpace(parts[2]),
+			AuthorEmail: strings.TrimSpace(parts[3]),
+			Date:        strings.TrimSpace(parts[4]),
+			Subject:     strings.TrimSpace(parts[5]),
+		})
+	}
+	return entries, nil
 }
 
 func Changelog(workspace string, limit int) (string, error) {
