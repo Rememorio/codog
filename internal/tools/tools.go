@@ -588,11 +588,11 @@ func (p *Prompter) emitRequest(decision PermissionDecision) {
 
 func ruleMatches(rules []string, toolName, input string) bool {
 	for _, rule := range rules {
-		if rule == "*" || strings.EqualFold(rule, toolName) {
-			return true
+		toolRule, needle := parsePermissionRule(rule)
+		if !permissionToolMatches(toolRule, toolName) {
+			continue
 		}
-		prefix, needle, ok := strings.Cut(rule, ":")
-		if ok && strings.EqualFold(prefix, toolName) && strings.Contains(input, needle) {
+		if needle == "" || strings.Contains(input, needle) {
 			return true
 		}
 	}
@@ -601,11 +601,98 @@ func ruleMatches(rules []string, toolName, input string) bool {
 
 func ruleMatchesTool(rules []string, toolName string) bool {
 	for _, rule := range rules {
-		if rule == "*" || strings.EqualFold(rule, toolName) {
+		toolRule, _ := parsePermissionRule(rule)
+		if permissionToolMatches(toolRule, toolName) {
 			return true
 		}
 	}
 	return false
+}
+
+func parsePermissionRule(rule string) (string, string) {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return "", ""
+	}
+	if open := strings.Index(rule, "("); open > 0 && strings.HasSuffix(rule, ")") {
+		tool := strings.TrimSpace(rule[:open])
+		needle := normalizePermissionNeedle(rule[open+1 : len(rule)-1])
+		return tool, needle
+	}
+	if tool, needle, ok := strings.Cut(rule, ":"); ok {
+		return strings.TrimSpace(tool), normalizePermissionNeedle(needle)
+	}
+	return rule, ""
+}
+
+func normalizePermissionNeedle(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "*")
+	value = strings.TrimSuffix(value, ":")
+	return strings.TrimSpace(value)
+}
+
+func permissionToolMatches(ruleTool string, toolName string) bool {
+	ruleTool = strings.TrimSpace(ruleTool)
+	toolName = strings.TrimSpace(toolName)
+	if ruleTool == "" || toolName == "" {
+		return false
+	}
+	if ruleTool == "*" {
+		return true
+	}
+	candidates := []string{
+		ruleTool,
+		CanonicalToolName(ruleTool),
+	}
+	targets := []string{
+		toolName,
+		CanonicalToolName(toolName),
+	}
+	for _, candidate := range candidates {
+		for _, target := range targets {
+			if permissionNameMatches(candidate, target) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func permissionNameMatches(pattern string, value string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	value = strings.ToLower(strings.TrimSpace(value))
+	if pattern == "" || value == "" {
+		return false
+	}
+	if pattern == "*" || pattern == value {
+		return true
+	}
+	if !strings.Contains(pattern, "*") {
+		return false
+	}
+	parts := strings.Split(pattern, "*")
+	position := 0
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		next := strings.Index(value[position:], part)
+		if next < 0 {
+			return false
+		}
+		if index == 0 && !strings.HasPrefix(pattern, "*") && next != 0 {
+			return false
+		}
+		position += next + len(part)
+	}
+	if !strings.HasSuffix(pattern, "*") && len(parts) > 0 {
+		last := parts[len(parts)-1]
+		if last != "" && !strings.HasSuffix(value, last) {
+			return false
+		}
+	}
+	return true
 }
 
 func permissionRank(p Permission) int {

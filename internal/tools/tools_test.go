@@ -309,10 +309,34 @@ func TestPrompterRules(t *testing.T) {
 	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"go test ./..."}`)))
 
 	p = &Prompter{
+		Mode:      PermissionAllow,
+		DenyRules: []string{"Bash(rm -rf:*)"},
+	}
+	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`)))
+
+	p = &Prompter{
+		Mode:       PermissionReadOnly,
+		AllowRules: []string{"Bash(go test:*)"},
+	}
+	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"go test ./..."}`)))
+
+	p = &Prompter{
 		Mode:        PermissionAllow,
 		DeniedTools: []string{"bash"},
 	}
 	require.Error(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"pwd"}`)))
+
+	p = &Prompter{
+		Mode:        PermissionAllow,
+		DeniedTools: []string{"Read"},
+	}
+	require.Error(t, p.Authorize("read_file", PermissionReadOnly, []byte(`{"path":"README.md"}`)))
+
+	p = &Prompter{
+		Mode:        PermissionAllow,
+		DeniedTools: []string{"mcp__playwright__*"},
+	}
+	require.Error(t, p.Authorize("mcp__playwright__click", PermissionReadOnly, []byte(`{}`)))
 }
 
 func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
