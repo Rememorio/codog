@@ -17,18 +17,20 @@ const (
 )
 
 type HookConfig struct {
-	PreToolUse               []string      `json:"pre_tool_use,omitempty"`
-	PostToolUse              []string      `json:"post_tool_use,omitempty"`
-	UserPromptSubmit         []string      `json:"user_prompt_submit,omitempty"`
-	SessionStart             []string      `json:"session_start,omitempty"`
-	Stop                     []string      `json:"stop,omitempty"`
-	PreCompact               []string      `json:"pre_compact,omitempty"`
-	PreToolUseCommands       []HookCommand `json:"-"`
-	PostToolUseCommands      []HookCommand `json:"-"`
-	UserPromptSubmitCommands []HookCommand `json:"-"`
-	SessionStartCommands     []HookCommand `json:"-"`
-	StopCommands             []HookCommand `json:"-"`
-	PreCompactCommands       []HookCommand `json:"-"`
+	PreToolUse                 []string      `json:"pre_tool_use,omitempty"`
+	PostToolUse                []string      `json:"post_tool_use,omitempty"`
+	PostToolUseFailure         []string      `json:"post_tool_use_failure,omitempty"`
+	UserPromptSubmit           []string      `json:"user_prompt_submit,omitempty"`
+	SessionStart               []string      `json:"session_start,omitempty"`
+	Stop                       []string      `json:"stop,omitempty"`
+	PreCompact                 []string      `json:"pre_compact,omitempty"`
+	PreToolUseCommands         []HookCommand `json:"-"`
+	PostToolUseCommands        []HookCommand `json:"-"`
+	PostToolUseFailureCommands []HookCommand `json:"-"`
+	UserPromptSubmitCommands   []HookCommand `json:"-"`
+	SessionStartCommands       []HookCommand `json:"-"`
+	StopCommands               []HookCommand `json:"-"`
+	PreCompactCommands         []HookCommand `json:"-"`
 }
 
 type HookCommand struct {
@@ -62,6 +64,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	postFailure, err := hookCommands(raw, "post_tool_use_failure", "PostToolUseFailure")
+	if err != nil {
+		return err
+	}
 	userPromptSubmit, err := hookCommands(raw, "user_prompt_submit", "UserPromptSubmit")
 	if err != nil {
 		return err
@@ -80,12 +86,14 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	}
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
+	h.PostToolUseFailureCommands = postFailure
 	h.UserPromptSubmitCommands = userPromptSubmit
 	h.SessionStartCommands = sessionStart
 	h.StopCommands = stop
 	h.PreCompactCommands = preCompact
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
+	h.PostToolUseFailure = hookCommandStrings(postFailure)
 	h.UserPromptSubmit = hookCommandStrings(userPromptSubmit)
 	h.SessionStart = hookCommandStrings(sessionStart)
 	h.Stop = hookCommandStrings(stop)
@@ -873,6 +881,11 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.PostToolUse) != 0 {
 		dst.PostToolUseCommands = mergeHookCommands(dst.PostToolUseCommands, hookCommandsFromStrings(src.PostToolUse))
 	}
+	if len(src.PostToolUseFailureCommands) != 0 {
+		dst.PostToolUseFailureCommands = mergeHookCommands(dst.PostToolUseFailureCommands, src.PostToolUseFailureCommands)
+	} else if len(src.PostToolUseFailure) != 0 {
+		dst.PostToolUseFailureCommands = mergeHookCommands(dst.PostToolUseFailureCommands, hookCommandsFromStrings(src.PostToolUseFailure))
+	}
 	if len(src.UserPromptSubmitCommands) != 0 {
 		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, src.UserPromptSubmitCommands)
 	} else if len(src.UserPromptSubmit) != 0 {
@@ -895,6 +908,7 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	}
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
+	dst.PostToolUseFailure = hookCommandStrings(dst.PostToolUseFailureCommands)
 	dst.UserPromptSubmit = hookCommandStrings(dst.UserPromptSubmitCommands)
 	dst.SessionStart = hookCommandStrings(dst.SessionStartCommands)
 	dst.Stop = hookCommandStrings(dst.StopCommands)

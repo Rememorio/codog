@@ -4442,21 +4442,23 @@ type hooksRequest struct {
 }
 
 type hooksListReport struct {
-	Kind                     string               `json:"kind"`
-	Action                   string               `json:"action"`
-	Status                   string               `json:"status"`
-	PreToolUse               []string             `json:"pre_tool_use"`
-	PostToolUse              []string             `json:"post_tool_use"`
-	UserPromptSubmit         []string             `json:"user_prompt_submit"`
-	SessionStart             []string             `json:"session_start"`
-	Stop                     []string             `json:"stop"`
-	PreCompact               []string             `json:"pre_compact"`
-	PreToolUseCommands       []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
-	PostToolUseCommands      []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
-	UserPromptSubmitCommands []hookCommandSummary `json:"user_prompt_submit_commands,omitempty"`
-	SessionStartCommands     []hookCommandSummary `json:"session_start_commands,omitempty"`
-	StopCommands             []hookCommandSummary `json:"stop_commands,omitempty"`
-	PreCompactCommands       []hookCommandSummary `json:"pre_compact_commands,omitempty"`
+	Kind                       string               `json:"kind"`
+	Action                     string               `json:"action"`
+	Status                     string               `json:"status"`
+	PreToolUse                 []string             `json:"pre_tool_use"`
+	PostToolUse                []string             `json:"post_tool_use"`
+	PostToolUseFailure         []string             `json:"post_tool_use_failure"`
+	UserPromptSubmit           []string             `json:"user_prompt_submit"`
+	SessionStart               []string             `json:"session_start"`
+	Stop                       []string             `json:"stop"`
+	PreCompact                 []string             `json:"pre_compact"`
+	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
+	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
+	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
+	UserPromptSubmitCommands   []hookCommandSummary `json:"user_prompt_submit_commands,omitempty"`
+	SessionStartCommands       []hookCommandSummary `json:"session_start_commands,omitempty"`
+	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
+	PreCompactCommands         []hookCommandSummary `json:"pre_compact_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4474,21 +4476,23 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 	switch req.Action {
 	case "list":
 		report := hooksListReport{
-			Kind:                     "hooks",
-			Action:                   "list",
-			Status:                   "ok",
-			PreToolUse:               append([]string(nil), a.Config.Hooks.PreToolUse...),
-			PostToolUse:              append([]string(nil), a.Config.Hooks.PostToolUse...),
-			UserPromptSubmit:         append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
-			SessionStart:             append([]string(nil), a.Config.Hooks.SessionStart...),
-			Stop:                     append([]string(nil), a.Config.Hooks.Stop...),
-			PreCompact:               append([]string(nil), a.Config.Hooks.PreCompact...),
-			PreToolUseCommands:       hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
-			PostToolUseCommands:      hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
-			UserPromptSubmitCommands: hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
-			SessionStartCommands:     hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
-			StopCommands:             hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
-			PreCompactCommands:       hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
+			Kind:                       "hooks",
+			Action:                     "list",
+			Status:                     "ok",
+			PreToolUse:                 append([]string(nil), a.Config.Hooks.PreToolUse...),
+			PostToolUse:                append([]string(nil), a.Config.Hooks.PostToolUse...),
+			PostToolUseFailure:         append([]string(nil), a.Config.Hooks.PostToolUseFailure...),
+			UserPromptSubmit:           append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
+			SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
+			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
+			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
+			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
+			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
+			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
+			UserPromptSubmitCommands:   hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
+			SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
+			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
+			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4627,6 +4631,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "pre_tool_use", nil
 	case "post", "post_tool_use", "post-tool-use":
 		return "post_tool_use", nil
+	case "post-failure", "postfailure", "post_tool_use_failure", "post-tool-use-failure":
+		return "post_tool_use_failure", nil
 	case "prompt", "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
 		return "user_prompt_submit", nil
 	case "session", "sessionstart", "session_start", "session-start":
@@ -4680,6 +4686,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Post tool use    %d\n", len(report.PostToolUse))
 	for _, command := range report.PostToolUseCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Post tool failure %d\n", len(report.PostToolUseFailure))
+	for _, command := range report.PostToolUseFailureCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  User prompt submit %d\n", len(report.UserPromptSubmit))
@@ -9987,6 +9997,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		SessionStartHookCount:     len(a.Config.Hooks.SessionStart),
 		PreHookCount:              len(a.Config.Hooks.PreToolUse),
 		PostHookCount:             len(a.Config.Hooks.PostToolUse),
+		PostFailureHookCount:      len(a.Config.Hooks.PostToolUseFailure),
 		StopHookCount:             len(a.Config.Hooks.Stop),
 		PreCompactHookCount:       len(a.Config.Hooks.PreCompact),
 		EnabledSkillCount:         len(a.Config.EnabledSkills),
@@ -10525,24 +10536,25 @@ func (a *App) Doctor(args []string) error {
 	}
 	sandboxStatus := sandbox.Detect()
 	report := doctor.Run(doctor.Options{
-		Workspace:        a.Workspace,
-		ConfigHome:       a.Config.ConfigHome,
-		Model:            a.Config.Model,
-		BaseURL:          a.Config.BaseURL,
-		APIKey:           a.Config.APIKey,
-		AuthToken:        a.Config.AuthToken,
-		PermissionMode:   a.Config.PermissionMode,
-		ToolCount:        toolCount,
-		SessionCount:     sessionCount,
-		MemoryFiles:      memoryPaths,
-		UserPromptSubmit: a.Config.Hooks.UserPromptSubmit,
-		SessionStart:     a.Config.Hooks.SessionStart,
-		PreToolUse:       a.Config.Hooks.PreToolUse,
-		PostToolUse:      a.Config.Hooks.PostToolUse,
-		Stop:             a.Config.Hooks.Stop,
-		PreCompact:       a.Config.Hooks.PreCompact,
-		SandboxDefault:   sandboxStatus.Default,
-		SandboxOK:        sandboxStatus.Available,
+		Workspace:          a.Workspace,
+		ConfigHome:         a.Config.ConfigHome,
+		Model:              a.Config.Model,
+		BaseURL:            a.Config.BaseURL,
+		APIKey:             a.Config.APIKey,
+		AuthToken:          a.Config.AuthToken,
+		PermissionMode:     a.Config.PermissionMode,
+		ToolCount:          toolCount,
+		SessionCount:       sessionCount,
+		MemoryFiles:        memoryPaths,
+		UserPromptSubmit:   a.Config.Hooks.UserPromptSubmit,
+		SessionStart:       a.Config.Hooks.SessionStart,
+		PreToolUse:         a.Config.Hooks.PreToolUse,
+		PostToolUse:        a.Config.Hooks.PostToolUse,
+		PostToolUseFailure: a.Config.Hooks.PostToolUseFailure,
+		Stop:               a.Config.Hooks.Stop,
+		PreCompact:         a.Config.Hooks.PreCompact,
+		SandboxDefault:     sandboxStatus.Default,
+		SandboxOK:          sandboxStatus.Available,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -16397,7 +16409,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|user-prompt-submit|session-start|stop|pre-compact] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

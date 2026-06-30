@@ -2816,6 +2816,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	sessionPath := filepath.Join(workspace, "session.json")
 	prePath := filepath.Join(workspace, "pre.json")
 	postPath := filepath.Join(workspace, "post.json")
+	postFailurePath := filepath.Join(workspace, "post-failure.json")
 	stopPath := filepath.Join(workspace, "stop.json")
 	compactPath := filepath.Join(workspace, "compact.json")
 	var out bytes.Buffer
@@ -2823,12 +2824,13 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	app := &App{
 		Config: config.Config{
 			Hooks: config.HookConfig{
-				UserPromptSubmit: []string{"cat > " + shellQuote(promptPath)},
-				SessionStart:     []string{"cat > " + shellQuote(sessionPath)},
-				PreToolUse:       []string{"cat > " + shellQuote(prePath)},
-				PostToolUse:      []string{"cat > " + shellQuote(postPath)},
-				Stop:             []string{"cat > " + shellQuote(stopPath)},
-				PreCompact:       []string{"cat > " + shellQuote(compactPath)},
+				UserPromptSubmit:   []string{"cat > " + shellQuote(promptPath)},
+				SessionStart:       []string{"cat > " + shellQuote(sessionPath)},
+				PreToolUse:         []string{"cat > " + shellQuote(prePath)},
+				PostToolUse:        []string{"cat > " + shellQuote(postPath)},
+				PostToolUseFailure: []string{"cat > " + shellQuote(postFailurePath)},
+				Stop:               []string{"cat > " + shellQuote(stopPath)},
+				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
 				},
@@ -2840,6 +2842,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				},
 				PostToolUseCommands: []config.HookCommand{
 					{Matcher: "bash", Command: "cat > " + shellQuote(postPath)},
+				},
+				PostToolUseFailureCommands: []config.HookCommand{
+					{Matcher: "bash", Command: "cat > " + shellQuote(postFailurePath)},
 				},
 				StopCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(stopPath)},
@@ -2860,6 +2865,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"session_start"`)
 	require.Contains(t, out.String(), `"pre_tool_use"`)
 	require.Contains(t, out.String(), `"post_tool_use"`)
+	require.Contains(t, out.String(), `"post_tool_use_failure"`)
 	require.Contains(t, out.String(), `"stop"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
 	var hooksList hooksListReport
@@ -2868,6 +2874,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, hooksList.SessionStartCommands[0].Command, "cat >")
 	require.Equal(t, "read_*", hooksList.PreToolUseCommands[0].Matcher)
 	require.Contains(t, hooksList.PreToolUseCommands[0].Command, "cat >")
+	require.Equal(t, "bash", hooksList.PostToolUseFailureCommands[0].Matcher)
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
 	out.Reset()
@@ -2903,6 +2910,13 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	data, err = os.ReadFile(postPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"post_tool_use"`)
+	require.Contains(t, string(data), `"is_error":true`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run post-failure --tool=bash --output=failed --error", sess))
+	data, err = os.ReadFile(postFailurePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"post_tool_use_failure"`)
 	require.Contains(t, string(data), `"is_error":true`)
 	out.Reset()
 

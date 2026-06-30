@@ -21,24 +21,25 @@ const (
 )
 
 type Options struct {
-	Workspace        string
-	ConfigHome       string
-	Model            string
-	BaseURL          string
-	APIKey           string
-	AuthToken        string
-	PermissionMode   string
-	ToolCount        int
-	SessionCount     int
-	MemoryFiles      []string
-	UserPromptSubmit []string
-	SessionStart     []string
-	PreToolUse       []string
-	PostToolUse      []string
-	Stop             []string
-	PreCompact       []string
-	SandboxDefault   string
-	SandboxOK        bool
+	Workspace          string
+	ConfigHome         string
+	Model              string
+	BaseURL            string
+	APIKey             string
+	AuthToken          string
+	PermissionMode     string
+	ToolCount          int
+	SessionCount       int
+	MemoryFiles        []string
+	UserPromptSubmit   []string
+	SessionStart       []string
+	PreToolUse         []string
+	PostToolUse        []string
+	PostToolUseFailure []string
+	Stop               []string
+	PreCompact         []string
+	SandboxDefault     string
+	SandboxOK          bool
 }
 
 type Summary struct {
@@ -242,14 +243,16 @@ func checkHooks(opts Options) Check {
 	sessionStart := compactHookCommands(opts.SessionStart)
 	pre := compactHookCommands(opts.PreToolUse)
 	post := compactHookCommands(opts.PostToolUse)
+	postFailure := compactHookCommands(opts.PostToolUseFailure)
 	stop := compactHookCommands(opts.Stop)
 	preCompact := compactHookCommands(opts.PreCompact)
-	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(stop) + len(preCompact)
+	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(stop) + len(preCompact)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
 		fmt.Sprintf("PreToolUse hooks: %d", len(pre)),
 		fmt.Sprintf("PostToolUse hooks: %d", len(post)),
+		fmt.Sprintf("PostToolUseFailure hooks: %d", len(postFailure)),
 		fmt.Sprintf("Stop hooks: %d", len(stop)),
 		fmt.Sprintf("PreCompact hooks: %d", len(preCompact)),
 	}
@@ -263,6 +266,7 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "SessionStart", sessionStart)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreToolUse", pre)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUse", post)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUseFailure", postFailure)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Stop", stop)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreCompact", preCompact)...)
 	if len(issues) != 0 {

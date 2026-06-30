@@ -189,7 +189,8 @@ Claude Code source.
   integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
 - Hook commands can run on `session_start`, `user_prompt_submit`,
-  `pre_tool_use`, `post_tool_use`, `stop`, and `pre_compact`; `codog hooks
+  `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `stop`, and
+  `pre_compact`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -411,6 +412,7 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "user_prompt_submit": ["echo prompt >&2"],
     "pre_tool_use": ["echo pre >&2"],
     "post_tool_use": ["echo post >&2"],
+    "post_tool_use_failure": ["echo post-failure >&2"],
     "stop": ["echo stop >&2"],
     "pre_compact": ["echo compact >&2"]
   },

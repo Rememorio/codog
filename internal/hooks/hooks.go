@@ -84,6 +84,17 @@ func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, outp
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) PostToolUseFailure(ctx context.Context, tool string, input []byte, output string) error {
+	payload := Payload{
+		Event:   "post_tool_use_failure",
+		Tool:    tool,
+		Input:   string(input),
+		Output:  output,
+		IsError: true,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {
 	payload := Payload{
 		Event: "user_prompt_submit",
@@ -138,6 +149,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.PreToolUseCommands, cfg.PreToolUse, payload)
 	case "post_tool_use":
 		return matchingHooks(cfg.PostToolUseCommands, cfg.PostToolUse, payload)
+	case "post_tool_use_failure":
+		return matchingHooks(cfg.PostToolUseFailureCommands, cfg.PostToolUseFailure, payload)
 	case "user_prompt_submit":
 		return matchingHooks(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit, payload)
 	case "session_start":
@@ -615,6 +628,8 @@ func normalizeEvent(event string) string {
 		return "pre_tool_use"
 	case "post", "posttooluse", "post_tool_use", "post-tool-use":
 		return "post_tool_use"
+	case "postfailure", "post-failure", "posttoolusefailure", "post_tool_use_failure", "post-tool-use-failure":
+		return "post_tool_use_failure"
 	case "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
 		return "user_prompt_submit"
 	case "sessionstart", "session_start", "session-start":

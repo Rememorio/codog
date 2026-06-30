@@ -165,6 +165,59 @@ func TestRunnerExecutesPreCompactHook(t *testing.T) {
 	require.Contains(t, hookPayload.Input, `"keep":1`)
 }
 
+func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type:  "tool_use",
+					ID:    "tool-1",
+					Name:  "missing_tool",
+					Input: []byte(`{"value":true}`),
+				}},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			Hooks: config.HookConfig{
+				PostToolUseFailureCommands: []config.HookCommand{{Command: "cat > failure.json"}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "run missing tool")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 1)
+	require.True(t, result.ToolCalls[0].IsError)
+
+	payload, err := os.ReadFile(workspace + "/failure.json")
+	require.NoError(t, err)
+	var hookPayload struct {
+		Event   string `json:"event"`
+		Tool    string `json:"tool"`
+		IsError bool   `json:"is_error"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &hookPayload))
+	require.Equal(t, "post_tool_use_failure", hookPayload.Event)
+	require.Equal(t, "missing_tool", hookPayload.Tool)
+	require.True(t, hookPayload.IsError)
+}
+
 func TestCompactMessagesKeepsRecentContext(t *testing.T) {
 	messages := []anthropic.Message{
 		anthropic.TextMessage("user", "one"),

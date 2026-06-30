@@ -268,6 +268,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 				{"matcher": "Bash", "hooks": [{"type": "http", "url": "https://example.test/hook", "if": "Bash(git *)", "headers": {"Authorization": "Bearer $HOOK_TOKEN"}, "allowedEnvVars": ["HOOK_TOKEN"], "timeout": 1.5}]},
 				{"command": "echo direct-post"}
 			],
+			"PostToolUseFailure": ["echo post-failure"],
 			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
 			"PreCompact": ["echo pre-compact"]
 		}
@@ -279,6 +280,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo session-start"}, cfg.Hooks.SessionStart)
 	require.Equal(t, []string{"echo simple-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo documented-post", "http POST https://example.test/hook", "echo direct-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []string{"echo post-failure"}, cfg.Hooks.PostToolUseFailure)
 	require.Equal(t, []string{"echo stop"}, cfg.Hooks.Stop)
 	require.Equal(t, []string{"echo pre-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo prompt-submit"}}, cfg.Hooks.UserPromptSubmitCommands)
@@ -289,6 +291,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 		{Matcher: "Bash", Type: "http", URL: "https://example.test/hook", If: "Bash(git *)", TimeoutSeconds: 1.5, Headers: map[string]string{"Authorization": "Bearer $HOOK_TOKEN"}, AllowedEnvVars: []string{"HOOK_TOKEN"}},
 		{Type: "command", Command: "echo direct-post"},
 	}, cfg.Hooks.PostToolUseCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo post-failure"}}, cfg.Hooks.PostToolUseFailureCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop"}}, cfg.Hooks.StopCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo pre-compact"}}, cfg.Hooks.PreCompactCommands)
 }
@@ -308,6 +311,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"session_start": ["echo user-session"],
 			"pre_tool_use": ["echo user-pre"],
 			"post_tool_use": ["echo user-post"],
+			"post_tool_use_failure": ["echo user-post-failure"],
 			"stop": ["echo user-stop"],
 			"pre_compact": ["echo user-compact"]
 		}
@@ -319,6 +323,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"PreToolUse": [
 				{"matcher": "Write", "command": "echo project-pre"}
 			],
+			"PostToolUseFailure": [{"command": "echo project-post-failure"}],
 			"Stop": [{"command": "echo project-stop"}],
 			"PreCompact": [{"command": "echo project-compact"}]
 		}
@@ -328,6 +333,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"user_prompt_submit": ["echo user-prompt", "echo local-prompt"],
 			"session_start": ["echo user-session", "echo local-session"],
 			"pre_tool_use": ["echo user-pre", "echo local-pre"],
+			"post_tool_use_failure": ["echo user-post-failure", "echo local-post-failure"],
 			"stop": ["echo user-stop", "echo local-stop"],
 			"pre_compact": ["echo user-compact", "echo local-compact"]
 		}
@@ -339,6 +345,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-session", "echo project-session", "echo local-session"}, cfg.Hooks.SessionStart)
 	require.Equal(t, []string{"echo user-pre", "echo project-pre", "echo local-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo user-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []string{"echo user-post-failure", "echo project-post-failure", "echo local-post-failure"}, cfg.Hooks.PostToolUseFailure)
 	require.Equal(t, []string{"echo user-stop", "echo project-stop", "echo local-stop"}, cfg.Hooks.Stop)
 	require.Equal(t, []string{"echo user-compact", "echo project-compact", "echo local-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []HookCommand{
@@ -356,6 +363,11 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Matcher: "Write", Type: "command", Command: "echo project-pre"},
 		{Type: "command", Command: "echo local-pre"},
 	}, cfg.Hooks.PreToolUseCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-post-failure"},
+		{Type: "command", Command: "echo project-post-failure"},
+		{Type: "command", Command: "echo local-post-failure"},
+	}, cfg.Hooks.PostToolUseFailureCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-stop"},
 		{Type: "command", Command: "echo project-stop"},

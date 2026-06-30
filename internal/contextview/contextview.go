@@ -55,6 +55,7 @@ type ConfigSummary struct {
 	SessionStartHookCount     int    `json:"session_start_hook_count"`
 	PreHookCount              int    `json:"pre_hook_count"`
 	PostHookCount             int    `json:"post_hook_count"`
+	PostFailureHookCount      int    `json:"post_tool_use_failure_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
 	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
 }
@@ -148,6 +149,7 @@ func Build(options Options) Report {
 			SessionStartHookCount:     options.Status.Config.SessionStartHookCount,
 			PreHookCount:              options.Status.Config.PreHookCount,
 			PostHookCount:             options.Status.Config.PostHookCount,
+			PostFailureHookCount:      options.Status.Config.PostFailureHookCount,
 			StopHookCount:             options.Status.Config.StopHookCount,
 			PreCompactHookCount:       options.Status.Config.PreCompactHookCount,
 		},

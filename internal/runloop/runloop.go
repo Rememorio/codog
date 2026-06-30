@@ -132,6 +132,9 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			if err := hookRunner.PreToolUse(ctx, block.Name, block.Input); err != nil {
 				call.Output = err.Error()
 				call.IsError = true
+				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
+					call.Output = failureErr.Error()
+				}
 				toolCalls = append(toolCalls, call)
 				r.emitToolUse(call)
 				messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
@@ -148,6 +151,11 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, call.Output, call.IsError); hookErr != nil && !call.IsError {
 				call.Output = hookErr.Error()
 				call.IsError = true
+			}
+			if call.IsError {
+				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
+					call.Output = failureErr.Error()
+				}
 			}
 
 			toolCalls = append(toolCalls, call)
@@ -166,12 +174,14 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 func hasHookConfig(cfg config.HookConfig) bool {
 	return len(cfg.PreToolUse) != 0 ||
 		len(cfg.PostToolUse) != 0 ||
+		len(cfg.PostToolUseFailure) != 0 ||
 		len(cfg.UserPromptSubmit) != 0 ||
 		len(cfg.SessionStart) != 0 ||
 		len(cfg.Stop) != 0 ||
 		len(cfg.PreCompact) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
+		len(cfg.PostToolUseFailureCommands) != 0 ||
 		len(cfg.UserPromptSubmitCommands) != 0 ||
 		len(cfg.SessionStartCommands) != 0 ||
 		len(cfg.StopCommands) != 0 ||
