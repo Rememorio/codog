@@ -148,8 +148,9 @@ Claude Code source.
   persist local interface, reasoning, runtime, and privacy preferences such as
   terminal theme, vim keybinding mode, reasoning effort, fast mode, external
   voice command enablement, and prompt history recording.
-- `/keybindings` and `codog keybindings` show the active editor mode plus REPL,
-  TUI, vim, and slash-command keyboard shortcuts.
+- `/keybindings` and `codog keybindings [show|path|init]` show the active editor
+  mode plus REPL, TUI, vim, and slash-command shortcuts, and can create a
+  `keybindings.json` template under the Codog config directory.
 - `codog mcp list|serve|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt`
   manages and inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls or through the

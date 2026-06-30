@@ -5896,38 +5896,240 @@ type keybindingSection struct {
 	Disabled bool              `json:"disabled,omitempty"`
 }
 
+type keybindingsRequest struct {
+	Action string
+	Format string
+	Force  bool
+}
+
 type keybindingReport struct {
-	Kind       string              `json:"kind"`
-	Action     string              `json:"action"`
-	Status     string              `json:"status"`
-	EditorMode string              `json:"editor_mode"`
-	VimMode    bool                `json:"vim_mode"`
-	Sections   []keybindingSection `json:"sections"`
+	Kind              string              `json:"kind"`
+	Action            string              `json:"action"`
+	Status            string              `json:"status"`
+	EditorMode        string              `json:"editor_mode"`
+	VimMode           bool                `json:"vim_mode"`
+	KeybindingsPath   string              `json:"keybindings_path,omitempty"`
+	KeybindingsExists bool                `json:"keybindings_exists"`
+	Sections          []keybindingSection `json:"sections,omitempty"`
+}
+
+type keybindingsFileReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Path    string `json:"path"`
+	Created bool   `json:"created"`
+	Exists  bool   `json:"exists"`
 }
 
 func (a *App) Keybindings(args []string) error {
-	format, err := parseSimpleOutputFormat("keybindings", args)
+	req, err := parseKeybindingsArgs(args)
 	if err != nil {
 		return err
 	}
-	report := a.keybindingReport()
-	if format == "json" {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+	switch req.Action {
+	case "show":
+		report := a.keybindingReport()
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderKeybindings(a.Out, report)
 		return nil
+	case "path":
+		path, err := a.keybindingsPath()
+		if err != nil {
+			return err
+		}
+		report := keybindingsFileReport{
+			Kind:   "keybindings",
+			Action: "path",
+			Status: "ok",
+			Path:   path,
+			Exists: fileExists(path),
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		fmt.Fprintln(a.Out, path)
+		return nil
+	case "init":
+		report, err := a.initKeybindings(req.Force)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderKeybindingsFileReport(a.Out, report)
+		return nil
+	default:
+		return fmt.Errorf("unknown keybindings command %q", req.Action)
 	}
-	renderKeybindings(a.Out, report)
-	return nil
+}
+
+func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
+	req := keybindingsRequest{Action: "show", Format: "text"}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("keybindings output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--force":
+			req.Force = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown keybindings flag %q", arg)
+		default:
+			if actionSet {
+				return req, fmt.Errorf("unexpected keybindings argument %q", arg)
+			}
+			switch strings.ToLower(arg) {
+			case "show", "list", "report":
+				req.Action = "show"
+			case "path", "where":
+				req.Action = "path"
+			case "init", "create", "template":
+				req.Action = "init"
+			default:
+				return req, fmt.Errorf("unknown keybindings command %q", arg)
+			}
+			actionSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "keybindings"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func (a *App) initKeybindings(force bool) (keybindingsFileReport, error) {
+	path, err := a.keybindingsPath()
+	if err != nil {
+		return keybindingsFileReport{}, err
+	}
+	alreadyExists := fileExists(path)
+	report := keybindingsFileReport{
+		Kind:   "keybindings",
+		Action: "init",
+		Status: "exists",
+		Path:   path,
+		Exists: alreadyExists,
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return report, err
+	}
+	data := defaultKeybindingsTemplate()
+	if force {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return report, err
+		}
+		report.Status = "written"
+		report.Created = !alreadyExists
+		report.Exists = true
+		return report, nil
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return report, nil
+		}
+		return report, err
+	}
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		return report, err
+	}
+	report.Status = "created"
+	report.Created = true
+	report.Exists = true
+	return report, nil
+}
+
+func (a *App) keybindingsPath() (string, error) {
+	if strings.TrimSpace(a.Config.ConfigHome) == "" {
+		return "", errors.New("config home is unavailable")
+	}
+	return filepath.Join(a.Config.ConfigHome, "keybindings.json"), nil
+}
+
+func defaultKeybindingsTemplate() []byte {
+	type bindingBlock struct {
+		Context  string            `json:"context"`
+		Bindings map[string]string `json:"bindings"`
+	}
+	template := struct {
+		Bindings []bindingBlock `json:"bindings"`
+	}{
+		Bindings: []bindingBlock{
+			{
+				Context: "repl",
+				Bindings: map[string]string{
+					"enter":  "submit prompt",
+					"tab":    "complete slash command, skill, model, or session",
+					"ctrl+r": "reverse search prompt history",
+					"ctrl+c": "exit current REPL read",
+				},
+			},
+			{
+				Context: "repl-vim",
+				Bindings: map[string]string{
+					"esc": "enter normal mode",
+					"i":   "enter insert mode",
+					"h":   "move left",
+					"j":   "previous history item",
+					"k":   "next history item",
+					"l":   "move right",
+				},
+			},
+			{
+				Context: "tui",
+				Bindings: map[string]string{
+					"ctrl+s": "submit prompt",
+					"tab":    "complete slash command",
+					"esc":    "quit without submitting",
+					"ctrl+c": "quit",
+				},
+			},
+			{
+				Context: "slash",
+				Bindings: map[string]string{
+					"/help":             "show command help",
+					"/keybindings":      "show keybinding report",
+					"/keybindings init": "create keybindings.json template",
+					"/vim":              "toggle vim keybinding preference",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(template, "", "  ")
+	return append(data, '\n')
 }
 
 func (a *App) keybindingReport() keybindingReport {
 	editorMode := effectiveEditorMode(a.Config.EditorMode)
+	path, _ := a.keybindingsPath()
 	return keybindingReport{
-		Kind:       "keybindings",
-		Action:     "show",
-		Status:     "ok",
-		EditorMode: editorMode,
-		VimMode:    editorModeIsVim(editorMode),
+		Kind:              "keybindings",
+		Action:            "show",
+		Status:            "ok",
+		EditorMode:        editorMode,
+		VimMode:           editorModeIsVim(editorMode),
+		KeybindingsPath:   path,
+		KeybindingsExists: path != "" && fileExists(path),
 		Sections: []keybindingSection{
 			{
 				Name: "REPL",
@@ -5963,6 +6165,7 @@ func (a *App) keybindingReport() keybindingReport {
 				Entries: []keybindingEntry{
 					{Key: "/help", Action: "show command help"},
 					{Key: "/keybindings", Action: "show this report"},
+					{Key: "/keybindings init", Action: "create keybindings.json template"},
 					{Key: "/vim", Action: "toggle vim keybinding preference"},
 					{Key: "/privacy-settings", Action: "change local privacy preferences"},
 				},
@@ -5971,10 +6174,25 @@ func (a *App) keybindingReport() keybindingReport {
 	}
 }
 
+func renderKeybindingsFileReport(out io.Writer, report keybindingsFileReport) {
+	switch report.Status {
+	case "created":
+		fmt.Fprintf(out, "Created keybindings template: %s\n", report.Path)
+	case "written":
+		fmt.Fprintf(out, "Wrote keybindings template: %s\n", report.Path)
+	default:
+		fmt.Fprintf(out, "Keybindings file already exists: %s\n", report.Path)
+	}
+}
+
 func renderKeybindings(out io.Writer, report keybindingReport) {
 	fmt.Fprintln(out, "Keybindings")
 	fmt.Fprintf(out, "  Editor mode      %s\n", report.EditorMode)
 	fmt.Fprintf(out, "  Vim mode         %t\n", report.VimMode)
+	if report.KeybindingsPath != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.KeybindingsPath)
+		fmt.Fprintf(out, "  Config exists    %t\n", report.KeybindingsExists)
+	}
 	for _, section := range report.Sections {
 		fmt.Fprintln(out)
 		name := section.Name
@@ -13476,7 +13694,7 @@ Usage:
   %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] voice [status|set-command|on|off|toggle|clear] [--command COMMAND] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] keybindings [--json|--output-format text|json]
+  %s [flags] keybindings [show|path|init] [--force] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]

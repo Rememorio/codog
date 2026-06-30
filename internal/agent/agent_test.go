@@ -1637,9 +1637,10 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 func TestKeybindingsCommandAndSlash(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
+	configHome := t.TempDir()
 	app := &App{
 		Config: config.Config{
-			ConfigHome: t.TempDir(),
+			ConfigHome: configHome,
 			EditorMode: "vim",
 		},
 		Out: &out,
@@ -1650,12 +1651,42 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"kind": "keybindings"`)
 	require.Contains(t, out.String(), `"editor_mode": "vim"`)
 	require.Contains(t, out.String(), `"vim_mode": true`)
+	require.Contains(t, out.String(), `"keybindings_exists": false`)
+	out.Reset()
+
+	keybindingsPath := filepath.Join(configHome, "keybindings.json")
+	require.NoError(t, app.Keybindings([]string{"path"}))
+	require.Equal(t, keybindingsPath+"\n", out.String())
+	out.Reset()
+
+	require.NoError(t, app.Keybindings([]string{"init", "--json"}))
+	require.Contains(t, out.String(), `"status": "created"`)
+	require.Contains(t, out.String(), `"created": true`)
+	data, err := os.ReadFile(keybindingsPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"context": "repl"`)
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
+	require.NoError(t, app.Keybindings([]string{"init"}))
+	require.Contains(t, out.String(), "already exists")
+	data, err = os.ReadFile(keybindingsPath)
+	require.NoError(t, err)
+	require.Equal(t, "custom\n", string(data))
+	out.Reset()
+
+	require.NoError(t, app.Keybindings([]string{"init", "--force"}))
+	require.Contains(t, out.String(), "Wrote keybindings template:")
+	data, err = os.ReadFile(keybindingsPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"bindings"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/keybindings", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Keybindings")
 	require.Contains(t, out.String(), "Editor mode      vim")
 	require.Contains(t, out.String(), "REPL vim")
+	require.Contains(t, out.String(), "Config exists    true")
 	require.Empty(t, errOut.String())
 }
 
