@@ -1461,6 +1461,31 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestKeybindingsCommandAndSlash(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: t.TempDir(),
+			EditorMode: "vim",
+		},
+		Out: &out,
+		Err: &errOut,
+	}
+
+	require.NoError(t, app.Keybindings([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "keybindings"`)
+	require.Contains(t, out.String(), `"editor_mode": "vim"`)
+	require.Contains(t, out.String(), `"vim_mode": true`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/keybindings", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Keybindings")
+	require.Contains(t, out.String(), "Editor mode      vim")
+	require.Contains(t, out.String(), "REPL vim")
+	require.Empty(t, errOut.String())
+}
+
 func TestPromptHistoryPreferenceSkipsInputRecords(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
 	defer server.Close()

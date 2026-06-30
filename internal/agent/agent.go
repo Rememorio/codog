@@ -249,6 +249,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Vim(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
+	case "keybindings":
+		return app.Keybindings(rest)
 	case "skills":
 		return app.Skills(rest)
 	case "commands":
@@ -3922,6 +3924,118 @@ func (a *App) preferenceConfigPath(target, path string) (string, error) {
 	}
 }
 
+type keybindingEntry struct {
+	Key         string `json:"key"`
+	Action      string `json:"action"`
+	Mode        string `json:"mode,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type keybindingSection struct {
+	Name     string            `json:"name"`
+	Entries  []keybindingEntry `json:"entries"`
+	Disabled bool              `json:"disabled,omitempty"`
+}
+
+type keybindingReport struct {
+	Kind       string              `json:"kind"`
+	Action     string              `json:"action"`
+	Status     string              `json:"status"`
+	EditorMode string              `json:"editor_mode"`
+	VimMode    bool                `json:"vim_mode"`
+	Sections   []keybindingSection `json:"sections"`
+}
+
+func (a *App) Keybindings(args []string) error {
+	format, err := parseSimpleOutputFormat("keybindings", args)
+	if err != nil {
+		return err
+	}
+	report := a.keybindingReport()
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderKeybindings(a.Out, report)
+	return nil
+}
+
+func (a *App) keybindingReport() keybindingReport {
+	editorMode := effectiveEditorMode(a.Config.EditorMode)
+	return keybindingReport{
+		Kind:       "keybindings",
+		Action:     "show",
+		Status:     "ok",
+		EditorMode: editorMode,
+		VimMode:    editorModeIsVim(editorMode),
+		Sections: []keybindingSection{
+			{
+				Name: "REPL",
+				Entries: []keybindingEntry{
+					{Key: "Enter", Action: "submit prompt"},
+					{Key: "Tab", Action: "complete slash command, skill, model, or session"},
+					{Key: "Ctrl-R", Action: "reverse search prompt history", Description: "available when prompt history is enabled"},
+					{Key: "Ctrl-C", Action: "exit current REPL read"},
+					{Key: "/exit", Action: "quit the REPL"},
+				},
+			},
+			{
+				Name:     "REPL vim",
+				Disabled: !editorModeIsVim(editorMode),
+				Entries: []keybindingEntry{
+					{Key: "Esc", Action: "enter normal mode", Mode: "insert"},
+					{Key: "i", Action: "enter insert mode", Mode: "normal"},
+					{Key: "h/j/k/l", Action: "move cursor/history", Mode: "normal"},
+					{Key: "0/$", Action: "jump to line start/end", Mode: "normal"},
+				},
+			},
+			{
+				Name: "TUI",
+				Entries: []keybindingEntry{
+					{Key: "Ctrl-S", Action: "submit prompt"},
+					{Key: "Tab", Action: "complete slash command"},
+					{Key: "Esc", Action: "quit without submitting"},
+					{Key: "Ctrl-C", Action: "quit"},
+				},
+			},
+			{
+				Name: "Slash",
+				Entries: []keybindingEntry{
+					{Key: "/help", Action: "show command help"},
+					{Key: "/keybindings", Action: "show this report"},
+					{Key: "/vim", Action: "toggle vim keybinding preference"},
+					{Key: "/privacy-settings", Action: "change local privacy preferences"},
+				},
+			},
+		},
+	}
+}
+
+func renderKeybindings(out io.Writer, report keybindingReport) {
+	fmt.Fprintln(out, "Keybindings")
+	fmt.Fprintf(out, "  Editor mode      %s\n", report.EditorMode)
+	fmt.Fprintf(out, "  Vim mode         %t\n", report.VimMode)
+	for _, section := range report.Sections {
+		fmt.Fprintln(out)
+		name := section.Name
+		if section.Disabled {
+			name += " (disabled)"
+		}
+		fmt.Fprintf(out, "%s\n", name)
+		for _, entry := range section.Entries {
+			action := entry.Action
+			if entry.Mode != "" {
+				action += " [" + entry.Mode + "]"
+			}
+			if entry.Description != "" {
+				action += " - " + entry.Description
+			}
+			fmt.Fprintf(out, "  %-14s %s\n", entry.Key, action)
+		}
+	}
+}
+
 type todosRequest struct {
 	Action   string
 	ID       string
@@ -6940,6 +7054,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/privacy-settings":
 		if err := a.PrivacySettings(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/keybindings":
+		if err := a.Keybindings(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/cost":
@@ -10422,6 +10540,7 @@ Usage:
   %s [flags] theme [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] keybindings [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
@@ -10471,7 +10590,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
