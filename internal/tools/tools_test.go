@@ -213,7 +213,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 65)
+	require.Len(t, infos, 66)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -256,7 +256,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, PermissionDanger, info.Permission)
 	}
-	for _, name := range []string{"worker_get", "worker_observe", "worker_await_ready", "worker_observe_completion"} {
+	for _, name := range []string{"worker_list", "worker_get", "worker_observe", "worker_await_ready", "worker_observe_completion"} {
 		info, ok = registry.Info(name)
 		require.True(t, ok)
 		require.Equal(t, PermissionReadOnly, info.Permission)
@@ -988,6 +988,12 @@ func TestWorkerToolsManagePromptWorker(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(createOut), &created))
 	require.NotEmpty(t, created.WorkerID)
 
+	listOut, err := WorkerListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"status":"ready_for_prompt"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "worker_list"`)
+	require.Contains(t, listOut, `"total": 1`)
+	require.Contains(t, listOut, created.WorkerID)
+
 	readyOut, err := WorkerAwaitReadyTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, readyOut, `"ready_for_prompt": true`)
@@ -1017,6 +1023,11 @@ func TestWorkerToolsManagePromptWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, getOut, sent.TaskID)
 	require.Contains(t, getOut, `"task_status":`)
+
+	runningListOut, err := WorkerListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"status":"running"}`))
+	require.NoError(t, err)
+	require.Contains(t, runningListOut, sent.TaskID)
+	require.Contains(t, runningListOut, `"total": 1`)
 
 	restartOut, err := WorkerRestartTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
 	require.NoError(t, err)

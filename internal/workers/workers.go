@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -99,6 +100,38 @@ func (s Store) Get(id string) (Worker, error) {
 		return Worker{}, err
 	}
 	return worker, nil
+}
+
+func (s Store) List() ([]Worker, error) {
+	if err := os.MkdirAll(s.dir(), 0o755); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(s.dir())
+	if err != nil {
+		return nil, err
+	}
+	out := []Worker{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if err := validateID(id); err != nil {
+			continue
+		}
+		worker, err := s.Get(id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, worker)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 func (s Store) Save(worker Worker) error {

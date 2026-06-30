@@ -40,4 +40,9 @@ func TestStoreManagesWorkerLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "finished", worker.Status)
 	require.NotEmpty(t, worker.Events)
+
+	list, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, worker.ID, list[0].ID)
 }

@@ -16,7 +16,7 @@ Claude Code source.
   `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
   `team_create`, `team_delete`,
-  `worker_create`, `worker_get`, `worker_observe`, `worker_resolve_trust`,
+  `worker_create`, `worker_list`, `worker_get`, `worker_observe`, `worker_resolve_trust`,
   `worker_await_ready`, `worker_send_prompt`, `worker_restart`,
   `worker_terminate`, `worker_observe_completion`,
   `enter_worktree`, `exit_worktree`,

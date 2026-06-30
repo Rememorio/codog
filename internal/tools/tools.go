@@ -149,6 +149,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(WorkerListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerObserveTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerResolveTrustTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -3015,6 +3016,65 @@ func (t WorkerCreateTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(worker), nil
+}
+
+type WorkerListTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (WorkerListTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "worker_list",
+		Description: "List coding worker control records with optional status filters.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"status":      map[string]any{"type": "string"},
+				"task_status": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (WorkerListTool) Permission() Permission { return PermissionReadOnly }
+
+func (t WorkerListTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Status     string `json:"status"`
+		TaskStatus string `json:"task_status"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	status := strings.TrimSpace(payload.Status)
+	taskStatus := strings.TrimSpace(payload.TaskStatus)
+	list, err := workerStore(t.ConfigHome, t.Workspace).List()
+	if err != nil {
+		return "", err
+	}
+	out := make([]workers.Worker, 0, len(list))
+	getter := WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}
+	for _, worker := range list {
+		worker = getter.withTaskStatus(worker)
+		if status != "" && !strings.EqualFold(worker.Status, status) {
+			continue
+		}
+		if taskStatus != "" && !strings.EqualFold(worker.TaskStatus, taskStatus) {
+			continue
+		}
+		out = append(out, worker)
+	}
+	return pretty(map[string]any{
+		"kind":        "worker_list",
+		"total":       len(out),
+		"status":      status,
+		"task_status": taskStatus,
+		"workers":     out,
+	}), nil
 }
 
 type WorkerGetTool struct {
