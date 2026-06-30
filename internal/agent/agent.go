@@ -416,6 +416,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.IDE(rest)
 	case "updater":
 		return app.Updater(ctx, rest)
+	case "upgrade":
+		return app.Upgrade(ctx, rest)
+	case "install":
+		return app.Install(ctx, rest)
 	case "enterprise":
 		return app.Enterprise(rest)
 	case "dump-manifests":
@@ -1654,6 +1658,25 @@ func (a *App) SystemPromptCommand(args []string) error {
 	}
 	fmt.Fprintln(a.Out, prompt)
 	return nil
+}
+
+func (a *App) Upgrade(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: codog upgrade [check|verify|download|install|rollback] ARGS...")
+	}
+	switch args[0] {
+	case "check", "verify", "download", "install", "rollback":
+		return a.Updater(ctx, args)
+	default:
+		return a.Updater(ctx, append([]string{"check"}, args...))
+	}
+}
+
+func (a *App) Install(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: codog install ARTIFACT [TARGET]")
+	}
+	return a.Updater(ctx, append([]string{"install"}, args...))
 }
 
 func (a *App) Background(args []string) error {
@@ -9083,6 +9106,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.IDE(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/upgrade":
+		if err := a.Upgrade(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/install":
+		if err := a.Install(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/agents":
 		if err := a.AgentsWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -12520,6 +12551,8 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
+  %s upgrade [check|verify|download|install|rollback] ARGS...
+  %s install ARTIFACT [TARGET]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]
   %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
@@ -12544,7 +12577,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

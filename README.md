@@ -273,6 +273,8 @@ Claude Code source.
 - `codog updater check|download|install|rollback` checks releases, downloads
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.
+- `codog upgrade` and `codog install` are top-level aliases for the signed
+  updater check/download/install/rollback workflows.
 - `codog providers status|list|show|set` inspects the active
   Anthropic-compatible provider, reports auth readiness without printing
   secrets, lists presets/OAuth profiles, and persists provider base URL/model

@@ -95,6 +95,8 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/desktop")
 	require.Contains(t, out.String(), "/mobile")
 	require.Contains(t, out.String(), "/reload-plugins")
+	require.Contains(t, out.String(), "/upgrade")
+	require.Contains(t, out.String(), "/install")
 }
 
 func TestCandidatesFiltersSlashCommands(t *testing.T) {

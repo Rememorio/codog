@@ -3562,6 +3562,28 @@ func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	data, err = os.ReadFile(target)
 	require.NoError(t, err)
 	require.Equal(t, "old", string(data))
+
+	aliasArtifact := filepath.Join(dir, "codog-alias-new")
+	aliasTarget := filepath.Join(dir, "codog-alias")
+	require.NoError(t, os.WriteFile(aliasArtifact, []byte("alias-new"), 0o755))
+	require.NoError(t, os.WriteFile(aliasTarget, []byte("alias-old"), 0o755))
+	out.Reset()
+	require.NoError(t, app.Install(context.Background(), []string{aliasArtifact, aliasTarget}))
+	require.Contains(t, out.String(), `"installed": true`)
+	data, err = os.ReadFile(aliasTarget)
+	require.NoError(t, err)
+	require.Equal(t, "alias-new", string(data))
+
+	upgradeArtifact := filepath.Join(dir, "codog-upgrade-new")
+	upgradeTarget := filepath.Join(dir, "codog-upgrade")
+	require.NoError(t, os.WriteFile(upgradeArtifact, []byte("upgrade-new"), 0o755))
+	require.NoError(t, os.WriteFile(upgradeTarget, []byte("upgrade-old"), 0o755))
+	out.Reset()
+	require.NoError(t, app.Upgrade(context.Background(), []string{"install", upgradeArtifact, upgradeTarget}))
+	require.Contains(t, out.String(), `"installed": true`)
+	data, err = os.ReadFile(upgradeTarget)
+	require.NoError(t, err)
+	require.Equal(t, "upgrade-new", string(data))
 }
 
 func TestUpdaterVerifyCommand(t *testing.T) {
