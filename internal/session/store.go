@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -59,6 +60,11 @@ type ReplaceResult struct {
 	OriginalMessages  int    `json:"original_messages"`
 	RemainingMessages int    `json:"remaining_messages"`
 	RemovedMessages   int    `json:"removed_messages"`
+}
+
+type messageRecordInfo struct {
+	Time  time.Time
+	Usage *anthropic.Usage
 }
 
 type Store struct {
@@ -444,15 +450,30 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 	if path == "" {
 		path = s.pathFor(sess.ID)
 	}
+	metadata := s.messageRecordMetadata(path)
 	records := make([]Record, 0, len(messages))
+	searchFrom := 0
 	for _, msg := range messages {
 		next := msg
-		records = append(records, Record{
+		record := Record{
 			Type:      "message",
 			Time:      time.Now().UTC(),
 			Message:   &next,
 			SessionID: sess.ID,
-		})
+		}
+		if index := findMessageIndex(sess.Messages, msg, searchFrom); index >= 0 {
+			searchFrom = index + 1
+			if info, ok := metadata[index]; ok {
+				if !info.Time.IsZero() {
+					record.Time = info.Time
+				}
+				if info.Usage != nil && !usageEmpty(*info.Usage) {
+					usage := *info.Usage
+					record.Usage = &usage
+				}
+			}
+		}
+		records = append(records, record)
 	}
 	if err := s.writeRecords(path, records); err != nil {
 		return ReplaceResult{}, err
@@ -466,6 +487,40 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 		RemainingMessages: len(messages),
 		RemovedMessages:   original - len(messages),
 	}, nil
+}
+
+func (s *Store) messageRecordMetadata(path string) map[int]messageRecordInfo {
+	records, err := s.readRecords(path)
+	if err != nil {
+		return nil
+	}
+	metadata := map[int]messageRecordInfo{}
+	messageIndex := -1
+	for _, record := range records {
+		if record.Message == nil {
+			continue
+		}
+		messageIndex++
+		var usage *anthropic.Usage
+		if record.Usage != nil && !usageEmpty(*record.Usage) {
+			next := *record.Usage
+			usage = &next
+		}
+		metadata[messageIndex] = messageRecordInfo{Time: record.Time, Usage: usage}
+	}
+	return metadata
+}
+
+func findMessageIndex(messages []anthropic.Message, target anthropic.Message, start int) int {
+	if start < 0 {
+		start = 0
+	}
+	for index := start; index < len(messages); index++ {
+		if reflect.DeepEqual(messages[index], target) {
+			return index
+		}
+	}
+	return -1
 }
 
 func (s *Store) pathFor(id string) string {
