@@ -16,17 +16,24 @@ func TestRunPayloadCapturesHookOutput(t *testing.T) {
 		t.Skip("uses POSIX shell")
 	}
 	workspace := t.TempDir()
-	report, err := Runner{Workspace: workspace}.RunPayload(context.Background(), []string{"cat && echo err >&2"}, Payload{
-		Event: "pre_tool_use",
-		Tool:  "read_file",
-		Input: `{"path":"README.md"}`,
+	report, err := Runner{Workspace: workspace}.RunPayload(context.Background(), []string{"cat && printf '\\n%s\\n%s\\n%s\\n%s\\n%s\\n' \"$CODOG_HOOK_EVENT\" \"$CODOG_HOOK_TOOL\" \"$CODOG_HOOK_INPUT\" \"$CODOG_HOOK_OUTPUT\" \"$CODOG_HOOK_IS_ERROR\" && echo err >&2"}, Payload{
+		Event:   "pre_tool_use",
+		Tool:    "read_file",
+		Input:   `{"path":"README.md"}`,
+		Output:  "done",
+		IsError: true,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "hooks", report.Kind)
 	require.Len(t, report.Results, 1)
 	require.True(t, report.Results[0].Success)
+	require.Equal(t, 0, report.Results[0].ExitCode)
 	require.Contains(t, report.Results[0].Stdout, `"tool":"read_file"`)
 	require.Contains(t, report.Results[0].Stdout, "README.md")
+	require.Contains(t, report.Results[0].Stdout, "pre_tool_use")
+	require.Contains(t, report.Results[0].Stdout, "read_file")
+	require.Contains(t, report.Results[0].Stdout, "done")
+	require.Contains(t, report.Results[0].Stdout, "true")
 	require.Contains(t, report.Results[0].Stderr, "err")
 }
 
@@ -41,6 +48,7 @@ func TestRunPayloadReturnsPartialFailureReport(t *testing.T) {
 	require.Len(t, report.Results, 2)
 	require.True(t, report.Results[0].Success)
 	require.False(t, report.Results[1].Success)
+	require.Equal(t, 7, report.Results[1].ExitCode)
 	require.FileExists(t, path)
 	data, readErr := os.ReadFile(path)
 	require.NoError(t, readErr)

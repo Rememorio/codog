@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +35,7 @@ type CommandResult struct {
 	Command    string `json:"command"`
 	Stdout     string `json:"stdout,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
+	ExitCode   int    `json:"exit_code"`
 	DurationMS int64  `json:"duration_ms"`
 	Success    bool   `json:"success"`
 	Error      string `json:"error,omitempty"`
@@ -106,6 +109,9 @@ func (r Runner) RunPayload(ctx context.Context, commands []string, payload Paylo
 		cmd.Env = append(os.Environ(),
 			"CODOG_HOOK_EVENT="+payload.Event,
 			"CODOG_HOOK_TOOL="+payload.Tool,
+			"CODOG_HOOK_INPUT="+payload.Input,
+			"CODOG_HOOK_OUTPUT="+payload.Output,
+			"CODOG_HOOK_IS_ERROR="+strconv.FormatBool(payload.IsError),
 		)
 		cmd.Stdin = bytes.NewReader(data)
 		var stdout bytes.Buffer
@@ -120,17 +126,20 @@ func (r Runner) RunPayload(ctx context.Context, commands []string, payload Paylo
 			Command:    command,
 			Stdout:     stdout.String(),
 			Stderr:     stderr.String(),
+			ExitCode:   0,
 			DurationMS: duration,
 			Success:    true,
 		}
 		if hookCtx.Err() == context.DeadlineExceeded {
 			result.Success = false
+			result.ExitCode = -1
 			result.Error = "timeout"
 			report.Results = append(report.Results, result)
 			return report, fmt.Errorf("hook timed out: %s", command)
 		}
 		if err != nil {
 			result.Success = false
+			result.ExitCode = hookExitCode(err)
 			result.Error = err.Error()
 			report.Results = append(report.Results, result)
 			return report, fmt.Errorf("hook failed: %s: %s", command, stderr.String())
@@ -138,6 +147,14 @@ func (r Runner) RunPayload(ctx context.Context, commands []string, payload Paylo
 		report.Results = append(report.Results, result)
 	}
 	return report, nil
+}
+
+func hookExitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 func matchingCommands(entries []config.HookCommand, fallback []string, tool string) []string {

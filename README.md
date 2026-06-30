@@ -133,7 +133,10 @@ Claude Code source.
   inspects and test-runs configured hooks with the same JSON payload shape used
   by model tool calls. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command hooks and matcher
-  filtering.
+  filtering. Hook commands receive the payload on stdin plus
+  `CODOG_HOOK_EVENT`, `CODOG_HOOK_TOOL`, `CODOG_HOOK_INPUT`,
+  `CODOG_HOOK_OUTPUT`, and `CODOG_HOOK_IS_ERROR`; run reports include stdout,
+  stderr, duration, success, and exit code.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
   Both commands use recorded provider token usage when available, including
