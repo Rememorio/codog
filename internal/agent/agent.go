@@ -4150,9 +4150,34 @@ func isURLish(value string) bool {
 
 func (a *App) Sandbox() error {
 	status := sandbox.Detect()
-	data, _ := json.MarshalIndent(status, "", "  ")
+	data, _ := json.MarshalIndent(sandboxReport{
+		Kind:       "sandbox",
+		Action:     "show",
+		Status:     sandboxReportStatus(status.Available),
+		OS:         status.OS,
+		Strategies: append([]string(nil), status.Strategies...),
+		Default:    status.Default,
+		Available:  status.Available,
+	}, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type sandboxReport struct {
+	Kind       string   `json:"kind"`
+	Action     string   `json:"action"`
+	Status     string   `json:"status"`
+	OS         string   `json:"os"`
+	Strategies []string `json:"strategies"`
+	Default    string   `json:"default"`
+	Available  bool     `json:"available"`
+}
+
+func sandboxReportStatus(available bool) string {
+	if available {
+		return "ok"
+	}
+	return "warn"
 }
 
 type sandboxToggleRequest struct {
@@ -11684,7 +11709,7 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 		return command, args, nil
 	}
 	if directSlashInteractiveOnly(name) {
-		return "", nil, renderInteractiveOnly(out, name, format)
+		return "", nil, renderInteractiveOnlySlash(out, name, format)
 	}
 	mapped := directSlashCommandName(name)
 	if mapped == "" {
@@ -11710,7 +11735,16 @@ func directSlashCommandName(name string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/deny", "/no", "/clear", "/resume", "/exit":
+	case "/approve", "/yes", "/deny", "/no", "/clear", "/resume", "/exit", "/compact", "/commit", "/pr", "/issue", "/bughunter", "/ultraplan":
+		return true
+	default:
+		return false
+	}
+}
+
+func directSlashResumeSafe(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "/compact", "/resume":
 		return true
 	default:
 		return false
@@ -11737,6 +11771,14 @@ func renderUnknownSlashCommand(out io.Writer, command string, format string) err
 
 func renderInteractiveOnly(out io.Writer, command string, format string) error {
 	return renderInteractiveOnlyWithHint(out, command, fmt.Sprintf("%s is only available in an interactive REPL session", command), "Run `codog repl` and use the command there.", format)
+}
+
+func renderInteractiveOnlySlash(out io.Writer, command string, format string) error {
+	hint := "Run `codog repl` and use the command there."
+	if directSlashResumeSafe(command) {
+		hint = fmt.Sprintf("Run `codog --resume latest %s` to target a saved session, or run `codog repl` and use the command there.", command)
+	}
+	return renderInteractiveOnlyWithHint(out, command, fmt.Sprintf("%s is only available in an interactive REPL session", command), hint, format)
 }
 
 func renderInteractiveOnlyWithHint(out io.Writer, command string, message string, hint string, format string) error {

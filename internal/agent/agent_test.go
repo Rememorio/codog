@@ -283,6 +283,18 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &statusReport))
 	require.Equal(t, "status", statusReport["kind"])
 
+	for _, command := range []string{"/version", "/sandbox", "/diff"} {
+		out, err = captureStdout(t, func() error {
+			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
+		})
+		require.NoError(t, err, command)
+		var localReport map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &localReport), command)
+		require.NotEqual(t, "interactive_only", localReport["error_kind"], command)
+		require.NotEmpty(t, localReport["kind"], command)
+		require.NotEmpty(t, localReport["status"], command)
+	}
+
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/statuz"}, config.FlagOverrides{})
 	})
@@ -304,6 +316,31 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "interactive_only", slashReport.ErrorKind)
 	require.Equal(t, "/approve", slashReport.Command)
+	require.NotContains(t, slashReport.Hint, "--resume")
+
+	for _, command := range []string{"/commit", "/pr", "/issue", "/bughunter", "/ultraplan"} {
+		out, err = captureStdout(t, func() error {
+			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
+		})
+		require.Error(t, err, command)
+		require.ErrorAs(t, err, &exitErr, command)
+		require.True(t, exitErr.Silent, command)
+		require.NoError(t, json.Unmarshal([]byte(out), &slashReport), command)
+		require.Equal(t, "interactive_only", slashReport.ErrorKind, command)
+		require.Equal(t, command, slashReport.Command, command)
+		require.NotContains(t, slashReport.Hint, "--resume", command)
+	}
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/compact"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "interactive_only", slashReport.ErrorKind)
+	require.Equal(t, "/compact", slashReport.Command)
+	require.Contains(t, slashReport.Hint, "--resume")
 }
 
 func TestInvalidPermissionModeJSONContract(t *testing.T) {
