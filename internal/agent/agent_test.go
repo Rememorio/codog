@@ -3350,6 +3350,47 @@ Review body.
 	require.NotContains(t, prompt, "---")
 }
 
+func TestSkillFrontmatterControlsInvocationAndSystemPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	visibleDir := filepath.Join(workspace, ".codog", "skills", "visible")
+	hiddenDir := filepath.Join(workspace, ".codog", "skills", "hidden")
+	disabledDir := filepath.Join(workspace, ".codog", "skills", "disabled")
+	require.NoError(t, os.MkdirAll(visibleDir, 0o755))
+	require.NoError(t, os.MkdirAll(hiddenDir, 0o755))
+	require.NoError(t, os.MkdirAll(disabledDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(visibleDir, "SKILL.md"), []byte("Visible body."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(hiddenDir, "SKILL.md"), []byte(`---
+user-invocable: false
+---
+Hidden body.
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(disabledDir, "SKILL.md"), []byte(`---
+disable-model-invocation: true
+---
+Disabled body.
+`), 0o644))
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, EnabledSkills: []string{"visible", "disabled"}},
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+
+	require.Contains(t, app.expandSkillInvocation("visible review this"), `<skill name="visible"`)
+	require.Equal(t, "hidden review this", app.expandSkillInvocation("hidden review this"))
+	require.False(t, app.handleSkillSlash(context.Background(), "/hidden review this", &session.Session{ID: "session"}))
+	require.Empty(t, errOut.String())
+
+	candidates := app.customSlashCompletionCandidates()
+	require.Contains(t, candidates, "/visible ")
+	require.NotContains(t, candidates, "/hidden ")
+
+	prompt := app.systemPrompt()
+	require.Contains(t, prompt, "Visible body.")
+	require.NotContains(t, prompt, "Disabled body.")
+}
+
 func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "skill done"}.Handler())
 	defer server.Close()

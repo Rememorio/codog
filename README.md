@@ -143,6 +143,9 @@ Claude Code source.
   directory skills with `SKILL.md`; skill frontmatter such as `description`,
   `allowed-tools`, `argument-hint`, `arguments`, `paths`, `when_to_use`,
   `model`, `context`, `agent`, and `effort` is parsed into prompt metadata.
+  `user-invocable: false` hides skills from direct slash/bare invocation, and
+  `disable-model-invocation: true` prevents enabled skills from entering the
+  system prompt.
   Prompt turns can also invoke a discovered skill by starting input with the skill name.
 - `codog templates list|show|apply` finds Markdown prompt templates from
   `~/.codog/templates` and `.codog/templates`, then renders `{{name}}`

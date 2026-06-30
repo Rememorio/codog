@@ -11406,6 +11406,9 @@ func (a *App) expandSkillInvocation(input string) string {
 	if err != nil {
 		return input
 	}
+	if !skill.UserInvocable {
+		return input
+	}
 	args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
 	return skills.RenderInvocation(skill, args)
 }
@@ -12102,6 +12105,9 @@ func (a *App) handleSkillSlash(ctx context.Context, line string, sess *session.S
 		}
 		fmt.Fprintln(a.Err, "error:", err)
 		return true
+	}
+	if !skill.UserInvocable {
+		return false
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
 	rendered := skills.RenderInvocation(skill, args)
@@ -15891,6 +15897,9 @@ func (a *App) systemPrompt() string {
 		if err != nil {
 			continue
 		}
+		if skill.DisableModelInvocation {
+			continue
+		}
 		builder.WriteString("\n\n")
 		builder.WriteString(skills.RenderPromptBlock(skill))
 	}
@@ -15960,6 +15969,9 @@ func (a *App) customSlashCompletionCandidates() []string {
 	}
 	if loadedSkills, err := skills.Load(a.Config.ConfigHome, a.Workspace); err == nil {
 		for _, skill := range loadedSkills {
+			if !skill.UserInvocable {
+				continue
+			}
 			candidates = append(candidates, "/"+strings.ReplaceAll(skill.Name, ":", "/")+" ")
 		}
 	}
