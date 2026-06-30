@@ -2592,10 +2592,14 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 	if a.mcpToolsLoaded {
 		return nil
 	}
-	for serverName, server := range a.Config.MCPServers {
+	failures := []string{}
+	registered := 0
+	for _, serverName := range sortedMCPServerNames(a.Config.MCPServers) {
+		server := a.Config.MCPServers[serverName]
 		result := mcp.ListTools(ctx, serverName, server)
 		if result.Error != "" {
-			return fmt.Errorf("mcp server %q: %s", serverName, result.Error)
+			failures = append(failures, fmt.Sprintf("%s: %s", serverName, result.Error))
+			continue
 		}
 		for _, remoteTool := range result.Tools {
 			name := tools.NewMCPToolName(serverName, remoteTool.Name)
@@ -2611,10 +2615,30 @@ func (a *App) RegisterMCPTools(ctx context.Context) error {
 				Server:      server,
 				RemoteName:  remoteTool.Name,
 			})
+			registered++
+		}
+	}
+	if len(failures) != 0 {
+		if a.Err != nil {
+			for _, failure := range failures {
+				fmt.Fprintf(a.Err, "MCP server unavailable: %s\n", failure)
+			}
+		}
+		if registered == 0 {
+			return fmt.Errorf("no MCP tools registered; %s", strings.Join(failures, "; "))
 		}
 	}
 	a.mcpToolsLoaded = true
 	return nil
+}
+
+func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (a *App) ListAgents() error {

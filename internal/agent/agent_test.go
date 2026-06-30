@@ -3493,6 +3493,42 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "Review hooks")
 }
 
+func TestRegisterMCPToolsContinuesAfterBrokenServer(t *testing.T) {
+	workspace := t.TempDir()
+	good := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:     []string{"CODOG_AGENT_MCP_HELPER=1"},
+	}
+	bad := config.MCPServerConfig{Command: filepath.Join(t.TempDir(), "missing-mcp")}
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{
+			"bad":  bad,
+			"good": good,
+		}},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.RegisterMCPTools(context.Background()))
+	require.True(t, app.mcpToolsLoaded)
+	require.True(t, app.Tools.Has(tools.NewMCPToolName("good", "echo")))
+	require.False(t, app.Tools.Has(tools.NewMCPToolName("bad", "echo")))
+	require.Contains(t, errOut.String(), "MCP server unavailable: bad:")
+
+	app = &App{
+		Config:    config.Config{MCPServers: map[string]config.MCPServerConfig{"bad": bad}},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Err:       io.Discard,
+	}
+	err := app.RegisterMCPTools(context.Background())
+	require.ErrorContains(t, err, "no MCP tools registered")
+	require.False(t, app.mcpToolsLoaded)
+}
+
 func TestMCPConfigCommands(t *testing.T) {
 	configHome := t.TempDir()
 	var out bytes.Buffer
