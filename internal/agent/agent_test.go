@@ -606,11 +606,62 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "hello", req.Prompt)
 	require.Equal(t, "json", req.Format)
+	require.True(t, req.PromptProvided)
 
 	req, err = parsePromptArgs([]string{"--output-format=stream-json", "--", "--json", "literal"})
 	require.NoError(t, err)
 	require.Equal(t, "--json literal", req.Prompt)
 	require.Equal(t, "stream-json", req.Format)
+	require.True(t, req.PromptProvided)
+
+	req, err = parsePromptArgs([]string{"--json"})
+	require.NoError(t, err)
+	require.Empty(t, req.Prompt)
+	require.Equal(t, "json", req.Format)
+	require.False(t, req.PromptProvided)
+}
+
+func TestPromptMissingPromptOutputContract(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	emptyStdin := filepath.Join(t.TempDir(), "stdin.txt")
+	require.NoError(t, os.WriteFile(emptyStdin, nil, 0o644))
+	stdinFile, err := os.Open(emptyStdin)
+	require.NoError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, stdinFile.Close())
+	}()
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "prompt"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report promptErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "prompt", report.Kind)
+	require.Equal(t, "abort", report.Action)
+	require.Equal(t, "missing_prompt", report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.Contains(t, report.Hint, "codog prompt")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "prompt", ""}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "missing_prompt", report.ErrorKind)
 }
 
 func TestDumpManifestsCommand(t *testing.T) {

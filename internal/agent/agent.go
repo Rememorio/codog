@@ -265,12 +265,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 		input := req.Prompt
-		if strings.TrimSpace(input) == "" {
-			data, err := io.ReadAll(os.Stdin)
+		if !req.PromptProvided {
+			data, err := readPromptInput(app.In)
 			if err != nil {
 				return err
 			}
 			input = string(data)
+		}
+		if strings.TrimSpace(input) == "" {
+			return renderMissingPrompt(app.Out, req.Format)
 		}
 		return app.PromptWithOutput(ctx, input, overrides, req.Format)
 	case "acp":
@@ -11435,6 +11438,35 @@ type cliErrorReport struct {
 	Hint      string `json:"hint"`
 }
 
+type promptErrorReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	ErrorKind string `json:"error_kind"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+}
+
+func renderMissingPrompt(out io.Writer, format string) error {
+	report := promptErrorReport{
+		Kind:      "prompt",
+		Action:    "abort",
+		ErrorKind: "missing_prompt",
+		Status:    "error",
+		Message:   "prompt is empty",
+		Hint:      "Provide a prompt with `codog prompt \"...\"`, `codog -p \"...\"`, or pipe text into `codog prompt`.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json", "stream-json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	default:
+		return &ExitError{Code: 1, Err: err}
+	}
+}
+
 func renderCLIError(out io.Writer, err error, format string) error {
 	report := buildCLIErrorReport(err)
 	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
@@ -13316,8 +13348,9 @@ type turnOptions struct {
 }
 
 type promptCLIRequest struct {
-	Prompt string
-	Format string
+	Prompt         string
+	Format         string
+	PromptProvided bool
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
@@ -13327,6 +13360,9 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 		arg := args[index]
 		switch {
 		case arg == "--":
+			if len(args[index+1:]) > 0 {
+				req.PromptProvided = true
+			}
 			parts = append(parts, args[index+1:]...)
 			index = len(args)
 		case arg == "--json":
@@ -13340,6 +13376,7 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		default:
+			req.PromptProvided = true
 			parts = append(parts, arg)
 		}
 	}
@@ -13350,6 +13387,23 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown prompt output format %q", req.Format)
 	}
+}
+
+func readPromptInput(in io.Reader) (string, error) {
+	if in == nil {
+		return "", nil
+	}
+	if file, ok := in.(*os.File); ok {
+		info, err := file.Stat()
+		if err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			return "", nil
+		}
+	}
+	data, err := io.ReadAll(in)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
