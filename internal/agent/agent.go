@@ -15015,6 +15015,9 @@ func (a *App) AllowedTools(args []string) error {
 		if len(args) < 2 {
 			return errors.New("usage: codog allowed-tools add TOOL [TOOL...]")
 		}
+		if err := a.validateToolRuleValues("allowed-tools add", args[1:]); err != nil {
+			return err
+		}
 		a.Config.PermissionRules.Allow = addRuleValues(a.Config.PermissionRules.Allow, args[1:])
 	case "remove", "rm", "delete":
 		if len(args) < 2 {
@@ -15040,6 +15043,10 @@ func (a *App) handleAllowedToolsSlash(args []string) {
 	case "add":
 		if len(args) < 2 {
 			fmt.Fprintln(a.Err, "usage: /allowed-tools add TOOL [TOOL...]")
+			return
+		}
+		if err := a.validateToolRuleValues("/allowed-tools add", args[1:]); err != nil {
+			fmt.Fprintln(a.Err, err)
 			return
 		}
 		a.Config.PermissionRules.Allow = addRuleValues(a.Config.PermissionRules.Allow, args[1:])
@@ -19376,17 +19383,24 @@ func (a *App) validateGlobalToolRules(overrides config.FlagOverrides, format str
 }
 
 func (a *App) validateGlobalToolRuleList(argument string, rules []string, format string) error {
+	if err := a.validateToolRuleValues(argument, rules); err != nil {
+		return renderCLIError(a.Out, err, format)
+	}
+	return nil
+}
+
+func (a *App) validateToolRuleValues(argument string, rules []string) error {
 	for _, rule := range rules {
 		toolName := toolRuleName(rule)
 		if a.validToolRuleName(toolName) {
 			continue
 		}
-		return renderCLIError(a.Out, toolNameError{
+		return toolNameError{
 			Argument:  argument,
 			ToolName:  toolName,
 			Available: a.availableToolNames(),
 			Aliases:   tools.ClaudeToolAliases(),
-		}, format)
+		}
 	}
 	return nil
 }
@@ -19402,24 +19416,26 @@ func (a *App) validToolRuleName(name string) bool {
 	if strings.Contains(name, "*") {
 		return a.toolWildcardMatchesRegisteredName(name)
 	}
-	if a.Tools == nil {
+	registry := a.activeToolRegistry()
+	if registry == nil {
 		return tools.CanonicalToolName(name) != name
 	}
-	if _, ok := a.Tools.Info(name); ok {
+	if _, ok := registry.Info(name); ok {
 		return true
 	}
 	if canonical := tools.CanonicalToolName(name); canonical != name {
-		_, ok := a.Tools.Info(canonical)
+		_, ok := registry.Info(canonical)
 		return ok
 	}
 	return false
 }
 
 func (a *App) toolWildcardMatchesRegisteredName(pattern string) bool {
-	if a == nil || a.Tools == nil {
+	registry := a.activeToolRegistry()
+	if registry == nil {
 		return false
 	}
-	for _, info := range a.Tools.Infos() {
+	for _, info := range registry.Infos() {
 		if permissionNamePatternMatches(pattern, info.Name) {
 			return true
 		}
@@ -19428,16 +19444,28 @@ func (a *App) toolWildcardMatchesRegisteredName(pattern string) bool {
 }
 
 func (a *App) availableToolNames() []string {
-	if a == nil || a.Tools == nil {
+	registry := a.activeToolRegistry()
+	if registry == nil {
 		return nil
 	}
-	infos := a.Tools.Infos()
+	infos := registry.Infos()
 	names := make([]string, 0, len(infos))
 	for _, info := range infos {
 		names = append(names, info.Name)
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (a *App) activeToolRegistry() *tools.Registry {
+	if a != nil && a.Tools != nil {
+		return a.Tools
+	}
+	workspace := ""
+	if a != nil {
+		workspace = a.Workspace
+	}
+	return tools.NewRegistry(workspace)
 }
 
 func toolRuleName(rule string) string {

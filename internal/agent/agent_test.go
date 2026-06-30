@@ -1690,6 +1690,18 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.NoError(t, app.AllowedTools([]string{"add", "grep"}))
 	require.Contains(t, app.Config.PermissionRules.Allow, "grep")
 	require.Contains(t, out.String(), "Allowed tools")
+	out.Reset()
+
+	require.NoError(t, app.AllowedTools([]string{"add", "Read", "Bash(go test:*)", "mcp__playwright__*"}))
+	require.Contains(t, app.Config.PermissionRules.Allow, "Read")
+	require.Contains(t, app.Config.PermissionRules.Allow, "Bash(go test:*)")
+	require.Contains(t, app.Config.PermissionRules.Allow, "mcp__playwright__*")
+	out.Reset()
+
+	err := app.AllowedTools([]string{"add", "teleport"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_tool_name")
+	require.NotContains(t, app.Config.PermissionRules.Allow, "teleport")
 }
 
 func TestAdvisorCommandAndSlash(t *testing.T) {
@@ -1851,6 +1863,25 @@ func TestAllowedToolsSlashMutatesRuntimeAllowRules(t *testing.T) {
 	require.Empty(t, app.Config.PermissionRules.Allow)
 	require.Contains(t, out.String(), "no allow rules configured")
 	require.Empty(t, errOut.String())
+}
+
+func TestAllowedToolsSlashRejectsUnknownToolRules(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			PermissionRules: config.PermissionRules{Allow: []string{"read_file"}},
+		},
+		Out: &out,
+		Err: &errOut,
+	}
+	sess := &session.Session{ID: "session"}
+
+	require.True(t, app.handleSlash(context.Background(), "/allowed-tools add teleport", sess))
+	require.ElementsMatch(t, []string{"read_file"}, app.Config.PermissionRules.Allow)
+	require.Empty(t, out.String())
+	require.Contains(t, errOut.String(), "invalid_tool_name")
+	require.Contains(t, errOut.String(), "teleport")
 }
 
 func TestPlanCommandAndSlashEnforceReadOnlyPlanningMode(t *testing.T) {
