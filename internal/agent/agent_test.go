@@ -285,6 +285,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "blame", command)
 	require.Equal(t, []string{"notes.txt", "1", "--output-format", "json"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "changelog", "1"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "changelog", command)
+	require.Equal(t, []string{"1", "--output-format", "json"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -727,6 +732,18 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "notes.txt")
 	out.Reset()
 
+	require.NoError(t, app.Changelog([]string{"1", "--json"}))
+	var changelogJSON changelogReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &changelogJSON))
+	require.Equal(t, "changelog", changelogJSON.Kind)
+	require.Equal(t, "show", changelogJSON.Action)
+	require.Equal(t, "ok", changelogJSON.Status)
+	require.Equal(t, 1, changelogJSON.Limit)
+	require.Equal(t, 1, changelogJSON.Count)
+	require.Equal(t, "add notes", changelogJSON.Entries[0].Subject)
+	require.Contains(t, changelogJSON.Raw, "notes.txt")
+	out.Reset()
+
 	runGit(t, workspace, "tag", "v0.1.0")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644))
 	runGit(t, workspace, "add", ".")
@@ -827,6 +844,18 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.Equal(t, "cli alias commit", logJSON.Entries[0].Subject)
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "changelog", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var changelogJSON changelogReport
+	require.NoError(t, json.Unmarshal([]byte(out), &changelogJSON))
+	require.Equal(t, "changelog", changelogJSON.Kind)
+	require.Equal(t, "ok", changelogJSON.Status)
+	require.Equal(t, 1, changelogJSON.Count)
+	require.Equal(t, "cli alias commit", changelogJSON.Entries[0].Subject)
+	require.Contains(t, changelogJSON.Raw, "notes.txt")
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "blame", "notes.txt", "1"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
@@ -888,6 +917,15 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/changelog 1", sess))
 	require.Contains(t, out.String(), "slash commit")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/changelog --json 1", sess))
+	var changelogJSON changelogReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &changelogJSON))
+	require.Equal(t, "changelog", changelogJSON.Kind)
+	require.Equal(t, "ok", changelogJSON.Status)
+	require.Equal(t, 1, changelogJSON.Count)
+	require.Equal(t, "slash commit", changelogJSON.Entries[0].Subject)
 	out.Reset()
 
 	runGit(t, workspace, "tag", "v0.2.0")

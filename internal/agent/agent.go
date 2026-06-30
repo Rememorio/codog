@@ -14330,7 +14330,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -15084,16 +15084,87 @@ func renderTagReport(out io.Writer, report tagReport) {
 }
 
 func (a *App) Changelog(args []string) error {
-	limit, err := parseOptionalPositiveInt(args, 10, "changelog count")
+	req, err := parseChangelogArgs(args)
 	if err != nil {
 		return err
 	}
-	log, err := gitops.Changelog(a.Workspace, limit)
+	raw, err := gitops.Changelog(a.Workspace, req.Limit)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(a.Out, log)
+	if req.Format == "json" {
+		entries, err := gitops.LogEntries(a.Workspace, req.Limit)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(changelogReport{
+			Kind:    "changelog",
+			Action:  "show",
+			Status:  "ok",
+			Limit:   req.Limit,
+			Count:   len(entries),
+			Entries: entries,
+			Raw:     raw,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, raw)
 	return nil
+}
+
+type changelogRequest struct {
+	Format string
+	Limit  int
+}
+
+type changelogReport struct {
+	Kind    string            `json:"kind"`
+	Action  string            `json:"action"`
+	Status  string            `json:"status"`
+	Limit   int               `json:"limit"`
+	Count   int               `json:"count"`
+	Entries []gitops.LogEntry `json:"entries"`
+	Raw     string            `json:"raw"`
+}
+
+func parseChangelogArgs(args []string) (changelogRequest, error) {
+	req := changelogRequest{Format: "text", Limit: 10}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("changelog output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown changelog flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "changelog"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog changelog [count] [--json|--output-format text|json]")
+	}
+	limit, err := strconv.Atoi(positionals[0])
+	if err != nil || limit <= 0 {
+		return req, errors.New("changelog count must be a positive integer")
+	}
+	req.Limit = limit
+	return req, nil
 }
 
 type releaseNotesRequest struct {
@@ -18259,7 +18330,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "chrome",
+	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "changelog", "chrome",
 		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
@@ -18437,9 +18508,9 @@ Usage:
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE
-  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
-  %s [flags] changelog [count]
+  %s [flags] changelog [count] [--json|--output-format text|json]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
   %s [flags] node|python [--timeout-ms N] CODE|FILE [ARG...]
