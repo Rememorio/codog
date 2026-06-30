@@ -2901,6 +2901,16 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/ide", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "IDE Bridge")
 	require.Contains(t, out.String(), "Trusted editor   none")
+	out.Reset()
+
+	require.NoError(t, app.BridgeKick([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"kind": "bridge_kick"`)
+	require.Contains(t, out.String(), `"status": "ok"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/bridge-kick poll 404", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Bridge Kick")
+	require.Contains(t, out.String(), "Status           unsupported")
 }
 
 func TestBriefCommandUsesToolPayloadAndSlash(t *testing.T) {

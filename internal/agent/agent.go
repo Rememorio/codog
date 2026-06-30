@@ -450,6 +450,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RemoteSetup(rest, overrides)
 	case "bridge", "remote-control":
 		return app.Bridge(rest)
+	case "bridge-kick":
+		return app.BridgeKick(rest)
 	case "desktop", "app":
 		return app.Desktop(rest, overrides)
 	case "mobile":
@@ -1150,6 +1152,65 @@ func (a *App) IDE(args []string) error {
 	return nil
 }
 
+type bridgeKickRequest struct {
+	Action string
+	Format string
+	Args   []string
+}
+
+type bridgeKickReport struct {
+	Kind    string             `json:"kind"`
+	Action  string             `json:"action"`
+	Status  string             `json:"status"`
+	Message string             `json:"message,omitempty"`
+	Bridge  ideBridgeReport    `json:"bridge"`
+	State   bridge.EditorState `json:"state"`
+}
+
+func (a *App) BridgeKick(args []string) error {
+	req, err := parseBridgeKickArgs(args)
+	if err != nil {
+		return err
+	}
+	server := bridge.Server{
+		ConfigHome: a.Config.ConfigHome,
+		Workspace:  a.Workspace,
+		TrustToken: a.Config.Future.EditorBridgeToken,
+	}
+	report := bridgeKickReport{
+		Kind:   "bridge_kick",
+		Action: req.Action,
+		Status: "ok",
+		Bridge: ideBridgeReport{
+			Command:         "codog bridge serve",
+			Socket:          a.Config.Future.EditorBridgeSocket,
+			TokenConfigured: a.Config.Future.EditorBridgeToken != "",
+		},
+	}
+	switch req.Action {
+	case "status":
+		report.State, _ = server.EditorState()
+		report.Message = "Local bridge diagnostics are available. Remote web bridge fault injection is not available in Codog."
+	case "clear":
+		if err := server.ClearEditorState(); err != nil {
+			return err
+		}
+		report.State, _ = server.EditorState()
+		report.Message = "Cleared local trusted editor bridge state."
+	default:
+		report.Status = "unsupported"
+		report.State, _ = server.EditorState()
+		report.Message = fmt.Sprintf("bridge-kick %s is a Claude web bridge fault-injection command; Codog supports local status and clear only.", strings.Join(append([]string{req.Action}, req.Args...), " "))
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBridgeKickReport(a.Out, report)
+	return nil
+}
+
 func parseIDEArgs(args []string) (ideRequest, error) {
 	req := ideRequest{Action: "status", Format: "text"}
 	actionSet := false
@@ -1192,6 +1253,38 @@ func parseIDEArgs(args []string) (ideRequest, error) {
 	}
 }
 
+func parseBridgeKickArgs(args []string) (bridgeKickRequest, error) {
+	req := bridgeKickRequest{Action: "status", Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("bridge-kick output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown bridge-kick flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "bridge-kick"); err != nil {
+		return req, err
+	}
+	if len(positionals) != 0 {
+		req.Action = strings.ToLower(positionals[0])
+		req.Args = positionals[1:]
+	}
+	return req, nil
+}
+
 func renderIDEReport(out io.Writer, report ideReport) {
 	fmt.Fprintln(out, "IDE Bridge")
 	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
@@ -1225,6 +1318,23 @@ func renderIDEReport(out io.Writer, report ideReport) {
 			fmt.Fprintf(out, "-%d", selection.EndLine)
 		}
 		fmt.Fprintln(out)
+	}
+}
+
+func renderBridgeKickReport(out io.Writer, report bridgeKickReport) {
+	fmt.Fprintln(out, "Bridge Kick")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Bridge command   %s\n", report.Bridge.Command)
+	fmt.Fprintf(out, "  Socket           %s\n", emptyAsNone(report.Bridge.Socket))
+	fmt.Fprintf(out, "  Token configured %t\n", report.Bridge.TokenConfigured)
+	if report.State.Identity == nil {
+		fmt.Fprintln(out, "  Trusted editor   none")
+	} else {
+		fmt.Fprintf(out, "  Trusted editor   %s\n", report.State.Identity.Editor)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
 	}
 }
 
@@ -11181,6 +11291,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Bridge(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/bridge-kick":
+		if err := a.BridgeKick(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/desktop", "/app":
 		if err := a.Desktop(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -15559,7 +15673,7 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote serve [addr] | bridge|remote-control serve | ide [status|clear] | updater check|verify|download|install|rollback
+  %s remote serve [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]

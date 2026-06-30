@@ -65,7 +65,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/node`, `/python`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/bridge-kick`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -323,6 +323,9 @@ Claude Code source.
   prompt turns, workspace info, file listing/search/diff, diagnostics,
   code-intelligence queries, background task control/watch events, and bounded
   file read/write/edit operations.
+- `codog bridge-kick [status|clear]` and `/bridge-kick` inspect or clear local
+  bridge diagnostics; Claude web bridge fault injection subcommands are
+  reported as unsupported in Codog.
 - `codog ide [status|clear]` and `/ide` inspect or clear the trusted editor
   bridge state recorded by `codog bridge serve`, including the connected
   editor, active file, and selection.
