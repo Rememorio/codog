@@ -130,7 +130,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 		"voice_enabled": true,
 		"voice_command": "cat",
 		"future": {
-			"chrome_default_enabled": true
+			"chrome_default_enabled": true,
+			"slack_app_install_count": 3
 		},
 		"privacy_settings": {
 			"telemetry_enabled": true,
@@ -151,6 +152,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "cat", cfg.VoiceCommand)
 	require.NotNil(t, cfg.Future.ChromeDefaultEnabled)
 	require.True(t, *cfg.Future.ChromeDefaultEnabled)
+	require.Equal(t, 3, cfg.Future.SlackAppInstallCount)
 	require.NotNil(t, cfg.Privacy.TelemetryEnabled)
 	require.True(t, *cfg.Privacy.TelemetryEnabled)
 	require.NotNil(t, cfg.Privacy.CrashReportsEnabled)

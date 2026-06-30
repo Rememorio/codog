@@ -62,7 +62,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -238,6 +238,8 @@ Claude Code source.
   `/install-github-app` create Claude Code GitHub Actions workflow files using
   the official `anthropics/claude-code-action`, with `--dry-run`, custom secret
   names, and `--force` overwrite support.
+- `codog install-slack-app [--no-open]` and `/install-slack-app` open or print
+  the Claude Slack app Marketplace URL and record a local install-click count.
 - `codog terminal-setup status|snippet|install|uninstall` and
   `/terminal-setup` inspect or manage idempotent shell integration snippets for
   zsh, bash, fish, and PowerShell.

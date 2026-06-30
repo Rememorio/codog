@@ -80,6 +80,7 @@ type FutureConfig struct {
 	EditorBridgeToken         string            `json:"editor_bridge_token,omitempty"`
 	BackgroundStatePath       string            `json:"background_state_path,omitempty"`
 	ChromeDefaultEnabled      *bool             `json:"chrome_default_enabled,omitempty"`
+	SlackAppInstallCount      int               `json:"slack_app_install_count,omitempty"`
 }
 
 type PermissionRules struct {
@@ -577,7 +578,8 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.EditorBridgeSocket != "" ||
 		cfg.EditorBridgeToken != "" ||
 		cfg.BackgroundStatePath != "" ||
-		cfg.ChromeDefaultEnabled != nil
+		cfg.ChromeDefaultEnabled != nil ||
+		cfg.SlackAppInstallCount != 0
 }
 
 func permissionRulesSet(rules PermissionRules) bool {

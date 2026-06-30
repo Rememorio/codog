@@ -330,6 +330,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.PRComments(ctx, rest)
 	case "install-github-app":
 		return app.InstallGitHubApp(rest)
+	case "install-slack-app":
+		return app.InstallSlackApp(rest)
 	case "issue":
 		return app.IssueDraft(rest, overrides)
 	case "run":
@@ -7269,6 +7271,29 @@ type installGitHubAppRequest struct {
 	DryRun     bool
 }
 
+type installSlackAppRequest struct {
+	Format string
+	Target string
+	Path   string
+	Open   bool
+}
+
+type installSlackAppReport struct {
+	Kind         string `json:"kind"`
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	URL          string `json:"url"`
+	Opened       bool   `json:"opened"`
+	Opener       string `json:"opener,omitempty"`
+	InstallCount int    `json:"install_count"`
+	Path         string `json:"path,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
+
+var openExternalURL = openSystemURL
+
 func (a *App) PRComments(ctx context.Context, args []string) error {
 	req, err := parsePRCommentsArgs(args)
 	if err != nil {
@@ -7433,6 +7458,133 @@ func renderInstallGitHubAppReport(out io.Writer, report githubsetup.Report) {
 	for _, instruction := range report.Instructions {
 		fmt.Fprintf(out, "  Next             %s\n", instruction)
 	}
+}
+
+func (a *App) InstallSlackApp(args []string) error {
+	req, err := parseInstallSlackAppArgs(args)
+	if err != nil {
+		return err
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	count := a.Config.Future.SlackAppInstallCount + 1
+	if _, err := config.SetFileValue(path, "future.slack_app_install_count", count); err != nil {
+		return err
+	}
+	a.Config.Future.SlackAppInstallCount = count
+	report := installSlackAppReport{
+		Kind:         "install_slack_app",
+		Action:       "open",
+		Status:       "ok",
+		URL:          slackAppURL,
+		InstallCount: count,
+		Path:         path,
+		Message:      "Visit the Slack Marketplace URL to install the Claude app.",
+	}
+	if req.Open {
+		opener, err := openExternalURL(slackAppURL)
+		if err != nil {
+			report.Status = "open_failed"
+			report.Message = "Could not open a browser automatically. Visit the URL manually."
+		} else {
+			report.Opened = true
+			report.Opener = opener
+			report.Message = "Opening Slack app installation page in browser."
+		}
+	} else {
+		report.Action = "show"
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderInstallSlackAppReport(a.Out, report)
+	return nil
+}
+
+func parseInstallSlackAppArgs(args []string) (installSlackAppRequest, error) {
+	req := installSlackAppRequest{Format: "text", Target: "user", Open: true}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("install-slack-app output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("install-slack-app target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("install-slack-app config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--open":
+			req.Open = true
+		case arg == "--no-open":
+			req.Open = false
+		default:
+			return req, fmt.Errorf("unknown install-slack-app option %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "install-slack-app"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderInstallSlackAppReport(out io.Writer, report installSlackAppReport) {
+	fmt.Fprintln(out, "Slack App Setup")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  URL              %s\n", report.URL)
+	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
+	if report.Opener != "" {
+		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
+	}
+	fmt.Fprintf(out, "  Install count    %d\n", report.InstallCount)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func openSystemURL(url string) (string, error) {
+	var command []string
+	switch runtime.GOOS {
+	case "darwin":
+		command = []string{"open", url}
+	case "windows":
+		command = []string{"rundll32", "url.dll,FileProtocolHandler", url}
+	default:
+		command = []string{"xdg-open", url}
+	}
+	if _, err := exec.LookPath(command[0]); err != nil {
+		return "", err
+	}
+	cmd := exec.Command(command[0], command[1:]...)
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	return command[0], nil
 }
 
 func (a *App) IssueDraft(args []string, overrides config.FlagOverrides) error {
@@ -10204,6 +10356,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/install-github-app":
 		if err := a.InstallGitHubApp(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/install-slack-app":
+		if err := a.InstallSlackApp(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/issue":
@@ -14062,6 +14218,7 @@ Usage:
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
+  %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
@@ -14135,7 +14292,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
