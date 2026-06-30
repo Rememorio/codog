@@ -18606,9 +18606,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		if len(rest) > 0 && rest[0] == "prompt" {
 			rest = rest[1:]
 		}
-		if outputFormat == "" && jsonOutput {
-			outputFormat = "json"
-		}
+		outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
 		rest = injectGlobalOutputFormat("prompt", rest, outputFormat)
 		return base, "prompt", rest, nil
 	}
@@ -18616,11 +18614,19 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		return base, "", nil, nil
 	}
 	command, rest := rest[0], rest[1:]
-	if outputFormat == "" && jsonOutput {
-		outputFormat = "json"
-	}
+	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
 	return base, command, rest, nil
+}
+
+func resolveGlobalOutputFormat(outputFormat string, jsonOutput bool) string {
+	if strings.TrimSpace(outputFormat) != "" {
+		return outputFormat
+	}
+	if jsonOutput {
+		return "json"
+	}
+	return strings.TrimSpace(os.Getenv("CODOG_OUTPUT_FORMAT"))
 }
 
 func injectGlobalOutputFormat(command string, rest []string, format string) []string {
@@ -18863,7 +18869,7 @@ Flags:
   --max-turns N
   --max-tokens N
   --json
-  --output-format text|json (prompt also accepts stream-json)
+  --output-format text|json (prompt also accepts stream-json; CODOG_OUTPUT_FORMAT sets the default)
   --config PATH
 
 Environment:

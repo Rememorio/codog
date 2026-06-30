@@ -311,6 +311,25 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, []string{"doctor", "--output-format", "json"}, rest)
 }
 
+func TestParseFlagsSupportsOutputFormatEnv(t *testing.T) {
+	t.Setenv("CODOG_OUTPUT_FORMAT", "json")
+
+	_, command, rest, err := parseFlags([]string{"status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Equal(t, []string{"--output-format", "json"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--output-format", "text", "status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Equal(t, []string{"--output-format", "text"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"config", "get", "auth"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "config", command)
+	require.Equal(t, []string{"get", "auth", "--output-format", "json"}, rest)
+}
+
 func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	req, err := parsePromptArgs([]string{"hello", "--output-format", "json"})
 	require.NoError(t, err)
