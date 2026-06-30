@@ -23,6 +23,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/model")
 	require.Contains(t, out.String(), "/max-tokens")
 	require.Contains(t, out.String(), "/max-turns")
+	require.Contains(t, out.String(), "/btw")
 	require.Contains(t, out.String(), "/permissions")
 	require.Contains(t, out.String(), "/allowed-tools")
 	require.Contains(t, out.String(), "/clear")

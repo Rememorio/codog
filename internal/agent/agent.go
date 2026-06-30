@@ -227,6 +227,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			input = string(data)
 		}
 		return app.Prompt(ctx, input, overrides)
+	case "btw":
+		return app.BTW(ctx, rest, overrides, nil)
 	case "sessions":
 		return app.SessionsCommand(rest)
 	case "rename":
@@ -9130,6 +9132,130 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	return nil
 }
 
+type btwRequest struct {
+	Question  string
+	SessionID string
+}
+
+func (a *App) BTW(ctx context.Context, args []string, overrides config.FlagOverrides, active *session.Session) error {
+	req, err := parseBTWArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if a.Sessions == nil {
+		return errors.New("session store is unavailable")
+	}
+	if a.Tools == nil {
+		return errors.New("tool registry is not initialized")
+	}
+	if err := a.RegisterMCPTools(ctx); err != nil {
+		return err
+	}
+	source, err := a.btwSourceSession(req.SessionID, active)
+	if err != nil {
+		return err
+	}
+	side, err := a.btwSideSession(source)
+	if err != nil {
+		return err
+	}
+	if err := a.runSessionTurn(ctx, "btw", side, req.Question, "completed"); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Err, "\n\nbtw session: %s\n", side.ID)
+	if source != nil && strings.TrimSpace(source.ID) != "" {
+		fmt.Fprintf(a.Err, "source session: %s\n", source.ID)
+	}
+	return nil
+}
+
+func parseBTWArgs(args []string, overrides config.FlagOverrides) (btwRequest, error) {
+	req := btwRequest{SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID)}
+	questionParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--":
+			questionParts = append(questionParts, args[index+1:]...)
+			index = len(args)
+		case len(questionParts) == 0 && arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("btw session id is required")
+			}
+			req.SessionID = args[index]
+		case len(questionParts) == 0 && strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case len(questionParts) == 0 && arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("btw resume session id is required")
+			}
+			req.SessionID = args[index]
+		case len(questionParts) == 0 && strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case len(questionParts) == 0 && strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown btw flag %q", arg)
+		default:
+			questionParts = append(questionParts, arg)
+		}
+	}
+	req.Question = strings.TrimSpace(strings.Join(questionParts, " "))
+	if req.Question == "" {
+		return req, errors.New("usage: codog btw QUESTION [--session ID|--resume ID]")
+	}
+	if req.SessionID == "true" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func (a *App) btwSourceSession(sessionID string, active *session.Session) (*session.Session, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" && active != nil && strings.TrimSpace(active.ID) != "" {
+		return active, nil
+	}
+	if sessionID == "" {
+		return nil, nil
+	}
+	if sessionID == "latest" {
+		latest, err := a.Sessions.LatestID()
+		if err != nil {
+			return nil, err
+		}
+		sessionID = latest
+	}
+	if active != nil && active.ID == sessionID {
+		return active, nil
+	}
+	return a.Sessions.Open(sessionID)
+}
+
+func (a *App) btwSideSession(source *session.Session) (*session.Session, error) {
+	if source != nil && strings.TrimSpace(source.ID) != "" {
+		exists, err := a.Sessions.Exists(source.ID)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			forked, err := a.Sessions.Fork(source.ID, "btw")
+			if err != nil {
+				return nil, err
+			}
+			forked.Messages = append([]anthropic.Message(nil), source.Messages...)
+			return forked, nil
+		}
+	}
+	side, err := a.Sessions.Open("")
+	if err != nil {
+		return nil, err
+	}
+	if source != nil {
+		side.Messages = append([]anthropic.Message(nil), source.Messages...)
+	}
+	return side, nil
+}
+
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
 	if a.promptHistoryEnabled() {
 		if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
@@ -9735,6 +9861,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/brief":
 		if err := a.Brief(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/btw":
+		if err := a.BTW(ctx, fields[1:], config.FlagOverrides{}, sess); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/ide":
@@ -13241,6 +13371,7 @@ func printHelp(out io.Writer) {
 
 Usage:
   %s [flags] prompt "explain this repo" | -p "explain this repo"
+  %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
   %s [flags] repl
@@ -13353,7 +13484,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

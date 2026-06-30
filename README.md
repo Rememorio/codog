@@ -53,13 +53,15 @@ Claude Code source.
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags
 - System prompt override and append support with `--system-prompt` and
   `--append-system-prompt`
+- `codog btw QUESTION` and `/btw QUESTION` answer a quick side question in a
+  forked session so the active conversation is not modified.
 
 - `codog tui` starts a Bubble Tea prompt composer with Tab completion for
   built-in/custom slash commands, skill shortcuts, common subcommands, the
   current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,

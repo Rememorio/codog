@@ -2524,6 +2524,65 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	require.Equal(t, "hello", history[0].Text)
 }
 
+func TestBTWUsesForkedSideSession(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "side done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	require.NoError(t, app.Sessions.Append("main-session", anthropic.TextMessage("user", "source context")))
+	sess, err := app.Sessions.Open("main-session")
+	require.NoError(t, err)
+	sourceMessages := len(sess.Messages)
+
+	require.True(t, app.handleSlash(context.Background(), "/btw answer a side question", sess))
+	require.Contains(t, out.String(), "side done")
+	require.Contains(t, errOut.String(), "btw session:")
+	require.Contains(t, errOut.String(), "source session: main-session")
+	require.Len(t, sess.Messages, sourceMessages)
+
+	source, err := app.Sessions.Open("main-session")
+	require.NoError(t, err)
+	require.Len(t, source.Messages, sourceMessages)
+	sideID := extractLineValue(errOut.String(), "btw session:")
+	require.NotEmpty(t, sideID)
+	side, err := app.Sessions.Open(sideID)
+	require.NoError(t, err)
+	require.Len(t, side.Messages, sourceMessages+2)
+	require.Equal(t, "answer a side question", side.Messages[sourceMessages].Content[0].Text)
+	require.Contains(t, side.Messages[sourceMessages+1].Content[0].Text, "side done")
+}
+
+func extractLineValue(text string, prefix string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
 func TestPromptExpandsFileReferencesForModelInput(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
 	defer server.Close()
