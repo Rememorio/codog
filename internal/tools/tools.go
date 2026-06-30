@@ -1734,7 +1734,11 @@ func (ReadFileTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path":   map[string]any{"type": "string"},
+				"path": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Claude-compatible alias for path.",
+				},
 				"offset": map[string]any{"type": "integer", "minimum": 0},
 				"limit":  map[string]any{"type": "integer", "minimum": 1},
 			},
@@ -1748,14 +1752,15 @@ func (ReadFileTool) Permission() Permission { return PermissionReadOnly }
 
 func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Path   string `json:"path"`
-		Offset int    `json:"offset"`
-		Limit  int    `json:"limit"`
+		Path     string `json:"path"`
+		FilePath string `json:"file_path"`
+		Offset   int    `json:"offset"`
+		Limit    int    `json:"limit"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, firstNonEmpty(payload.Path, payload.FilePath), false)
 	if err != nil {
 		return "", err
 	}
@@ -1794,7 +1799,11 @@ func (WriteFileTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path":    map[string]any{"type": "string"},
+				"path": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Claude-compatible alias for path.",
+				},
 				"content": map[string]any{"type": "string"},
 			},
 			"required":             []string{"path", "content"},
@@ -1807,8 +1816,9 @@ func (WriteFileTool) Permission() Permission { return PermissionWorkspace }
 
 func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path     string `json:"path"`
+		FilePath string `json:"file_path"`
+		Content  string `json:"content"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -1816,7 +1826,7 @@ func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string
 	if int64(len(payload.Content)) > maxFileToolBytes {
 		return "", fmt.Errorf("content exceeds maximum file tool size of %d bytes", maxFileToolBytes)
 	}
-	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, true)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, firstNonEmpty(payload.Path, payload.FilePath), true)
 	if err != nil {
 		return "", err
 	}
@@ -1845,7 +1855,11 @@ func (EditFileTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path":        map[string]any{"type": "string"},
+				"path": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Claude-compatible alias for path.",
+				},
 				"old_string":  map[string]any{"type": "string"},
 				"new_string":  map[string]any{"type": "string"},
 				"replace_all": map[string]any{"type": "boolean"},
@@ -1861,6 +1875,7 @@ func (EditFileTool) Permission() Permission { return PermissionWorkspace }
 func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Path       string `json:"path"`
+		FilePath   string `json:"file_path"`
 		OldString  string `json:"old_string"`
 		NewString  string `json:"new_string"`
 		ReplaceAll bool   `json:"replace_all"`
@@ -1871,7 +1886,7 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if payload.OldString == "" {
 		return "", errors.New("old_string is required")
 	}
-	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, firstNonEmpty(payload.Path, payload.FilePath), false)
 	if err != nil {
 		return "", err
 	}
@@ -1917,6 +1932,10 @@ func (MultiEditTool) Definition() anthropic.ToolDefinition {
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]any{"type": "string"},
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Claude-compatible alias for path.",
+				},
 				"edits": map[string]any{
 					"type": "array",
 					"items": map[string]any{
@@ -1941,8 +1960,9 @@ func (MultiEditTool) Permission() Permission { return PermissionWorkspace }
 
 func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Path  string `json:"path"`
-		Edits []struct {
+		Path     string `json:"path"`
+		FilePath string `json:"file_path"`
+		Edits    []struct {
 			OldString  string `json:"old_string"`
 			NewString  string `json:"new_string"`
 			ReplaceAll bool   `json:"replace_all"`
@@ -1954,7 +1974,7 @@ func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string
 	if len(payload.Edits) == 0 {
 		return "", errors.New("edits are required")
 	}
-	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, payload.Path, false)
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, firstNonEmpty(payload.Path, payload.FilePath), false)
 	if err != nil {
 		return "", err
 	}
@@ -5512,6 +5532,15 @@ func readFileLimited(path string, maxBytes int64) ([]byte, bool, error) {
 		return data[:maxBytes], true, nil
 	}
 	return data, false, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func safePathInScope(workspace string, additionalDirs []string, requested string, allowMissing bool) (string, error) {

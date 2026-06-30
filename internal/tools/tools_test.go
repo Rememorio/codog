@@ -442,6 +442,10 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "alpha")
 
+	out, err = registry.Execute(context.Background(), "Read", []byte(`{"file_path":"notes.txt"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "alpha")
+
 	out, err = registry.Execute(context.Background(), "Bash", []byte(`{"command":"printf alias-ok"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "alias-ok"`)
@@ -494,6 +498,27 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 	require.Contains(t, out, `"target_tool": "bash"`)
 	require.Contains(t, out, `"known_tool": true`)
 	require.Contains(t, out, `"required_permission": "danger-full-access"`)
+}
+
+func TestFileToolsAcceptClaudeFilePathParameter(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+
+	out, err := registry.Execute(context.Background(), "Write", []byte(`{"file_path":"notes.txt","content":"alpha beta alpha\n"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "create"`)
+
+	out, err = registry.Execute(context.Background(), "Edit", []byte(`{"file_path":"notes.txt","old_string":"beta","new_string":"gamma"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"replacements": 1`)
+
+	out, err = registry.Execute(context.Background(), "MultiEdit", []byte(`{"file_path":"notes.txt","edits":[{"old_string":"alpha","new_string":"delta","replace_all":true}]}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"replacements": 2`)
+
+	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "delta gamma delta\n", string(data))
 }
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
