@@ -236,6 +236,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BTW(ctx, rest, overrides, nil)
 	case "sessions":
 		return app.SessionsCommand(rest)
+	case "backfill-sessions":
+		return app.BackfillSessions(rest)
 	case "rename":
 		return app.Rename(rest, overrides)
 	case "history", "prompt-history":
@@ -11768,6 +11770,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/session":
 		a.handleSessionSlash(fields[1:], sess)
+	case "/backfill-sessions":
+		if err := a.BackfillSessions(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/clear":
 		a.handleClearSlash(fields[1:], sess)
 	case "/resume":
@@ -14156,6 +14162,33 @@ func (a *App) SessionsCommand(args []string) error {
 	return nil
 }
 
+func (a *App) BackfillSessions(args []string) error {
+	format, err := parseSimpleOutputFormat("backfill-sessions", args)
+	if err != nil {
+		return err
+	}
+	report, err := a.Sessions.BackfillPromptHistory()
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBackfillSessions(a.Out, report)
+	return nil
+}
+
+func renderBackfillSessions(out io.Writer, report session.BackfillReport) {
+	fmt.Fprintln(out, "Backfill Sessions")
+	fmt.Fprintf(out, "  Sessions scanned %d\n", report.SessionsScanned)
+	fmt.Fprintf(out, "  Sessions updated %d\n", report.SessionsUpdated)
+	fmt.Fprintf(out, "  Inputs added      %d\n", report.InputsAdded)
+	fmt.Fprintf(out, "  Skipped existing  %d\n", report.SkippedWithInputs)
+	fmt.Fprintf(out, "  Skipped disabled  %d\n", report.SkippedDisabled)
+}
+
 func (a *App) ListSessions() error {
 	sessions, err := a.Sessions.List()
 	if err != nil {
@@ -15618,6 +15651,7 @@ Usage:
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|rename|delete]
+  %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]

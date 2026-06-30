@@ -46,6 +46,30 @@ type UsageEntry struct {
 	Usage        anthropic.Usage `json:"usage"`
 }
 
+type BackfillReport struct {
+	Kind                  string                   `json:"kind"`
+	Action                string                   `json:"action"`
+	Status                string                   `json:"status"`
+	SessionsScanned       int                      `json:"sessions_scanned"`
+	SessionsUpdated       int                      `json:"sessions_updated"`
+	InputsAdded           int                      `json:"inputs_added"`
+	SkippedWithInputs     int                      `json:"skipped_with_inputs"`
+	SkippedDisabled       int                      `json:"skipped_disabled"`
+	BackfilledSessions    []BackfilledSession      `json:"backfilled_sessions,omitempty"`
+	SkippedSessionDetails []BackfillSkippedSession `json:"skipped_session_details,omitempty"`
+}
+
+type BackfilledSession struct {
+	ID     string `json:"id"`
+	Path   string `json:"path"`
+	Inputs int    `json:"inputs"`
+}
+
+type BackfillSkippedSession struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
 type RewindResult struct {
 	SessionID         string `json:"session_id"`
 	Path              string `json:"path"`
@@ -481,6 +505,61 @@ func (s *Store) Usage(id string) ([]UsageEntry, error) {
 	return entries, nil
 }
 
+func (s *Store) BackfillPromptHistory() (BackfillReport, error) {
+	sessions, err := s.List()
+	if err != nil {
+		return BackfillReport{}, err
+	}
+	report := BackfillReport{
+		Kind:            "backfill_sessions",
+		Action:          "prompt_history",
+		Status:          "ok",
+		SessionsScanned: len(sessions),
+	}
+	for _, sess := range sessions {
+		records, err := s.readRecords(sess.Path)
+		if err != nil {
+			return BackfillReport{}, err
+		}
+		hasInput := false
+		disabled := false
+		for _, record := range records {
+			switch record.Type {
+			case "input":
+				if strings.TrimSpace(record.Input) != "" {
+					hasInput = true
+				}
+			case "prompt_history":
+				if strings.EqualFold(strings.TrimSpace(record.Input), "disabled") {
+					disabled = true
+				}
+			}
+		}
+		if hasInput {
+			report.SkippedWithInputs++
+			report.SkippedSessionDetails = append(report.SkippedSessionDetails, BackfillSkippedSession{ID: sess.ID, Reason: "existing_inputs"})
+			continue
+		}
+		if disabled {
+			report.SkippedDisabled++
+			report.SkippedSessionDetails = append(report.SkippedSessionDetails, BackfillSkippedSession{ID: sess.ID, Reason: "prompt_history_disabled"})
+			continue
+		}
+		inputs := promptInputsFromRecords(sess.ID, records)
+		if len(inputs) == 0 {
+			continue
+		}
+		records = append(records, inputs...)
+		if err := s.writeRecords(sess.Path, records); err != nil {
+			return BackfillReport{}, err
+		}
+		report.SessionsUpdated++
+		report.InputsAdded += len(inputs)
+		report.BackfilledSessions = append(report.BackfilledSessions, BackfilledSession{ID: sess.ID, Path: sess.Path, Inputs: len(inputs)})
+	}
+	return report, nil
+}
+
 func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 	if strings.TrimSpace(id) == "" {
 		return RewindResult{}, errors.New("session id is required")
@@ -541,6 +620,32 @@ func usageEmpty(usage anthropic.Usage) bool {
 		usage.OutputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 &&
 		usage.CacheReadInputTokens == 0
+}
+
+func promptInputsFromRecords(sessionID string, records []Record) []Record {
+	inputs := []Record{}
+	for _, record := range records {
+		if record.Message == nil || record.Message.Role != "user" {
+			continue
+		}
+		for _, block := range record.Message.Content {
+			if block.Type != "text" || strings.TrimSpace(block.Text) == "" {
+				continue
+			}
+			when := record.Time
+			if when.IsZero() {
+				when = time.Now().UTC()
+			}
+			inputs = append(inputs, Record{
+				Type:      "input",
+				Time:      when,
+				Input:     strings.TrimSpace(block.Text),
+				SessionID: sessionID,
+			})
+			break
+		}
+	}
+	return inputs
 }
 
 func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (ReplaceResult, error) {

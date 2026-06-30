@@ -296,6 +296,39 @@ func TestPromptHistoryDisabledMarkerSuppressesUserMessageFallback(t *testing.T) 
 	require.Empty(t, entries)
 }
 
+func TestBackfillPromptHistory(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("legacy", anthropic.TextMessage("user", "first legacy prompt")))
+	require.NoError(t, store.Append("legacy", anthropic.TextMessage("assistant", "answer")))
+	require.NoError(t, store.Append("legacy", anthropic.TextMessage("user", "second legacy prompt")))
+	require.NoError(t, store.AppendInput("current", "already recorded"))
+	require.NoError(t, store.Append("current", anthropic.TextMessage("user", "current prompt")))
+	require.NoError(t, store.AppendPromptHistoryDisabled("private"))
+	require.NoError(t, store.Append("private", anthropic.TextMessage("user", "private prompt")))
+
+	report, err := store.BackfillPromptHistory()
+	require.NoError(t, err)
+	require.Equal(t, "backfill_sessions", report.Kind)
+	require.Equal(t, 3, report.SessionsScanned)
+	require.Equal(t, 1, report.SessionsUpdated)
+	require.Equal(t, 2, report.InputsAdded)
+	require.Equal(t, 1, report.SkippedWithInputs)
+	require.Equal(t, 1, report.SkippedDisabled)
+
+	entries, err := store.PromptHistory("legacy")
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, "first legacy prompt", entries[0].Text)
+	require.Equal(t, "second legacy prompt", entries[1].Text)
+
+	report, err = store.BackfillPromptHistory()
+	require.NoError(t, err)
+	require.Equal(t, 0, report.SessionsUpdated)
+	require.Equal(t, 0, report.InputsAdded)
+	require.Equal(t, 2, report.SkippedWithInputs)
+	require.Equal(t, 1, report.SkippedDisabled)
+}
+
 func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize <this> repo")))

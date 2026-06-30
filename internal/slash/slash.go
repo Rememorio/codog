@@ -99,6 +99,7 @@ func Specs() []Spec {
 		{Name: "/summary", Usage: "/summary", Description: "Summarize the current session."},
 		{Name: "/todos", Usage: "/todos [list|add|start|done|pending|clear]", Description: "Show or update the workspace todo list."},
 		{Name: "/session", Usage: "/session [list|exists|switch|fork|delete]", Description: "Manage saved sessions."},
+		{Name: "/backfill-sessions", Usage: "/backfill-sessions [--json]", Description: "Persist prompt history records for older sessions."},
 		{Name: "/prompt-history", Usage: "/prompt-history [limit]", Description: "Alias for /history."},
 		{Name: "/rename", Usage: "/rename NEW_ID", Description: "Rename the active session."},
 		{Name: "/resume", Usage: "/resume [session-id|latest]", Description: "Load a saved session into the REPL."},

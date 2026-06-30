@@ -235,6 +235,25 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
+func TestBackfillSessionsCommandAndSlash(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("legacy", anthropic.TextMessage("user", "legacy prompt")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.BackfillSessions([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "backfill_sessions"`)
+	require.Contains(t, out.String(), `"sessions_updated": 1`)
+	require.Contains(t, out.String(), `"inputs_added": 1`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/backfill-sessions", &session.Session{ID: "legacy"}))
+	require.Contains(t, out.String(), "Backfill Sessions")
+	require.Contains(t, out.String(), "Sessions scanned 1")
+	require.Empty(t, errOut.String())
+}
+
 func TestRewindCommandAndSlash(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
