@@ -273,7 +273,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 71)
+	require.Len(t, infos, 72)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -302,6 +302,10 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	_, ok = registry.Info("notebook_edit")
 	require.True(t, ok)
+	info, ok = registry.Info("NotebookRead")
+	require.True(t, ok)
+	require.Equal(t, "notebook_read", info.Name)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 	info, ok = registry.Info("lsp")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
@@ -582,6 +586,30 @@ func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 	info, ok := registry.Info("notebook_edit")
 	require.True(t, ok)
 	require.Equal(t, PermissionWorkspace, info.Permission)
+}
+
+func TestNotebookReadToolReadsCellsAndOutputs(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "analysis.ipynb"), []byte(`{
+  "cells": [
+    {"cell_type":"markdown","source":["# Title\n","notes"],"metadata":{}},
+    {"cell_type":"code","execution_count":1,"source":["print('hi')\n"],"outputs":[{"output_type":"stream","name":"stdout","text":["hi\n"]}]}
+  ],
+  "metadata": {}
+}`), 0o644))
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "NotebookRead", []byte(`{"notebook_path":"analysis.ipynb","cell_index":1,"include_outputs":true}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "notebook_read"`)
+	require.Contains(t, out, `"cell_count": 2`)
+	require.Contains(t, out, `"index": 1`)
+	require.Contains(t, out, `"source": "print('hi')\n"`)
+	require.Contains(t, out, `"output_count": 1`)
+	require.Contains(t, out, `"outputs": [`)
+
+	info, ok := registry.Info("notebook_read")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
 func TestLSPToolQueriesCodeIntel(t *testing.T) {

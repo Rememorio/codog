@@ -13,7 +13,7 @@ Claude Code source.
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `bash_output`, `kill_bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `ls`, `web_fetch`, `web_search`, `remote_trigger`,
-  `notebook_edit`,
+  `notebook_read`, `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
   `team_create`, `team_list`, `team_get`, `team_delete`,
   `worker_create`, `worker_list`, `worker_get`, `worker_observe`, `worker_resolve_trust`,
@@ -30,7 +30,7 @@ Claude Code source.
   `todo_read`, `todo_write`, `testing_permission`, `git_status`, `git_diff`, `git_log`,
   `git_show`, `git_blame`
 - Claude Code-style model tool names such as `Bash`, `Read`, `Write`, `Edit`,
-  `BashOutput`, `KillBash`, `MultiEdit`, `LS`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
+  `BashOutput`, `KillBash`, `MultiEdit`, `LS`, `NotebookRead`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
   as execution aliases while Codog keeps one canonical tool definition per
   capability.
 - Permission confirmation with `read-only`, `workspace-write`,
@@ -217,7 +217,8 @@ Claude Code source.
   symbol and keyword candidates, while `format PATH [--write]` previews or
   writes `gofmt` output for workspace-scoped Go files.
 - `codog code-intel symbols|diagnostics|completion|format` remains available
-  for compatibility, `notebook-edit` updates `.ipynb` cells, and
+  for compatibility, `notebook_read` reads `.ipynb` cell sources and optional
+  outputs, `notebook-edit` updates `.ipynb` cells, and
   `lsp discover|start|list|status|stop` manages local language server
   lifecycles. `code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]`
   starts the saved LSP command over stdio for one request when a real server is
