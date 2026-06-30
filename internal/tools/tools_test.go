@@ -115,6 +115,29 @@ func TestFileToolsAllowAdditionalDirs(t *testing.T) {
 	require.Contains(t, out, extraFile)
 }
 
+func TestLSToolListsScopedDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "main.go"), []byte("package pkg\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("docs\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".secret"), []byte("hidden\n"), 0o644))
+
+	out, err := LSTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"ignore":["README.md"]}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "ls"`)
+	require.Contains(t, out, `"name": "pkg"`)
+	require.Contains(t, out, `"type": "directory"`)
+	require.NotContains(t, out, `"name": "README.md"`)
+	require.NotContains(t, out, `.secret`)
+
+	out, err = NewRegistry(workspace).Execute(context.Background(), "LS", []byte(`{"path":".","hidden":true}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"hidden": true`)
+	out, err = NewRegistry(workspace).Execute(context.Background(), "LS", []byte(`{"path":".","hidden":true,"limit":1}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"truncated": true`)
+}
+
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "a.txt")
@@ -224,7 +247,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 68)
+	require.Len(t, infos, 69)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -234,6 +257,9 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("Read")
 	require.True(t, ok)
 	require.Equal(t, "read_file", info.Name)
+	info, ok = registry.Info("LS")
+	require.True(t, ok)
+	require.Equal(t, "ls", info.Name)
 	info, ok = registry.Info("TodoWrite")
 	require.True(t, ok)
 	require.Equal(t, "todo_write", info.Name)

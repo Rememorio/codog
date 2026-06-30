@@ -117,6 +117,7 @@ var claudeToolAliases = map[string]string{
 	"listmcpprompts":           "list_mcp_prompts",
 	"listmcpresources":         "list_mcp_resources",
 	"listmcpresourcetemplates": "list_mcp_resource_templates",
+	"ls":                       "ls",
 	"mcp":                      "mcp",
 	"mcpauth":                  "mcp_auth",
 	"multiedit":                "multi_edit",
@@ -179,6 +180,7 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	reg.Register(LSTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WebFetchTool{})
 	reg.Register(WebSearchTool{})
 	reg.Register(RemoteTriggerTool{})
@@ -254,6 +256,7 @@ func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(LSTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(BriefTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(SendUserMessageTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(NotebookEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -1957,6 +1960,143 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	sort.Strings(files)
 	return pretty(map[string]any{"files": files, "truncated": len(files) >= limit}), nil
+}
+
+type LSTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+type lsEntry struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Type   string `json:"type"`
+	Size   int64  `json:"size"`
+	Hidden bool   `json:"hidden,omitempty"`
+}
+
+func (LSTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "ls",
+		Description: "List files and directories in a workspace-scoped directory.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":   map[string]any{"type": "string"},
+				"ignore": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"hidden": map[string]any{"type": "boolean"},
+				"limit":  map[string]any{"type": "integer", "minimum": 1},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (LSTool) Permission() Permission { return PermissionReadOnly }
+
+func (t LSTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Path   string   `json:"path"`
+		Ignore []string `json:"ignore"`
+		Hidden bool     `json:"hidden"`
+		Limit  int      `json:"limit"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	requested := strings.TrimSpace(payload.Path)
+	if requested == "" {
+		requested = "."
+	}
+	dir, err := safePathInScope(t.Workspace, t.AdditionalDirs, requested, false)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("path must be a directory")
+	}
+	limit := payload.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	children, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	sort.Slice(children, func(i, j int) bool {
+		left, right := children[i], children[j]
+		if left.IsDir() != right.IsDir() {
+			return left.IsDir()
+		}
+		return strings.ToLower(left.Name()) < strings.ToLower(right.Name())
+	})
+	entries := make([]lsEntry, 0, min(len(children), limit))
+	truncated := false
+	for _, child := range children {
+		name := child.Name()
+		hidden := strings.HasPrefix(name, ".")
+		if hidden && !payload.Hidden {
+			continue
+		}
+		childPath := filepath.Join(dir, name)
+		if ignoredLSEntry(t.Workspace, childPath, name, payload.Ignore) {
+			continue
+		}
+		if len(entries) >= limit {
+			truncated = true
+			break
+		}
+		childInfo, err := child.Info()
+		if err != nil {
+			return "", err
+		}
+		kind := "file"
+		switch {
+		case childInfo.IsDir():
+			kind = "directory"
+		case childInfo.Mode()&os.ModeSymlink != 0:
+			kind = "symlink"
+		}
+		entries = append(entries, lsEntry{
+			Name:   name,
+			Path:   displayPath(t.Workspace, childPath),
+			Type:   kind,
+			Size:   childInfo.Size(),
+			Hidden: hidden,
+		})
+	}
+	return pretty(map[string]any{
+		"kind":      "ls",
+		"path":      displayPath(t.Workspace, dir),
+		"entries":   entries,
+		"truncated": truncated,
+	}), nil
+}
+
+func ignoredLSEntry(workspace string, fullPath string, name string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	display := filepath.ToSlash(displayPath(workspace, fullPath))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if ok, _ := filepath.Match(pattern, name); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(filepath.FromSlash(pattern), filepath.FromSlash(display)); ok {
+			return true
+		}
+	}
+	return false
 }
 
 type WebFetchTool struct{}

@@ -12,7 +12,7 @@ Claude Code source.
   skill shortcuts, model switches, and recent sessions on real terminals
 - Anthropic-compatible streaming through `/v1/messages`
 - Built-in tools: `bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
-  `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `remote_trigger`,
+  `multi_edit`, `grep`, `glob`, `ls`, `web_fetch`, `web_search`, `remote_trigger`,
   `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
   `team_create`, `team_list`, `team_get`, `team_delete`,
@@ -30,7 +30,7 @@ Claude Code source.
   `todo_read`, `todo_write`, `testing_permission`, `git_status`, `git_diff`, `git_log`,
   `git_show`, `git_blame`
 - Claude Code-style model tool names such as `Bash`, `Read`, `Write`, `Edit`,
-  `MultiEdit`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
+  `MultiEdit`, `LS`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
   as execution aliases while Codog keeps one canonical tool definition per
   capability.
 - Permission confirmation with `read-only`, `workspace-write`,
