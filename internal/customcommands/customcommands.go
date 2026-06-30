@@ -7,22 +7,33 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/frontmatter"
 )
 
 type Command struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Source  string `json:"source"`
-	Preview string `json:"preview"`
-	Body    string `json:"body,omitempty"`
+	Name             string   `json:"name"`
+	Path             string   `json:"path"`
+	Source           string   `json:"source"`
+	Description      string   `json:"description,omitempty"`
+	AllowedTools     []string `json:"allowed_tools,omitempty"`
+	ArgumentHint     string   `json:"argument_hint,omitempty"`
+	Arguments        []string `json:"arguments,omitempty"`
+	FrontmatterError string   `json:"frontmatter_error,omitempty"`
+	Preview          string   `json:"preview"`
+	Body             string   `json:"body,omitempty"`
 }
 
 type Rendered struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Source   string `json:"source"`
-	Args     string `json:"args,omitempty"`
-	Rendered string `json:"rendered"`
+	Name         string   `json:"name"`
+	Path         string   `json:"path"`
+	Source       string   `json:"source"`
+	Description  string   `json:"description,omitempty"`
+	AllowedTools []string `json:"allowed_tools,omitempty"`
+	ArgumentHint string   `json:"argument_hint,omitempty"`
+	Arguments    []string `json:"arguments,omitempty"`
+	Args         string   `json:"args,omitempty"`
+	Rendered     string   `json:"rendered"`
 }
 
 var ErrNotFound = errors.New("custom command not found")
@@ -59,14 +70,7 @@ func Load(configHome, workspace string) ([]Command, error) {
 			if err != nil {
 				return err
 			}
-			body := string(data)
-			commands = append(commands, Command{
-				Name:    name,
-				Path:    path,
-				Source:  root.source,
-				Preview: preview(body),
-				Body:    body,
-			})
+			commands = append(commands, parseCommandDocument(name, path, root.source, string(data)))
 			return nil
 		})
 		if err != nil {
@@ -96,8 +100,7 @@ func Find(configHome, workspace, name string) (Command, error) {
 			}
 			return Command{}, err
 		}
-		body := string(data)
-		return Command{Name: name, Path: path, Source: root.source, Preview: preview(body), Body: body}, nil
+		return parseCommandDocument(name, path, root.source, string(data)), nil
 	}
 	return Command{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
@@ -109,12 +112,43 @@ func Render(command Command, args string) Rendered {
 		rendered = strings.ReplaceAll(rendered, marker, args)
 	}
 	return Rendered{
-		Name:     command.Name,
-		Path:     command.Path,
-		Source:   command.Source,
-		Args:     args,
-		Rendered: rendered,
+		Name:         command.Name,
+		Path:         command.Path,
+		Source:       command.Source,
+		Description:  command.Description,
+		AllowedTools: append([]string(nil), command.AllowedTools...),
+		ArgumentHint: command.ArgumentHint,
+		Arguments:    append([]string(nil), command.Arguments...),
+		Args:         args,
+		Rendered:     rendered,
 	}
+}
+
+func parseCommandDocument(name string, path string, source string, text string) Command {
+	body, values, parseErr := frontmatter.Parse(text)
+	command := Command{
+		Name:   name,
+		Path:   path,
+		Source: source,
+		Body:   body,
+	}
+	if parseErr != nil {
+		command.FrontmatterError = parseErr.Error()
+	}
+	if len(values) > 0 {
+		command.Description = frontmatter.String(values, "description")
+		command.AllowedTools = frontmatter.StringList(values["allowed-tools"])
+		command.ArgumentHint = frontmatter.String(values, "argument-hint")
+		command.Arguments = frontmatter.ArgumentList(values["arguments"])
+	}
+	if command.Description == "" {
+		command.Description = frontmatter.DescriptionFromMarkdown(command.Body)
+	}
+	command.Preview = command.Description
+	if command.Preview == "" {
+		command.Preview = preview(command.Body)
+	}
+	return command
 }
 
 func roots(configHome, workspace string) []root {

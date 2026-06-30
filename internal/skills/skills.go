@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/Rememorio/codog/internal/frontmatter"
 )
 
 type Skill struct {
@@ -261,7 +261,7 @@ func RenderPromptBlock(skill Skill) string {
 }
 
 func ParseDocument(name string, path string, source string, text string) Skill {
-	body, frontmatter, parseErr := splitFrontmatter(text)
+	body, values, parseErr := frontmatter.Parse(text)
 	skill := Skill{
 		Name:          name,
 		Path:          path,
@@ -272,56 +272,35 @@ func ParseDocument(name string, path string, source string, text string) Skill {
 	if parseErr != nil {
 		skill.FrontmatterError = parseErr.Error()
 	}
-	applyFrontmatter(&skill, frontmatter)
+	applyFrontmatter(&skill, values)
 	if skill.Description == "" {
-		skill.Description = descriptionFromMarkdown(skill.Body)
+		skill.Description = frontmatter.DescriptionFromMarkdown(skill.Body)
 	}
 	return skill
 }
 
-func splitFrontmatter(text string) (string, map[string]any, error) {
-	text = strings.TrimPrefix(text, "\ufeff")
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 || strings.TrimSpace(strings.TrimSuffix(lines[0], "\r")) != "---" {
-		return text, nil, nil
-	}
-	for index := 1; index < len(lines); index++ {
-		if strings.TrimSpace(strings.TrimSuffix(lines[index], "\r")) != "---" {
-			continue
-		}
-		source := strings.Join(lines[1:index], "\n")
-		body := strings.Join(lines[index+1:], "\n")
-		frontmatter := map[string]any{}
-		if err := yaml.Unmarshal([]byte(source), &frontmatter); err != nil {
-			return body, nil, err
-		}
-		return body, frontmatter, nil
-	}
-	return text, nil, nil
-}
-
-func applyFrontmatter(skill *Skill, frontmatter map[string]any) {
-	if len(frontmatter) == 0 {
+func applyFrontmatter(skill *Skill, values map[string]any) {
+	if len(values) == 0 {
 		return
 	}
-	skill.DisplayName = stringField(frontmatter, "name")
-	skill.Description = stringField(frontmatter, "description")
-	skill.WhenToUse = firstStringField(frontmatter, "when_to_use", "when-to-use")
-	skill.Version = stringField(frontmatter, "version")
-	skill.AllowedTools = stringListField(frontmatter["allowed-tools"])
-	skill.ArgumentHint = stringField(frontmatter, "argument-hint")
-	skill.Arguments = argumentListField(frontmatter["arguments"])
-	skill.Paths = normalizeSkillPaths(stringListField(frontmatter["paths"]))
-	skill.Model = stringField(frontmatter, "model")
-	skill.Agent = stringField(frontmatter, "agent")
-	skill.Effort = stringField(frontmatter, "effort")
-	if context := stringField(frontmatter, "context"); context == "fork" {
+	skill.DisplayName = frontmatter.String(values, "name")
+	skill.Description = frontmatter.String(values, "description")
+	skill.WhenToUse = frontmatter.FirstString(values, "when_to_use", "when-to-use")
+	skill.Version = frontmatter.String(values, "version")
+	skill.AllowedTools = frontmatter.StringList(values["allowed-tools"])
+	skill.ArgumentHint = frontmatter.String(values, "argument-hint")
+	skill.Arguments = frontmatter.ArgumentList(values["arguments"])
+	skill.Paths = frontmatter.NormalizePaths(frontmatter.StringList(values["paths"]))
+	skill.Model = frontmatter.String(values, "model")
+	skill.Agent = frontmatter.String(values, "agent")
+	skill.Effort = frontmatter.String(values, "effort")
+	if context := frontmatter.String(values, "context"); context == "fork" {
 		skill.ExecutionContext = context
 	}
-	if value, ok := boolField(frontmatter["user-invocable"]); ok {
+	if value, ok := frontmatter.Bool(values["user-invocable"]); ok {
 		skill.UserInvocable = value
 	}
-	if value, ok := boolField(frontmatter["disable-model-invocation"]); ok {
+	if value, ok := frontmatter.Bool(values["disable-model-invocation"]); ok {
 		skill.DisableModelInvocation = value
 	}
 }
@@ -362,137 +341,6 @@ func renderMetadata(skill Skill) string {
 		return ""
 	}
 	return strings.Join(lines, "\n") + "\n"
-}
-
-func stringField(frontmatter map[string]any, key string) string {
-	return strings.TrimSpace(scalarString(frontmatter[key]))
-}
-
-func firstStringField(frontmatter map[string]any, keys ...string) string {
-	for _, key := range keys {
-		value := stringField(frontmatter, key)
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func scalarString(value any) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	case fmt.Stringer:
-		return typed.String()
-	default:
-		return fmt.Sprint(typed)
-	}
-}
-
-func stringListField(value any) []string {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case []any:
-		out := []string{}
-		for _, item := range typed {
-			out = append(out, splitCommaOrNewline(scalarString(item))...)
-		}
-		return compactStrings(out)
-	case []string:
-		out := []string{}
-		for _, item := range typed {
-			out = append(out, splitCommaOrNewline(item)...)
-		}
-		return compactStrings(out)
-	case string:
-		return compactStrings(splitCommaOrNewline(typed))
-	default:
-		return compactStrings(splitCommaOrNewline(scalarString(typed)))
-	}
-}
-
-func argumentListField(value any) []string {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case []any, []string:
-		return stringListField(value)
-	case string:
-		return compactStrings(strings.Fields(strings.NewReplacer(",", " ", "\n", " ").Replace(typed)))
-	default:
-		return compactStrings(strings.Fields(scalarString(typed)))
-	}
-}
-
-func splitCommaOrNewline(value string) []string {
-	return strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == '\n' || r == '\r'
-	})
-}
-
-func compactStrings(values []string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
-}
-
-func normalizeSkillPaths(values []string) []string {
-	out := []string{}
-	for _, value := range values {
-		value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
-		value = strings.TrimSuffix(value, "/**")
-		if value == "" || value == "**" {
-			continue
-		}
-		out = append(out, value)
-	}
-	return compactStrings(out)
-}
-
-func boolField(value any) (bool, bool) {
-	switch typed := value.(type) {
-	case nil:
-		return false, false
-	case bool:
-		return typed, true
-	case string:
-		switch strings.ToLower(strings.TrimSpace(typed)) {
-		case "true", "yes", "y", "1", "on":
-			return true, true
-		case "false", "no", "n", "0", "off":
-			return false, true
-		default:
-			return false, false
-		}
-	default:
-		return false, false
-	}
-}
-
-func descriptionFromMarkdown(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		line = strings.TrimLeft(line, "#")
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 func defaultInstallName(source string, info os.FileInfo) string {

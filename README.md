@@ -153,7 +153,9 @@ Claude Code source.
 - `codog commands list|show|run` and `/commands` discover custom Markdown
   slash commands from `~/.codog/commands`, `.codog/commands`, and
   `.claude/commands`, including nested commands like `team/review.md` as
-  `team:review`, then render `$ARGUMENTS` and `{{args}}`. In the REPL, custom
+  `team:review`; command frontmatter such as `description`, `allowed-tools`,
+  `argument-hint`, and `arguments` is parsed for list/run metadata, then the
+  Markdown body renders `$ARGUMENTS` and `{{args}}`. In the REPL, custom
   commands can also run directly as `/name args` or `/team/review args`.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and

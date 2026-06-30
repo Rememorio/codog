@@ -15,7 +15,13 @@ func TestLoadFindAndRenderCommands(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands", "team"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(configHome, "commands", "review.md"), []byte("User review $ARGUMENTS"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "commands", "review.md"), []byte(`---
+description: Review a file.
+allowed-tools: Read, Bash(go test:*)
+argument-hint: FILE
+arguments: [file]
+---
+User review $ARGUMENTS`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "fix.md"), []byte("Claude fix {{args}}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "audit.md"), []byte("Team audit $ARGUMENTS"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "fix.md"), []byte("Codog fix {{ ARGUMENTS }}"), 0o644))
@@ -34,7 +40,16 @@ func TestLoadFindAndRenderCommands(t *testing.T) {
 	command, err = Find(configHome, workspace, "review")
 	require.NoError(t, err)
 	require.Equal(t, "user", command.Source)
-	require.Equal(t, "User review file.go", Render(command, "file.go").Rendered)
+	require.Equal(t, "Review a file.", command.Description)
+	require.Equal(t, "Review a file.", command.Preview)
+	require.Equal(t, []string{"Read", "Bash(go test:*)"}, command.AllowedTools)
+	require.Equal(t, "FILE", command.ArgumentHint)
+	require.Equal(t, []string{"file"}, command.Arguments)
+	require.NotContains(t, command.Body, "allowed-tools")
+	rendered = Render(command, "file.go")
+	require.Equal(t, "User review file.go", rendered.Rendered)
+	require.Equal(t, "Review a file.", rendered.Description)
+	require.Equal(t, []string{"Read", "Bash(go test:*)"}, rendered.AllowedTools)
 
 	command, err = Find(configHome, workspace, "/team/audit")
 	require.NoError(t, err)
