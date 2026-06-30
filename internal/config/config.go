@@ -83,6 +83,8 @@ type FutureConfig struct {
 	SlackAppInstallCount      int               `json:"slack_app_install_count,omitempty"`
 	StickerOrderCount         int               `json:"sticker_order_count,omitempty"`
 	ExtraUsageVisitCount      int               `json:"extra_usage_visit_count,omitempty"`
+	GuestPassReferralURL      string            `json:"guest_pass_referral_url,omitempty"`
+	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
 type PermissionRules struct {
@@ -587,7 +589,9 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.ChromeDefaultEnabled != nil ||
 		cfg.SlackAppInstallCount != 0 ||
 		cfg.StickerOrderCount != 0 ||
-		cfg.ExtraUsageVisitCount != 0
+		cfg.ExtraUsageVisitCount != 0 ||
+		cfg.GuestPassReferralURL != "" ||
+		cfg.GuestPassVisitCount != 0
 }
 
 func permissionRulesSet(rules PermissionRules) bool {

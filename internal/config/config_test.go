@@ -134,7 +134,9 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 			"chrome_default_enabled": true,
 			"slack_app_install_count": 3,
 			"sticker_order_count": 2,
-			"extra_usage_visit_count": 4
+			"extra_usage_visit_count": 4,
+			"guest_pass_referral_url": "https://example.test/pass",
+			"guest_pass_visit_count": 5
 		},
 		"privacy_settings": {
 			"telemetry_enabled": true,
@@ -159,6 +161,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, 3, cfg.Future.SlackAppInstallCount)
 	require.Equal(t, 2, cfg.Future.StickerOrderCount)
 	require.Equal(t, 4, cfg.Future.ExtraUsageVisitCount)
+	require.Equal(t, "https://example.test/pass", cfg.Future.GuestPassReferralURL)
+	require.Equal(t, 5, cfg.Future.GuestPassVisitCount)
 	require.NotNil(t, cfg.Privacy.TelemetryEnabled)
 	require.True(t, *cfg.Privacy.TelemetryEnabled)
 	require.NotNil(t, cfg.Privacy.CrashReportsEnabled)
@@ -195,7 +199,9 @@ func TestLoadFutureClickCountersOnly(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"future": {
 			"sticker_order_count": 2,
-			"extra_usage_visit_count": 4
+			"extra_usage_visit_count": 4,
+			"guest_pass_referral_url": "https://example.test/pass",
+			"guest_pass_visit_count": 5
 		}
 	}`), 0o644))
 
@@ -203,6 +209,8 @@ func TestLoadFutureClickCountersOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, cfg.Future.StickerOrderCount)
 	require.Equal(t, 4, cfg.Future.ExtraUsageVisitCount)
+	require.Equal(t, "https://example.test/pass", cfg.Future.GuestPassReferralURL)
+	require.Equal(t, 5, cfg.Future.GuestPassVisitCount)
 }
 
 func TestLoadSkipPermissionsFlagOverridesPermissionMode(t *testing.T) {

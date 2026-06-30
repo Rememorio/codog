@@ -2247,6 +2247,50 @@ func TestStickersCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestPassesCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: t.TempDir(), Out: &out, Err: &errOut}
+	openedURL := ""
+	previousOpen := openExternalURL
+	openExternalURL = func(url string) (string, error) {
+		openedURL = url
+		return "test-open", nil
+	}
+	t.Cleanup(func() { openExternalURL = previousOpen })
+
+	referralURL := "https://example.test/guest-pass"
+	require.NoError(t, app.Passes([]string{"set-url", referralURL, "--json"}))
+	require.Equal(t, referralURL, app.Config.Future.GuestPassReferralURL)
+	require.Contains(t, out.String(), `"kind": "passes"`)
+	require.Contains(t, out.String(), `"referral_url": "`+referralURL+`"`)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"guest_pass_referral_url": "`+referralURL+`"`)
+	out.Reset()
+
+	require.NoError(t, app.Passes([]string{"--json"}))
+	require.Equal(t, referralURL, openedURL)
+	require.Contains(t, out.String(), `"opened": true`)
+	require.Contains(t, out.String(), `"visit_count": 1`)
+	require.Equal(t, 1, app.Config.Future.GuestPassVisitCount)
+	out.Reset()
+	openedURL = ""
+
+	require.True(t, app.handleSlash(context.Background(), "/passes clear-url", &session.Session{ID: "session"}))
+	require.Empty(t, app.Config.Future.GuestPassReferralURL)
+	require.Contains(t, out.String(), "Guest Passes")
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/passes --no-open", &session.Session{ID: "session"}))
+	require.Empty(t, openedURL)
+	require.Contains(t, out.String(), guestPassDocsURL)
+	require.Equal(t, 2, app.Config.Future.GuestPassVisitCount)
+}
+
 func TestExtraUsageCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")

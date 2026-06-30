@@ -338,6 +338,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.InstallSlackApp(rest)
 	case "stickers":
 		return app.Stickers(rest)
+	case "passes":
+		return app.Passes(rest)
 	case "issue":
 		return app.IssueDraft(rest, overrides)
 	case "run":
@@ -7338,10 +7340,35 @@ type extraUsageReport struct {
 	Message    string `json:"message,omitempty"`
 }
 
+type passesRequest struct {
+	Action      string
+	Format      string
+	Target      string
+	Path        string
+	Open        bool
+	Docs        bool
+	ReferralURL string
+}
+
+type passesReport struct {
+	Kind        string `json:"kind"`
+	Action      string `json:"action"`
+	Status      string `json:"status"`
+	URL         string `json:"url"`
+	DocsURL     string `json:"docs_url"`
+	ReferralURL string `json:"referral_url,omitempty"`
+	Opened      bool   `json:"opened"`
+	Opener      string `json:"opener,omitempty"`
+	VisitCount  int    `json:"visit_count"`
+	Path        string `json:"path,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
+
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
 const stickerOrderURL = "https://www.stickermule.com/claudecode"
 const extraUsagePersonalURL = "https://claude.ai/settings/usage"
 const extraUsageAdminURL = "https://claude.ai/admin-settings/usage"
+const guestPassDocsURL = "https://support.claude.com/en/articles/12875061-claude-code-guest-passes"
 
 var openExternalURL = openSystemURL
 
@@ -7850,6 +7877,208 @@ func renderExtraUsageReport(out io.Writer, report extraUsageReport) {
 		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
 	}
 	fmt.Fprintf(out, "  Visit count      %d\n", report.VisitCount)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func (a *App) Passes(args []string) error {
+	req, err := parsePassesArgs(args)
+	if err != nil {
+		return err
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	report := passesReport{
+		Kind:        "passes",
+		Action:      req.Action,
+		Status:      "ok",
+		DocsURL:     guestPassDocsURL,
+		ReferralURL: firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL),
+		Path:        path,
+	}
+	switch req.Action {
+	case "set-url":
+		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.guest_pass_referral_url", req.ReferralURL); err != nil {
+			return err
+		}
+		a.Config.Future.GuestPassReferralURL = req.ReferralURL
+		report.ReferralURL = req.ReferralURL
+		report.URL = req.ReferralURL
+		report.Message = "Guest pass referral URL saved."
+	case "clear-url":
+		if _, err := config.UnsetFileValue(path, "future.guest_pass_referral_url"); err != nil {
+			return err
+		}
+		a.Config.Future.GuestPassReferralURL = ""
+		report.ReferralURL = ""
+		report.URL = guestPassDocsURL
+		report.Message = "Guest pass referral URL cleared."
+	case "show", "open":
+		count := a.Config.Future.GuestPassVisitCount + 1
+		if _, err := config.SetFileValue(path, "future.guest_pass_visit_count", count); err != nil {
+			return err
+		}
+		a.Config.Future.GuestPassVisitCount = count
+		report.VisitCount = count
+		report.URL = passesURL(report.ReferralURL, req.Docs)
+		if report.ReferralURL == "" || req.Docs {
+			report.Message = "No guest pass referral URL is configured. Showing Claude Code guest pass documentation."
+		} else {
+			report.Message = "Showing configured guest pass referral URL."
+		}
+		if req.Action == "show" || !req.Open {
+			report.Action = "show"
+			break
+		}
+		opener, err := openExternalURL(report.URL)
+		if err != nil {
+			report.Status = "open_failed"
+			report.Message = "Could not open a browser automatically. Visit the URL manually."
+		} else {
+			report.Opened = true
+			report.Opener = opener
+			report.Message = "Opening guest pass page in browser."
+		}
+	default:
+		return fmt.Errorf("unknown passes command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderPassesReport(a.Out, report)
+	return nil
+}
+
+func parsePassesArgs(args []string) (passesRequest, error) {
+	req := passesRequest{Action: "open", Format: "text", Target: "user", Open: true}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("passes output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("passes target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("passes config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--open":
+			req.Open = true
+		case arg == "--no-open":
+			req.Open = false
+		case arg == "--docs":
+			req.Docs = true
+		case arg == "--referral-url":
+			index++
+			if index >= len(args) {
+				return req, errors.New("passes referral URL is required")
+			}
+			req.ReferralURL = args[index]
+		case strings.HasPrefix(arg, "--referral-url="):
+			req.ReferralURL = strings.TrimPrefix(arg, "--referral-url=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "passes"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "show", "status":
+		req.Action = "show"
+		req.Open = false
+	case "open":
+		req.Action = "open"
+	case "set-url", "set", "url":
+		req.Action = "set-url"
+		if req.ReferralURL == "" && len(rest) > 1 {
+			req.ReferralURL = rest[1]
+		}
+		if req.ReferralURL == "" {
+			return req, errors.New("passes referral URL is required")
+		}
+	case "clear-url", "clear", "unset":
+		req.Action = "clear-url"
+	default:
+		return req, fmt.Errorf("unknown passes command %q", rest[0])
+	}
+	if (req.Action == "show" || req.Action == "open" || req.Action == "clear-url") && len(rest) > 1 {
+		return req, fmt.Errorf("unexpected passes argument %q", rest[1])
+	}
+	if req.Action == "set-url" && len(rest) > 2 {
+		return req, fmt.Errorf("unexpected passes argument %q", rest[2])
+	}
+	return req, nil
+}
+
+func passesURL(referralURL string, docs bool) string {
+	if docs || strings.TrimSpace(referralURL) == "" {
+		return guestPassDocsURL
+	}
+	return referralURL
+}
+
+func validateHTTPURL(raw string, label string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be a valid URL", label)
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("%s must use http or https", label)
+	}
+}
+
+func renderPassesReport(out io.Writer, report passesReport) {
+	fmt.Fprintln(out, "Guest Passes")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  URL              %s\n", report.URL)
+	fmt.Fprintf(out, "  Docs             %s\n", report.DocsURL)
+	if report.ReferralURL != "" {
+		fmt.Fprintf(out, "  Referral URL     %s\n", report.ReferralURL)
+	}
+	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
+	if report.Opener != "" {
+		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
+	}
+	if report.VisitCount != 0 {
+		fmt.Fprintf(out, "  Visit count      %d\n", report.VisitCount)
+	}
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
 	}
@@ -10655,6 +10884,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/stickers":
 		if err := a.Stickers(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/passes":
+		if err := a.Passes(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/issue":
@@ -14690,6 +14923,7 @@ Usage:
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]
   %s [flags] stickers [--no-open] [--json|--output-format text|json]
+  %s [flags] passes [show|set-url URL|clear-url] [--no-open] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
@@ -14765,7 +14999,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
