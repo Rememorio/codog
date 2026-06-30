@@ -289,6 +289,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	cmd.Dir = cwd
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	configureBackgroundCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		return Task{}, err
 	}
@@ -307,7 +308,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		RestartedFrom: options.RestartedFrom,
 	}
 	if err := s.save(task); err != nil {
-		_ = cmd.Process.Kill()
+		_ = killBackgroundProcess(cmd.Process.Pid)
 		return Task{}, err
 	}
 	go func() {
@@ -413,11 +414,7 @@ func (s Store) Stop(id string) (Task, error) {
 	if task.Status != "running" {
 		return task, nil
 	}
-	process, err := os.FindProcess(task.PID)
-	if err != nil {
-		return Task{}, err
-	}
-	if err := process.Kill(); err != nil && processRunning(task.PID) {
+	if err := killBackgroundProcess(task.PID); err != nil && processRunning(task.PID) {
 		return Task{}, err
 	}
 	now := time.Now().UTC()

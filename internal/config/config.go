@@ -104,6 +104,7 @@ type Config struct {
 	AppendSystemPrompt  string                     `json:"append_system_prompt,omitempty"`
 	Theme               string                     `json:"theme,omitempty"`
 	EditorMode          string                     `json:"editorMode,omitempty"`
+	ReasoningEffort     string                     `json:"reasoning_effort,omitempty"`
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
@@ -501,6 +502,9 @@ func merge(dst *Config, src Config) {
 	if src.EditorMode != "" {
 		dst.EditorMode = src.EditorMode
 	}
+	if src.ReasoningEffort != "" {
+		dst.ReasoningEffort = src.ReasoningEffort
+	}
 	if src.MaxTokens != 0 {
 		dst.MaxTokens = src.MaxTokens
 	}
@@ -722,6 +726,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_EDITOR_MODE"); value != "" {
 		cfg.EditorMode = value
+	}
+	if value := os.Getenv("CODOG_REASONING_EFFORT"); value != "" {
+		cfg.ReasoningEffort = value
 	}
 	if value := os.Getenv("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value

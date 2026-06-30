@@ -245,8 +245,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OutputStyle(rest)
 	case "theme":
 		return app.Theme(rest)
+	case "color":
+		return app.Theme(rest)
 	case "vim":
 		return app.Vim(rest)
+	case "effort":
+		return app.Effort(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
 	case "keybindings":
@@ -3463,6 +3467,178 @@ func validateThemeName(name string) error {
 		return fmt.Errorf("invalid theme name %q", name)
 	}
 	return nil
+}
+
+var availableEfforts = []string{"auto", "low", "medium", "high"}
+
+type effortRequest struct {
+	Action string
+	Level  string
+	Format string
+	Target string
+	Path   string
+}
+
+type effortReport struct {
+	Kind      string   `json:"kind"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	Effort    string   `json:"effort"`
+	Previous  string   `json:"previous,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Available []string `json:"available"`
+}
+
+func (a *App) Effort(args []string) error {
+	req, err := parseEffortArgs(args)
+	if err != nil {
+		return err
+	}
+	report := effortReport{
+		Kind:      "effort",
+		Action:    req.Action,
+		Status:    "ok",
+		Effort:    effectiveEffort(a.Config.ReasoningEffort),
+		Available: append([]string(nil), availableEfforts...),
+	}
+	switch req.Action {
+	case "status", "list":
+	case "set":
+		if err := validateEffort(req.Level); err != nil {
+			return err
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		previous := effectiveEffort(a.Config.ReasoningEffort)
+		if _, err := config.SetFileValue(path, "reasoning_effort", req.Level); err != nil {
+			return err
+		}
+		a.Config.ReasoningEffort = req.Level
+		report.Action = "set"
+		report.Effort = effectiveEffort(a.Config.ReasoningEffort)
+		report.Previous = previous
+		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		previous := effectiveEffort(a.Config.ReasoningEffort)
+		if _, err := config.UnsetFileValue(path, "reasoning_effort"); err != nil {
+			return err
+		}
+		a.Config.ReasoningEffort = ""
+		report.Action = "clear"
+		report.Effort = effectiveEffort(a.Config.ReasoningEffort)
+		report.Previous = previous
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown effort command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderEffortReport(a.Out, report)
+	return nil
+}
+
+func parseEffortArgs(args []string) (effortRequest, error) {
+	req := effortRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("effort output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("effort target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("effort config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "effort"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "list":
+		req.Action = "list"
+	case "set":
+		if len(rest) < 2 {
+			return req, errors.New("effort level is required")
+		}
+		req.Action = "set"
+		req.Level = strings.ToLower(rest[1])
+	case "clear", "reset":
+		req.Action = "clear"
+	default:
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected effort argument %q", rest[1])
+		}
+		req.Action = "set"
+		req.Level = strings.ToLower(rest[0])
+	}
+	return req, nil
+}
+
+func renderEffortReport(out io.Writer, report effortReport) {
+	fmt.Fprintln(out, "Effort")
+	fmt.Fprintf(out, "  Active           %s\n", report.Effort)
+	if report.Previous != "" {
+		fmt.Fprintf(out, "  Previous         %s\n", report.Previous)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	fmt.Fprintf(out, "  Available        %s\n", strings.Join(report.Available, ", "))
+}
+
+func effectiveEffort(level string) string {
+	level = strings.ToLower(strings.TrimSpace(level))
+	if level == "" {
+		return "auto"
+	}
+	return level
+}
+
+func validateEffort(level string) error {
+	level = effectiveEffort(level)
+	for _, allowed := range availableEfforts {
+		if level == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown effort level %q", level)
 }
 
 type vimRequest struct {
@@ -7343,8 +7519,16 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Theme(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/color":
+		if err := a.Theme(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/vim":
 		if err := a.Vim(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/effort":
+		if err := a.Effort(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/privacy-settings":
@@ -8054,7 +8238,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	}
 	switch strings.ToLower(args[0]) {
 	case "model":
-		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns}, nil
+		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "reasoning_effort": cfg.ReasoningEffort}, nil
 	case "interface", "ui":
 		return map[string]any{"theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
 	case "privacy", "privacy-settings":
@@ -10647,6 +10831,11 @@ func (a *App) systemPrompt() string {
 		builder.WriteString("\n\n")
 		builder.WriteString(strings.TrimSpace(a.Config.AppendSystemPrompt))
 	}
+	if effort := strings.TrimSpace(a.Config.ReasoningEffort); effort != "" {
+		builder.WriteString("\n\n<codog_reasoning_effort>")
+		builder.WriteString(effectiveEffort(effort))
+		builder.WriteString("</codog_reasoning_effort>")
+	}
 	for _, name := range a.Config.EnabledSkills {
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
 		if err != nil {
@@ -10835,7 +11024,9 @@ Usage:
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
   %s [flags] theme [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] color [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [--json|--output-format text|json]
   %s [flags] cost --resume latest
@@ -10886,8 +11077,8 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

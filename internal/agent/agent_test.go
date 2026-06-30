@@ -1430,6 +1430,14 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"theme": "dark"`)
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/color light", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Theme")
+	require.Equal(t, "light", app.Config.Theme)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"theme": "light"`)
+	out.Reset()
+
 	require.NoError(t, app.Vim([]string{"on", "--json"}))
 	require.Contains(t, out.String(), `"kind": "vim"`)
 	require.Contains(t, out.String(), `"enabled": true`)
@@ -1438,6 +1446,16 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"editorMode": "vim"`)
+	out.Reset()
+
+	require.NoError(t, app.Effort([]string{"high", "--json"}))
+	require.Contains(t, out.String(), `"kind": "effort"`)
+	require.Contains(t, out.String(), `"effort": "high"`)
+	require.Equal(t, "high", app.Config.ReasoningEffort)
+	require.Contains(t, app.systemPrompt(), "<codog_reasoning_effort>high</codog_reasoning_effort>")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"reasoning_effort": "high"`)
 	out.Reset()
 
 	require.NoError(t, app.PrivacySettings([]string{"set", "prompt-history", "off", "--json"}))
@@ -1453,6 +1471,12 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/theme clear", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Theme")
 	require.Equal(t, "", app.Config.Theme)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/effort clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Effort")
+	require.Equal(t, "", app.Config.ReasoningEffort)
+	require.NotContains(t, app.systemPrompt(), "<codog_reasoning_effort>")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/privacy-settings enable prompt-history", &session.Session{ID: "session"}))

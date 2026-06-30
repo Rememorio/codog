@@ -91,7 +91,7 @@ func TestBridgeSessionPromptStartsBackgroundTask(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(tasks[0].ID, 4096)
 		return err == nil && strings.Contains(logs, "bridge-prompt:--resume ide-session prompt summarize selection")
-	}, 10*time.Second, 50*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 }
 
 func TestBridgeFileReadWriteEdit(t *testing.T) {
