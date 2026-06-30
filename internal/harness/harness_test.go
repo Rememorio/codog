@@ -38,6 +38,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, bashDenied.OK)
 	require.Equal(t, 1, bashDenied.ToolCalls)
 	require.Contains(t, bashDenied.Output, "bash denied harness ok")
+
+	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
+	require.True(t, pluginTool.OK)
+	require.Equal(t, 1, pluginTool.ToolCalls)
+	require.Contains(t, pluginTool.Output, "plugin harness ok")
 }
 
 func findScenario(t *testing.T, report Report, name string) ScenarioReport {

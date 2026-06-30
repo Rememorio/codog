@@ -14,6 +14,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/tools"
 )
@@ -47,6 +48,7 @@ type scenario struct {
 	prompt     string
 	promptIn   string
 	permission tools.Permission
+	plugins    bool
 	setup      func(string) error
 	verify     func(string, runloop.TurnResult, string) error
 }
@@ -258,6 +260,39 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		{
+			name:    "plugin_tool_roundtrip",
+			plugins: true,
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "demo_tool",
+					Input: json.RawMessage(`{"message":"plugin-harness"}`),
+				}}},
+				{Text: "plugin harness ok"},
+			},
+			prompt: "run plugin",
+			setup: func(workspace string) error {
+				dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return err
+				}
+				manifest := `{"id":"demo","tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`
+				return os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(manifest), 0o644)
+			},
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "plugin harness ok") {
+					return fmt.Errorf("missing plugin final response")
+				}
+				if err := expectToolCalls(result, 1, false); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "plugin-harness") {
+					return fmt.Errorf("missing plugin stdin echo in tool output")
+				}
+				return nil
+			},
+		},
 	}
 
 	report := Report{Total: len(scenarios)}
@@ -297,6 +332,10 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	if permission == "" {
 		permission = tools.PermissionWorkspace
 	}
+	registry, err := registryForScenario(workspace, item)
+	if err != nil {
+		return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+	}
 	result, err := runloop.Runner{
 		Config: config.Config{
 			Model:               "mock",
@@ -305,7 +344,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			AutoCompactMessages: 20,
 		},
 		Client:    client,
-		Tools:     tools.NewRegistry(workspace),
+		Tools:     registry,
 		Prompter:  &tools.Prompter{Mode: permission, In: strings.NewReader(item.promptIn), Err: io.Discard},
 		Workspace: workspace,
 		Out:       &out,
@@ -330,6 +369,40 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport.OK = true
 	return scenarioReport
+}
+
+func registryForScenario(workspace string, item scenario) (*tools.Registry, error) {
+	registry := tools.NewRegistry(workspace)
+	if !item.plugins {
+		return registry, nil
+	}
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return nil, err
+	}
+	for _, manifest := range manifests {
+		if !manifest.Enabled {
+			continue
+		}
+		for _, tool := range manifest.Tools {
+			if strings.TrimSpace(tool.Name) == "" || strings.TrimSpace(tool.Command) == "" {
+				continue
+			}
+			if registry.Has(tool.Name) {
+				return nil, fmt.Errorf("plugin tool %q conflicts with an existing tool", tool.Name)
+			}
+			registry.Register(tools.CommandTool{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Schema:      tool.InputSchema,
+				Required:    tools.Permission(tool.Permission),
+				Command:     tool.Command,
+				Args:        tool.Args,
+				Workspace:   manifest.Root,
+			})
+		}
+	}
+	return registry, nil
 }
 
 func expectToolCalls(result runloop.TurnResult, count int, wantError bool) error {
