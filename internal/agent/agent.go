@@ -6527,6 +6527,9 @@ func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readl
 			continue
 		}
 		if a.handleSlash(ctx, line, sess) {
+			if strings.HasPrefix(line, "/vim") {
+				rl.SetVimMode(a.readlineVimMode())
+			}
 			continue
 		}
 		if err := a.runSessionTurn(ctx, "repl", sess, line, "idle"); err != nil {
@@ -6546,6 +6549,7 @@ func (a *App) newLineReader(activeSessionID string) (*readline.Instance, bool, e
 		Stdin:                  input,
 		Stdout:                 a.Err,
 		Stderr:                 a.Err,
+		VimMode:                a.readlineVimMode(),
 		AutoComplete:           slashCompleter{candidates: a.slashCompletionCandidates(activeSessionID)},
 		HistorySearchFold:      true,
 		DisableAutoSaveHistory: true,
@@ -6559,6 +6563,10 @@ func (a *App) newLineReader(activeSessionID string) (*readline.Instance, bool, e
 		return nil, false, err
 	}
 	return rl, true, nil
+}
+
+func (a *App) readlineVimMode() bool {
+	return editorModeIsVim(a.Config.EditorMode)
 }
 
 func (a *App) replHistoryFile() string {

@@ -1434,6 +1434,7 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, out.String(), `"kind": "vim"`)
 	require.Contains(t, out.String(), `"enabled": true`)
 	require.Equal(t, "vim", app.Config.EditorMode)
+	require.True(t, app.readlineVimMode())
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"editorMode": "vim"`)
