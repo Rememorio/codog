@@ -2880,9 +2880,50 @@ func shellQuote(value string) string {
 }
 
 func (a *App) ListPlugins() error {
+	return a.listPlugins("text")
+}
+
+type pluginsListSummary struct {
+	Total    int `json:"total"`
+	Enabled  int `json:"enabled"`
+	Disabled int `json:"disabled"`
+}
+
+type pluginsListReport struct {
+	Kind            string              `json:"kind"`
+	Action          string              `json:"action"`
+	Status          string              `json:"status"`
+	Summary         pluginsListSummary  `json:"summary"`
+	Plugins         []plugins.Manifest  `json:"plugins"`
+	ConfigLoadError *string             `json:"config_load_error"`
+	LoadFailures    []map[string]string `json:"load_failures"`
+}
+
+func (a *App) listPlugins(format string) error {
 	manifests, err := plugins.Load(a.Workspace)
 	if err != nil {
 		return err
+	}
+	if format == "json" {
+		summary := pluginsListSummary{Total: len(manifests)}
+		for _, manifest := range manifests {
+			if manifest.Enabled {
+				summary.Enabled++
+			} else {
+				summary.Disabled++
+			}
+		}
+		data, _ := json.MarshalIndent(pluginsListReport{
+			Kind:            "plugin",
+			Action:          "list",
+			Status:          "ok",
+			Summary:         summary,
+			Plugins:         manifests,
+			ConfigLoadError: nil,
+			LoadFailures:    []map[string]string{},
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
 	data, _ := json.MarshalIndent(manifests, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
@@ -2891,12 +2932,13 @@ func (a *App) ListPlugins() error {
 
 func (a *App) Marketplace(args []string) error {
 	var err error
-	args, _, err = stripJSONOnlyOutputFormat("marketplace", args)
+	var format string
+	args, format, err = stripJSONOnlyOutputFormat("marketplace", args)
 	if err != nil {
 		return err
 	}
 	if len(args) == 0 || args[0] == "list" {
-		return a.ListPlugins()
+		return a.listPlugins(format)
 	}
 	var payload any
 	switch args[0] {

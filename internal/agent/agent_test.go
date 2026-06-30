@@ -5677,12 +5677,26 @@ func TestMarketplaceAcceptsOutputFormatFlags(t *testing.T) {
 
 	var out bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out}
+	require.NoError(t, app.Marketplace(nil))
+	require.True(t, strings.HasPrefix(strings.TrimSpace(out.String()), "["))
+	out.Reset()
+
 	require.NoError(t, app.Marketplace([]string{"--output-format", "json", "list"}))
-	require.Contains(t, out.String(), `"id": "demo"`)
+	var report pluginsListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "plugin", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.Summary.Total)
+	require.Equal(t, 1, report.Summary.Enabled)
+	require.Equal(t, 0, report.Summary.Disabled)
+	require.Nil(t, report.ConfigLoadError)
+	require.Empty(t, report.LoadFailures)
+	require.Equal(t, "demo", report.Plugins[0].ID)
 	out.Reset()
 
 	require.NoError(t, app.Marketplace([]string{"list", "--json"}))
-	require.Contains(t, out.String(), `"name": "Demo"`)
+	require.Contains(t, out.String(), `"summary"`)
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
