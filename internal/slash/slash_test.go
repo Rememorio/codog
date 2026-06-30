@@ -78,6 +78,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/tokens")
 	require.Contains(t, out.String(), "/version")
 	require.Contains(t, out.String(), "/templates")
+	require.Contains(t, out.String(), "/copy")
 	require.Contains(t, out.String(), "/agents")
 	require.Contains(t, out.String(), "/tasks")
 	require.Contains(t, out.String(), "/background")

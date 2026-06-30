@@ -10,7 +10,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -263,6 +265,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Plan(append([]string{"exit"}, rest...))
 	case "export":
 		return app.Export(rest)
+	case "copy":
+		return app.Copy(ctx, rest, overrides)
 	case "git":
 		return app.Git(rest)
 	case "branch":
@@ -5778,6 +5782,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/export":
 		a.handleExportSlash(fields[1:], sess)
+	case "/copy":
+		if err := a.Copy(ctx, fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/history", "/prompt-history":
 		a.handleHistorySlash(fields[1:], sess)
 	case "/summary":
@@ -7070,6 +7078,26 @@ type exportRequest struct {
 	Format    string
 }
 
+type copyRequest struct {
+	SessionID string
+	Scope     string
+	Format    string
+	JSON      bool
+}
+
+type copyReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	SessionID string `json:"session_id"`
+	Scope     string `json:"scope"`
+	Format    string `json:"format"`
+	Bytes     int    `json:"bytes"`
+	Clipboard string `json:"clipboard"`
+}
+
+var writeClipboard = writeSystemClipboard
+
 func (a *App) Export(args []string) error {
 	req, err := parseExportArgs(args, "latest")
 	if err != nil {
@@ -7100,6 +7128,198 @@ func (a *App) Export(args []string) error {
 	encoded, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(a.Out, string(encoded))
 	return nil
+}
+
+func (a *App) Copy(ctx context.Context, args []string, overrides config.FlagOverrides) error {
+	req, err := parseCopyArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	data, sess, format, err := a.copyPayload(req)
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return errors.New("nothing to copy")
+	}
+	clipboard, err := writeClipboard(ctx, data)
+	if err != nil {
+		return err
+	}
+	report := copyReport{
+		Kind:      "copy",
+		Action:    "copy",
+		Status:    "ok",
+		SessionID: sess.ID,
+		Scope:     req.Scope,
+		Format:    format,
+		Bytes:     len(data),
+		Clipboard: clipboard,
+	}
+	if req.JSON {
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return nil
+	}
+	fmt.Fprintf(a.Out, "Copied %s from session %s to clipboard (%d bytes).\n", req.Scope, sess.ID, len(data))
+	return nil
+}
+
+func (a *App) copyPayload(req copyRequest) ([]byte, *session.Session, string, error) {
+	if req.Scope == "all" {
+		format := req.Format
+		if strings.TrimSpace(format) == "" {
+			format = session.ExportMarkdown
+		}
+		data, sess, err := a.Sessions.Export(req.SessionID, format)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		normalized, _ := session.NormalizeExportFormat(format)
+		return data, sess, normalized, nil
+	}
+	sess, err := a.Sessions.Open(req.SessionID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	data := []byte(renderLastSessionMessage(sess))
+	return data, sess, "text", nil
+}
+
+func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, error) {
+	req := copyRequest{Scope: "last", SessionID: "latest"}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.JSON = true
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("usage: codog copy [last|all] [--session ID] [--format markdown|json|jsonl] [--json]")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("usage: codog copy [last|all] [--resume ID|latest] [--format markdown|json|jsonl] [--json]")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--format" || arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("copy format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--format="):
+			req.Format = strings.TrimPrefix(arg, "--format=")
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "last" || arg == "latest":
+			req.Scope = "last"
+		case arg == "all" || arg == "session":
+			req.Scope = "all"
+		default:
+			return req, fmt.Errorf("unknown copy argument %q", arg)
+		}
+	}
+	if req.Scope == "last" && strings.TrimSpace(req.Format) != "" && req.Format != "text" {
+		return req, errors.New("copy last only supports text format")
+	}
+	if req.Scope == "all" {
+		if _, err := session.NormalizeExportFormat(req.Format); err != nil {
+			return req, err
+		}
+	}
+	return req, nil
+}
+
+func renderLastSessionMessage(sess *session.Session) string {
+	for index := len(sess.Messages) - 1; index >= 0; index-- {
+		msg := sess.Messages[index]
+		if msg.Role == "assistant" {
+			return renderMessagePlainText(msg)
+		}
+	}
+	if len(sess.Messages) == 0 {
+		return ""
+	}
+	return renderMessagePlainText(sess.Messages[len(sess.Messages)-1])
+}
+
+func renderMessagePlainText(msg anthropic.Message) string {
+	var builder strings.Builder
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "text":
+			if strings.TrimSpace(block.Text) != "" {
+				builder.WriteString(strings.TrimSpace(block.Text))
+				builder.WriteString("\n")
+			}
+		case "tool_result":
+			if strings.TrimSpace(block.Content) != "" {
+				builder.WriteString(strings.TrimSpace(block.Content))
+				builder.WriteString("\n")
+			}
+		}
+	}
+	text := strings.TrimSpace(builder.String())
+	if text == "" {
+		return ""
+	}
+	return text + "\n"
+}
+
+func writeSystemClipboard(ctx context.Context, data []byte) (string, error) {
+	candidates := clipboardCommands()
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate[0]); err != nil {
+			continue
+		}
+		cmd := exec.CommandContext(ctx, candidate[0], candidate[1:]...)
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return "", err
+		}
+		if err := cmd.Start(); err != nil {
+			return "", err
+		}
+		if _, err := stdin.Write(data); err != nil {
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			return "", err
+		}
+		if err := stdin.Close(); err != nil {
+			_ = cmd.Wait()
+			return "", err
+		}
+		if err := cmd.Wait(); err != nil {
+			return "", err
+		}
+		return candidate[0], nil
+	}
+	return "", errors.New("no clipboard command found")
+}
+
+func clipboardCommands() [][]string {
+	switch runtime.GOOS {
+	case "darwin":
+		return [][]string{{"pbcopy"}}
+	case "windows":
+		return [][]string{{"clip"}}
+	default:
+		return [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}}
+	}
 }
 
 func (a *App) handleExportSlash(args []string, sess *session.Session) {
@@ -8585,7 +8805,7 @@ Usage:
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
-  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]
+  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl] | copy [last|all] [--session ID]
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]

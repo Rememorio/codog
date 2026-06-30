@@ -2236,6 +2236,39 @@ func TestExportSlashWritesCurrentSession(t *testing.T) {
 	require.Contains(t, string(data), "slash export")
 }
 
+func TestCopyCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "copy prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "copy response")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	var copied []byte
+	previousClipboard := writeClipboard
+	writeClipboard = func(_ context.Context, data []byte) (string, error) {
+		copied = append([]byte(nil), data...)
+		return "test-clipboard", nil
+	}
+	t.Cleanup(func() { writeClipboard = previousClipboard })
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Copy(context.Background(), []string{"last", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.Equal(t, "copy response\n", string(copied))
+	require.Contains(t, out.String(), `"clipboard": "test-clipboard"`)
+	out.Reset()
+
+	require.NoError(t, app.Copy(context.Background(), []string{"all", "--session=source", "--format=json"}, config.FlagOverrides{}))
+	require.Contains(t, string(copied), `"id": "source"`)
+	require.Contains(t, out.String(), "Copied all")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/copy all", sess))
+	require.Contains(t, string(copied), "# Conversation Export")
+	require.Empty(t, errOut.String())
+}
+
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	command := buildAgentCommand("/tmp/codog", agentdefs.Definition{
 		Name:   "reviewer",
