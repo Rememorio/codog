@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -48,6 +49,19 @@ type LogEntry struct {
 	AuthorEmail string `json:"author_email"`
 	Date        string `json:"date"`
 	Subject     string `json:"subject"`
+}
+
+type BlameEntry struct {
+	Commit       string `json:"commit"`
+	ShortCommit  string `json:"short_commit"`
+	Author       string `json:"author"`
+	AuthorEmail  string `json:"author_email,omitempty"`
+	AuthorTime   int64  `json:"author_time,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	OriginalLine int    `json:"original_line"`
+	FinalLine    int    `json:"final_line"`
+	Line         string `json:"line"`
 }
 
 type TagInfo struct {
@@ -395,6 +409,92 @@ func Blame(workspace string, path string, line int) (string, error) {
 	}
 	args = append(args, "--", path)
 	return git(workspace, args...)
+}
+
+func BlameEntries(workspace string, path string, line int) ([]BlameEntry, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, errors.New("blame file is required")
+	}
+	args := []string{"blame", "--line-porcelain"}
+	if line > 0 {
+		args = append(args, "-L", fmt.Sprintf("%d,%d", line, line))
+	}
+	args = append(args, "--", path)
+	raw, err := git(workspace, args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseBlamePorcelain(raw), nil
+}
+
+func parseBlamePorcelain(raw string) []BlameEntry {
+	var entries []BlameEntry
+	var current *BlameEntry
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(line, "\t") {
+			if current != nil {
+				current.Line = strings.TrimPrefix(line, "\t")
+				entries = append(entries, *current)
+				current = nil
+			}
+			continue
+		}
+		if current == nil {
+			if entry, ok := parseBlameHeader(line); ok {
+				current = &entry
+			}
+			continue
+		}
+		key, value, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "author":
+			current.Author = strings.TrimSpace(value)
+		case "author-mail":
+			current.AuthorEmail = strings.Trim(strings.TrimSpace(value), "<>")
+		case "author-time":
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+				current.AuthorTime = parsed
+			}
+		case "summary":
+			current.Summary = strings.TrimSpace(value)
+		case "filename":
+			current.Filename = strings.TrimSpace(value)
+		}
+	}
+	return entries
+}
+
+func parseBlameHeader(line string) (BlameEntry, bool) {
+	parts := strings.Fields(line)
+	if len(parts) < 3 {
+		return BlameEntry{}, false
+	}
+	originalLine, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return BlameEntry{}, false
+	}
+	finalLine, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return BlameEntry{}, false
+	}
+	commit := strings.TrimSpace(parts[0])
+	return BlameEntry{
+		Commit:       commit,
+		ShortCommit:  shortCommit(commit),
+		OriginalLine: originalLine,
+		FinalLine:    finalLine,
+	}, true
+}
+
+func shortCommit(commit string) string {
+	if len(commit) <= 12 {
+		return commit
+	}
+	return commit[:12]
 }
 
 func Commit(workspace string, options CommitOptions) (CommitResult, error) {

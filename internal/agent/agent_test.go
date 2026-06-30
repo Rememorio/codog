@@ -280,6 +280,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "log", command)
 	require.Equal(t, []string{"1", "--output-format", "json"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "blame", "notes.txt", "1"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "blame", command)
+	require.Equal(t, []string{"notes.txt", "1", "--output-format", "json"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -736,6 +741,21 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "hello")
 	out.Reset()
 
+	require.NoError(t, app.Git([]string{"blame", "notes.txt", "1", "--json"}))
+	var blameJSON gitBlameReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &blameJSON))
+	require.Equal(t, "git_blame", blameJSON.Kind)
+	require.Equal(t, "show", blameJSON.Action)
+	require.Equal(t, "ok", blameJSON.Status)
+	require.Equal(t, "notes.txt", blameJSON.Path)
+	require.Equal(t, 1, blameJSON.Line)
+	require.Equal(t, 1, blameJSON.Count)
+	require.Len(t, blameJSON.Entries, 1)
+	require.Equal(t, "hello", blameJSON.Entries[0].Line)
+	require.Equal(t, "add notes", blameJSON.Entries[0].Summary)
+	require.Contains(t, blameJSON.Raw, "hello")
+	out.Reset()
+
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\nagain\n"), 0o644))
 	require.NoError(t, app.Git([]string{"diff"}))
 	require.Contains(t, out.String(), "+again")
@@ -812,6 +832,17 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "hello cli")
 
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "blame", "notes.txt", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var blameJSON gitBlameReport
+	require.NoError(t, json.Unmarshal([]byte(out), &blameJSON))
+	require.Equal(t, "git_blame", blameJSON.Kind)
+	require.Equal(t, "ok", blameJSON.Status)
+	require.Equal(t, 1, blameJSON.Count)
+	require.Equal(t, "hello cli", blameJSON.Entries[0].Line)
+
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello cli\nagain\n"), 0o644))
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "diff"}, config.FlagOverrides{})
@@ -870,6 +901,15 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/blame notes.txt 1", sess))
 	require.Contains(t, out.String(), "hello slash")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/blame notes.txt 1 --json", sess))
+	var blameJSON gitBlameReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &blameJSON))
+	require.Equal(t, "git_blame", blameJSON.Kind)
+	require.Equal(t, "ok", blameJSON.Status)
+	require.Equal(t, 1, blameJSON.Count)
+	require.Equal(t, "hello slash", blameJSON.Entries[0].Line)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/git status", sess))

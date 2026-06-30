@@ -14330,7 +14330,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -14342,15 +14342,7 @@ func (a *App) Git(args []string) error {
 	case "changelog":
 		return a.Changelog(args[1:])
 	case "blame":
-		path, line, err := parseGitBlameArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		blame, err := gitops.Blame(a.Workspace, path, line)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(a.Out, blame)
+		return a.GitBlame(args[1:])
 	case "stash":
 		return a.Stash(args[1:])
 	case "commit":
@@ -15284,20 +15276,91 @@ func parseOptionalPositiveInt(args []string, defaultValue int, label string) (in
 	return value, nil
 }
 
-func parseGitBlameArgs(args []string) (string, int, error) {
-	if len(args) == 0 || len(args) > 2 {
-		return "", 0, errors.New("usage: codog git blame FILE [line]")
+type gitBlameRequest struct {
+	Format string
+	Path   string
+	Line   int
+}
+
+type gitBlameReport struct {
+	Kind    string              `json:"kind"`
+	Action  string              `json:"action"`
+	Status  string              `json:"status"`
+	Path    string              `json:"path"`
+	Line    int                 `json:"line,omitempty"`
+	Count   int                 `json:"count"`
+	Entries []gitops.BlameEntry `json:"entries"`
+	Raw     string              `json:"raw"`
+}
+
+func (a *App) GitBlame(args []string) error {
+	req, err := parseGitBlameArgs(args)
+	if err != nil {
+		return err
 	}
-	path := args[0]
-	line := 0
-	if len(args) == 2 {
-		parsed, err := strconv.Atoi(args[1])
-		if err != nil || parsed <= 0 {
-			return "", 0, errors.New("blame line must be a positive integer")
+	raw, err := gitops.Blame(a.Workspace, req.Path, req.Line)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		entries, err := gitops.BlameEntries(a.Workspace, req.Path, req.Line)
+		if err != nil {
+			return err
 		}
-		line = parsed
+		data, _ := json.MarshalIndent(gitBlameReport{
+			Kind:    "git_blame",
+			Action:  "show",
+			Status:  "ok",
+			Path:    req.Path,
+			Line:    req.Line,
+			Count:   len(entries),
+			Entries: entries,
+			Raw:     raw,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
-	return path, line, nil
+	fmt.Fprintln(a.Out, raw)
+	return nil
+}
+
+func parseGitBlameArgs(args []string) (gitBlameRequest, error) {
+	req := gitBlameRequest{Format: "text"}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("git blame output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown git blame flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "git blame"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 || len(positionals) > 2 {
+		return req, errors.New("usage: codog git blame FILE [line] [--json|--output-format text|json]")
+	}
+	req.Path = positionals[0]
+	if len(positionals) == 2 {
+		parsed, err := strconv.Atoi(positionals[1])
+		if err != nil || parsed <= 0 {
+			return req, errors.New("blame line must be a positive integer")
+		}
+		req.Line = parsed
+	}
+	return req, nil
 }
 
 func (a *App) handleDiffSlash(args []string) {
@@ -15336,17 +15399,9 @@ func (a *App) handleChangelogSlash(args []string) {
 }
 
 func (a *App) handleBlameSlash(args []string) {
-	path, line, err := parseGitBlameArgs(args)
-	if err != nil {
+	if err := a.GitBlame(args); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
-		return
 	}
-	blame, err := gitops.Blame(a.Workspace, path, line)
-	if err != nil {
-		fmt.Fprintln(a.Err, "error:", err)
-		return
-	}
-	fmt.Fprintln(a.Out, blame)
 }
 
 func (a *App) handleCommitSlash(args []string) {
@@ -18204,7 +18259,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "background", "brief", "bughunter", "chrome",
+	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "chrome",
 		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
@@ -18381,8 +18436,8 @@ Usage:
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
-  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] | commit [--all] MESSAGE
-  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE
+  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
