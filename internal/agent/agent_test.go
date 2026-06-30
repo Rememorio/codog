@@ -2533,7 +2533,7 @@ func TestSlashAliasesForExistingSurfaces(t *testing.T) {
 	}
 	sess := &session.Session{ID: "session"}
 
-	for _, command := range []string{"/ide", "/agents", "/tasks", "/background", "/plugin", "/plugins", "/marketplace", "/providers"} {
+	for _, command := range []string{"/ide", "/agents", "/tasks", "/bashes", "/background", "/plugin", "/plugins", "/marketplace", "/providers"} {
 		out.Reset()
 		errOut.Reset()
 		require.True(t, app.handleSlash(context.Background(), command, sess), command)
@@ -3327,6 +3327,23 @@ func TestBackgroundRunAttachesSessionFromOverrides(t *testing.T) {
 
 	require.NoError(t, app.BackgroundWithOverrides([]string{"list"}, config.FlagOverrides{SessionID: "session-1"}))
 	require.Contains(t, out.String(), `"session_id": "session-1"`)
+}
+
+func TestBackgroundSlashAliases(t *testing.T) {
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewStore(configHome),
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/bashes list", &session.Session{ID: "session-1"}))
+	require.Equal(t, "[]\n", out.String())
+	require.Empty(t, errOut.String())
 }
 
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
