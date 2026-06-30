@@ -5239,6 +5239,15 @@ func TestProvidersSetWritesConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"base_url": "http://127.0.0.1:8080"`)
 	require.Contains(t, string(data), `"model": "claude-local"`)
+	out.Reset()
+
+	openAIPath := filepath.Join(configHome, "openai-provider.json")
+	require.NoError(t, app.Providers([]string{"set", "openai", "--path", openAIPath, "--json"}))
+	require.Contains(t, out.String(), `"provider": "openai"`)
+	data, err = os.ReadFile(openAIPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"base_url": "https://api.openai.com/v1"`)
+	require.Contains(t, string(data), `"model": "openai/gpt-4o-mini"`)
 }
 
 func TestProvidersShowCurrent(t *testing.T) {
@@ -5258,6 +5267,14 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "custom"`)
 	require.Contains(t, out.String(), `"base_url": "https://provider.example"`)
 	require.Contains(t, out.String(), `"model": "claude-compatible"`)
+	out.Reset()
+
+	app.Config.BaseURL = "https://api.openai.com/v1"
+	app.Config.Model = "openai/gpt-4o-mini"
+	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
+	require.Contains(t, out.String(), `"name": "openai"`)
+	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
+	require.Contains(t, out.String(), `"model": "openai/gpt-4o-mini"`)
 }
 
 func TestOAuthBrowserCommands(t *testing.T) {

@@ -119,6 +119,18 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
+	t.Setenv("CODOG_MODEL", "openai/gpt-4o-mini")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "openai/gpt-4o-mini", cfg.Model)
+	require.Equal(t, "openai-secret", cfg.APIKey)
+	require.Equal(t, "http://127.0.0.1:8080/v1", cfg.BaseURL)
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

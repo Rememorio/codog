@@ -3438,7 +3438,7 @@ func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
 		}
 	case "set":
 		if len(positionals) == 0 {
-			return req, errors.New("usage: codog providers set anthropic|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
+			return req, errors.New("usage: codog providers set anthropic|openai|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
 		}
 		req.Name = positionals[0]
 		if len(positionals) > 1 && req.BaseURL == "" {
@@ -3486,12 +3486,17 @@ func buildProvidersReport(cfg config.Config, action string) (providersReport, er
 
 func activeProvider(cfg config.Config) activeProviderReport {
 	name := "custom"
+	protocol := "anthropic-compatible"
 	if sameProviderURL(cfg.BaseURL, config.DefaultBaseURL) {
 		name = "anthropic"
 	}
+	if strings.HasPrefix(strings.TrimSpace(cfg.Model), "openai/") {
+		name = "openai"
+		protocol = "openai-compatible"
+	}
 	return activeProviderReport{
 		Name:      name,
-		Protocol:  "anthropic-compatible",
+		Protocol:  protocol,
 		BaseURL:   cfg.BaseURL,
 		Model:     cfg.Model,
 		MaxTokens: cfg.MaxTokens,
@@ -3546,6 +3551,14 @@ func providerPresets() []providerPreset {
 			Description:  "Anthropic Messages API.",
 		},
 		{
+			Name:         "openai",
+			Protocol:     "openai-compatible",
+			BaseURL:      "https://api.openai.com/v1",
+			DefaultModel: "openai/gpt-4o-mini",
+			AuthEnv:      []string{"CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY"},
+			Description:  "OpenAI-compatible Chat Completions API selected by the openai/ model prefix.",
+		},
+		{
 			Name:        "custom",
 			Protocol:    "anthropic-compatible",
 			AuthEnv:     []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
@@ -3596,9 +3609,17 @@ func setProviderConfig(paths []string, req providerCommandRequest) (providerSetR
 		if baseURL == "" {
 			return providerSetReport{}, errors.New("custom provider requires --base-url or a BASE_URL positional argument")
 		}
+	case "openai", "openai-compatible":
+		name = "openai"
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		if model == "" {
+			model = "openai/gpt-4o-mini"
+		}
 	default:
 		if baseURL == "" {
-			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic or custom --base-url URL", req.Name)
+			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic, openai, or custom --base-url URL", req.Name)
 		}
 	}
 	if err := validateProviderBaseURL(baseURL); err != nil {

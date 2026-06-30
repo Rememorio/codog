@@ -1211,6 +1211,20 @@ func applyEnv(cfg *Config) {
 	if value := os.Getenv("CODOG_MODEL"); value != "" {
 		cfg.Model = value
 	}
+	if value := os.Getenv("CODOG_API_KEY"); value != "" {
+		cfg.APIKey = value
+	}
+	if value := os.Getenv("CODOG_AUTH_TOKEN"); value != "" {
+		cfg.AuthToken = value
+	}
+	if strings.HasPrefix(strings.TrimSpace(cfg.Model), "openai/") {
+		if value := os.Getenv("OPENAI_API_KEY"); value != "" && cfg.APIKey == "" {
+			cfg.APIKey = value
+		}
+		if value := os.Getenv("OPENAI_BASE_URL"); value != "" {
+			cfg.BaseURL = value
+		}
+	}
 	if value := os.Getenv("CODOG_ADVISOR_MODEL"); value != "" {
 		cfg.AdvisorModel = value
 	}

@@ -2,6 +2,8 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,6 +32,118 @@ func TestClientStreamsText(t *testing.T) {
 	require.Len(t, msg.Blocks, 1)
 	require.Contains(t, msg.Blocks[0].Text, "hello from mock")
 	require.Equal(t, 10, msg.Usage.InputTokens)
+}
+
+func TestClientStreamsOpenAICompatibleText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.Equal(t, "Bearer openai-key", r.Header.Get("authorization"))
+		require.Empty(t, r.Header.Get("x-api-key"))
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "gpt-4o", body["model"])
+		require.Equal(t, true, body["stream"])
+		messages := body["messages"].([]any)
+		require.Equal(t, "system", messages[0].(map[string]any)["role"])
+		require.Equal(t, "Be concise.", messages[0].(map[string]any)["content"])
+		streamOptions := body["stream_options"].(map[string]any)
+		require.Equal(t, true, streamOptions["include_usage"])
+
+		w.Header().Set("content-type", "text/event-stream")
+		writeOpenAISSE(t, w,
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "hello "}}}},
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "world"}}}},
+			map[string]any{
+				"choices": []any{},
+				"usage": map[string]any{
+					"prompt_tokens":     7,
+					"completion_tokens": 2,
+					"prompt_tokens_details": map[string]any{
+						"cached_tokens": 3,
+					},
+				},
+			},
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "openai-key", "")
+	var streamed strings.Builder
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "openai/gpt-4o",
+		MaxTokens: 64,
+		System:    "Be concise.",
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, func(delta string) {
+		streamed.WriteString(delta)
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "hello world", streamed.String())
+	require.Len(t, msg.Blocks, 1)
+	require.Equal(t, "hello world", msg.Blocks[0].Text)
+	require.Equal(t, 4, msg.Usage.InputTokens)
+	require.Equal(t, 3, msg.Usage.CacheReadInputTokens)
+	require.Equal(t, 2, msg.Usage.OutputTokens)
+}
+
+func TestClientStreamsOpenAICompatibleToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		tools := body["tools"].([]any)
+		tool := tools[0].(map[string]any)
+		require.Equal(t, "function", tool["type"])
+		function := tool["function"].(map[string]any)
+		require.Equal(t, "read_file", function["name"])
+		require.Equal(t, "Read a file.", function["description"])
+
+		w.Header().Set("content-type", "text/event-stream")
+		writeOpenAISSE(t, w,
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{
+				map[string]any{
+					"index": 0,
+					"id":    "call_1",
+					"type":  "function",
+					"function": map[string]any{
+						"name":      "read_file",
+						"arguments": `{"pa`,
+					},
+				},
+			}}}}},
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{
+				map[string]any{
+					"index": 0,
+					"function": map[string]any{
+						"arguments": `th":"README.md"}`,
+					},
+				},
+			}}}}},
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "openai-key", "")
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "openai/gpt-4o",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "read it")},
+		Tools: []ToolDefinition{{
+			Name:        "read_file",
+			Description: "Read a file.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"path": map[string]any{"type": "string"}},
+			},
+		}},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Len(t, msg.Blocks, 1)
+	require.Equal(t, "tool_use", msg.Blocks[0].Type)
+	require.Equal(t, "call_1", msg.Blocks[0].ID)
+	require.Equal(t, "read_file", msg.Blocks[0].Name)
+	require.JSONEq(t, `{"path":"README.md"}`, string(msg.Blocks[0].Input))
 }
 
 func TestClientRetriesRateLimitedRequests(t *testing.T) {
@@ -68,4 +182,16 @@ func TestClientRetriesRateLimitedRequests(t *testing.T) {
 	require.Len(t, delays, 2)
 	require.Equal(t, 20*time.Millisecond, delays[0])
 	require.Contains(t, msg.Blocks[0].Text, "retry success")
+}
+
+func writeOpenAISSE(t *testing.T, w http.ResponseWriter, payloads ...any) {
+	t.Helper()
+	for _, payload := range payloads {
+		data, err := json.Marshal(payload)
+		require.NoError(t, err)
+		_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+		require.NoError(t, err)
+	}
+	_, err := fmt.Fprint(w, "data: [DONE]\n\n")
+	require.NoError(t, err)
 }

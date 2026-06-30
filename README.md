@@ -10,7 +10,9 @@ Claude Code source.
 - One-shot prompt mode through `codog prompt` or Claude-compatible `codog -p`
 - Interactive REPL with Tab completion for built-in and custom slash commands,
   skill shortcuts, model switches, and recent sessions on real terminals
-- Anthropic-compatible streaming through `/v1/messages`
+- Anthropic-compatible streaming through `/v1/messages`, plus explicit
+  OpenAI-compatible Chat Completions streaming when the model starts with
+  `openai/`
 - Built-in tools: `bash`, `bash_output`, `kill_bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `ls`, `web_fetch`, `web_search`, `remote_trigger`,
   `notebook_read`, `notebook_edit`,
@@ -380,10 +382,9 @@ Claude Code source.
   rollback path.
 - `codog upgrade` and `codog install` are top-level aliases for the signed
   updater check/download/install/rollback workflows.
-- `codog providers status|list|show|set` inspects the active
-  Anthropic-compatible provider, reports auth readiness without printing
-  secrets, lists presets/OAuth profiles, and persists provider base URL/model
-  changes.
+- `codog providers status|list|show|set` inspects the active Anthropic- or
+  OpenAI-compatible provider, reports auth readiness without printing secrets,
+  lists presets/OAuth profiles, and persists provider base URL/model changes.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use
   audit events, and `enterprise verify POLICY PUBLIC_KEY` verifies signed
   managed policy files.
@@ -411,8 +412,10 @@ Inspect effective config with `codog config`, `codog config get SECTION`, or
 `codog config paths`. Persist settings with `codog config set KEY VALUE` and
 remove them with `codog config unset KEY`; use `--target project` or
 `--target local` to write `.codog.json` or `.codog.local.json`.
-Use `codog providers set anthropic` or `codog providers set custom --base-url
-URL --model MODEL` as a focused provider configuration shortcut.
+Use `codog providers set anthropic`, `codog providers set openai`, or
+`codog providers set custom --base-url URL --model MODEL` as focused provider
+configuration shortcuts. OpenAI-compatible providers are selected by storing a
+model with the `openai/` prefix, for example `openai/gpt-4o-mini`.
 
 `~/.codog/config.json`, `.codog.json`, or `.codog.local.json`:
 
@@ -484,8 +487,12 @@ Environment overrides:
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_AUTH_TOKEN`
 - `ANTHROPIC_BASE_URL`
+- `CODOG_API_KEY`
+- `CODOG_AUTH_TOKEN`
 - `CODOG_BASE_URL`
 - `CODOG_MODEL`
+- `OPENAI_API_KEY` when the effective model starts with `openai/`
+- `OPENAI_BASE_URL` when the effective model starts with `openai/`
 - `CODOG_PERMISSION_MODE`
 - `CODOG_CONFIG_HOME`
 - `CODOG_RATE_LIMIT_MAX_RETRIES`
