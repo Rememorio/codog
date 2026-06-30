@@ -2200,6 +2200,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
 		return nil
 	}
 	if len(args) < 2 && args[0] != "prune" && args[0] != "supervise" {
@@ -2221,6 +2222,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
 		return nil
 	case "restart":
 		task, err := store.Restart(args[1], a.Workspace)
@@ -2229,6 +2231,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
 		return nil
 	case "logs":
 		limit := int64(64 * 1024)
@@ -2277,6 +2280,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		for _, task := range result.Restarted {
+			a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+		}
 		return nil
 	default:
 		return fmt.Errorf("unknown background command %q", args[0])
@@ -4431,14 +4437,16 @@ func isSensitiveEnvName(name string) bool {
 }
 
 type hooksRequest struct {
-	Format    string
-	Action    string
-	Event     string
-	Tool      string
-	Input     string
-	Output    string
-	IsError   bool
-	TimeoutMS int
+	Format           string
+	Action           string
+	Event            string
+	Tool             string
+	Input            string
+	Output           string
+	IsError          bool
+	TimeoutMS        int
+	NotificationType string
+	Title            string
 }
 
 type hooksListReport struct {
@@ -4452,6 +4460,7 @@ type hooksListReport struct {
 	SessionStart               []string             `json:"session_start"`
 	Stop                       []string             `json:"stop"`
 	PreCompact                 []string             `json:"pre_compact"`
+	Notification               []string             `json:"notification"`
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
@@ -4459,6 +4468,7 @@ type hooksListReport struct {
 	SessionStartCommands       []hookCommandSummary `json:"session_start_commands,omitempty"`
 	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
 	PreCompactCommands         []hookCommandSummary `json:"pre_compact_commands,omitempty"`
+	NotificationCommands       []hookCommandSummary `json:"notification_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4486,6 +4496,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
 			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
 			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
+			Notification:               append([]string(nil), a.Config.Hooks.Notification...),
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
@@ -4493,6 +4504,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
 			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
 			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
+			NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4503,11 +4515,23 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		return nil
 	case "run":
 		payload := hooks.Payload{
-			Event:   req.Event,
-			Tool:    req.Tool,
-			Input:   req.Input,
-			Output:  req.Output,
-			IsError: req.IsError,
+			Event:            req.Event,
+			Tool:             req.Tool,
+			Input:            req.Input,
+			Output:           req.Output,
+			IsError:          req.IsError,
+			Message:          req.Input,
+			Title:            req.Title,
+			NotificationType: req.NotificationType,
+		}
+		if req.Event == "notification" {
+			payload.NotificationType = firstNonEmpty(req.NotificationType, req.Tool, "generic")
+			payload.Tool = payload.NotificationType
+			payload.Message = req.Input
+		} else {
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4573,6 +4597,22 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Output = args[i]
 		case strings.HasPrefix(arg, "--output="):
 			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--notification-type":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks notification type is required")
+			}
+			req.NotificationType = args[i]
+		case strings.HasPrefix(arg, "--notification-type="):
+			req.NotificationType = strings.TrimPrefix(arg, "--notification-type=")
+		case arg == "--title":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks title is required")
+			}
+			req.Title = args[i]
+		case strings.HasPrefix(arg, "--title="):
+			req.Title = strings.TrimPrefix(arg, "--title=")
 		case arg == "--error":
 			req.IsError = true
 		case arg == "--timeout-ms":
@@ -4619,8 +4659,11 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact") {
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "notification") {
 		req.Tool = ""
+	}
+	if req.Event == "notification" && strings.TrimSpace(req.NotificationType) == "" && strings.TrimSpace(req.Tool) != "" {
+		req.NotificationType = req.Tool
 	}
 	return req, nil
 }
@@ -4641,6 +4684,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "stop", nil
 	case "compact", "precompact", "pre_compact", "pre-compact":
 		return "pre_compact", nil
+	case "notification", "notify":
+		return "notification", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -4706,6 +4751,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Pre compact      %d\n", len(report.PreCompact))
 	for _, command := range report.PreCompactCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Notification     %d\n", len(report.Notification))
+	for _, command := range report.NotificationCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -10000,6 +10049,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		PostFailureHookCount:      len(a.Config.Hooks.PostToolUseFailure),
 		StopHookCount:             len(a.Config.Hooks.Stop),
 		PreCompactHookCount:       len(a.Config.Hooks.PreCompact),
+		NotificationHookCount:     len(a.Config.Hooks.Notification),
 		EnabledSkillCount:         len(a.Config.EnabledSkills),
 		PlanActive:                planState.Active,
 		PlanText:                  planState.Plan,
@@ -10553,6 +10603,7 @@ func (a *App) Doctor(args []string) error {
 		PostToolUseFailure: a.Config.Hooks.PostToolUseFailure,
 		Stop:               a.Config.Hooks.Stop,
 		PreCompact:         a.Config.Hooks.PreCompact,
+		Notification:       a.Config.Hooks.Notification,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
 	})
@@ -16013,6 +16064,16 @@ func (a *App) lifecycleHookRunner() hooks.Runner {
 	}
 }
 
+func (a *App) runNotificationHook(ctx context.Context, notificationType string, title string, message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+	if err := a.lifecycleHookRunner().Notification(ctx, notificationType, title, message); err != nil && a.Err != nil {
+		fmt.Fprintf(a.Err, "notification hook error: %v\n", err)
+	}
+}
+
 func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, source string) error {
 	if sess == nil {
 		return nil
@@ -16409,7 +16470,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact|notification] [--tool NAME] [--input JSON] [--output TEXT] [--notification-type TYPE] [--title TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

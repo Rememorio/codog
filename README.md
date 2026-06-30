@@ -189,8 +189,8 @@ Claude Code source.
   integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
 - Hook commands can run on `session_start`, `user_prompt_submit`,
-  `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `stop`, and
-  `pre_compact`; `codog hooks
+  `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `stop`,
+  `pre_compact`, and `notification`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -200,7 +200,8 @@ Claude Code source.
   through the configured model with `$ARGUMENTS` expanded to the hook payload.
   Hook commands receive the payload on stdin plus
   `CODOG_HOOK_EVENT`, `CODOG_HOOK_TOOL`, `CODOG_HOOK_INPUT`,
-  `CODOG_HOOK_OUTPUT`, and `CODOG_HOOK_IS_ERROR`; run reports include stdout,
+  `CODOG_HOOK_OUTPUT`, `CODOG_HOOK_IS_ERROR`, `CODOG_HOOK_MESSAGE`,
+  `CODOG_HOOK_TITLE`, and `CODOG_HOOK_NOTIFICATION_TYPE`; run reports include stdout,
   stderr, HTTP status, duration, success, and exit code.
 - `codog brief MESSAGE [--status normal|proactive] [--attach PATH]` and
   `/brief` expose the built-in `brief` tool as a human command with optional
@@ -414,7 +415,8 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "post_tool_use": ["echo post >&2"],
     "post_tool_use_failure": ["echo post-failure >&2"],
     "stop": ["echo stop >&2"],
-    "pre_compact": ["echo compact >&2"]
+    "pre_compact": ["echo compact >&2"],
+    "notification": ["echo notify >&2"]
   },
   "mcp_servers": {
     "example": {

@@ -143,6 +143,9 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		PreCompactCommands: []config.HookCommand{
 			{Type: "command", Command: "compact"},
 		},
+		NotificationCommands: []config.HookCommand{
+			{Matcher: "background_*", Type: "command", Command: "notify"},
+		},
 	}
 
 	require.Equal(t, []string{"write-only", "all"}, CommandsForEvent(cfg, "pre_tool_use", "write_file"))
@@ -154,6 +157,7 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"session"}, CommandsForEvent(cfg, "session-start", ""))
 	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))
 	require.Equal(t, []string{"compact"}, CommandsForEvent(cfg, "pre-compact", ""))
+	require.Equal(t, []string{"notify"}, CommandsForEvent(cfg, "notification", "background_task_started"))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
 }
 
@@ -170,4 +174,27 @@ func TestHooksForPayloadFiltersIfConditions(t *testing.T) {
 	matched = HooksForPayload(cfg, Payload{Event: "pre_tool_use", Tool: "bash", Input: `{"command":"npm test"}`})
 	require.Len(t, matched, 1)
 	require.Equal(t, "http", matched[0].Type)
+}
+
+func TestHooksForPayloadFiltersNotificationMatchersAndConditions(t *testing.T) {
+	cfg := config.HookConfig{NotificationCommands: []config.HookCommand{
+		{Matcher: "background_*", Type: "command", If: "background_task_started(*started*)", Command: "started"},
+		{Matcher: "auth_*", Type: "command", Command: "auth"},
+	}}
+
+	matched := HooksForPayload(cfg, Payload{
+		Event:            "notification",
+		Message:          "background task started",
+		Title:            "Background task started",
+		NotificationType: "background_task_started",
+	})
+	require.Len(t, matched, 1)
+	require.Equal(t, "started", matched[0].Command)
+
+	matched = HooksForPayload(cfg, Payload{
+		Event:            "notification",
+		Message:          "background task stopped",
+		NotificationType: "background_task_stopped",
+	})
+	require.Empty(t, matched)
 }

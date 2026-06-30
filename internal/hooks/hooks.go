@@ -36,11 +36,14 @@ type PromptRequest struct {
 }
 
 type Payload struct {
-	Event   string `json:"event"`
-	Tool    string `json:"tool,omitempty"`
-	Input   string `json:"input,omitempty"`
-	Output  string `json:"output,omitempty"`
-	IsError bool   `json:"is_error,omitempty"`
+	Event            string `json:"event"`
+	Tool             string `json:"tool,omitempty"`
+	Input            string `json:"input,omitempty"`
+	Output           string `json:"output,omitempty"`
+	IsError          bool   `json:"is_error,omitempty"`
+	Message          string `json:"message,omitempty"`
+	Title            string `json:"title,omitempty"`
+	NotificationType string `json:"notification_type,omitempty"`
 }
 
 type CommandResult struct {
@@ -128,6 +131,22 @@ func (r Runner) PreCompact(ctx context.Context, input string) error {
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) Notification(ctx context.Context, notificationType string, title string, message string) error {
+	notificationType = strings.TrimSpace(notificationType)
+	if notificationType == "" {
+		notificationType = "generic"
+	}
+	payload := Payload{
+		Event:            "notification",
+		Tool:             notificationType,
+		Input:            message,
+		Message:          message,
+		Title:            title,
+		NotificationType: notificationType,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
 	payload := Payload{Event: event, Tool: tool}
 	hooks := HooksForPayload(cfg, payload)
@@ -159,6 +178,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.StopCommands, cfg.Stop, payload)
 	case "pre_compact":
 		return matchingHooks(cfg.PreCompactCommands, cfg.PreCompact, payload)
+	case "notification":
+		return matchingHooks(cfg.NotificationCommands, cfg.Notification, payload)
 	default:
 		return nil
 	}
@@ -283,6 +304,9 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 		"CODOG_HOOK_INPUT="+payload.Input,
 		"CODOG_HOOK_OUTPUT="+payload.Output,
 		"CODOG_HOOK_IS_ERROR="+strconv.FormatBool(payload.IsError),
+		"CODOG_HOOK_MESSAGE="+payload.Message,
+		"CODOG_HOOK_TITLE="+payload.Title,
+		"CODOG_HOOK_NOTIFICATION_TYPE="+payload.NotificationType,
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -416,14 +440,22 @@ func matchingHooks(entries []config.HookCommand, fallback []string, payload Payl
 		return hookCommandsFromStrings(fallback)
 	}
 	hookList := []config.HookCommand{}
+	target := matcherTarget(payload)
 	for _, entry := range entries {
-		if matcherMatches(entry.Matcher, payload.Tool) && conditionMatches(entry.If, payload) {
+		if matcherMatches(entry.Matcher, target) && conditionMatches(entry.If, payload) {
 			if strings.TrimSpace(config.HookCommandDisplay(entry)) != "" {
 				hookList = append(hookList, entry)
 			}
 		}
 	}
 	return hookList
+}
+
+func matcherTarget(payload Payload) string {
+	if normalizeEvent(payload.Event) == "notification" && strings.TrimSpace(payload.NotificationType) != "" {
+		return payload.NotificationType
+	}
+	return payload.Tool
 }
 
 func hookCommandsFromStrings(values []string) []config.HookCommand {
@@ -493,11 +525,11 @@ func conditionMatches(condition string, payload Payload) bool {
 	open := strings.Index(condition, "(")
 	close := strings.LastIndex(condition, ")")
 	if open <= 0 || close <= open {
-		return matcherMatches(condition, payload.Tool)
+		return matcherMatches(condition, matcherTarget(payload))
 	}
-	tool := strings.TrimSpace(condition[:open])
+	target := strings.TrimSpace(condition[:open])
 	pattern := strings.TrimSpace(condition[open+1 : close])
-	if !matcherMatches(tool, payload.Tool) {
+	if !matcherMatches(target, matcherTarget(payload)) {
 		return false
 	}
 	if pattern == "" || pattern == "*" {
@@ -512,7 +544,7 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType}
 	var decoded any
 	if err := json.Unmarshal([]byte(payload.Input), &decoded); err == nil {
 		collectJSONStrings(decoded, &values)
@@ -638,6 +670,8 @@ func normalizeEvent(event string) string {
 		return "stop"
 	case "precompact", "pre_compact", "pre-compact":
 		return "pre_compact"
+	case "notification", "notify":
+		return "notification"
 	default:
 		return event
 	}

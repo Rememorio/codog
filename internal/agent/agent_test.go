@@ -2819,6 +2819,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	postFailurePath := filepath.Join(workspace, "post-failure.json")
 	stopPath := filepath.Join(workspace, "stop.json")
 	compactPath := filepath.Join(workspace, "compact.json")
+	notificationPath := filepath.Join(workspace, "notification.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -2831,6 +2832,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				PostToolUseFailure: []string{"cat > " + shellQuote(postFailurePath)},
 				Stop:               []string{"cat > " + shellQuote(stopPath)},
 				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
+				Notification:       []string{"cat > " + shellQuote(notificationPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
 				},
@@ -2852,6 +2854,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				PreCompactCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(compactPath)},
 				},
+				NotificationCommands: []config.HookCommand{
+					{Matcher: "background_*", Command: "cat > " + shellQuote(notificationPath)},
+				},
 			},
 		},
 		Workspace: workspace,
@@ -2868,6 +2873,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"post_tool_use_failure"`)
 	require.Contains(t, out.String(), `"stop"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
+	require.Contains(t, out.String(), `"notification"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
 	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
@@ -2877,6 +2883,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "bash", hooksList.PostToolUseFailureCommands[0].Matcher)
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
+	require.Equal(t, "background_*", hooksList.NotificationCommands[0].Matcher)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
@@ -2937,6 +2944,24 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &compactHook))
 	require.Equal(t, "pre_compact", compactHook.Event)
 	require.Contains(t, compactHook.Input, `"source"`)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "notification", "--notification-type", "background_task_started", "--title", "Started", "--input", "task started"}))
+	data, err = os.ReadFile(notificationPath)
+	require.NoError(t, err)
+	var notificationHook struct {
+		Event            string `json:"event"`
+		Tool             string `json:"tool"`
+		Message          string `json:"message"`
+		Title            string `json:"title"`
+		NotificationType string `json:"notification_type"`
+	}
+	require.NoError(t, json.Unmarshal(data, &notificationHook))
+	require.Equal(t, "notification", notificationHook.Event)
+	require.Equal(t, "background_task_started", notificationHook.Tool)
+	require.Equal(t, "task started", notificationHook.Message)
+	require.Equal(t, "Started", notificationHook.Title)
+	require.Equal(t, "background_task_started", notificationHook.NotificationType)
 	require.Empty(t, errOut.String())
 }
 
@@ -4140,6 +4165,65 @@ func TestBackgroundRunAttachesSessionFromOverrides(t *testing.T) {
 
 	require.NoError(t, app.BackgroundWithOverrides([]string{"list"}, config.FlagOverrides{SessionID: "session-1"}))
 	require.Contains(t, out.String(), `"session_id": "session-1"`)
+}
+
+func TestBackgroundRunEmitsNotificationHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	received := make(chan struct {
+		Event            string `json:"event"`
+		Message          string `json:"message"`
+		Title            string `json:"title"`
+		NotificationType string `json:"notification_type"`
+	}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload struct {
+			Event            string `json:"event"`
+			Message          string `json:"message"`
+			Title            string `json:"title"`
+			NotificationType string `json:"notification_type"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Hooks: config.HookConfig{
+				NotificationCommands: []config.HookCommand{
+					{Matcher: "background_task_started", Type: "http", URL: server.URL},
+				},
+			},
+		},
+		Sessions:  session.NewStore(configHome),
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"run", "echo", "attached"}, config.FlagOverrides{SessionID: "session-1"}))
+	require.Contains(t, out.String(), `"session_id": "session-1"`)
+	select {
+	case payload := <-received:
+		require.Equal(t, "notification", payload.Event)
+		require.Equal(t, "Background task started", payload.Title)
+		require.Equal(t, "background_task_started", payload.NotificationType)
+		require.Contains(t, payload.Message, "started")
+		require.Contains(t, payload.Message, "echo attached")
+	case <-time.After(2 * time.Second):
+		t.Fatal("notification hook was not called")
+	}
+	require.Empty(t, errOut.String())
 }
 
 func TestBackgroundSlashAliases(t *testing.T) {

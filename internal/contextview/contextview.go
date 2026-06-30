@@ -58,6 +58,7 @@ type ConfigSummary struct {
 	PostFailureHookCount      int    `json:"post_tool_use_failure_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
 	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
+	NotificationHookCount     int    `json:"notification_hook_count"`
 }
 
 type SessionSummary struct {
@@ -152,6 +153,7 @@ func Build(options Options) Report {
 			PostFailureHookCount:      options.Status.Config.PostFailureHookCount,
 			StopHookCount:             options.Status.Config.StopHookCount,
 			PreCompactHookCount:       options.Status.Config.PreCompactHookCount,
+			NotificationHookCount:     options.Status.Config.NotificationHookCount,
 		},
 		Git: options.Status.Git,
 		Session: SessionSummary{

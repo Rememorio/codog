@@ -28,6 +28,7 @@ type Options struct {
 	PostFailureHookCount      int
 	StopHookCount             int
 	PreCompactHookCount       int
+	NotificationHookCount     int
 	EnabledSkillCount         int
 	PlanActive                bool
 	PlanText                  string
@@ -95,6 +96,7 @@ type ConfigStatus struct {
 	PostFailureHookCount      int    `json:"post_tool_use_failure_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
 	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
+	NotificationHookCount     int    `json:"notification_hook_count"`
 	EnabledSkillCount         int    `json:"enabled_skill_count"`
 }
 
@@ -178,6 +180,7 @@ func Build(opts Options) Snapshot {
 			PostFailureHookCount:      opts.PostFailureHookCount,
 			StopHookCount:             opts.StopHookCount,
 			PreCompactHookCount:       opts.PreCompactHookCount,
+			NotificationHookCount:     opts.NotificationHookCount,
 			EnabledSkillCount:         opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{
