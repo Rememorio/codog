@@ -29,6 +29,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/doctor")
 	require.Contains(t, out.String(), "/sandbox")
 	require.Contains(t, out.String(), "/sandbox-toggle")
+	require.Contains(t, out.String(), "/heapdump")
 	require.Contains(t, out.String(), "/compact")
 	require.Contains(t, out.String(), "/usage")
 	require.Contains(t, out.String(), "/stats")

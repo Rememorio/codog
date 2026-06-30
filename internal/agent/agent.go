@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -382,6 +383,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Sandbox()
 	case "sandbox-toggle":
 		return app.SandboxToggle(rest)
+	case "heapdump":
+		return app.HeapDump(rest)
 	case "symbols":
 		return app.Symbols(rest)
 	case "diagnostics":
@@ -3848,6 +3851,121 @@ func renderSandboxToggleReport(out io.Writer, report sandboxToggleReport) {
 	if report.Error != "" {
 		fmt.Fprintf(out, "  Error            %s\n", report.Error)
 	}
+}
+
+type heapDumpRequest struct {
+	Path   string
+	Format string
+	GC     bool
+}
+
+type heapDumpReport struct {
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	Path      string `json:"path"`
+	Bytes     int64  `json:"bytes"`
+	GC        bool   `json:"gc"`
+	WrittenAt string `json:"written_at"`
+}
+
+func (a *App) HeapDump(args []string) error {
+	req, err := parseHeapDumpArgs(args)
+	if err != nil {
+		return err
+	}
+	path := req.Path
+	if strings.TrimSpace(path) == "" {
+		path = a.defaultHeapDumpPath(time.Now().UTC())
+	} else {
+		path = a.resolveOutputPath(path)
+	}
+	if req.GC {
+		runtime.GC()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	writeErr := pprof.WriteHeapProfile(file)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	report := heapDumpReport{
+		Kind:      "heapdump",
+		Status:    "ok",
+		Path:      path,
+		Bytes:     stat.Size(),
+		GC:        req.GC,
+		WrittenAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderHeapDumpReport(a.Out, report)
+	return nil
+}
+
+func parseHeapDumpArgs(args []string) (heapDumpRequest, error) {
+	req := heapDumpRequest{Format: "text", GC: true}
+	pathSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("heapdump output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--gc":
+			req.GC = true
+		case arg == "--no-gc":
+			req.GC = false
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown heapdump flag %q", arg)
+		default:
+			if pathSet {
+				return req, fmt.Errorf("unexpected heapdump argument %q", arg)
+			}
+			req.Path = arg
+			pathSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "heapdump"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func (a *App) defaultHeapDumpPath(now time.Time) string {
+	name := "heap-" + now.Format("20060102-150405") + ".pprof"
+	return a.resolveOutputPath(filepath.Join(".codog", "heap", name))
+}
+
+func renderHeapDumpReport(out io.Writer, report heapDumpReport) {
+	fmt.Fprintln(out, "Heap Dump")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
+	fmt.Fprintf(out, "  Bytes            %d\n", report.Bytes)
+	fmt.Fprintf(out, "  GC               %t\n", report.GC)
+	fmt.Fprintf(out, "  Written at       %s\n", report.WrittenAt)
 }
 
 func (a *App) Init(args []string) error {
@@ -9310,6 +9428,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.SandboxToggle(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/heapdump":
+		if err := a.HeapDump(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/version":
 		if err := renderVersion(a.Out, a.Workspace, nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -13200,6 +13322,7 @@ Usage:
   %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
+  %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|clear] [--target user|project|local] [--json|--output-format text|json]
@@ -13230,7 +13353,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

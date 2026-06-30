@@ -414,6 +414,32 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.NotContains(t, string(data), "sandbox_strategy")
 }
 
+func TestHeapDumpCommandWritesProfile(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	path := filepath.Join(workspace, "heap.pprof")
+
+	require.NoError(t, app.HeapDump([]string{path, "--json"}))
+	require.Contains(t, out.String(), `"kind": "heapdump"`)
+	require.Contains(t, out.String(), `"status": "ok"`)
+	require.Contains(t, out.String(), `"gc": true`)
+	stat, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Greater(t, stat.Size(), int64(0))
+	out.Reset()
+
+	slashPath := filepath.Join(workspace, "slash.pprof")
+	require.True(t, app.handleSlash(context.Background(), "/heapdump "+slashPath+" --no-gc", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Heap Dump")
+	require.Contains(t, out.String(), "GC               false")
+	stat, err = os.Stat(slashPath)
+	require.NoError(t, err)
+	require.Greater(t, stat.Size(), int64(0))
+	require.Empty(t, errOut.String())
+}
+
 func TestSystemPromptAndToolDetailsSlashCommands(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use the project style."), 0o644))
