@@ -368,6 +368,42 @@ func (r *Registry) Definitions() []anthropic.ToolDefinition {
 	return defs
 }
 
+func (r *Registry) DefinitionsForPlanMode() []anthropic.ToolDefinition {
+	defs := make([]anthropic.ToolDefinition, 0, len(r.tools))
+	for _, tool := range r.tools {
+		def := tool.Definition()
+		if ToolVisibleInPlanMode(def.Name, tool.Permission()) {
+			defs = append(defs, def)
+		}
+	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
+	return defs
+}
+
+func ToolVisibleInPlanMode(name string, permission Permission) bool {
+	if permission == PermissionReadOnly {
+		return true
+	}
+	return CanonicalToolName(name) == "bash"
+}
+
+func ToolAllowedInPlanMode(name string, permission Permission) bool {
+	return ToolVisibleInPlanMode(name, permission)
+}
+
+func ReadOnlyPrompter(base *Prompter, workspace string) *Prompter {
+	if base == nil {
+		return &Prompter{Mode: PermissionReadOnly, Workspace: workspace}
+	}
+	next := *base
+	next.Mode = PermissionReadOnly
+	next.AllowRules = nil
+	if next.Workspace == "" {
+		next.Workspace = workspace
+	}
+	return &next
+}
+
 func (r *Registry) Infos() []ToolInfo {
 	infos := make([]ToolInfo, 0, len(r.tools))
 	for _, tool := range r.tools {

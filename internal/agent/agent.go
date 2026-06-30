@@ -17085,6 +17085,7 @@ func skillAllowedToolRules(values []string) []string {
 func (a *App) effectiveConfig() config.Config {
 	cfg := a.Config
 	if a.planModeActive() {
+		cfg.PlanMode = true
 		cfg.PermissionMode = string(tools.PermissionReadOnly)
 		cfg.PermissionRules.Allow = nil
 	}

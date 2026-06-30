@@ -111,7 +111,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			MaxTokens: r.Config.MaxTokens,
 			System:    system,
 			Messages:  requestMessages,
-			Tools:     r.Tools.Definitions(),
+			Tools:     r.toolDefinitions(),
 		}
 		assistant, err := r.Client.Stream(ctx, req, func(delta string) {
 			if r.Out != nil {
@@ -161,13 +161,31 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 
 			canonicalTool := tools.CanonicalToolName(block.Name)
+			execPrompter := r.Prompter
+			if r.Config.PlanMode {
+				if info, ok := r.Tools.Info(block.Name); ok && !tools.ToolAllowedInPlanMode(info.Name, info.Permission) {
+					call.Output = fmt.Sprintf("plan mode blocked tool %s because it requires %s permission", info.Name, info.Permission)
+					call.IsError = true
+					if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, call.Output, call.IsError); hookErr != nil {
+						call.Output = hookErr.Error()
+					}
+					if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
+						call.Output = failureErr.Error()
+					}
+					toolCalls = append(toolCalls, call)
+					r.emitToolUse(call)
+					messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
+					continue
+				}
+				execPrompter = tools.ReadOnlyPrompter(execPrompter, r.Workspace)
+			}
 			oldCWD := ""
 			if canonicalTool == "bash" && r.SessionID != "" {
 				if cwd, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil {
 					oldCWD = cwd
 				}
 			}
-			output, err := r.Tools.Execute(toolCtx, block.Name, block.Input, r.Prompter)
+			output, err := r.Tools.Execute(toolCtx, block.Name, block.Input, execPrompter)
 			if err != nil {
 				call.Output = err.Error()
 				call.IsError = true
@@ -217,6 +235,13 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		return result, fmt.Errorf("%w; stop failure hook: %v", err, hookErr)
 	}
 	return result, err
+}
+
+func (r Runner) toolDefinitions() []anthropic.ToolDefinition {
+	if r.Config.PlanMode {
+		return r.Tools.DefinitionsForPlanMode()
+	}
+	return r.Tools.Definitions()
 }
 
 func hasHookConfig(cfg config.HookConfig) bool {

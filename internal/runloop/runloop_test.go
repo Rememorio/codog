@@ -91,6 +91,72 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	}, result.MessageUsages)
 }
 
+func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "tool-1",
+						Name:  "bash",
+						Input: []byte(`{"command":"printf ok"}`),
+					},
+					{
+						Type:  "tool_use",
+						ID:    "tool-2",
+						Name:  "bash",
+						Input: []byte(`{"command":"touch blocked-by-bash.txt"}`),
+					},
+					{
+						Type:  "tool_use",
+						ID:    "tool-3",
+						Name:  "write_file",
+						Input: []byte(`{"path":"blocked.txt","content":"nope"}`),
+					},
+				},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			PlanMode:  true,
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "plan only")
+	require.NoError(t, err)
+	require.Len(t, client.requests, 2)
+	require.True(t, requestHasTool(client.requests[0], "bash"))
+	require.True(t, requestHasTool(client.requests[0], "read_file"))
+	require.True(t, requestHasTool(client.requests[0], "exit_plan_mode"))
+	require.False(t, requestHasTool(client.requests[0], "write_file"))
+	require.False(t, requestHasTool(client.requests[0], "edit_file"))
+	require.Len(t, result.ToolCalls, 3)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, `"stdout": "ok"`)
+	require.True(t, result.ToolCalls[1].IsError)
+	require.Contains(t, result.ToolCalls[1].Output, "permission denied")
+	require.True(t, result.ToolCalls[2].IsError)
+	require.Contains(t, result.ToolCalls[2].Output, "plan mode blocked tool write_file")
+	require.NoFileExists(t, filepath.Join(workspace, "blocked-by-bash.txt"))
+	require.NoFileExists(t, filepath.Join(workspace, "blocked.txt"))
+}
+
 func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")
@@ -473,4 +539,13 @@ func TestCompactMessagesKeepsRecentContext(t *testing.T) {
 	require.Len(t, compacted, 2)
 	require.Equal(t, "three", compacted[1].Content[0].Text)
 	require.Contains(t, compacted[0].Content[0].Text, "auto-compacted")
+}
+
+func requestHasTool(req anthropic.Request, name string) bool {
+	for _, tool := range req.Tools {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
 }

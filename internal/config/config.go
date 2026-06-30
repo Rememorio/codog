@@ -299,6 +299,7 @@ type Config struct {
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
+	PlanMode            bool                       `json:"-"`
 	Privacy             PrivacyConfig              `json:"privacy_settings,omitempty"`
 	PermissionRules     PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome          string                     `json:"config_home,omitempty"`
