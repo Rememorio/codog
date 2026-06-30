@@ -3352,6 +3352,53 @@ Review body.
 	require.NotContains(t, prompt, "---")
 }
 
+func TestSystemPromptActivatesSkillsMatchingPromptAndFocusPaths(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	internalSkill := filepath.Join(workspace, ".codog", "skills", "internal-review")
+	docsSkill := filepath.Join(workspace, ".codog", "skills", "docs-review")
+	otherSkill := filepath.Join(workspace, ".codog", "skills", "script-review")
+	require.NoError(t, os.MkdirAll(internalSkill, 0o755))
+	require.NoError(t, os.MkdirAll(docsSkill, 0o755))
+	require.NoError(t, os.MkdirAll(otherSkill, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(internalSkill, "SKILL.md"), []byte(`---
+paths:
+  - internal/**
+---
+Internal review body.
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(docsSkill, "SKILL.md"), []byte(`---
+paths:
+  - docs/**/*.md
+---
+Docs review body.
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(otherSkill, "SKILL.md"), []byte(`---
+paths:
+  - scripts/**
+---
+Script review body.
+`), 0o644))
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+	}
+
+	prompt := app.systemPromptForInput("inspect @internal/agent.go")
+	require.Contains(t, prompt, "Internal review body.")
+	require.NotContains(t, prompt, "Docs review body.")
+	require.NotContains(t, prompt, "Script review body.")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "docs", "guide.md"), []byte("guide"), 0o644))
+	_, err := focus.Add(workspace, []string{"docs/guide.md"})
+	require.NoError(t, err)
+
+	prompt = app.systemPromptForInput("")
+	require.Contains(t, prompt, "Docs review body.")
+	require.NotContains(t, prompt, "Script review body.")
+}
+
 func TestSkillFrontmatterControlsInvocationAndSystemPrompt(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

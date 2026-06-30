@@ -11323,7 +11323,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
 		Workspace:        a.Workspace,
 		Out:              a.Out,
-		System:           a.systemPrompt(),
+		System:           a.systemPromptForInput(input),
 		OnToolUse:        a.auditToolUse(sess.ID),
 	}
 	result, err := runner.Run(ctx, sess.Messages, modelInput)
@@ -15936,6 +15936,10 @@ func (a *App) auditPermissionDecision(sessionID string) func(tools.PermissionDec
 }
 
 func (a *App) systemPrompt() string {
+	return a.systemPromptForInput("")
+}
+
+func (a *App) systemPromptForInput(input string) string {
 	base := "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
 	if strings.TrimSpace(a.Config.SystemPrompt) != "" {
 		base = strings.TrimSpace(a.Config.SystemPrompt)
@@ -15954,6 +15958,7 @@ func (a *App) systemPrompt() string {
 	if fastModeEnabled(a.Config.FastMode) {
 		builder.WriteString("\n\n<codog_fast_mode>enabled</codog_fast_mode>")
 	}
+	includedSkills := map[string]bool{}
 	for _, name := range a.Config.EnabledSkills {
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
 		if err != nil {
@@ -15962,6 +15967,16 @@ func (a *App) systemPrompt() string {
 		if skill.DisableModelInvocation {
 			continue
 		}
+		includedSkills[strings.ToLower(skill.Name)] = true
+		builder.WriteString("\n\n")
+		builder.WriteString(skills.RenderPromptBlock(skill))
+	}
+	for _, skill := range a.pathMatchedSkills(input) {
+		key := strings.ToLower(skill.Name)
+		if includedSkills[key] {
+			continue
+		}
+		includedSkills[key] = true
 		builder.WriteString("\n\n")
 		builder.WriteString(skills.RenderPromptBlock(skill))
 	}
@@ -15990,6 +16005,38 @@ func (a *App) systemPrompt() string {
 		builder.WriteString(rendered)
 	}
 	return builder.String()
+}
+
+func (a *App) pathMatchedSkills(input string) []skills.Skill {
+	paths := a.skillContextPaths(input)
+	if len(paths) == 0 {
+		return nil
+	}
+	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return nil
+	}
+	out := []skills.Skill{}
+	for _, skill := range all {
+		if skill.DisableModelInvocation || len(skill.Paths) == 0 {
+			continue
+		}
+		if skills.MatchesAnyPath(skill, paths) {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func (a *App) skillContextPaths(input string) []string {
+	paths := []string{}
+	paths = append(paths, promptrefs.References(input)...)
+	if state, err := focus.Load(a.Workspace); err == nil {
+		for _, entry := range state.Entries {
+			paths = append(paths, entry.Path)
+		}
+	}
+	return addRuleValues(nil, paths)
 }
 
 func containsFold(values []string, target string) bool {

@@ -117,6 +117,61 @@ func Find(configHome, workspace, name string) (Skill, error) {
 	return Skill{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
 
+func MatchesAnyPath(skill Skill, paths []string) bool {
+	if len(skill.Paths) == 0 || len(paths) == 0 {
+		return false
+	}
+	for _, candidate := range paths {
+		for _, pattern := range skill.Paths {
+			if matchPathPattern(pattern, candidate) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchPathPattern(pattern string, candidate string) bool {
+	pattern = cleanMatchPath(pattern)
+	candidate = cleanMatchPath(candidate)
+	if pattern == "" || candidate == "" {
+		return false
+	}
+	if pattern == candidate || strings.HasPrefix(candidate, pattern+"/") {
+		return true
+	}
+	if ok, _ := pathpkg.Match(pattern, candidate); ok {
+		return true
+	}
+	if !strings.Contains(pattern, "/") {
+		if ok, _ := pathpkg.Match(pattern, pathpkg.Base(candidate)); ok {
+			return true
+		}
+	}
+	if rest, ok := strings.CutPrefix(pattern, "**/"); ok {
+		return matchPathPattern(rest, candidate) || matchPathPattern(rest, pathpkg.Base(candidate))
+	}
+	if prefix, rest, ok := strings.Cut(pattern, "/**/"); ok {
+		if candidate == prefix {
+			return true
+		}
+		if strings.HasPrefix(candidate, prefix+"/") {
+			return matchPathPattern(rest, strings.TrimPrefix(candidate, prefix+"/"))
+		}
+	}
+	return false
+}
+
+func cleanMatchPath(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	value = strings.TrimPrefix(value, "./")
+	value = pathpkg.Clean(value)
+	if value == "." {
+		return ""
+	}
+	return strings.TrimPrefix(value, "/")
+}
+
 func Install(source string, targetRoot string, explicitName string, targetLabel string) (InstallReport, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {

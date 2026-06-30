@@ -21,6 +21,11 @@ func TestExpandAppendsWorkspaceFileReferences(t *testing.T) {
 	require.Contains(t, expanded, "note body")
 }
 
+func TestReferencesExtractsPathTokens(t *testing.T) {
+	require.Equal(t, []string{"notes.md", "internal/app.go"}, References("read @notes.md, then @internal/app.go"))
+	require.Empty(t, References("email a@example.com"))
+}
+
 func TestExpandRejectsEscapingReferences(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")

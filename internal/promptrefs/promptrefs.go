@@ -21,7 +21,7 @@ type Reference struct {
 }
 
 func Expand(input string, workspace string, additionalDirs []string) string {
-	refs := references(input)
+	refs := References(input)
 	if len(refs) == 0 {
 		return input
 	}
@@ -49,7 +49,7 @@ func Expand(input string, workspace string, additionalDirs []string) string {
 	return appendReferences(input, resolved)
 }
 
-func references(input string) []string {
+func References(input string) []string {
 	var refs []string
 	for i := 0; i < len(input); i++ {
 		if input[i] != '@' || !isReferenceStart(input, i) {

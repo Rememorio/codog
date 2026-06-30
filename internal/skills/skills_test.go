@@ -91,6 +91,15 @@ Use the checklist.
 	require.NotContains(t, rendered, "---")
 }
 
+func TestMatchesAnyPathSupportsDirectoriesAndGlobs(t *testing.T) {
+	skill := Skill{Paths: []string{"internal", "*.md", "cmd/**/*.go"}}
+
+	require.True(t, MatchesAnyPath(skill, []string{"internal/agent/agent.go"}))
+	require.True(t, MatchesAnyPath(skill, []string{"README.md"}))
+	require.True(t, MatchesAnyPath(skill, []string{"cmd/codog/main.go"}))
+	require.False(t, MatchesAnyPath(skill, []string{"docs/guide.txt"}))
+}
+
 func TestInstallAndUninstallSkills(t *testing.T) {
 	root := t.TempDir()
 	sourceFile := filepath.Join(root, "review.md")
