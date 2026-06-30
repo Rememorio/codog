@@ -404,6 +404,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Remote(rest)
 	case "remote-env":
 		return app.RemoteEnv(rest)
+	case "remote-setup":
+		return app.RemoteSetup(rest, overrides)
 	case "bridge":
 		return app.Bridge(rest)
 	case "desktop", "app":
@@ -512,6 +514,38 @@ type remoteEnvReport struct {
 	Path                string `json:"path,omitempty"`
 }
 
+type remoteSetupRequest struct {
+	Action       string
+	Format       string
+	Addr         string
+	Target       string
+	Path         string
+	AuthToken    string
+	ClearToken   bool
+	SetLease     bool
+	LeaseSeconds int
+	SessionID    string
+}
+
+type remoteSetupReport struct {
+	Kind                string   `json:"kind"`
+	Action              string   `json:"action"`
+	Status              string   `json:"status"`
+	Workspace           string   `json:"workspace,omitempty"`
+	SessionID           string   `json:"session_id,omitempty"`
+	Enabled             bool     `json:"enabled"`
+	Ready               bool     `json:"ready"`
+	AuthTokenConfigured bool     `json:"auth_token_configured"`
+	LeaseSeconds        int      `json:"lease_seconds"`
+	RemoteCommand       string   `json:"remote_command"`
+	RemoteAddr          string   `json:"remote_addr"`
+	RemoteURL           string   `json:"remote_url"`
+	HealthURL           string   `json:"health_url"`
+	StateURL            string   `json:"state_url"`
+	Path                string   `json:"path,omitempty"`
+	Messages            []string `json:"messages,omitempty"`
+}
+
 func (a *App) RemoteEnv(args []string) error {
 	req, err := parseRemoteEnvArgs(args)
 	if err != nil {
@@ -584,6 +618,92 @@ func (a *App) RemoteEnv(args []string) error {
 		return nil
 	}
 	renderRemoteEnvReport(a.Out, report)
+	return nil
+}
+
+func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
+	req, err := parseRemoteSetupArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	sessionID, err := resolveHandoffSessionID(a.Sessions, req.SessionID)
+	if err != nil {
+		return err
+	}
+	addr, remoteURL, err := normalizeRemoteHandoffAddr(req.Addr)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+	case "enable":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.remote_enabled", true); err != nil {
+			return err
+		}
+		a.Config.Future.RemoteEnabled = true
+		if req.AuthToken != "" {
+			if _, err := config.SetFileValue(path, "future.remote_auth_token", req.AuthToken); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteAuthToken = req.AuthToken
+		}
+		if req.ClearToken {
+			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteAuthToken = ""
+		}
+		if req.SetLease {
+			if _, err := config.SetFileValue(path, "future.remote_lease_seconds", req.LeaseSeconds); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteLeaseSeconds = req.LeaseSeconds
+		}
+		req.Path = path
+	case "disable":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.remote_enabled", false); err != nil {
+			return err
+		}
+		a.Config.Future.RemoteEnabled = false
+		if req.ClearToken {
+			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteAuthToken = ""
+		}
+		req.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		for _, key := range []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
+			if _, err := config.UnsetFileValue(path, key); err != nil {
+				return err
+			}
+		}
+		a.Config.Future.RemoteEnabled = false
+		a.Config.Future.RemoteAuthToken = ""
+		a.Config.Future.RemoteLeaseSeconds = 0
+		req.Path = path
+	default:
+		return fmt.Errorf("unknown remote-setup command %q", req.Action)
+	}
+	report := a.buildRemoteSetupReport(req, sessionID, addr, remoteURL)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderRemoteSetupReport(a.Out, report)
 	return nil
 }
 
@@ -690,6 +810,179 @@ func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
 	return req, nil
 }
 
+func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remoteSetupRequest, error) {
+	req := remoteSetupRequest{
+		Action:    "status",
+		Format:    "text",
+		Addr:      "127.0.0.1:8791",
+		Target:    "user",
+		SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID),
+	}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--addr":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup addr is required")
+			}
+			req.Addr = args[index]
+		case strings.HasPrefix(arg, "--addr="):
+			req.Addr = strings.TrimPrefix(arg, "--addr=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--auth-token":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup auth token is required")
+			}
+			req.AuthToken = args[index]
+		case strings.HasPrefix(arg, "--auth-token="):
+			req.AuthToken = strings.TrimPrefix(arg, "--auth-token=")
+		case arg == "--clear-auth-token":
+			req.ClearToken = true
+		case arg == "--lease-seconds":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup lease seconds is required")
+			}
+			seconds, err := strconv.Atoi(args[index])
+			if err != nil || seconds < 0 {
+				return req, errors.New("remote-setup lease seconds must be a non-negative integer")
+			}
+			req.SetLease = true
+			req.LeaseSeconds = seconds
+		case strings.HasPrefix(arg, "--lease-seconds="):
+			seconds, err := strconv.Atoi(strings.TrimPrefix(arg, "--lease-seconds="))
+			if err != nil || seconds < 0 {
+				return req, errors.New("remote-setup lease seconds must be a non-negative integer")
+			}
+			req.SetLease = true
+			req.LeaseSeconds = seconds
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-setup resume session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--enable":
+			req.Action = "enable"
+			actionSet = true
+		case arg == "--disable":
+			req.Action = "disable"
+			actionSet = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown remote-setup flag %q", arg)
+		default:
+			if actionSet {
+				return req, fmt.Errorf("unexpected remote-setup argument %q", arg)
+			}
+			switch strings.ToLower(arg) {
+			case "status", "show", "check":
+				req.Action = "status"
+			case "enable", "on", "setup":
+				req.Action = "enable"
+			case "disable", "off":
+				req.Action = "disable"
+			case "clear", "reset", "unset":
+				req.Action = "clear"
+			default:
+				return req, fmt.Errorf("unknown remote-setup command %q", arg)
+			}
+			actionSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "remote-setup"); err != nil {
+		return req, err
+	}
+	if req.AuthToken != "" && req.ClearToken {
+		return req, errors.New("remote-setup cannot set and clear auth token in the same command")
+	}
+	if req.Action == "status" && (req.AuthToken != "" || req.ClearToken || req.SetLease) {
+		req.Action = "enable"
+	}
+	if req.Action == "disable" && (req.AuthToken != "" || req.SetLease) {
+		return req, errors.New("remote-setup disable only accepts --clear-auth-token as a write option")
+	}
+	return req, nil
+}
+
+func (a *App) buildRemoteSetupReport(req remoteSetupRequest, sessionID, addr, remoteURL string) remoteSetupReport {
+	enabled := a.Config.Future.RemoteEnabled
+	authConfigured := strings.TrimSpace(a.Config.Future.RemoteAuthToken) != ""
+	status := "disabled"
+	switch {
+	case enabled && authConfigured:
+		status = "ready"
+	case enabled:
+		status = "enabled_without_auth"
+	}
+	report := remoteSetupReport{
+		Kind:                "remote_setup",
+		Action:              req.Action,
+		Status:              status,
+		Workspace:           a.Workspace,
+		SessionID:           sessionID,
+		Enabled:             enabled,
+		Ready:               enabled,
+		AuthTokenConfigured: authConfigured,
+		LeaseSeconds:        a.Config.Future.RemoteLeaseSeconds,
+		RemoteCommand:       "codog remote serve " + addr,
+		RemoteAddr:          addr,
+		RemoteURL:           remoteURL,
+		HealthURL:           strings.TrimRight(remoteURL, "/") + "/health",
+		StateURL:            strings.TrimRight(remoteURL, "/") + "/state",
+		Path:                req.Path,
+	}
+	switch {
+	case !enabled:
+		report.Messages = append(report.Messages, "Enable remote control with `codog remote-setup enable` before connecting a remote client.")
+	case !authConfigured:
+		report.Messages = append(report.Messages, "No auth token is configured; keep the listener on localhost or set `--auth-token` before exposing it.")
+	default:
+		report.Messages = append(report.Messages, "Start the remote command shown above, then connect a desktop, mobile, or remote client to the URL.")
+	}
+	if sessionID != "" {
+		report.Messages = append(report.Messages, "Use the reported session id when the client should attach to the current conversation.")
+	}
+	return report
+}
+
 func renderRemoteEnvReport(out io.Writer, report remoteEnvReport) {
 	fmt.Fprintln(out, "Remote Environment")
 	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
@@ -697,6 +990,27 @@ func renderRemoteEnvReport(out io.Writer, report remoteEnvReport) {
 	fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+}
+
+func renderRemoteSetupReport(out io.Writer, report remoteSetupReport) {
+	fmt.Fprintln(out, "Remote Setup")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Ready            %t\n", report.Ready)
+	fmt.Fprintf(out, "  Auth token       %t\n", report.AuthTokenConfigured)
+	fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
+	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
+	fmt.Fprintf(out, "  Remote URL       %s\n", report.RemoteURL)
+	fmt.Fprintf(out, "  Health URL       %s\n", report.HealthURL)
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Note             %s\n", message)
 	}
 }
 
@@ -8781,6 +9095,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RemoteEnv(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/remote-setup":
+		if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/desktop", "/app":
 		if err := a.Desktop(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -12698,6 +13016,7 @@ Usage:
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
+  %s remote-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]
   %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
@@ -12721,7 +13040,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

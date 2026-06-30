@@ -1647,6 +1647,44 @@ func TestRemoteEnvCommandPersistsSettings(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.RemoteSetup([]string{"enable", "--addr", ":8799", "--auth-token", "secret-token", "--lease-seconds", "120", "--json"}, config.FlagOverrides{SessionID: "setup-session"}))
+	require.Contains(t, out.String(), `"kind": "remote_setup"`)
+	require.Contains(t, out.String(), `"enabled": true`)
+	require.Contains(t, out.String(), `"ready": true`)
+	require.Contains(t, out.String(), `"auth_token_configured": true`)
+	require.Contains(t, out.String(), `"remote_url": "http://127.0.0.1:8799"`)
+	require.Contains(t, out.String(), `"session_id": "setup-session"`)
+	require.NotContains(t, out.String(), "secret-token")
+	require.True(t, app.Config.Future.RemoteEnabled)
+	require.Equal(t, "secret-token", app.Config.Future.RemoteAuthToken)
+	require.Equal(t, 120, app.Config.Future.RemoteLeaseSeconds)
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"remote_enabled": true`)
+	require.Contains(t, string(data), `"remote_auth_token": "secret-token"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/remote-setup disable --addr 127.0.0.1:9999", &session.Session{ID: "active-session"}))
+	require.Contains(t, out.String(), "Remote Setup")
+	require.Contains(t, out.String(), "Enabled          false")
+	require.Contains(t, out.String(), "127.0.0.1:9999")
+	require.Contains(t, out.String(), "active-session")
+	require.Empty(t, errOut.String())
+}
+
 func TestDesktopAndMobileHandoffCommands(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
