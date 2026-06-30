@@ -114,11 +114,74 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	var report helpReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "help", report.Kind)
-	require.Equal(t, "show", report.Action)
+	require.Equal(t, "help", report.Action)
 	require.Equal(t, "ok", report.Status)
 	require.Equal(t, "doctor", report.Topic)
-	require.Equal(t, "codog doctor [ARGS...]", report.Usage)
-	require.Contains(t, report.Help, "Usage:")
+	require.Equal(t, "doctor", report.Command)
+	require.Equal(t, "codog doctor [--output-format text|json]", report.Usage)
+	require.Contains(t, report.Help, "Doctor")
+	require.NotNil(t, report.LocalOnly)
+	require.True(t, *report.LocalOnly)
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
+	require.Contains(t, report.OutputFields, "checks")
+	require.Contains(t, report.StatusValues, "warn")
+	require.Contains(t, report.CheckNames, "Auth")
+}
+
+func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	cases := []struct {
+		name  string
+		args  []string
+		topic string
+	}{
+		{
+			name:  "doctor global format",
+			args:  []string{"--config", configPath, "--output-format", "json", "doctor", "--help"},
+			topic: "doctor",
+		},
+		{
+			name:  "compact suffix format",
+			args:  []string{"--config", configPath, "compact", "--help", "--output-format", "json"},
+			topic: "compact",
+		},
+		{
+			name:  "session suffix format",
+			args:  []string{"--config", configPath, "session", "--help", "--output-format", "json"},
+			topic: "session",
+		},
+		{
+			name:  "resume global flag",
+			args:  []string{"--resume", "--help", "--output-format", "json"},
+			topic: "resume",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.NoError(t, err)
+			var report helpReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "help", report.Kind)
+			require.Equal(t, "help", report.Action)
+			require.Equal(t, "ok", report.Status)
+			require.Equal(t, tc.topic, report.Topic)
+			require.NotContains(t, out, "config_parse_error")
+			require.NotContains(t, out, "missing_credentials")
+		})
+	}
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "doctor", "--help"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(out, "Doctor\n"))
+	require.Contains(t, out, "no provider request or session resume required")
 }
 
 func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {

@@ -118,6 +118,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			args = append([]string{"acp"}, args[1:]...)
 		}
 	}
+	if handled, err := renderGlobalResumeHelp(os.Stdout, args); handled {
+		return err
+	}
 	if acpArgs, ok, err := parseACPGlobalInvocation(args); ok || err != nil {
 		if err != nil {
 			return err
@@ -160,6 +163,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		applyStoredOAuthToken(&cfg, time.Now().UTC())
 		return renderProvidersCommand(os.Stdout, cfg, paths, rest)
+	}
+	if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+		return err
 	}
 	if command == "mock-server" {
 		addr := ":8089"
@@ -19986,18 +19992,32 @@ func argsHaveOutputFormat(args []string) bool {
 }
 
 type helpReport struct {
-	Kind   string `json:"kind"`
-	Action string `json:"action"`
-	Status string `json:"status"`
-	Topic  string `json:"topic,omitempty"`
-	Usage  string `json:"usage"`
-	Help   string `json:"help"`
+	Kind                    string   `json:"kind"`
+	Action                  string   `json:"action"`
+	Status                  string   `json:"status"`
+	Topic                   string   `json:"topic,omitempty"`
+	Command                 string   `json:"command,omitempty"`
+	Usage                   string   `json:"usage"`
+	Help                    string   `json:"help"`
+	LocalOnly               *bool    `json:"local_only,omitempty"`
+	RequiresCredentials     *bool    `json:"requires_credentials,omitempty"`
+	RequiresProviderRequest *bool    `json:"requires_provider_request,omitempty"`
+	RequiresSessionResume   *bool    `json:"requires_session_resume,omitempty"`
+	MutatesWorkspace        *bool    `json:"mutates_workspace,omitempty"`
+	OutputFields            []string `json:"output_fields,omitempty"`
+	StatusValues            []string `json:"status_values,omitempty"`
+	CheckNames              []string `json:"check_names,omitempty"`
 }
 
 func renderHelpCommand(out io.Writer, args []string) error {
 	format, topic, err := parseHelpArgs(args)
 	if err != nil {
 		return err
+	}
+	if topic != "" {
+		if spec, ok := commandHelpSpecFor(topic); ok {
+			return renderCommandHelpSpec(out, spec, format)
+		}
 	}
 	help := helpText(filepath.Base(os.Args[0]))
 	if format == "json" {
@@ -20046,6 +20066,193 @@ func parseHelpArgs(args []string) (string, string, error) {
 		return "", "", err
 	}
 	return format, strings.TrimSpace(strings.Join(topicParts, " ")), nil
+}
+
+type commandHelpSpec struct {
+	Topic                   string
+	Command                 string
+	Usage                   string
+	Text                    string
+	LocalOnly               bool
+	RequiresCredentials     bool
+	RequiresProviderRequest bool
+	RequiresSessionResume   bool
+	MutatesWorkspace        bool
+	OutputFields            []string
+	StatusValues            []string
+	CheckNames              []string
+}
+
+func renderGlobalResumeHelp(out io.Writer, args []string) (bool, error) {
+	if len(args) < 2 || args[0] != "--resume" || !isHelpFlag(args[1]) {
+		return false, nil
+	}
+	return true, renderCommandHelpTopic(out, "resume", args[2:], requestedOutputFormat(args))
+}
+
+func renderCommandHelpRequest(out io.Writer, command string, args []string, fallbackFormat string) (bool, error) {
+	if _, ok := commandHelpSpecFor(command); !ok {
+		return false, nil
+	}
+	helpArgs := make([]string, 0, len(args))
+	helpRequested := false
+	for _, arg := range args {
+		if isHelpFlag(arg) {
+			helpRequested = true
+			continue
+		}
+		helpArgs = append(helpArgs, arg)
+	}
+	if !helpRequested {
+		return false, nil
+	}
+	return true, renderCommandHelpTopic(out, command, helpArgs, fallbackFormat)
+}
+
+func renderCommandHelpTopic(out io.Writer, topic string, args []string, fallbackFormat string) error {
+	spec, ok := commandHelpSpecFor(topic)
+	if !ok {
+		return fmt.Errorf("unknown help topic %q", topic)
+	}
+	format, err := parseCommandHelpFormat(spec.Command, args, fallbackFormat)
+	if err != nil {
+		return renderCLIError(out, err, fallbackFormat)
+	}
+	return renderCommandHelpSpec(out, spec, format)
+}
+
+func parseCommandHelpFormat(command string, args []string, fallbackFormat string) (string, error) {
+	format := strings.TrimSpace(fallbackFormat)
+	if format == "" {
+		format = "text"
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", missingArgumentError{Argument: "--output-format", Example: "--output-format json"}
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return "", fmt.Errorf("unknown %s help flag %q", command, arg)
+		default:
+			return "", fmt.Errorf("unknown %s help argument %q", command, arg)
+		}
+	}
+	normalized, err := normalizeOutputFormat(command+" help", format, []string{"text", "json"})
+	if err != nil {
+		return "", err
+	}
+	return normalized, nil
+}
+
+func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(helpReport{
+			Kind:                    "help",
+			Action:                  "help",
+			Status:                  "ok",
+			Topic:                   spec.Topic,
+			Command:                 spec.Command,
+			Usage:                   spec.Usage,
+			Help:                    spec.Text,
+			LocalOnly:               boolPtr(spec.LocalOnly),
+			RequiresCredentials:     boolPtr(spec.RequiresCredentials),
+			RequiresProviderRequest: boolPtr(spec.RequiresProviderRequest),
+			RequiresSessionResume:   boolPtr(spec.RequiresSessionResume),
+			MutatesWorkspace:        boolPtr(spec.MutatesWorkspace),
+			OutputFields:            append([]string(nil), spec.OutputFields...),
+			StatusValues:            append([]string(nil), spec.StatusValues...),
+			CheckNames:              append([]string(nil), spec.CheckNames...),
+		}, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprint(out, spec.Text)
+	return nil
+}
+
+func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
+	switch strings.ToLower(strings.TrimSpace(topic)) {
+	case "doctor":
+		return commandHelpSpec{
+			Topic:                   "doctor",
+			Command:                 "doctor",
+			Usage:                   "codog doctor [--output-format text|json]",
+			Text:                    "Doctor\n\nUsage:\n  codog doctor [--output-format text|json]\n\nRuns local diagnostics for auth, config, memory, MCP, hooks, git, sandbox, and runtime state; no provider request or session resume required.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"checks", "has_failures", "summary"},
+			StatusValues:            []string{"ok", "warn", "fail"},
+			CheckNames:              []string{"Auth", "Base URL", "Config home", "Workspace", "Memory", "Model", "Permissions", "Tools", "MCP", "Sessions", "Hooks", "Git", "Sandbox", "Go toolchain", "Runtime"},
+		}, true
+	case "compact":
+		return commandHelpSpec{
+			Topic:                   "compact",
+			Command:                 "compact",
+			Usage:                   "codog compact [--session ID|--resume ID|latest] [--keep N] [--output-format text|json]",
+			Text:                    "Compact\n\nUsage:\n  codog compact [--session ID|--resume ID|latest] [--keep N] [--output-format text|json]\n\nCompacts a saved session by keeping the most recent messages. Help is local and does not resume a session.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"session_id", "path", "original_messages", "remaining_messages", "removed_messages"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
+	case "session":
+		return commandHelpSpec{
+			Topic:                   "session",
+			Command:                 "session",
+			Usage:                   "codog sessions [list|show|exists|fork|rename|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|fork|rename|delete] [ARGS...]\n\nInspects and mutates saved session metadata. Help is local and does not open a session.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"id", "messages", "created_at", "updated_at"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
+	case "sessions":
+		spec, _ := commandHelpSpecFor("session")
+		spec.Topic = "sessions"
+		spec.Command = "sessions"
+		return spec, true
+	case "resume":
+		return commandHelpSpec{
+			Topic:                   "resume",
+			Command:                 "resume",
+			Usage:                   "codog --resume ID|latest [prompt TEXT|repl]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl]\n\nSelects an existing session before running prompt or REPL. Help is local and does not open a session.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"session_id", "message_count"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
+	default:
+		return commandHelpSpec{}, false
+	}
+}
+
+func isHelpFlag(arg string) bool {
+	return arg == "--help" || arg == "-h"
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func printHelp(out io.Writer) {
