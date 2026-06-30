@@ -28,6 +28,7 @@ type Options struct {
 	PostFailureHookCount      int
 	StopHookCount             int
 	PreCompactHookCount       int
+	PostCompactHookCount      int
 	NotificationHookCount     int
 	SubagentStartHookCount    int
 	SubagentStopHookCount     int
@@ -98,6 +99,7 @@ type ConfigStatus struct {
 	PostFailureHookCount      int    `json:"post_tool_use_failure_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
 	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
+	PostCompactHookCount      int    `json:"post_compact_hook_count"`
 	NotificationHookCount     int    `json:"notification_hook_count"`
 	SubagentStartHookCount    int    `json:"subagent_start_hook_count"`
 	SubagentStopHookCount     int    `json:"subagent_stop_hook_count"`
@@ -184,6 +186,7 @@ func Build(opts Options) Snapshot {
 			PostFailureHookCount:      opts.PostFailureHookCount,
 			StopHookCount:             opts.StopHookCount,
 			PreCompactHookCount:       opts.PreCompactHookCount,
+			PostCompactHookCount:      opts.PostCompactHookCount,
 			NotificationHookCount:     opts.NotificationHookCount,
 			SubagentStartHookCount:    opts.SubagentStartHookCount,
 			SubagentStopHookCount:     opts.SubagentStopHookCount,

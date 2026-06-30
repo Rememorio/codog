@@ -24,6 +24,7 @@ type HookConfig struct {
 	SessionStart               []string      `json:"session_start,omitempty"`
 	Stop                       []string      `json:"stop,omitempty"`
 	PreCompact                 []string      `json:"pre_compact,omitempty"`
+	PostCompact                []string      `json:"post_compact,omitempty"`
 	Notification               []string      `json:"notification,omitempty"`
 	SubagentStart              []string      `json:"subagent_start,omitempty"`
 	SubagentStop               []string      `json:"subagent_stop,omitempty"`
@@ -34,6 +35,7 @@ type HookConfig struct {
 	SessionStartCommands       []HookCommand `json:"-"`
 	StopCommands               []HookCommand `json:"-"`
 	PreCompactCommands         []HookCommand `json:"-"`
+	PostCompactCommands        []HookCommand `json:"-"`
 	NotificationCommands       []HookCommand `json:"-"`
 	SubagentStartCommands      []HookCommand `json:"-"`
 	SubagentStopCommands       []HookCommand `json:"-"`
@@ -90,6 +92,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	postCompact, err := hookCommands(raw, "post_compact", "PostCompact")
+	if err != nil {
+		return err
+	}
 	notification, err := hookCommands(raw, "notification", "Notification")
 	if err != nil {
 		return err
@@ -109,6 +115,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.SessionStartCommands = sessionStart
 	h.StopCommands = stop
 	h.PreCompactCommands = preCompact
+	h.PostCompactCommands = postCompact
 	h.NotificationCommands = notification
 	h.SubagentStartCommands = subagentStart
 	h.SubagentStopCommands = subagentStop
@@ -119,6 +126,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.SessionStart = hookCommandStrings(sessionStart)
 	h.Stop = hookCommandStrings(stop)
 	h.PreCompact = hookCommandStrings(preCompact)
+	h.PostCompact = hookCommandStrings(postCompact)
 	h.Notification = hookCommandStrings(notification)
 	h.SubagentStart = hookCommandStrings(subagentStart)
 	h.SubagentStop = hookCommandStrings(subagentStop)
@@ -930,6 +938,11 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.PreCompact) != 0 {
 		dst.PreCompactCommands = mergeHookCommands(dst.PreCompactCommands, hookCommandsFromStrings(src.PreCompact))
 	}
+	if len(src.PostCompactCommands) != 0 {
+		dst.PostCompactCommands = mergeHookCommands(dst.PostCompactCommands, src.PostCompactCommands)
+	} else if len(src.PostCompact) != 0 {
+		dst.PostCompactCommands = mergeHookCommands(dst.PostCompactCommands, hookCommandsFromStrings(src.PostCompact))
+	}
 	if len(src.NotificationCommands) != 0 {
 		dst.NotificationCommands = mergeHookCommands(dst.NotificationCommands, src.NotificationCommands)
 	} else if len(src.Notification) != 0 {
@@ -952,6 +965,7 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.SessionStart = hookCommandStrings(dst.SessionStartCommands)
 	dst.Stop = hookCommandStrings(dst.StopCommands)
 	dst.PreCompact = hookCommandStrings(dst.PreCompactCommands)
+	dst.PostCompact = hookCommandStrings(dst.PostCompactCommands)
 	dst.Notification = hookCommandStrings(dst.NotificationCommands)
 	dst.SubagentStart = hookCommandStrings(dst.SubagentStartCommands)
 	dst.SubagentStop = hookCommandStrings(dst.SubagentStopCommands)

@@ -58,6 +58,7 @@ type ConfigSummary struct {
 	PostFailureHookCount      int    `json:"post_tool_use_failure_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
 	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
+	PostCompactHookCount      int    `json:"post_compact_hook_count"`
 	NotificationHookCount     int    `json:"notification_hook_count"`
 	SubagentStartHookCount    int    `json:"subagent_start_hook_count"`
 	SubagentStopHookCount     int    `json:"subagent_stop_hook_count"`
@@ -155,6 +156,7 @@ func Build(options Options) Report {
 			PostFailureHookCount:      options.Status.Config.PostFailureHookCount,
 			StopHookCount:             options.Status.Config.StopHookCount,
 			PreCompactHookCount:       options.Status.Config.PreCompactHookCount,
+			PostCompactHookCount:      options.Status.Config.PostCompactHookCount,
 			NotificationHookCount:     options.Status.Config.NotificationHookCount,
 			SubagentStartHookCount:    options.Status.Config.SubagentStartHookCount,
 			SubagentStopHookCount:     options.Status.Config.SubagentStopHookCount,

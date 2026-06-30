@@ -4469,6 +4469,7 @@ type hooksListReport struct {
 	SessionStart               []string             `json:"session_start"`
 	Stop                       []string             `json:"stop"`
 	PreCompact                 []string             `json:"pre_compact"`
+	PostCompact                []string             `json:"post_compact"`
 	Notification               []string             `json:"notification"`
 	SubagentStart              []string             `json:"subagent_start"`
 	SubagentStop               []string             `json:"subagent_stop"`
@@ -4479,6 +4480,7 @@ type hooksListReport struct {
 	SessionStartCommands       []hookCommandSummary `json:"session_start_commands,omitempty"`
 	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
 	PreCompactCommands         []hookCommandSummary `json:"pre_compact_commands,omitempty"`
+	PostCompactCommands        []hookCommandSummary `json:"post_compact_commands,omitempty"`
 	NotificationCommands       []hookCommandSummary `json:"notification_commands,omitempty"`
 	SubagentStartCommands      []hookCommandSummary `json:"subagent_start_commands,omitempty"`
 	SubagentStopCommands       []hookCommandSummary `json:"subagent_stop_commands,omitempty"`
@@ -4509,6 +4511,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
 			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
 			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
+			PostCompact:                append([]string(nil), a.Config.Hooks.PostCompact...),
 			Notification:               append([]string(nil), a.Config.Hooks.Notification...),
 			SubagentStart:              append([]string(nil), a.Config.Hooks.SubagentStart...),
 			SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
@@ -4519,6 +4522,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
 			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
 			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
+			PostCompactCommands:        hookCommandsForList(a.Config.Hooks.PostCompactCommands, a.Config.Hooks.PostCompact),
 			NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
 			SubagentStartCommands:      hookCommandsForList(a.Config.Hooks.SubagentStartCommands, a.Config.Hooks.SubagentStart),
 			SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
@@ -4732,7 +4736,7 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop") {
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop") {
 		req.Tool = ""
 	}
 	if req.Event == "notification" && strings.TrimSpace(req.NotificationType) == "" && strings.TrimSpace(req.Tool) != "" {
@@ -4760,6 +4764,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "stop", nil
 	case "compact", "precompact", "pre_compact", "pre-compact":
 		return "pre_compact", nil
+	case "postcompact", "post_compact", "post-compact":
+		return "post_compact", nil
 	case "notification", "notify":
 		return "notification", nil
 	case "subagent-start", "subagentstart", "subagent_start":
@@ -4831,6 +4837,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Pre compact      %d\n", len(report.PreCompact))
 	for _, command := range report.PreCompactCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Post compact     %d\n", len(report.PostCompact))
+	for _, command := range report.PostCompactCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  Notification     %d\n", len(report.Notification))
@@ -10137,6 +10147,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		PostFailureHookCount:      len(a.Config.Hooks.PostToolUseFailure),
 		StopHookCount:             len(a.Config.Hooks.Stop),
 		PreCompactHookCount:       len(a.Config.Hooks.PreCompact),
+		PostCompactHookCount:      len(a.Config.Hooks.PostCompact),
 		NotificationHookCount:     len(a.Config.Hooks.Notification),
 		SubagentStartHookCount:    len(a.Config.Hooks.SubagentStart),
 		SubagentStopHookCount:     len(a.Config.Hooks.SubagentStop),
@@ -10693,6 +10704,7 @@ func (a *App) Doctor(args []string) error {
 		PostToolUseFailure: a.Config.Hooks.PostToolUseFailure,
 		Stop:               a.Config.Hooks.Stop,
 		PreCompact:         a.Config.Hooks.PreCompact,
+		PostCompact:        a.Config.Hooks.PostCompact,
 		Notification:       a.Config.Hooks.Notification,
 		SubagentStart:      a.Config.Hooks.SubagentStart,
 		SubagentStop:       a.Config.Hooks.SubagentStop,
@@ -15879,7 +15891,8 @@ func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
-	if err := a.lifecycleHookRunner().PreCompact(context.Background(), runloop.CompactHookPayload("manual", sess.ID, len(sess.Messages), req.Keep)); err != nil {
+	compactPayload := runloop.CompactHookPayload("manual", sess.ID, len(sess.Messages), req.Keep)
+	if err := a.lifecycleHookRunner().PreCompact(context.Background(), compactPayload); err != nil {
 		return err
 	}
 	compacted := runloop.CompactMessages(sess.Messages, req.Keep)
@@ -15897,6 +15910,9 @@ func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := a.lifecycleHookRunner().PostCompact(context.Background(), compactPayload); err != nil {
+		return err
 	}
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(result, "", "  ")
@@ -16605,7 +16621,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

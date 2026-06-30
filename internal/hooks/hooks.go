@@ -136,6 +136,14 @@ func (r Runner) PreCompact(ctx context.Context, input string) error {
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) PostCompact(ctx context.Context, input string) error {
+	payload := Payload{
+		Event: "post_compact",
+		Input: input,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func (r Runner) Notification(ctx context.Context, notificationType string, title string, message string) error {
 	notificationType = strings.TrimSpace(notificationType)
 	if notificationType == "" {
@@ -206,6 +214,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.StopCommands, cfg.Stop, payload)
 	case "pre_compact":
 		return matchingHooks(cfg.PreCompactCommands, cfg.PreCompact, payload)
+	case "post_compact":
+		return matchingHooks(cfg.PostCompactCommands, cfg.PostCompact, payload)
 	case "notification":
 		return matchingHooks(cfg.NotificationCommands, cfg.Notification, payload)
 	case "subagent_start":
@@ -719,6 +729,8 @@ func normalizeEvent(event string) string {
 		return "stop"
 	case "precompact", "pre_compact", "pre-compact":
 		return "pre_compact"
+	case "postcompact", "post_compact", "post-compact":
+		return "post_compact"
 	case "notification", "notify":
 		return "notification"
 	case "subagentstart", "subagent_start", "subagent-start":

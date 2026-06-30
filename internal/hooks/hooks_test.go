@@ -143,6 +143,9 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		PreCompactCommands: []config.HookCommand{
 			{Type: "command", Command: "compact"},
 		},
+		PostCompactCommands: []config.HookCommand{
+			{Type: "command", Command: "post-compact"},
+		},
 		NotificationCommands: []config.HookCommand{
 			{Matcher: "background_*", Type: "command", Command: "notify"},
 		},
@@ -163,6 +166,7 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"session"}, CommandsForEvent(cfg, "session-start", ""))
 	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))
 	require.Equal(t, []string{"compact"}, CommandsForEvent(cfg, "pre-compact", ""))
+	require.Equal(t, []string{"post-compact"}, CommandsForEvent(cfg, "post-compact", ""))
 	require.Equal(t, []string{"notify"}, CommandsForEvent(cfg, "notification", "background_task_started"))
 	require.Equal(t, []string{"agent-start"}, CommandsForEvent(cfg, "subagent-start", "reviewer"))
 	require.Equal(t, []string{"agent-stop"}, CommandsForEvent(cfg, "subagent-stop", "reviewer"))

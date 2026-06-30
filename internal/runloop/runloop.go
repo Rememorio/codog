@@ -84,12 +84,19 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	var toolCalls []ToolCall
 	var messageUsages []MessageUsage
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
+		compactPayload := ""
 		if shouldCompactMessages(messages, r.Config.AutoCompactMessages) {
-			if err := hookRunner.PreCompact(ctx, CompactHookPayload("auto", "", len(messages), r.Config.AutoCompactMessages)); err != nil {
+			compactPayload = CompactHookPayload("auto", "", len(messages), r.Config.AutoCompactMessages)
+			if err := hookRunner.PreCompact(ctx, compactPayload); err != nil {
 				return TurnResult{}, err
 			}
 		}
 		requestMessages := CompactMessages(messages, r.Config.AutoCompactMessages)
+		if compactPayload != "" {
+			if err := hookRunner.PostCompact(ctx, compactPayload); err != nil {
+				return TurnResult{}, err
+			}
+		}
 		req := anthropic.Request{
 			Model:     r.Config.Model,
 			MaxTokens: r.Config.MaxTokens,
@@ -179,6 +186,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SessionStart) != 0 ||
 		len(cfg.Stop) != 0 ||
 		len(cfg.PreCompact) != 0 ||
+		len(cfg.PostCompact) != 0 ||
 		len(cfg.Notification) != 0 ||
 		len(cfg.SubagentStart) != 0 ||
 		len(cfg.SubagentStop) != 0 ||
@@ -189,6 +197,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SessionStartCommands) != 0 ||
 		len(cfg.StopCommands) != 0 ||
 		len(cfg.PreCompactCommands) != 0 ||
+		len(cfg.PostCompactCommands) != 0 ||
 		len(cfg.NotificationCommands) != 0 ||
 		len(cfg.SubagentStartCommands) != 0 ||
 		len(cfg.SubagentStopCommands) != 0

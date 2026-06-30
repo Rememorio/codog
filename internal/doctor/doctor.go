@@ -38,6 +38,7 @@ type Options struct {
 	PostToolUseFailure []string
 	Stop               []string
 	PreCompact         []string
+	PostCompact        []string
 	Notification       []string
 	SubagentStart      []string
 	SubagentStop       []string
@@ -249,10 +250,11 @@ func checkHooks(opts Options) Check {
 	postFailure := compactHookCommands(opts.PostToolUseFailure)
 	stop := compactHookCommands(opts.Stop)
 	preCompact := compactHookCommands(opts.PreCompact)
+	postCompact := compactHookCommands(opts.PostCompact)
 	notification := compactHookCommands(opts.Notification)
 	subagentStart := compactHookCommands(opts.SubagentStart)
 	subagentStop := compactHookCommands(opts.SubagentStop)
-	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(stop) + len(preCompact) + len(notification) + len(subagentStart) + len(subagentStop)
+	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(stop) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
@@ -261,6 +263,7 @@ func checkHooks(opts Options) Check {
 		fmt.Sprintf("PostToolUseFailure hooks: %d", len(postFailure)),
 		fmt.Sprintf("Stop hooks: %d", len(stop)),
 		fmt.Sprintf("PreCompact hooks: %d", len(preCompact)),
+		fmt.Sprintf("PostCompact hooks: %d", len(postCompact)),
 		fmt.Sprintf("Notification hooks: %d", len(notification)),
 		fmt.Sprintf("SubagentStart hooks: %d", len(subagentStart)),
 		fmt.Sprintf("SubagentStop hooks: %d", len(subagentStop)),
@@ -278,6 +281,7 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUseFailure", postFailure)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Stop", stop)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreCompact", preCompact)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "PostCompact", postCompact)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Notification", notification)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "SubagentStart", subagentStart)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "SubagentStop", subagentStop)...)

@@ -144,7 +144,8 @@ func TestRunnerExecutesPreCompactHook(t *testing.T) {
 			MaxTurns:            2,
 			AutoCompactMessages: 1,
 			Hooks: config.HookConfig{
-				PreCompactCommands: []config.HookCommand{{Command: "cat > compact.json"}},
+				PreCompactCommands:  []config.HookCommand{{Command: "cat > compact.json"}},
+				PostCompactCommands: []config.HookCommand{{Command: "cat > post-compact.json"}},
 			},
 		},
 		Client:    client,
@@ -163,6 +164,16 @@ func TestRunnerExecutesPreCompactHook(t *testing.T) {
 	require.Equal(t, "pre_compact", hookPayload.Event)
 	require.Contains(t, hookPayload.Input, `"messages":4`)
 	require.Contains(t, hookPayload.Input, `"keep":1`)
+	postPayload, err := os.ReadFile(workspace + "/post-compact.json")
+	require.NoError(t, err)
+	var postHookPayload struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(postPayload, &postHookPayload))
+	require.Equal(t, "post_compact", postHookPayload.Event)
+	require.Contains(t, postHookPayload.Input, `"messages":4`)
+	require.Contains(t, postHookPayload.Input, `"keep":1`)
 }
 
 func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {

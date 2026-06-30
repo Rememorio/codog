@@ -253,6 +253,7 @@ func AllCandidates(options CandidateOptions) []string {
 		"/hooks run pre",
 		"/hooks run post",
 		"/hooks run notification",
+		"/hooks run post-compact",
 		"/hooks run subagent-start",
 		"/hooks run subagent-stop",
 		"/heapdump",

@@ -190,7 +190,8 @@ Claude Code source.
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
 - Hook commands can run on `session_start`, `user_prompt_submit`,
   `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `stop`,
-  `pre_compact`, `notification`, `subagent_start`, and `subagent_stop`; `codog hooks
+  `pre_compact`, `post_compact`, `notification`, `subagent_start`, and
+  `subagent_stop`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -419,6 +420,7 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "post_tool_use_failure": ["echo post-failure >&2"],
     "stop": ["echo stop >&2"],
     "pre_compact": ["echo compact >&2"],
+    "post_compact": ["echo compacted >&2"],
     "notification": ["echo notify >&2"],
     "subagent_start": ["echo agent-start >&2"],
     "subagent_stop": ["echo agent-stop >&2"]

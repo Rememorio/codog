@@ -1660,6 +1660,7 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	compactPath := filepath.Join(workspace, "compact-hook.json")
+	postCompactPath := filepath.Join(workspace, "post-compact-hook.json")
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("user", "one")))
 	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("assistant", "two")))
@@ -1671,7 +1672,8 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 			ConfigHome:          configHome,
 			AutoCompactMessages: 2,
 			Hooks: config.HookConfig{
-				PreCompactCommands: []config.HookCommand{{Command: "cat > " + shellQuote(compactPath)}},
+				PreCompactCommands:  []config.HookCommand{{Command: "cat > " + shellQuote(compactPath)}},
+				PostCompactCommands: []config.HookCommand{{Command: "cat > " + shellQuote(postCompactPath)}},
 			},
 		},
 		Sessions:  store,
@@ -1698,6 +1700,15 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 	require.NoError(t, json.Unmarshal(hookPayload, &compactHook))
 	require.Equal(t, "pre_compact", compactHook.Event)
 	require.Contains(t, compactHook.Input, `"session_id":"compact-session"`)
+	postHookPayload, err := os.ReadFile(postCompactPath)
+	require.NoError(t, err)
+	var postCompactHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(postHookPayload, &postCompactHook))
+	require.Equal(t, "post_compact", postCompactHook.Event)
+	require.Contains(t, postCompactHook.Input, `"session_id":"compact-session"`)
 }
 
 func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
@@ -2819,6 +2830,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	postFailurePath := filepath.Join(workspace, "post-failure.json")
 	stopPath := filepath.Join(workspace, "stop.json")
 	compactPath := filepath.Join(workspace, "compact.json")
+	postCompactPath := filepath.Join(workspace, "post-compact.json")
 	notificationPath := filepath.Join(workspace, "notification.json")
 	subagentStartPath := filepath.Join(workspace, "subagent-start.json")
 	subagentStopPath := filepath.Join(workspace, "subagent-stop.json")
@@ -2834,6 +2846,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				PostToolUseFailure: []string{"cat > " + shellQuote(postFailurePath)},
 				Stop:               []string{"cat > " + shellQuote(stopPath)},
 				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
+				PostCompact:        []string{"cat > " + shellQuote(postCompactPath)},
 				Notification:       []string{"cat > " + shellQuote(notificationPath)},
 				SubagentStart:      []string{"cat > " + shellQuote(subagentStartPath)},
 				SubagentStop:       []string{"cat > " + shellQuote(subagentStopPath)},
@@ -2857,6 +2870,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				},
 				PreCompactCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(compactPath)},
+				},
+				PostCompactCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(postCompactPath)},
 				},
 				NotificationCommands: []config.HookCommand{
 					{Matcher: "background_*", Command: "cat > " + shellQuote(notificationPath)},
@@ -2883,6 +2899,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"post_tool_use_failure"`)
 	require.Contains(t, out.String(), `"stop"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
+	require.Contains(t, out.String(), `"post_compact"`)
 	require.Contains(t, out.String(), `"notification"`)
 	require.Contains(t, out.String(), `"subagent_start"`)
 	require.Contains(t, out.String(), `"subagent_stop"`)
@@ -2895,6 +2912,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "bash", hooksList.PostToolUseFailureCommands[0].Matcher)
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
+	require.Contains(t, hooksList.PostCompactCommands[0].Command, "cat >")
 	require.Equal(t, "background_*", hooksList.NotificationCommands[0].Matcher)
 	require.Equal(t, "reviewer", hooksList.SubagentStartCommands[0].Matcher)
 	require.Equal(t, "reviewer", hooksList.SubagentStopCommands[0].Matcher)
@@ -2958,6 +2976,18 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &compactHook))
 	require.Equal(t, "pre_compact", compactHook.Event)
 	require.Contains(t, compactHook.Input, `"source"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run post-compact --input={\"source\":\"manual\"}", sess))
+	data, err = os.ReadFile(postCompactPath)
+	require.NoError(t, err)
+	var postCompactHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(data, &postCompactHook))
+	require.Equal(t, "post_compact", postCompactHook.Event)
+	require.Contains(t, postCompactHook.Input, `"source"`)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "notification", "--notification-type", "background_task_started", "--title", "Started", "--input", "task started"}))
