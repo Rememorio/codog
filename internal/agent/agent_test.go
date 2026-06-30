@@ -379,6 +379,41 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"os":`)
 }
 
+func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.SandboxToggle([]string{"detect", "--json"}))
+	require.Contains(t, out.String(), `"kind": "sandbox_toggle"`)
+	require.Contains(t, out.String(), `"configured_strategy": "detect"`)
+	require.Equal(t, "detect", app.Config.Future.SandboxStrategy)
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"sandbox_strategy": "detect"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/sandbox-toggle off", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Sandbox Toggle")
+	require.Contains(t, out.String(), "Configured       off")
+	require.Equal(t, "off", app.Config.Future.SandboxStrategy)
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.NoError(t, app.SandboxToggle([]string{"clear", "--json"}))
+	require.Contains(t, out.String(), `"configured_strategy": ""`)
+	require.Equal(t, "", app.Config.Future.SandboxStrategy)
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "sandbox_strategy")
+}
+
 func TestSystemPromptAndToolDetailsSlashCommands(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use the project style."), 0o644))

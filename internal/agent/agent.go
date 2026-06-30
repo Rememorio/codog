@@ -380,6 +380,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Doctor(rest)
 	case "sandbox":
 		return app.Sandbox()
+	case "sandbox-toggle":
+		return app.SandboxToggle(rest)
 	case "symbols":
 		return app.Symbols(rest)
 	case "diagnostics":
@@ -3663,6 +3665,189 @@ func (a *App) Sandbox() error {
 	data, _ := json.MarshalIndent(status, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type sandboxToggleRequest struct {
+	Action   string
+	Format   string
+	Strategy string
+	Target   string
+	Path     string
+}
+
+type sandboxToggleReport struct {
+	Kind               string   `json:"kind"`
+	Action             string   `json:"action"`
+	Status             string   `json:"status"`
+	OS                 string   `json:"os"`
+	ConfiguredStrategy string   `json:"configured_strategy"`
+	EffectiveStrategy  string   `json:"effective_strategy,omitempty"`
+	Enabled            bool     `json:"enabled"`
+	Available          bool     `json:"available"`
+	DefaultStrategy    string   `json:"default_strategy,omitempty"`
+	Strategies         []string `json:"strategies,omitempty"`
+	Path               string   `json:"path,omitempty"`
+	Error              string   `json:"error,omitempty"`
+}
+
+func (a *App) SandboxToggle(args []string) error {
+	req, err := parseSandboxToggleArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+	case "set":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.sandbox_strategy", req.Strategy); err != nil {
+			return err
+		}
+		a.Config.Future.SandboxStrategy = req.Strategy
+		req.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "future.sandbox_strategy"); err != nil {
+			return err
+		}
+		a.Config.Future.SandboxStrategy = ""
+		req.Path = path
+	default:
+		return fmt.Errorf("unknown sandbox-toggle command %q", req.Action)
+	}
+	report := buildSandboxToggleReport(req, a.Config.Future.SandboxStrategy)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSandboxToggleReport(a.Out, report)
+	return nil
+}
+
+func parseSandboxToggleArgs(args []string) (sandboxToggleRequest, error) {
+	req := sandboxToggleRequest{Action: "status", Format: "text", Target: "user"}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("sandbox-toggle output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("sandbox-toggle target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("sandbox-toggle path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown sandbox-toggle flag %q", arg)
+		default:
+			if actionSet {
+				return req, fmt.Errorf("unexpected sandbox-toggle argument %q", arg)
+			}
+			action, strategy, err := normalizeSandboxToggleAction(arg)
+			if err != nil {
+				return req, err
+			}
+			req.Action = action
+			req.Strategy = strategy
+			actionSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "sandbox-toggle"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func normalizeSandboxToggleAction(value string) (string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "status", "show", "list":
+		return "status", "", nil
+	case "clear", "reset", "unset":
+		return "clear", "", nil
+	case "on", "enable", "enabled", "auto", "detect":
+		return "set", "detect", nil
+	case "off", "disable", "disabled", "none":
+		return "set", "off", nil
+	case "sandbox-exec", "bwrap", "unshare":
+		return "set", strings.ToLower(strings.TrimSpace(value)), nil
+	default:
+		return "", "", fmt.Errorf("unknown sandbox-toggle strategy %q", value)
+	}
+}
+
+func buildSandboxToggleReport(req sandboxToggleRequest, configured string) sandboxToggleReport {
+	status := sandbox.Detect()
+	configured = strings.TrimSpace(configured)
+	effective, err := sandbox.ResolveStrategy(configured)
+	report := sandboxToggleReport{
+		Kind:               "sandbox_toggle",
+		Action:             req.Action,
+		OS:                 status.OS,
+		ConfiguredStrategy: configured,
+		EffectiveStrategy:  effective,
+		Enabled:            effective != "",
+		Available:          status.Available,
+		DefaultStrategy:    status.Default,
+		Strategies:         status.Strategies,
+		Path:               req.Path,
+	}
+	switch {
+	case err != nil:
+		report.Status = "unavailable"
+		report.Error = err.Error()
+	case effective != "":
+		report.Status = "enabled"
+	default:
+		report.Status = "disabled"
+	}
+	return report
+}
+
+func renderSandboxToggleReport(out io.Writer, report sandboxToggleReport) {
+	fmt.Fprintln(out, "Sandbox Toggle")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  OS               %s\n", report.OS)
+	fmt.Fprintf(out, "  Configured       %s\n", emptyAsNone(report.ConfiguredStrategy))
+	fmt.Fprintf(out, "  Effective        %s\n", emptyAsNone(report.EffectiveStrategy))
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Available        %t\n", report.Available)
+	if report.DefaultStrategy != "" {
+		fmt.Fprintf(out, "  Default          %s\n", report.DefaultStrategy)
+	}
+	if len(report.Strategies) > 0 {
+		fmt.Fprintf(out, "  Strategies       %s\n", strings.Join(report.Strategies, ", "))
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Error != "" {
+		fmt.Fprintf(out, "  Error            %s\n", report.Error)
+	}
 }
 
 func (a *App) Init(args []string) error {
@@ -9121,6 +9306,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Sandbox(); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/sandbox-toggle":
+		if err := a.SandboxToggle(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/version":
 		if err := renderVersion(a.Out, a.Workspace, nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -13013,6 +13202,7 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
+  %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
@@ -13040,7 +13230,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

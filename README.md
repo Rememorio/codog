@@ -59,7 +59,7 @@ Claude Code source.
   current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/sandbox-toggle`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
@@ -249,9 +249,9 @@ Claude Code source.
 - `codog doctor [--json]` runs local auth, config, workspace, permission,
   sandbox, git, session, tool registry, and runtime diagnostics without making
   a provider request.
-- `codog sandbox` reports detected strategies; `future.sandbox_strategy` can
-  wrap `bash` tool execution with `detect`, `sandbox-exec`, `bwrap`, or
-  `unshare`.
+- `codog sandbox` reports detected strategies; `codog sandbox-toggle` and
+  `/sandbox-toggle` show or persist `future.sandbox_strategy` for `bash` tool
+  execution with `detect`, `off`, `sandbox-exec`, `bwrap`, or `unshare`.
 - `codog symbols|diagnostics|map|references|definition|hover|teleport|completion|format`
   provides lightweight static Go code intelligence and symbol/file navigation
   without a persistent LSP process. `completion PREFIX` returns static Go
