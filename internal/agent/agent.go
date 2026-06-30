@@ -13130,6 +13130,10 @@ func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *sessio
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
+	if err := a.restoreTodosFromSession(next); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
 	if err := a.runSessionEndHook(ctx, sess, "resume"); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
@@ -16746,7 +16750,63 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 			id = "latest"
 		}
 	}
-	return a.Sessions.Open(id)
+	sess, err := a.Sessions.Open(id)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(id) != "" {
+		if err := a.restoreTodosFromSession(sess); err != nil {
+			return nil, err
+		}
+	}
+	return sess, nil
+}
+
+func (a *App) restoreTodosFromSession(sess *session.Session) error {
+	items, ok := lastTodoWriteItems(sess.Messages)
+	if !ok {
+		return nil
+	}
+	if todoItemsAllCompletedForRestore(items) {
+		items = nil
+	}
+	_, err := todos.Replace(a.Workspace, items)
+	return err
+}
+
+func lastTodoWriteItems(messages []anthropic.Message) ([]todos.Item, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if !strings.EqualFold(msg.Role, "assistant") {
+			continue
+		}
+		for j := len(msg.Content) - 1; j >= 0; j-- {
+			block := msg.Content[j]
+			if block.Type != "tool_use" || tools.CanonicalToolName(block.Name) != "todo_write" {
+				continue
+			}
+			var payload struct {
+				Todos []todos.Item `json:"todos"`
+			}
+			if err := json.Unmarshal(block.Input, &payload); err != nil {
+				return nil, false
+			}
+			return payload.Todos, true
+		}
+	}
+	return nil, false
+}
+
+func todoItemsAllCompletedForRestore(items []todos.Item) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item.Status) != "completed" {
+			return false
+		}
+	}
+	return true
 }
 
 func sessionStartSource(overrides config.FlagOverrides) string {

@@ -436,6 +436,43 @@ func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {
 	require.Contains(t, errOut.String(), "session resumed: source")
 }
 
+func TestResumeRestoresTodosFromTranscript(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	require.NoError(t, store.Append("source", anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{{
+		Type:  "tool_use",
+		Name:  "TodoWrite",
+		Input: []byte(`{"todos":[{"content":"restore todo","status":"in_progress","priority":"high"}]}`),
+	}}}))
+	require.NoError(t, store.Append("done", anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{{
+		Type:  "tool_use",
+		Name:  "todo_write",
+		Input: []byte(`{"todos":[{"content":"finished","status":"completed","priority":"low"}]}`),
+	}}}))
+	sess, err := store.Open("")
+	require.NoError(t, err)
+	app := &App{
+		Config:    config.Config{Model: "mock", PermissionMode: "workspace-write"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/resume source", sess))
+	state, err := todos.Load(workspace)
+	require.NoError(t, err)
+	require.Len(t, state.Items, 1)
+	require.Equal(t, "restore todo", state.Items[0].Content)
+	require.Equal(t, "in_progress", state.Items[0].Status)
+
+	_, err = app.openSession(config.FlagOverrides{Resume: "done"})
+	require.NoError(t, err)
+	state, err = todos.Load(workspace)
+	require.NoError(t, err)
+	require.Empty(t, state.Items)
+}
+
 func TestRuntimeInfoSlashCommands(t *testing.T) {
 	var out bytes.Buffer
 	app := &App{Workspace: t.TempDir(), Out: &out, Err: io.Discard}
