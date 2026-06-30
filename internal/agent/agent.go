@@ -4482,6 +4482,8 @@ type hooksRequest struct {
 	WorktreeID       string
 	WorktreePath     string
 	Ref              string
+	OldCWD           string
+	NewCWD           string
 	TaskID           string
 	TaskKind         string
 	TaskStatus       string
@@ -4518,6 +4520,7 @@ type hooksListReport struct {
 	SubagentStop               []string             `json:"subagent_stop"`
 	WorktreeCreate             []string             `json:"worktree_create"`
 	WorktreeRemove             []string             `json:"worktree_remove"`
+	CwdChanged                 []string             `json:"cwd_changed"`
 	TaskCreated                []string             `json:"task_created"`
 	TaskCompleted              []string             `json:"task_completed"`
 	InstructionsLoaded         []string             `json:"instructions_loaded"`
@@ -4540,6 +4543,7 @@ type hooksListReport struct {
 	SubagentStopCommands       []hookCommandSummary `json:"subagent_stop_commands,omitempty"`
 	WorktreeCreateCommands     []hookCommandSummary `json:"worktree_create_commands,omitempty"`
 	WorktreeRemoveCommands     []hookCommandSummary `json:"worktree_remove_commands,omitempty"`
+	CwdChangedCommands         []hookCommandSummary `json:"cwd_changed_commands,omitempty"`
 	TaskCreatedCommands        []hookCommandSummary `json:"task_created_commands,omitempty"`
 	TaskCompletedCommands      []hookCommandSummary `json:"task_completed_commands,omitempty"`
 	InstructionsLoadedCommands []hookCommandSummary `json:"instructions_loaded_commands,omitempty"`
@@ -4582,6 +4586,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
 			WorktreeCreate:             append([]string(nil), a.Config.Hooks.WorktreeCreate...),
 			WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
+			CwdChanged:                 append([]string(nil), a.Config.Hooks.CwdChanged...),
 			TaskCreated:                append([]string(nil), a.Config.Hooks.TaskCreated...),
 			TaskCompleted:              append([]string(nil), a.Config.Hooks.TaskCompleted...),
 			InstructionsLoaded:         append([]string(nil), a.Config.Hooks.InstructionsLoaded...),
@@ -4604,6 +4609,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
 			WorktreeCreateCommands:     hookCommandsForList(a.Config.Hooks.WorktreeCreateCommands, a.Config.Hooks.WorktreeCreate),
 			WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
+			CwdChangedCommands:         hookCommandsForList(a.Config.Hooks.CwdChangedCommands, a.Config.Hooks.CwdChanged),
 			TaskCreatedCommands:        hookCommandsForList(a.Config.Hooks.TaskCreatedCommands, a.Config.Hooks.TaskCreated),
 			TaskCompletedCommands:      hookCommandsForList(a.Config.Hooks.TaskCompletedCommands, a.Config.Hooks.TaskCompleted),
 			InstructionsLoadedCommands: hookCommandsForList(a.Config.Hooks.InstructionsLoadedCommands, a.Config.Hooks.InstructionsLoaded),
@@ -4636,6 +4642,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			WorktreeID:       req.WorktreeID,
 			WorktreePath:     req.WorktreePath,
 			Ref:              req.Ref,
+			OldCWD:           req.OldCWD,
+			NewCWD:           req.NewCWD,
 			TaskID:           req.TaskID,
 			TaskKind:         req.TaskKind,
 			TaskStatus:       req.TaskStatus,
@@ -4725,6 +4733,21 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			if req.Event == "worktree_create" {
 				payload.Reason = ""
 			}
+		} else if req.Event == "cwd_changed" {
+			payload.OldCWD = req.OldCWD
+			payload.NewCWD = firstNonEmpty(req.NewCWD, req.Tool)
+			payload.Tool = payload.NewCWD
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.ToolName = ""
+			payload.ToolInput = nil
+			payload.Reason = ""
 		} else if req.Event == "task_created" || req.Event == "task_completed" {
 			payload.TaskID = firstNonEmpty(req.TaskID, req.Tool)
 			payload.TaskKind = firstNonEmpty(req.TaskKind, req.AgentType, "background")
@@ -4790,6 +4813,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.WorktreeID = ""
 			payload.WorktreePath = ""
 			payload.Ref = ""
+			payload.OldCWD = ""
+			payload.NewCWD = ""
 			payload.TaskID = ""
 			payload.TaskKind = ""
 			payload.TaskStatus = ""
@@ -4805,6 +4830,10 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.WorktreeID = ""
 			payload.WorktreePath = ""
 			payload.Ref = ""
+		}
+		if req.Event != "cwd_changed" {
+			payload.OldCWD = ""
+			payload.NewCWD = ""
 		}
 		if req.Event != "task_created" && req.Event != "task_completed" {
 			payload.TaskID = ""
@@ -4961,6 +4990,22 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Ref = args[i]
 		case strings.HasPrefix(arg, "--ref="):
 			req.Ref = strings.TrimPrefix(arg, "--ref=")
+		case arg == "--old-cwd":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks old cwd is required")
+			}
+			req.OldCWD = args[i]
+		case strings.HasPrefix(arg, "--old-cwd="):
+			req.OldCWD = strings.TrimPrefix(arg, "--old-cwd=")
+		case arg == "--new-cwd":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks new cwd is required")
+			}
+			req.NewCWD = args[i]
+		case strings.HasPrefix(arg, "--new-cwd="):
+			req.NewCWD = strings.TrimPrefix(arg, "--new-cwd=")
 		case arg == "--path" || arg == "--file-path":
 			i++
 			if i >= len(args) {
@@ -5155,6 +5200,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "worktree_create", nil
 	case "worktree-remove", "worktreeremove", "worktree_remove":
 		return "worktree_remove", nil
+	case "cwd-changed", "cwdchanged", "cwd_changed":
+		return "cwd_changed", nil
 	case "task-created", "taskcreated", "task_created":
 		return "task_created", nil
 	case "task-completed", "taskcompleted", "task_completed":
@@ -5272,6 +5319,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Worktree remove  %d\n", len(report.WorktreeRemove))
 	for _, command := range report.WorktreeRemoveCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Cwd changed      %d\n", len(report.CwdChanged))
+	for _, command := range report.CwdChangedCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  Task created     %d\n", len(report.TaskCreated))
@@ -10598,6 +10649,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		SubagentStopHookCount:       len(a.Config.Hooks.SubagentStop),
 		WorktreeCreateHookCount:     len(a.Config.Hooks.WorktreeCreate),
 		WorktreeRemoveHookCount:     len(a.Config.Hooks.WorktreeRemove),
+		CwdChangedHookCount:         len(a.Config.Hooks.CwdChanged),
 		TaskCreatedHookCount:        len(a.Config.Hooks.TaskCreated),
 		TaskCompletedHookCount:      len(a.Config.Hooks.TaskCompleted),
 		InstructionsLoadedHookCount: len(a.Config.Hooks.InstructionsLoaded),
@@ -11166,6 +11218,7 @@ func (a *App) Doctor(args []string) error {
 		SubagentStop:       a.Config.Hooks.SubagentStop,
 		WorktreeCreate:     a.Config.Hooks.WorktreeCreate,
 		WorktreeRemove:     a.Config.Hooks.WorktreeRemove,
+		CwdChanged:         a.Config.Hooks.CwdChanged,
 		TaskCreated:        a.Config.Hooks.TaskCreated,
 		TaskCompleted:      a.Config.Hooks.TaskCompleted,
 		InstructionsLoaded: a.Config.Hooks.InstructionsLoaded,
@@ -17314,7 +17367,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|task-created|task-completed|instructions-loaded|file-changed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|cwd-changed|task-created|task-completed|instructions-loaded|file-changed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

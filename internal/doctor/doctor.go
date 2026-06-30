@@ -49,6 +49,7 @@ type Options struct {
 	SubagentStop       []string
 	WorktreeCreate     []string
 	WorktreeRemove     []string
+	CwdChanged         []string
 	TaskCreated        []string
 	TaskCompleted      []string
 	InstructionsLoaded []string
@@ -272,11 +273,12 @@ func checkHooks(opts Options) Check {
 	subagentStop := compactHookCommands(opts.SubagentStop)
 	worktreeCreate := compactHookCommands(opts.WorktreeCreate)
 	worktreeRemove := compactHookCommands(opts.WorktreeRemove)
+	cwdChanged := compactHookCommands(opts.CwdChanged)
 	taskCreated := compactHookCommands(opts.TaskCreated)
 	taskCompleted := compactHookCommands(opts.TaskCompleted)
 	instructionsLoaded := compactHookCommands(opts.InstructionsLoaded)
 	fileChanged := compactHookCommands(opts.FileChanged)
-	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop) + len(worktreeCreate) + len(worktreeRemove) + len(taskCreated) + len(taskCompleted) + len(instructionsLoaded) + len(fileChanged)
+	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop) + len(worktreeCreate) + len(worktreeRemove) + len(cwdChanged) + len(taskCreated) + len(taskCompleted) + len(instructionsLoaded) + len(fileChanged)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
@@ -296,6 +298,7 @@ func checkHooks(opts Options) Check {
 		fmt.Sprintf("SubagentStop hooks: %d", len(subagentStop)),
 		fmt.Sprintf("WorktreeCreate hooks: %d", len(worktreeCreate)),
 		fmt.Sprintf("WorktreeRemove hooks: %d", len(worktreeRemove)),
+		fmt.Sprintf("CwdChanged hooks: %d", len(cwdChanged)),
 		fmt.Sprintf("TaskCreated hooks: %d", len(taskCreated)),
 		fmt.Sprintf("TaskCompleted hooks: %d", len(taskCompleted)),
 		fmt.Sprintf("InstructionsLoaded hooks: %d", len(instructionsLoaded)),
@@ -325,6 +328,7 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "SubagentStop", subagentStop)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "WorktreeCreate", worktreeCreate)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "WorktreeRemove", worktreeRemove)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "CwdChanged", cwdChanged)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "TaskCreated", taskCreated)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "TaskCompleted", taskCompleted)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "InstructionsLoaded", instructionsLoaded)...)

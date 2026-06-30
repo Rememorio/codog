@@ -2921,6 +2921,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	subagentStopPath := filepath.Join(workspace, "subagent-stop.json")
 	worktreeCreatePath := filepath.Join(workspace, "worktree-create.json")
 	worktreeRemovePath := filepath.Join(workspace, "worktree-remove.json")
+	cwdChangedPath := filepath.Join(workspace, "cwd-changed.json")
 	taskCreatedPath := filepath.Join(workspace, "task-created.json")
 	taskCompletedPath := filepath.Join(workspace, "task-completed.json")
 	instructionsLoadedPath := filepath.Join(workspace, "instructions-loaded.json")
@@ -2948,6 +2949,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				SubagentStop:       []string{"cat > " + shellQuote(subagentStopPath)},
 				WorktreeCreate:     []string{"cat > " + shellQuote(worktreeCreatePath)},
 				WorktreeRemove:     []string{"cat > " + shellQuote(worktreeRemovePath)},
+				CwdChanged:         []string{"cat > " + shellQuote(cwdChangedPath)},
 				TaskCreated:        []string{"cat > " + shellQuote(taskCreatedPath)},
 				TaskCompleted:      []string{"cat > " + shellQuote(taskCompletedPath)},
 				InstructionsLoaded: []string{"cat > " + shellQuote(instructionsLoadedPath)},
@@ -3006,6 +3008,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				WorktreeRemoveCommands: []config.HookCommand{
 					{Matcher: "agent-*", Command: "cat > " + shellQuote(worktreeRemovePath)},
 				},
+				CwdChangedCommands: []config.HookCommand{
+					{Matcher: "*", Command: "cat > " + shellQuote(cwdChangedPath)},
+				},
 				TaskCreatedCommands: []config.HookCommand{
 					{Matcher: "agent", Command: "cat > " + shellQuote(taskCreatedPath)},
 				},
@@ -3045,6 +3050,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"subagent_stop"`)
 	require.Contains(t, out.String(), `"worktree_create"`)
 	require.Contains(t, out.String(), `"worktree_remove"`)
+	require.Contains(t, out.String(), `"cwd_changed"`)
 	require.Contains(t, out.String(), `"task_created"`)
 	require.Contains(t, out.String(), `"task_completed"`)
 	require.Contains(t, out.String(), `"instructions_loaded"`)
@@ -3069,6 +3075,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "reviewer", hooksList.SubagentStopCommands[0].Matcher)
 	require.Equal(t, "agent-*", hooksList.WorktreeCreateCommands[0].Matcher)
 	require.Equal(t, "agent-*", hooksList.WorktreeRemoveCommands[0].Matcher)
+	require.Equal(t, "*", hooksList.CwdChangedCommands[0].Matcher)
 	require.Equal(t, "agent", hooksList.TaskCreatedCommands[0].Matcher)
 	require.Equal(t, "agent", hooksList.TaskCompletedCommands[0].Matcher)
 	require.Equal(t, "session_start", hooksList.InstructionsLoadedCommands[0].Matcher)
@@ -3291,6 +3298,23 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "agent-1", worktreeRemoveHook.WorktreeID)
 	require.Equal(t, filepath.Join(workspace, "wt"), worktreeRemoveHook.WorktreePath)
 	require.Equal(t, "abc123", worktreeRemoveHook.Ref)
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "cwd-changed", "--old-cwd", workspace, "--new-cwd", filepath.Join(workspace, "sub"), "--input", `{"source":"bash"}`}))
+	data, err = os.ReadFile(cwdChangedPath)
+	require.NoError(t, err)
+	var cwdChangedHook struct {
+		Event  string `json:"event"`
+		Tool   string `json:"tool"`
+		OldCWD string `json:"old_cwd"`
+		NewCWD string `json:"new_cwd"`
+		Input  string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(data, &cwdChangedHook))
+	require.Equal(t, "cwd_changed", cwdChangedHook.Event)
+	require.Equal(t, filepath.Join(workspace, "sub"), cwdChangedHook.Tool)
+	require.Equal(t, workspace, cwdChangedHook.OldCWD)
+	require.Equal(t, filepath.Join(workspace, "sub"), cwdChangedHook.NewCWD)
+	require.Contains(t, cwdChangedHook.Input, `"source"`)
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "task-created", "--task-id", "task-1", "--task-kind", "agent", "--task-status", "running", "--input", `{"id":"task-1"}`}))
 	data, err = os.ReadFile(taskCreatedPath)

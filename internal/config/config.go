@@ -35,6 +35,7 @@ type HookConfig struct {
 	SubagentStop               []string      `json:"subagent_stop,omitempty"`
 	WorktreeCreate             []string      `json:"worktree_create,omitempty"`
 	WorktreeRemove             []string      `json:"worktree_remove,omitempty"`
+	CwdChanged                 []string      `json:"cwd_changed,omitempty"`
 	TaskCreated                []string      `json:"task_created,omitempty"`
 	TaskCompleted              []string      `json:"task_completed,omitempty"`
 	InstructionsLoaded         []string      `json:"instructions_loaded,omitempty"`
@@ -57,6 +58,7 @@ type HookConfig struct {
 	SubagentStopCommands       []HookCommand `json:"-"`
 	WorktreeCreateCommands     []HookCommand `json:"-"`
 	WorktreeRemoveCommands     []HookCommand `json:"-"`
+	CwdChangedCommands         []HookCommand `json:"-"`
 	TaskCreatedCommands        []HookCommand `json:"-"`
 	TaskCompletedCommands      []HookCommand `json:"-"`
 	InstructionsLoadedCommands []HookCommand `json:"-"`
@@ -158,6 +160,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	cwdChanged, err := hookCommands(raw, "cwd_changed", "CwdChanged")
+	if err != nil {
+		return err
+	}
 	taskCreated, err := hookCommands(raw, "task_created", "TaskCreated")
 	if err != nil {
 		return err
@@ -192,6 +198,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.SubagentStopCommands = subagentStop
 	h.WorktreeCreateCommands = worktreeCreate
 	h.WorktreeRemoveCommands = worktreeRemove
+	h.CwdChangedCommands = cwdChanged
 	h.TaskCreatedCommands = taskCreated
 	h.TaskCompletedCommands = taskCompleted
 	h.InstructionsLoadedCommands = instructionsLoaded
@@ -214,6 +221,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.SubagentStop = hookCommandStrings(subagentStop)
 	h.WorktreeCreate = hookCommandStrings(worktreeCreate)
 	h.WorktreeRemove = hookCommandStrings(worktreeRemove)
+	h.CwdChanged = hookCommandStrings(cwdChanged)
 	h.TaskCreated = hookCommandStrings(taskCreated)
 	h.TaskCompleted = hookCommandStrings(taskCompleted)
 	h.InstructionsLoaded = hookCommandStrings(instructionsLoaded)
@@ -1081,6 +1089,11 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.WorktreeRemove) != 0 {
 		dst.WorktreeRemoveCommands = mergeHookCommands(dst.WorktreeRemoveCommands, hookCommandsFromStrings(src.WorktreeRemove))
 	}
+	if len(src.CwdChangedCommands) != 0 {
+		dst.CwdChangedCommands = mergeHookCommands(dst.CwdChangedCommands, src.CwdChangedCommands)
+	} else if len(src.CwdChanged) != 0 {
+		dst.CwdChangedCommands = mergeHookCommands(dst.CwdChangedCommands, hookCommandsFromStrings(src.CwdChanged))
+	}
 	if len(src.TaskCreatedCommands) != 0 {
 		dst.TaskCreatedCommands = mergeHookCommands(dst.TaskCreatedCommands, src.TaskCreatedCommands)
 	} else if len(src.TaskCreated) != 0 {
@@ -1119,6 +1132,7 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.SubagentStop = hookCommandStrings(dst.SubagentStopCommands)
 	dst.WorktreeCreate = hookCommandStrings(dst.WorktreeCreateCommands)
 	dst.WorktreeRemove = hookCommandStrings(dst.WorktreeRemoveCommands)
+	dst.CwdChanged = hookCommandStrings(dst.CwdChangedCommands)
 	dst.TaskCreated = hookCommandStrings(dst.TaskCreatedCommands)
 	dst.TaskCompleted = hookCommandStrings(dst.TaskCompletedCommands)
 	dst.InstructionsLoaded = hookCommandStrings(dst.InstructionsLoadedCommands)

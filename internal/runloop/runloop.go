@@ -11,6 +11,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hooks"
+	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/tools"
 )
 
@@ -159,12 +160,27 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 				continue
 			}
 
+			canonicalTool := tools.CanonicalToolName(block.Name)
+			oldCWD := ""
+			if canonicalTool == "bash" && r.SessionID != "" {
+				if cwd, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil {
+					oldCWD = cwd
+				}
+			}
 			output, err := r.Tools.Execute(toolCtx, block.Name, block.Input, r.Prompter)
 			if err != nil {
 				call.Output = err.Error()
 				call.IsError = true
 			} else {
 				call.Output = output
+			}
+			if oldCWD != "" {
+				if newCWD, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil && newCWD != oldCWD {
+					if hookErr := hookRunner.CwdChanged(ctx, oldCWD, newCWD, string(block.Input)); hookErr != nil && !call.IsError {
+						call.Output = hookErr.Error()
+						call.IsError = true
+					}
+				}
 			}
 			if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, call.Output, call.IsError); hookErr != nil && !call.IsError {
 				call.Output = hookErr.Error()
@@ -222,6 +238,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SubagentStop) != 0 ||
 		len(cfg.WorktreeCreate) != 0 ||
 		len(cfg.WorktreeRemove) != 0 ||
+		len(cfg.CwdChanged) != 0 ||
 		len(cfg.TaskCreated) != 0 ||
 		len(cfg.TaskCompleted) != 0 ||
 		len(cfg.InstructionsLoaded) != 0 ||
@@ -244,6 +261,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SubagentStopCommands) != 0 ||
 		len(cfg.WorktreeCreateCommands) != 0 ||
 		len(cfg.WorktreeRemoveCommands) != 0 ||
+		len(cfg.CwdChangedCommands) != 0 ||
 		len(cfg.TaskCreatedCommands) != 0 ||
 		len(cfg.TaskCompletedCommands) != 0 ||
 		len(cfg.InstructionsLoadedCommands) != 0 ||

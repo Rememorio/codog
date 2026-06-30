@@ -69,6 +69,7 @@ type ConfigSummary struct {
 	SubagentStopHookCount       int    `json:"subagent_stop_hook_count"`
 	WorktreeCreateHookCount     int    `json:"worktree_create_hook_count"`
 	WorktreeRemoveHookCount     int    `json:"worktree_remove_hook_count"`
+	CwdChangedHookCount         int    `json:"cwd_changed_hook_count"`
 	TaskCreatedHookCount        int    `json:"task_created_hook_count"`
 	TaskCompletedHookCount      int    `json:"task_completed_hook_count"`
 	InstructionsLoadedHookCount int    `json:"instructions_loaded_hook_count"`
@@ -178,6 +179,7 @@ func Build(options Options) Report {
 			SubagentStopHookCount:       options.Status.Config.SubagentStopHookCount,
 			WorktreeCreateHookCount:     options.Status.Config.WorktreeCreateHookCount,
 			WorktreeRemoveHookCount:     options.Status.Config.WorktreeRemoveHookCount,
+			CwdChangedHookCount:         options.Status.Config.CwdChangedHookCount,
 			TaskCreatedHookCount:        options.Status.Config.TaskCreatedHookCount,
 			TaskCompletedHookCount:      options.Status.Config.TaskCompletedHookCount,
 			InstructionsLoadedHookCount: options.Status.Config.InstructionsLoadedHookCount,

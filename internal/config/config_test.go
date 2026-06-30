@@ -282,6 +282,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"SubagentStop": [{"matcher": "reviewer", "command": "echo agent-stop"}],
 			"WorktreeCreate": [{"matcher": "agent-*", "command": "echo worktree-create"}],
 			"WorktreeRemove": [{"matcher": "agent-*", "command": "echo worktree-remove"}],
+			"CwdChanged": [{"matcher": "*", "command": "echo cwd-changed"}],
 			"TaskCreated": [{"matcher": "agent", "command": "echo task-created"}],
 			"TaskCompleted": [{"matcher": "agent", "command": "echo task-completed"}],
 			"InstructionsLoaded": [{"matcher": "session_start", "command": "echo instructions-loaded"}],
@@ -309,6 +310,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo agent-stop"}, cfg.Hooks.SubagentStop)
 	require.Equal(t, []string{"echo worktree-create"}, cfg.Hooks.WorktreeCreate)
 	require.Equal(t, []string{"echo worktree-remove"}, cfg.Hooks.WorktreeRemove)
+	require.Equal(t, []string{"echo cwd-changed"}, cfg.Hooks.CwdChanged)
 	require.Equal(t, []string{"echo task-created"}, cfg.Hooks.TaskCreated)
 	require.Equal(t, []string{"echo task-completed"}, cfg.Hooks.TaskCompleted)
 	require.Equal(t, []string{"echo instructions-loaded"}, cfg.Hooks.InstructionsLoaded)
@@ -335,6 +337,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Matcher: "reviewer", Type: "command", Command: "echo agent-stop"}}, cfg.Hooks.SubagentStopCommands)
 	require.Equal(t, []HookCommand{{Matcher: "agent-*", Type: "command", Command: "echo worktree-create"}}, cfg.Hooks.WorktreeCreateCommands)
 	require.Equal(t, []HookCommand{{Matcher: "agent-*", Type: "command", Command: "echo worktree-remove"}}, cfg.Hooks.WorktreeRemoveCommands)
+	require.Equal(t, []HookCommand{{Matcher: "*", Type: "command", Command: "echo cwd-changed"}}, cfg.Hooks.CwdChangedCommands)
 	require.Equal(t, []HookCommand{{Matcher: "agent", Type: "command", Command: "echo task-created"}}, cfg.Hooks.TaskCreatedCommands)
 	require.Equal(t, []HookCommand{{Matcher: "agent", Type: "command", Command: "echo task-completed"}}, cfg.Hooks.TaskCompletedCommands)
 	require.Equal(t, []HookCommand{{Matcher: "session_start", Type: "command", Command: "echo instructions-loaded"}}, cfg.Hooks.InstructionsLoadedCommands)
@@ -370,6 +373,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"subagent_stop": ["echo user-subagent-stop"],
 			"worktree_create": ["echo user-worktree-create"],
 			"worktree_remove": ["echo user-worktree-remove"],
+			"cwd_changed": ["echo user-cwd-changed"],
 			"task_created": ["echo user-task-created"],
 			"task_completed": ["echo user-task-completed"],
 			"instructions_loaded": ["echo user-instructions-loaded"],
@@ -397,6 +401,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"SubagentStop": [{"matcher": "reviewer", "command": "echo project-subagent-stop"}],
 			"WorktreeCreate": [{"matcher": "agent-*", "command": "echo project-worktree-create"}],
 			"WorktreeRemove": [{"matcher": "agent-*", "command": "echo project-worktree-remove"}],
+			"CwdChanged": [{"matcher": "*", "command": "echo project-cwd-changed"}],
 			"TaskCreated": [{"matcher": "agent", "command": "echo project-task-created"}],
 			"TaskCompleted": [{"matcher": "agent", "command": "echo project-task-completed"}],
 			"InstructionsLoaded": [{"matcher": "session_start", "command": "echo project-instructions-loaded"}],
@@ -422,6 +427,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"subagent_stop": ["echo user-subagent-stop", "echo local-subagent-stop"],
 			"worktree_create": ["echo user-worktree-create", "echo local-worktree-create"],
 			"worktree_remove": ["echo user-worktree-remove", "echo local-worktree-remove"],
+			"cwd_changed": ["echo user-cwd-changed", "echo local-cwd-changed"],
 			"task_created": ["echo user-task-created", "echo local-task-created"],
 			"task_completed": ["echo user-task-completed", "echo local-task-completed"],
 			"instructions_loaded": ["echo user-instructions-loaded", "echo local-instructions-loaded"],
@@ -449,6 +455,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-subagent-stop", "echo project-subagent-stop", "echo local-subagent-stop"}, cfg.Hooks.SubagentStop)
 	require.Equal(t, []string{"echo user-worktree-create", "echo project-worktree-create", "echo local-worktree-create"}, cfg.Hooks.WorktreeCreate)
 	require.Equal(t, []string{"echo user-worktree-remove", "echo project-worktree-remove", "echo local-worktree-remove"}, cfg.Hooks.WorktreeRemove)
+	require.Equal(t, []string{"echo user-cwd-changed", "echo project-cwd-changed", "echo local-cwd-changed"}, cfg.Hooks.CwdChanged)
 	require.Equal(t, []string{"echo user-task-created", "echo project-task-created", "echo local-task-created"}, cfg.Hooks.TaskCreated)
 	require.Equal(t, []string{"echo user-task-completed", "echo project-task-completed", "echo local-task-completed"}, cfg.Hooks.TaskCompleted)
 	require.Equal(t, []string{"echo user-instructions-loaded", "echo project-instructions-loaded", "echo local-instructions-loaded"}, cfg.Hooks.InstructionsLoaded)
@@ -538,6 +545,11 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Matcher: "agent-*", Type: "command", Command: "echo project-worktree-remove"},
 		{Type: "command", Command: "echo local-worktree-remove"},
 	}, cfg.Hooks.WorktreeRemoveCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-cwd-changed"},
+		{Matcher: "*", Type: "command", Command: "echo project-cwd-changed"},
+		{Type: "command", Command: "echo local-cwd-changed"},
+	}, cfg.Hooks.CwdChangedCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-task-created"},
 		{Matcher: "agent", Type: "command", Command: "echo project-task-created"},

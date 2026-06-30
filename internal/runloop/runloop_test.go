@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -299,6 +300,78 @@ func TestRunnerAppliesHookEnvironmentToLaterBashTool(t *testing.T) {
 	require.Len(t, result.ToolCalls, 2)
 	require.False(t, result.ToolCalls[1].IsError)
 	require.Contains(t, result.ToolCalls[1].Output, `"stdout": "from-hook"`)
+}
+
+func TestRunnerExecutesCwdChangedHookAfterBashCWDChange(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	subdir := workspace + "/sub"
+	physicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	physicalSubdir := filepath.Join(physicalWorkspace, "sub")
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "tool-1",
+						Name:  "bash",
+						Input: []byte(`{"command":"mkdir sub && cd sub"}`),
+					},
+					{
+						Type:  "tool_use",
+						ID:    "tool-2",
+						Name:  "bash",
+						Input: []byte(`{"command":"printf %s \"$PWD\""}`),
+					},
+				},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Model:      "mock",
+			MaxTokens:  128,
+			MaxTurns:   2,
+			Hooks: config.HookConfig{
+				CwdChangedCommands: []config.HookCommand{{Matcher: physicalSubdir, Command: "cat > cwd-changed.json"}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome}),
+		Workspace: workspace,
+		SessionID: "session-1",
+	}.Run(context.Background(), nil, "change cwd")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 2)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.False(t, result.ToolCalls[1].IsError)
+	require.Contains(t, result.ToolCalls[1].Output, subdir)
+
+	payload, err := os.ReadFile(workspace + "/cwd-changed.json")
+	require.NoError(t, err)
+	var hookPayload struct {
+		Event  string `json:"event"`
+		Tool   string `json:"tool"`
+		OldCWD string `json:"old_cwd"`
+		NewCWD string `json:"new_cwd"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &hookPayload))
+	require.Equal(t, "cwd_changed", hookPayload.Event)
+	require.Equal(t, physicalSubdir, hookPayload.Tool)
+	require.Equal(t, physicalWorkspace, hookPayload.OldCWD)
+	require.Equal(t, physicalSubdir, hookPayload.NewCWD)
 }
 
 func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {

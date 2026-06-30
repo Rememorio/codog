@@ -37,6 +37,7 @@ import (
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
+	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
@@ -1457,6 +1458,18 @@ func toolEnvironment(ctx context.Context, configHome string) ([]string, error) {
 	return hookenv.Merge(env, hookEnv), nil
 }
 
+func toolCWD(ctx context.Context, configHome string, workspace string) (string, error) {
+	return shellstate.CurrentCWD(configHome, SessionIDFromContext(ctx), workspace)
+}
+
+func wrapCommandWithCWDProbe(command string, cwdFile string) string {
+	cwdFile = strings.TrimSpace(cwdFile)
+	if cwdFile == "" {
+		return command
+	}
+	return command + "\n__codog_status=$?\npwd -P > " + shellQuoteToolArg(cwdFile) + "\nexit $__codog_status"
+}
+
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Command                   string `json:"command"`
@@ -1471,11 +1484,27 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	if strings.TrimSpace(payload.Command) == "" {
 		return "", errors.New("command is required")
 	}
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	commandText := payload.Command
+	cwdProbePath := ""
+	if SessionIDFromContext(ctx) != "" && strings.TrimSpace(t.ConfigHome) != "" && !payload.RunInBackground {
+		probe, err := os.CreateTemp("", "codog-cwd-*.txt")
+		if err != nil {
+			return "", err
+		}
+		cwdProbePath = probe.Name()
+		_ = probe.Close()
+		defer os.Remove(cwdProbePath)
+		commandText = wrapCommandWithCWDProbe(commandText, cwdProbePath)
+	}
 	strategy := t.SandboxStrategy
 	if payload.DangerouslyDisableSandbox {
 		strategy = "off"
 	}
-	command, args, effectiveSandbox, err := sandbox.ShellCommand(strategy, t.Workspace, payload.Command)
+	command, args, effectiveSandbox, err := sandbox.ShellCommand(strategy, t.Workspace, commandText)
 	if err != nil {
 		return "", err
 	}
@@ -1484,7 +1513,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		if err != nil {
 			return "", err
 		}
-		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), t.Workspace, background.RunOptions{Kind: "bash", Env: env})
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), cwd, background.RunOptions{Kind: "bash", Env: env})
 		if err != nil {
 			return "", err
 		}
@@ -1506,7 +1535,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	defer cancel()
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
-	cmd.Dir = t.Workspace
+	cmd.Dir = cwd
 	env, err := toolEnvironment(ctx, t.ConfigHome)
 	if err != nil {
 		return "", err
@@ -1516,11 +1545,26 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
+	finalCWD := cwd
+	cwdChanged := false
+	if cwdProbePath != "" {
+		if data, readErr := os.ReadFile(cwdProbePath); readErr == nil {
+			if saved, saveErr := shellstate.SaveCWD(t.ConfigHome, SessionIDFromContext(ctx), strings.TrimSpace(string(data))); saveErr == nil && saved != "" {
+				finalCWD = saved
+				cwdChanged = finalCWD != cwd
+			}
+		}
+	}
 	result := map[string]any{
 		"stdout":      stdout.String(),
 		"stderr":      stderr.String(),
 		"exit_code":   exitCode(err),
 		"duration_ms": time.Since(started).Milliseconds(),
+		"cwd":         finalCWD,
+	}
+	if cwdChanged {
+		result["old_cwd"] = cwd
+		result["cwd_changed"] = true
 	}
 	if effectiveSandbox != "" {
 		result["sandbox"] = effectiveSandbox
@@ -1729,13 +1773,17 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
 	if payload.RunInBackground {
 		command := strings.Join([]string{shellQuoteToolArg(executable), "-NoProfile", "-Command", shellQuoteToolArg(payload.Command)}, " ")
 		env, err := toolEnvironment(ctx, t.ConfigHome)
 		if err != nil {
 			return "", err
 		}
-		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{Kind: "powershell", Env: env})
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, cwd, background.RunOptions{Kind: "powershell", Env: env})
 		if err != nil {
 			return "", err
 		}
@@ -1752,7 +1800,7 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	defer cancel()
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-Command", payload.Command)
-	cmd.Dir = t.Workspace
+	cmd.Dir = cwd
 	env, err := toolEnvironment(ctx, t.ConfigHome)
 	if err != nil {
 		return "", err
@@ -3569,7 +3617,11 @@ func (t AgentTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, cwd, background.RunOptions{
 		Kind:      "agent",
 		AgentType: agentName,
 		SessionID: payload.SessionID,
@@ -3803,6 +3855,10 @@ func (t TeamCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
 	taskIDs := make([]string, 0, len(payload.Tasks))
 	for _, task := range payload.Tasks {
 		prompt := strings.TrimSpace(task.Prompt)
@@ -3813,7 +3869,7 @@ func (t TeamCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 		if description != "" {
 			prompt = "Task: " + description + "\n\n" + prompt
 		}
-		started, err := store.RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{
+		started, err := store.RunWithOptions(buildTeamTaskCommand(executable, prompt), cwd, background.RunOptions{
 			Kind:      "team",
 			SessionID: payload.SessionID,
 			Env:       env,
@@ -4312,7 +4368,11 @@ func (t WorkerSendPromptTool) Execute(ctx context.Context, input json.RawMessage
 	if err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{Kind: "worker", Env: env})
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), cwd, background.RunOptions{Kind: "worker", Env: env})
 	if err != nil {
 		return "", err
 	}
@@ -4554,7 +4614,11 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(payload.Command, t.Workspace, background.RunOptions{
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(payload.Command, cwd, background.RunOptions{
 		Kind:          payload.Kind,
 		SessionID:     payload.SessionID,
 		RestartPolicy: payload.Restart,
@@ -4637,7 +4701,11 @@ func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{
+	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
+	if err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), cwd, background.RunOptions{
 		Kind: "task_packet",
 		Env:  env,
 	})

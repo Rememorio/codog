@@ -24,6 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func escapeJSONSubstring(value string) string {
+	data, _ := json.Marshal(value)
+	return strings.Trim(string(data), `"`)
+}
+
 func TestReadFileRejectsWorkspaceEscape(t *testing.T) {
 	workspace := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "secret.txt")
@@ -111,6 +116,42 @@ func TestBashToolLoadsHookEnvironment(t *testing.T) {
 	out, err := BashTool{Workspace: workspace, ConfigHome: configHome}.Execute(ctx, []byte(`{"command":"printf %s \"$CODOG_TEST_HOOK_ENV\""}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "ready"`)
+}
+
+func TestBashToolPersistsSessionCWD(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	sessionID := "session-1"
+	subdir := filepath.Join(workspace, "sub")
+	require.NoError(t, os.Mkdir(subdir, 0o755))
+	physicalSubdir, err := filepath.EvalSymlinks(subdir)
+	require.NoError(t, err)
+	ctx := ContextWithSessionID(context.Background(), sessionID)
+	tool := BashTool{Workspace: workspace, ConfigHome: configHome}
+
+	out, err := tool.Execute(ctx, []byte(`{"command":"cd sub"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"cwd_changed": true`)
+	require.Contains(t, out, `"cwd": "`+escapeJSONSubstring(physicalSubdir)+`"`)
+
+	out, err = tool.Execute(ctx, []byte(`{"command":"printf %s \"$PWD\""}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "`+escapeJSONSubstring(physicalSubdir)+`"`)
+
+	registry := NewRegistryWithOptions(workspace, RegistryOptions{ConfigHome: configHome})
+	out, err = registry.Execute(ctx, "Bash", []byte(`{"command":"printf %s \"$PWD\"","run_in_background":true}`), nil)
+	require.NoError(t, err)
+	var payload struct {
+		Task background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.Eventually(t, func() bool {
+		output, err := registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+		return err == nil && strings.Contains(output, physicalSubdir)
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {

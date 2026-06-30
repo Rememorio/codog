@@ -59,6 +59,8 @@ type Payload struct {
 	WorktreeID       string          `json:"worktree_id,omitempty"`
 	WorktreePath     string          `json:"worktree_path,omitempty"`
 	Ref              string          `json:"ref,omitempty"`
+	OldCWD           string          `json:"old_cwd,omitempty"`
+	NewCWD           string          `json:"new_cwd,omitempty"`
 	TaskID           string          `json:"task_id,omitempty"`
 	TaskKind         string          `json:"task_kind,omitempty"`
 	TaskStatus       string          `json:"task_status,omitempty"`
@@ -278,6 +280,17 @@ func (r Runner) WorktreeRemove(ctx context.Context, id string, worktreePath stri
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) CwdChanged(ctx context.Context, oldCWD string, newCWD string, input string) error {
+	payload := Payload{
+		Event:  "cwd_changed",
+		Tool:   newCWD,
+		Input:  input,
+		OldCWD: oldCWD,
+		NewCWD: newCWD,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func (r Runner) TaskCreated(ctx context.Context, id string, kind string, status string, input string) error {
 	payload := Payload{
 		Event:      "task_created",
@@ -395,6 +408,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.WorktreeCreateCommands, cfg.WorktreeCreate, payload)
 	case "worktree_remove":
 		return matchingHooks(cfg.WorktreeRemoveCommands, cfg.WorktreeRemove, payload)
+	case "cwd_changed":
+		return matchingHooks(cfg.CwdChangedCommands, cfg.CwdChanged, payload)
 	case "task_created":
 		return matchingHooks(cfg.TaskCreatedCommands, cfg.TaskCreated, payload)
 	case "task_completed":
@@ -546,6 +561,8 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		"CODOG_HOOK_WORKTREE_ID="+payload.WorktreeID,
 		"CODOG_HOOK_WORKTREE_PATH="+payload.WorktreePath,
 		"CODOG_HOOK_REF="+payload.Ref,
+		"CODOG_HOOK_OLD_CWD="+payload.OldCWD,
+		"CODOG_HOOK_NEW_CWD="+payload.NewCWD,
 		"CODOG_HOOK_TASK_ID="+payload.TaskID,
 		"CODOG_HOOK_TASK_KIND="+payload.TaskKind,
 		"CODOG_HOOK_TASK_STATUS="+payload.TaskStatus,
@@ -807,7 +824,7 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref, payload.TaskID, payload.TaskKind, payload.TaskStatus, payload.FilePath, payload.Operation, payload.MemoryType, payload.LoadReason, payload.TriggerFilePath, payload.ParentFilePath}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref, payload.OldCWD, payload.NewCWD, payload.TaskID, payload.TaskKind, payload.TaskStatus, payload.FilePath, payload.Operation, payload.MemoryType, payload.LoadReason, payload.TriggerFilePath, payload.ParentFilePath}
 	values = append(values, payload.Globs...)
 	if len(payload.ToolInput) != 0 {
 		values = append(values, string(payload.ToolInput))
@@ -963,6 +980,8 @@ func normalizeEvent(event string) string {
 		return "worktree_create"
 	case "worktreeremove", "worktree_remove", "worktree-remove":
 		return "worktree_remove"
+	case "cwdchanged", "cwd_changed", "cwd-changed":
+		return "cwd_changed"
 	case "taskcreated", "task_created", "task-created":
 		return "task_created"
 	case "taskcompleted", "task_completed", "task-completed":

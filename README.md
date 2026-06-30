@@ -43,6 +43,9 @@ Claude Code source.
   destructive patterns, sed in-place edits, and suspicious path targets
 - Shell tools return stdout, stderr, exit code, timeout/interruption status, and
   execution duration.
+- `bash` keeps a session-scoped current working directory. A command that ends
+  in a different directory updates later shell and background task launches and
+  can trigger `cwd_changed` hooks.
 - `bash` can run in the background with `run_in_background`; `bash_output` and
   `kill_bash` read or stop those background bash tasks through Claude-compatible
   `BashOutput` and `KillBash` aliases.
@@ -193,10 +196,10 @@ Claude Code source.
   `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`,
   `permission_request`, `permission_denied`, `stop`, `stop_failure`,
   `pre_compact`, `post_compact`, `notification`, `subagent_start`,
-  `subagent_stop`, `worktree_create`, `worktree_remove`, `task_created`,
-  `task_completed`, `instructions_loaded`, and `file_changed`; `codog hooks
-  list|run` inspects and test-runs configured hooks with the same JSON payload
-  shape used by live sessions. Hook config accepts simple string arrays and the
+  `subagent_stop`, `worktree_create`, `worktree_remove`, `cwd_changed`,
+  `task_created`, `task_completed`, `instructions_loaded`, and `file_changed`;
+  `codog hooks list|run` inspects and test-runs configured hooks with the same
+  JSON payload shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
   agent hooks,
   matcher filtering, `if` conditions, per-hook timeouts, shell selection, and
@@ -211,14 +214,15 @@ Claude Code source.
   `CODOG_HOOK_LAST_ASSISTANT_MESSAGE`, plus permission-specific
   `CODOG_HOOK_TOOL_NAME`, `CODOG_HOOK_TOOL_USE_ID`, and `CODOG_HOOK_REASON`,
   plus worktree-specific `CODOG_HOOK_WORKTREE_ID`,
-  `CODOG_HOOK_WORKTREE_PATH`, and `CODOG_HOOK_REF`, plus task-specific
+  `CODOG_HOOK_WORKTREE_PATH`, and `CODOG_HOOK_REF`, plus cwd-specific
+  `CODOG_HOOK_OLD_CWD` and `CODOG_HOOK_NEW_CWD`, plus task-specific
   `CODOG_HOOK_TASK_ID`, `CODOG_HOOK_TASK_KIND`, and
   `CODOG_HOOK_TASK_STATUS`, plus instruction-load-specific
   `CODOG_HOOK_MEMORY_TYPE`, `CODOG_HOOK_LOAD_REASON`, `CODOG_HOOK_GLOBS`,
   `CODOG_HOOK_TRIGGER_FILE_PATH`, and `CODOG_HOOK_PARENT_FILE_PATH`, plus
   file-change-specific
   `CODOG_HOOK_FILE_PATH` and `CODOG_HOOK_OPERATION`;
-  `setup`, `session_start`, and `file_changed` command hooks also receive
+  `setup`, `session_start`, `cwd_changed`, and `file_changed` command hooks also receive
   `CLAUDE_ENV_FILE` and `CODOG_HOOK_ENV_FILE`, where simple `export KEY=value`
   lines are loaded into the current session environment for later shell and
   background task tools;
@@ -448,6 +452,7 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "subagent_stop": ["echo agent-stop >&2"],
     "worktree_create": ["echo worktree-create >&2"],
     "worktree_remove": ["echo worktree-remove >&2"],
+    "cwd_changed": ["echo cwd-changed >&2"],
     "task_created": ["echo task-created >&2"],
     "task_completed": ["echo task-completed >&2"],
     "instructions_loaded": ["echo instructions-loaded >&2"],
