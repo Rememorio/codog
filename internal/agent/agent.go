@@ -130,7 +130,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
-		return err
+		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	if command == "help" || command == "--help" || command == "-h" {
 		return renderHelpCommand(os.Stdout, rest)
@@ -262,7 +262,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "prompt":
 		req, err := parsePromptArgs(rest)
 		if err != nil {
-			return err
+			return renderCLIError(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		input := req.Prompt
 		if !req.PromptProvided {
@@ -11431,11 +11431,27 @@ type slashErrorReport struct {
 }
 
 type cliErrorReport struct {
-	Kind      string `json:"kind"`
-	ErrorKind string `json:"error_kind"`
-	Status    string `json:"status"`
-	Message   string `json:"message"`
-	Hint      string `json:"hint"`
+	Kind      string   `json:"kind"`
+	ErrorKind string   `json:"error_kind"`
+	Status    string   `json:"status"`
+	Message   string   `json:"message"`
+	Hint      string   `json:"hint"`
+	Value     string   `json:"value,omitempty"`
+	Expected  []string `json:"expected,omitempty"`
+}
+
+type outputFormatError struct {
+	Command  string
+	Value    string
+	Expected []string
+}
+
+func (e outputFormatError) Error() string {
+	command := strings.TrimSpace(e.Command)
+	if command == "" {
+		command = "command"
+	}
+	return fmt.Sprintf("invalid_output_format: unknown %s output format %q", command, e.Value)
 }
 
 type promptErrorReport struct {
@@ -11470,7 +11486,9 @@ func renderMissingPrompt(out io.Writer, format string) error {
 func renderCLIError(out io.Writer, err error, format string) error {
 	report := buildCLIErrorReport(err)
 	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
-	if strings.EqualFold(format, "json") {
+	var formatErr outputFormatError
+	forceJSON := errors.As(err, &formatErr)
+	if strings.EqualFold(format, "json") || forceJSON {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(out, string(data))
 		return &ExitError{Code: 1, Err: exitErr, Silent: true}
@@ -11482,6 +11500,22 @@ func buildCLIErrorReport(err error) cliErrorReport {
 	message := strings.TrimSpace(err.Error())
 	kind := "config_load_failed"
 	hint := "Check `codog config paths` and fix the active configuration."
+	var formatErr outputFormatError
+	if errors.As(err, &formatErr) {
+		expected := append([]string(nil), formatErr.Expected...)
+		if len(expected) == 0 {
+			expected = []string{"text", "json"}
+		}
+		return cliErrorReport{
+			Kind:      "invalid_output_format",
+			ErrorKind: "invalid_output_format",
+			Status:    "error",
+			Message:   fmt.Sprintf("unknown output format %q", formatErr.Value),
+			Hint:      "Use `--output-format json` or `--output-format text`.",
+			Value:     formatErr.Value,
+			Expected:  expected,
+		}
+	}
 	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
 		kind = "invalid_permission_mode"
 		message = strings.TrimSpace(rest)
@@ -13381,12 +13415,12 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 		}
 	}
 	req.Prompt = strings.TrimSpace(strings.Join(parts, " "))
-	switch req.Format {
-	case "text", "json", "stream-json":
-		return req, nil
-	default:
-		return req, fmt.Errorf("unknown prompt output format %q", req.Format)
+	normalized, err := normalizeOutputFormat("prompt", req.Format, []string{"text", "json", "stream-json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalized
+	return req, nil
 }
 
 func readPromptInput(in io.Reader) (string, error) {
@@ -19558,6 +19592,11 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 			rest = rest[1:]
 		}
 		outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
+		normalized, err := normalizeOutputFormat("prompt", outputFormat, []string{"text", "json", "stream-json"})
+		if err != nil {
+			return base, "", nil, err
+		}
+		outputFormat = normalized
 		rest = injectGlobalOutputFormat("prompt", rest, outputFormat)
 		return base, "prompt", rest, nil
 	}
@@ -19566,8 +19605,33 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	command, rest := rest[0], rest[1:]
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
+	if outputFormat != "" && commandAcceptsGlobalOutputFormat(command) && !argsHaveOutputFormat(rest) {
+		expected := []string{"text", "json"}
+		if strings.EqualFold(command, "prompt") {
+			expected = []string{"text", "json", "stream-json"}
+		}
+		normalized, err := normalizeOutputFormat(command, outputFormat, expected)
+		if err != nil {
+			return base, "", nil, err
+		}
+		outputFormat = normalized
+	}
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
 	return base, command, rest, nil
+}
+
+func normalizeOutputFormat(command, value string, expected []string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	lower := strings.ToLower(value)
+	for _, candidate := range expected {
+		if lower == candidate {
+			return lower, nil
+		}
+	}
+	return "", outputFormatError{Command: command, Value: value, Expected: expected}
 }
 
 func resolveGlobalOutputFormat(outputFormat string, jsonOutput bool) string {

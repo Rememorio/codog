@@ -275,6 +275,39 @@ func TestInvalidPermissionModeJSONContract(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_permission_mode")
 }
 
+func TestInvalidOutputFormatJSONContract(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "YAML", "status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_output_format", report.Kind)
+	require.Equal(t, "invalid_output_format", report.ErrorKind)
+	require.Equal(t, "YAML", report.Value)
+	require.Equal(t, []string{"text", "json"}, report.Expected)
+	require.Contains(t, report.Hint, "--output-format json")
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, marshalErr := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, marshalErr)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "prompt", "hello", "--output-format", "YAML"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_output_format", report.Kind)
+	require.Equal(t, "YAML", report.Value)
+	require.Equal(t, []string{"text", "json", "stream-json"}, report.Expected)
+}
+
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 	for _, tool := range report.Tools {
 		if tool.Name == name {
