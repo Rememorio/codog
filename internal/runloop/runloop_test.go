@@ -2,6 +2,8 @@ package runloop
 
 import (
 	"context"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,6 +75,47 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 		{MessageIndex: 1, Usage: anthropic.Usage{InputTokens: 12, OutputTokens: 3}},
 		{MessageIndex: 3, Usage: anthropic.Usage{InputTokens: 15, OutputTokens: 2}},
 	}, result.MessageUsages)
+}
+
+func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{{
+			Blocks: []anthropic.ContentBlock{{
+				Type: "text",
+				Text: "done",
+			}},
+		}},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			Hooks: config.HookConfig{
+				UserPromptSubmitCommands: []config.HookCommand{{Command: "cat > prompt.json"}},
+				StopCommands:             []config.HookCommand{{Command: "cat > stop.json"}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "hello")
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Iterations)
+
+	promptPayload, err := os.ReadFile(workspace + "/prompt.json")
+	require.NoError(t, err)
+	require.Contains(t, string(promptPayload), `"event":"user_prompt_submit"`)
+	require.Contains(t, string(promptPayload), `"input":"hello"`)
+
+	stopPayload, err := os.ReadFile(workspace + "/stop.json")
+	require.NoError(t, err)
+	require.Contains(t, string(stopPayload), `"event":"stop"`)
+	require.Contains(t, string(stopPayload), `"output":"done"`)
 }
 
 func TestCompactMessagesKeepsRecentContext(t *testing.T) {

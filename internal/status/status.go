@@ -9,37 +9,39 @@ import (
 )
 
 type Options struct {
-	Version             string
-	Workspace           string
-	ConfigHome          string
-	Model               string
-	FastMode            bool
-	BaseURL             string
-	PermissionMode      string
-	MaxTokens           int
-	MaxTurns            int
-	AutoCompactMessages int
-	AuthConfigured      bool
-	MCPServerCount      int
-	PreHookCount        int
-	PostHookCount       int
-	EnabledSkillCount   int
-	PlanActive          bool
-	PlanText            string
-	PlanUpdatedAt       string
-	MemoryFiles         []MemoryFileStatus
-	ToolNames           []string
-	SessionID           string
-	SessionPath         string
-	SessionMessages     int
-	SessionCount        int
-	GitStatus           string
-	GitError            string
-	SandboxOS           string
-	SandboxDefault      string
-	SandboxStrategies   []string
-	SandboxAvailable    bool
-	Executable          string
+	Version                   string
+	Workspace                 string
+	ConfigHome                string
+	Model                     string
+	FastMode                  bool
+	BaseURL                   string
+	PermissionMode            string
+	MaxTokens                 int
+	MaxTurns                  int
+	AutoCompactMessages       int
+	AuthConfigured            bool
+	MCPServerCount            int
+	UserPromptSubmitHookCount int
+	PreHookCount              int
+	PostHookCount             int
+	StopHookCount             int
+	EnabledSkillCount         int
+	PlanActive                bool
+	PlanText                  string
+	PlanUpdatedAt             string
+	MemoryFiles               []MemoryFileStatus
+	ToolNames                 []string
+	SessionID                 string
+	SessionPath               string
+	SessionMessages           int
+	SessionCount              int
+	GitStatus                 string
+	GitError                  string
+	SandboxOS                 string
+	SandboxDefault            string
+	SandboxStrategies         []string
+	SandboxAvailable          bool
+	Executable                string
 }
 
 type Snapshot struct {
@@ -73,19 +75,21 @@ type MemoryFileStatus struct {
 }
 
 type ConfigStatus struct {
-	ConfigHome          string `json:"config_home"`
-	Model               string `json:"model"`
-	FastMode            bool   `json:"fast_mode"`
-	BaseURL             string `json:"base_url"`
-	PermissionMode      string `json:"permission_mode"`
-	MaxTokens           int    `json:"max_tokens"`
-	MaxTurns            int    `json:"max_turns"`
-	AutoCompactMessages int    `json:"auto_compact_messages"`
-	AuthConfigured      bool   `json:"auth_configured"`
-	MCPServerCount      int    `json:"mcp_server_count"`
-	PreHookCount        int    `json:"pre_hook_count"`
-	PostHookCount       int    `json:"post_hook_count"`
-	EnabledSkillCount   int    `json:"enabled_skill_count"`
+	ConfigHome                string `json:"config_home"`
+	Model                     string `json:"model"`
+	FastMode                  bool   `json:"fast_mode"`
+	BaseURL                   string `json:"base_url"`
+	PermissionMode            string `json:"permission_mode"`
+	MaxTokens                 int    `json:"max_tokens"`
+	MaxTurns                  int    `json:"max_turns"`
+	AutoCompactMessages       int    `json:"auto_compact_messages"`
+	AuthConfigured            bool   `json:"auth_configured"`
+	MCPServerCount            int    `json:"mcp_server_count"`
+	UserPromptSubmitHookCount int    `json:"user_prompt_submit_hook_count"`
+	PreHookCount              int    `json:"pre_hook_count"`
+	PostHookCount             int    `json:"post_hook_count"`
+	StopHookCount             int    `json:"stop_hook_count"`
+	EnabledSkillCount         int    `json:"enabled_skill_count"`
 }
 
 type SessionStatus struct {
@@ -151,19 +155,21 @@ func Build(opts Options) Snapshot {
 			MemoryFiles:     append([]MemoryFileStatus(nil), opts.MemoryFiles...),
 		},
 		Config: ConfigStatus{
-			ConfigHome:          opts.ConfigHome,
-			Model:               opts.Model,
-			FastMode:            opts.FastMode,
-			BaseURL:             opts.BaseURL,
-			PermissionMode:      opts.PermissionMode,
-			MaxTokens:           opts.MaxTokens,
-			MaxTurns:            opts.MaxTurns,
-			AutoCompactMessages: opts.AutoCompactMessages,
-			AuthConfigured:      opts.AuthConfigured,
-			MCPServerCount:      opts.MCPServerCount,
-			PreHookCount:        opts.PreHookCount,
-			PostHookCount:       opts.PostHookCount,
-			EnabledSkillCount:   opts.EnabledSkillCount,
+			ConfigHome:                opts.ConfigHome,
+			Model:                     opts.Model,
+			FastMode:                  opts.FastMode,
+			BaseURL:                   opts.BaseURL,
+			PermissionMode:            opts.PermissionMode,
+			MaxTokens:                 opts.MaxTokens,
+			MaxTurns:                  opts.MaxTurns,
+			AutoCompactMessages:       opts.AutoCompactMessages,
+			AuthConfigured:            opts.AuthConfigured,
+			MCPServerCount:            opts.MCPServerCount,
+			UserPromptSubmitHookCount: opts.UserPromptSubmitHookCount,
+			PreHookCount:              opts.PreHookCount,
+			PostHookCount:             opts.PostHookCount,
+			StopHookCount:             opts.StopHookCount,
+			EnabledSkillCount:         opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{
 			Active:       opts.SessionID != "",

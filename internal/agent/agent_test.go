@@ -2793,20 +2793,30 @@ func TestHooksCommandAndSlash(t *testing.T) {
 		t.Skip("uses POSIX shell")
 	}
 	workspace := t.TempDir()
+	promptPath := filepath.Join(workspace, "prompt.json")
 	prePath := filepath.Join(workspace, "pre.json")
 	postPath := filepath.Join(workspace, "post.json")
+	stopPath := filepath.Join(workspace, "stop.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
 		Config: config.Config{
 			Hooks: config.HookConfig{
-				PreToolUse:  []string{"cat > " + shellQuote(prePath)},
-				PostToolUse: []string{"cat > " + shellQuote(postPath)},
+				UserPromptSubmit: []string{"cat > " + shellQuote(promptPath)},
+				PreToolUse:       []string{"cat > " + shellQuote(prePath)},
+				PostToolUse:      []string{"cat > " + shellQuote(postPath)},
+				Stop:             []string{"cat > " + shellQuote(stopPath)},
+				UserPromptSubmitCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(promptPath)},
+				},
 				PreToolUseCommands: []config.HookCommand{
 					{Matcher: "read_*", Command: "cat > " + shellQuote(prePath)},
 				},
 				PostToolUseCommands: []config.HookCommand{
 					{Matcher: "bash", Command: "cat > " + shellQuote(postPath)},
+				},
+				StopCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(stopPath)},
 				},
 			},
 		},
@@ -2817,17 +2827,28 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	sess := &session.Session{ID: "session"}
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"list", "--json"}))
+	require.Contains(t, out.String(), `"user_prompt_submit"`)
 	require.Contains(t, out.String(), `"pre_tool_use"`)
 	require.Contains(t, out.String(), `"post_tool_use"`)
+	require.Contains(t, out.String(), `"stop"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
+	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
 	require.Equal(t, "read_*", hooksList.PreToolUseCommands[0].Matcher)
 	require.Contains(t, hooksList.PreToolUseCommands[0].Command, "cat >")
+	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
+	data, err := os.ReadFile(promptPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"user_prompt_submit"`)
+	require.Contains(t, string(data), `"input":"hello"`)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "pre", "--tool", "read_file", "--input", `{"path":"README.md"}`}))
 	require.Contains(t, out.String(), "Hook Run")
-	data, err := os.ReadFile(prePath)
+	data, err = os.ReadFile(prePath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"pre_tool_use"`)
 	require.Contains(t, string(data), `"tool":"read_file"`)
@@ -2838,6 +2859,13 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"post_tool_use"`)
 	require.Contains(t, string(data), `"is_error":true`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run stop --output=done", sess))
+	data, err = os.ReadFile(stopPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"stop"`)
+	require.Contains(t, string(data), `"output":"done"`)
 	require.Empty(t, errOut.String())
 }
 

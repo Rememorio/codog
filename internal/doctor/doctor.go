@@ -21,20 +21,22 @@ const (
 )
 
 type Options struct {
-	Workspace      string
-	ConfigHome     string
-	Model          string
-	BaseURL        string
-	APIKey         string
-	AuthToken      string
-	PermissionMode string
-	ToolCount      int
-	SessionCount   int
-	MemoryFiles    []string
-	PreToolUse     []string
-	PostToolUse    []string
-	SandboxDefault string
-	SandboxOK      bool
+	Workspace        string
+	ConfigHome       string
+	Model            string
+	BaseURL          string
+	APIKey           string
+	AuthToken        string
+	PermissionMode   string
+	ToolCount        int
+	SessionCount     int
+	MemoryFiles      []string
+	UserPromptSubmit []string
+	PreToolUse       []string
+	PostToolUse      []string
+	Stop             []string
+	SandboxDefault   string
+	SandboxOK        bool
 }
 
 type Summary struct {
@@ -234,12 +236,16 @@ func checkSessions(count int) Check {
 }
 
 func checkHooks(opts Options) Check {
+	userPromptSubmit := compactHookCommands(opts.UserPromptSubmit)
 	pre := compactHookCommands(opts.PreToolUse)
 	post := compactHookCommands(opts.PostToolUse)
-	total := len(pre) + len(post)
+	stop := compactHookCommands(opts.Stop)
+	total := len(userPromptSubmit) + len(pre) + len(post) + len(stop)
 	details := []string{
+		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("PreToolUse hooks: %d", len(pre)),
 		fmt.Sprintf("PostToolUse hooks: %d", len(post)),
+		fmt.Sprintf("Stop hooks: %d", len(stop)),
 	}
 	if total == 0 {
 		return Check{Name: "Hooks", Status: StatusOK, Summary: "No hooks are configured.", Details: details}
@@ -247,7 +253,10 @@ func checkHooks(opts Options) Check {
 	if _, err := exec.LookPath("sh"); err != nil {
 		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Hooks are configured but sh is not available on PATH.", Details: details, Hint: "Install a POSIX-compatible shell or remove configured hooks."}
 	}
-	issues := append(hookPathIssues(opts.Workspace, "PreToolUse", pre), hookPathIssues(opts.Workspace, "PostToolUse", post)...)
+	issues := hookPathIssues(opts.Workspace, "UserPromptSubmit", userPromptSubmit)
+	issues = append(issues, hookPathIssues(opts.Workspace, "PreToolUse", pre)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUse", post)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "Stop", stop)...)
 	if len(issues) != 0 {
 		details = append(details, issues...)
 		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Some hook command paths could not be found.", Details: details, Hint: "Fix missing hook script paths or use a command available on PATH."}

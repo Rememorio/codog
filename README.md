@@ -188,11 +188,11 @@ Claude Code source.
 - `codog acp`, `codog acp serve`, `codog --acp`, and `/acp` expose a stable
   text/JSON status surface for ACP/Zed editor integration. The current report
   is explicit that no editor daemon or JSON-RPC endpoint is implemented yet.
-- Hook commands can run before and after tool use; `codog hooks list|run`
-  inspects and test-runs configured hooks with the same JSON payload shape used
-  by model tool calls. Hook config accepts simple string arrays and the
-  documented Claude Code object format with nested command, HTTP, prompt, and
-  agent hooks,
+- Hook commands can run on `user_prompt_submit`, `pre_tool_use`,
+  `post_tool_use`, and `stop`; `codog hooks list|run` inspects and test-runs
+  configured hooks with the same JSON payload shape used by live sessions. Hook
+  config accepts simple string arrays and the documented Claude Code object
+  format with nested command, HTTP, prompt, and agent hooks,
   matcher filtering, `if` conditions, per-hook timeouts, shell selection, and
   allow-listed header environment interpolation. Prompt and agent hooks run
   through the configured model with `$ARGUMENTS` expanded to the hook payload.
@@ -406,8 +406,10 @@ URL --model MODEL` as a focused provider configuration shortcut.
   "max_tokens": 4096,
   "enabled_skills": ["go-review"],
   "hooks": {
+    "user_prompt_submit": ["echo prompt >&2"],
     "pre_tool_use": ["echo pre >&2"],
-    "post_tool_use": ["echo post >&2"]
+    "post_tool_use": ["echo post >&2"],
+    "stop": ["echo stop >&2"]
   },
   "mcp_servers": {
     "example": {

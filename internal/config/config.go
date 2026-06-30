@@ -17,10 +17,14 @@ const (
 )
 
 type HookConfig struct {
-	PreToolUse          []string      `json:"pre_tool_use,omitempty"`
-	PostToolUse         []string      `json:"post_tool_use,omitempty"`
-	PreToolUseCommands  []HookCommand `json:"-"`
-	PostToolUseCommands []HookCommand `json:"-"`
+	PreToolUse               []string      `json:"pre_tool_use,omitempty"`
+	PostToolUse              []string      `json:"post_tool_use,omitempty"`
+	UserPromptSubmit         []string      `json:"user_prompt_submit,omitempty"`
+	Stop                     []string      `json:"stop,omitempty"`
+	PreToolUseCommands       []HookCommand `json:"-"`
+	PostToolUseCommands      []HookCommand `json:"-"`
+	UserPromptSubmitCommands []HookCommand `json:"-"`
+	StopCommands             []HookCommand `json:"-"`
 }
 
 type HookCommand struct {
@@ -54,10 +58,22 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	userPromptSubmit, err := hookCommands(raw, "user_prompt_submit", "UserPromptSubmit")
+	if err != nil {
+		return err
+	}
+	stop, err := hookCommands(raw, "stop", "Stop")
+	if err != nil {
+		return err
+	}
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
+	h.UserPromptSubmitCommands = userPromptSubmit
+	h.StopCommands = stop
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
+	h.UserPromptSubmit = hookCommandStrings(userPromptSubmit)
+	h.Stop = hookCommandStrings(stop)
 	return nil
 }
 
@@ -841,8 +857,20 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.PostToolUse) != 0 {
 		dst.PostToolUseCommands = mergeHookCommands(dst.PostToolUseCommands, hookCommandsFromStrings(src.PostToolUse))
 	}
+	if len(src.UserPromptSubmitCommands) != 0 {
+		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, src.UserPromptSubmitCommands)
+	} else if len(src.UserPromptSubmit) != 0 {
+		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, hookCommandsFromStrings(src.UserPromptSubmit))
+	}
+	if len(src.StopCommands) != 0 {
+		dst.StopCommands = mergeHookCommands(dst.StopCommands, src.StopCommands)
+	} else if len(src.Stop) != 0 {
+		dst.StopCommands = mergeHookCommands(dst.StopCommands, hookCommandsFromStrings(src.Stop))
+	}
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
+	dst.UserPromptSubmit = hookCommandStrings(dst.UserPromptSubmitCommands)
+	dst.Stop = hookCommandStrings(dst.StopCommands)
 }
 
 func hookCommandsFromStrings(values []string) []HookCommand {

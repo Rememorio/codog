@@ -128,12 +128,20 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		PostToolUseCommands: []config.HookCommand{
 			{Matcher: "Edit,MultiEdit", Type: "command", Command: "edits"},
 		},
+		UserPromptSubmitCommands: []config.HookCommand{
+			{Type: "command", Command: "prompt"},
+		},
+		StopCommands: []config.HookCommand{
+			{Type: "command", Command: "stop"},
+		},
 	}
 
 	require.Equal(t, []string{"write-only", "all"}, CommandsForEvent(cfg, "pre_tool_use", "write_file"))
 	require.Equal(t, []string{"glob", "all"}, CommandsForEvent(cfg, "pre_tool_use", "read_file"))
 	require.Equal(t, []string{"regex", "all"}, CommandsForEvent(cfg, "pre_tool_use", "bash"))
 	require.Equal(t, []string{"edits"}, CommandsForEvent(cfg, "post", "multi_edit"))
+	require.Equal(t, []string{"prompt"}, CommandsForEvent(cfg, "user-prompt-submit", ""))
+	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
 }
 

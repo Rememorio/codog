@@ -43,16 +43,18 @@ type WorkspaceSummary struct {
 }
 
 type ConfigSummary struct {
-	Model               string `json:"model"`
-	PermissionMode      string `json:"permission_mode"`
-	MaxTokens           int    `json:"max_tokens"`
-	MaxTurns            int    `json:"max_turns"`
-	AutoCompactMessages int    `json:"auto_compact_messages"`
-	AuthConfigured      bool   `json:"auth_configured"`
-	MCPServerCount      int    `json:"mcp_server_count"`
-	EnabledSkillCount   int    `json:"enabled_skill_count"`
-	PreHookCount        int    `json:"pre_hook_count"`
-	PostHookCount       int    `json:"post_hook_count"`
+	Model                     string `json:"model"`
+	PermissionMode            string `json:"permission_mode"`
+	MaxTokens                 int    `json:"max_tokens"`
+	MaxTurns                  int    `json:"max_turns"`
+	AutoCompactMessages       int    `json:"auto_compact_messages"`
+	AuthConfigured            bool   `json:"auth_configured"`
+	MCPServerCount            int    `json:"mcp_server_count"`
+	EnabledSkillCount         int    `json:"enabled_skill_count"`
+	UserPromptSubmitHookCount int    `json:"user_prompt_submit_hook_count"`
+	PreHookCount              int    `json:"pre_hook_count"`
+	PostHookCount             int    `json:"post_hook_count"`
+	StopHookCount             int    `json:"stop_hook_count"`
 }
 
 type SessionSummary struct {
@@ -132,16 +134,18 @@ func Build(options Options) Report {
 			Name: options.Status.Workspace.Name,
 		},
 		Config: ConfigSummary{
-			Model:               options.Status.Config.Model,
-			PermissionMode:      options.Status.Config.PermissionMode,
-			MaxTokens:           options.Status.Config.MaxTokens,
-			MaxTurns:            options.Status.Config.MaxTurns,
-			AutoCompactMessages: options.Status.Config.AutoCompactMessages,
-			AuthConfigured:      options.Status.Config.AuthConfigured,
-			MCPServerCount:      options.Status.Config.MCPServerCount,
-			EnabledSkillCount:   options.Status.Config.EnabledSkillCount,
-			PreHookCount:        options.Status.Config.PreHookCount,
-			PostHookCount:       options.Status.Config.PostHookCount,
+			Model:                     options.Status.Config.Model,
+			PermissionMode:            options.Status.Config.PermissionMode,
+			MaxTokens:                 options.Status.Config.MaxTokens,
+			MaxTurns:                  options.Status.Config.MaxTurns,
+			AutoCompactMessages:       options.Status.Config.AutoCompactMessages,
+			AuthConfigured:            options.Status.Config.AuthConfigured,
+			MCPServerCount:            options.Status.Config.MCPServerCount,
+			EnabledSkillCount:         options.Status.Config.EnabledSkillCount,
+			UserPromptSubmitHookCount: options.Status.Config.UserPromptSubmitHookCount,
+			PreHookCount:              options.Status.Config.PreHookCount,
+			PostHookCount:             options.Status.Config.PostHookCount,
+			StopHookCount:             options.Status.Config.StopHookCount,
 		},
 		Git: options.Status.Git,
 		Session: SessionSummary{

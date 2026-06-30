@@ -84,6 +84,23 @@ func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, outp
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {
+	payload := Payload{
+		Event: "user_prompt_submit",
+		Input: input,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) Stop(ctx context.Context, output string, isError bool) error {
+	payload := Payload{
+		Event:   "stop",
+		Output:  output,
+		IsError: isError,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
 	payload := Payload{Event: event, Tool: tool}
 	hooks := HooksForPayload(cfg, payload)
@@ -105,6 +122,10 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.PreToolUseCommands, cfg.PreToolUse, payload)
 	case "post_tool_use":
 		return matchingHooks(cfg.PostToolUseCommands, cfg.PostToolUse, payload)
+	case "user_prompt_submit":
+		return matchingHooks(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit, payload)
+	case "stop":
+		return matchingHooks(cfg.StopCommands, cfg.Stop, payload)
 	default:
 		return nil
 	}
@@ -570,10 +591,14 @@ func claudeToolName(tool string) string {
 func normalizeEvent(event string) string {
 	event = strings.ToLower(strings.TrimSpace(event))
 	switch event {
-	case "pre", "pretooluse", "pre_tool_use":
+	case "pre", "pretooluse", "pre_tool_use", "pre-tool-use":
 		return "pre_tool_use"
-	case "post", "posttooluse", "post_tool_use":
+	case "post", "posttooluse", "post_tool_use", "post-tool-use":
 		return "post_tool_use"
+	case "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
+		return "user_prompt_submit"
+	case "stop":
+		return "stop"
 	default:
 		return event
 	}

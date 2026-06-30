@@ -260,25 +260,31 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	configPath := filepath.Join(dir, "config.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"hooks": {
+			"UserPromptSubmit": ["echo prompt-submit"],
 			"pre_tool_use": ["echo simple-pre"],
 			"PostToolUse": [
 				{"matcher": "Write", "hooks": [{"type": "command", "command": "echo documented-post"}]},
 				{"matcher": "Bash", "hooks": [{"type": "http", "url": "https://example.test/hook", "if": "Bash(git *)", "headers": {"Authorization": "Bearer $HOOK_TOKEN"}, "allowedEnvVars": ["HOOK_TOKEN"], "timeout": 1.5}]},
 				{"command": "echo direct-post"}
-			]
+			],
+			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}]
 		}
 	}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
+	require.Equal(t, []string{"echo prompt-submit"}, cfg.Hooks.UserPromptSubmit)
 	require.Equal(t, []string{"echo simple-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo documented-post", "http POST https://example.test/hook", "echo direct-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []string{"echo stop"}, cfg.Hooks.Stop)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo prompt-submit"}}, cfg.Hooks.UserPromptSubmitCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
 	require.Equal(t, []HookCommand{
 		{Matcher: "Write", Type: "command", Command: "echo documented-post"},
 		{Matcher: "Bash", Type: "http", URL: "https://example.test/hook", If: "Bash(git *)", TimeoutSeconds: 1.5, Headers: map[string]string{"Authorization": "Bearer $HOOK_TOKEN"}, AllowedEnvVars: []string{"HOOK_TOKEN"}},
 		{Type: "command", Command: "echo direct-post"},
 	}, cfg.Hooks.PostToolUseCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop"}}, cfg.Hooks.StopCommands)
 }
 
 func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
@@ -292,32 +298,50 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configHome, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{
 		"hooks": {
+			"user_prompt_submit": ["echo user-prompt"],
 			"pre_tool_use": ["echo user-pre"],
-			"post_tool_use": ["echo user-post"]
+			"post_tool_use": ["echo user-post"],
+			"stop": ["echo user-stop"]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
 		"hooks": {
+			"UserPromptSubmit": [{"command": "echo project-prompt"}],
 			"PreToolUse": [
 				{"matcher": "Write", "command": "echo project-pre"}
-			]
+			],
+			"Stop": [{"command": "echo project-stop"}]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{
 		"hooks": {
-			"pre_tool_use": ["echo user-pre", "echo local-pre"]
+			"user_prompt_submit": ["echo user-prompt", "echo local-prompt"],
+			"pre_tool_use": ["echo user-pre", "echo local-pre"],
+			"stop": ["echo user-stop", "echo local-stop"]
 		}
 	}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{})
 	require.NoError(t, err)
+	require.Equal(t, []string{"echo user-prompt", "echo project-prompt", "echo local-prompt"}, cfg.Hooks.UserPromptSubmit)
 	require.Equal(t, []string{"echo user-pre", "echo project-pre", "echo local-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo user-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []string{"echo user-stop", "echo project-stop", "echo local-stop"}, cfg.Hooks.Stop)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-prompt"},
+		{Type: "command", Command: "echo project-prompt"},
+		{Type: "command", Command: "echo local-prompt"},
+	}, cfg.Hooks.UserPromptSubmitCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-pre"},
 		{Matcher: "Write", Type: "command", Command: "echo project-pre"},
 		{Type: "command", Command: "echo local-pre"},
 	}, cfg.Hooks.PreToolUseCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-stop"},
+		{Type: "command", Command: "echo project-stop"},
+		{Type: "command", Command: "echo local-stop"},
+	}, cfg.Hooks.StopCommands)
 }
 
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {

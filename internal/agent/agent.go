@@ -4431,13 +4431,17 @@ type hooksRequest struct {
 }
 
 type hooksListReport struct {
-	Kind                string               `json:"kind"`
-	Action              string               `json:"action"`
-	Status              string               `json:"status"`
-	PreToolUse          []string             `json:"pre_tool_use"`
-	PostToolUse         []string             `json:"post_tool_use"`
-	PreToolUseCommands  []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
-	PostToolUseCommands []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
+	Kind                     string               `json:"kind"`
+	Action                   string               `json:"action"`
+	Status                   string               `json:"status"`
+	PreToolUse               []string             `json:"pre_tool_use"`
+	PostToolUse              []string             `json:"post_tool_use"`
+	UserPromptSubmit         []string             `json:"user_prompt_submit"`
+	Stop                     []string             `json:"stop"`
+	PreToolUseCommands       []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
+	PostToolUseCommands      []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
+	UserPromptSubmitCommands []hookCommandSummary `json:"user_prompt_submit_commands,omitempty"`
+	StopCommands             []hookCommandSummary `json:"stop_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4455,13 +4459,17 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 	switch req.Action {
 	case "list":
 		report := hooksListReport{
-			Kind:                "hooks",
-			Action:              "list",
-			Status:              "ok",
-			PreToolUse:          append([]string(nil), a.Config.Hooks.PreToolUse...),
-			PostToolUse:         append([]string(nil), a.Config.Hooks.PostToolUse...),
-			PreToolUseCommands:  hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
-			PostToolUseCommands: hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
+			Kind:                     "hooks",
+			Action:                   "list",
+			Status:                   "ok",
+			PreToolUse:               append([]string(nil), a.Config.Hooks.PreToolUse...),
+			PostToolUse:              append([]string(nil), a.Config.Hooks.PostToolUse...),
+			UserPromptSubmit:         append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
+			Stop:                     append([]string(nil), a.Config.Hooks.Stop...),
+			PreToolUseCommands:       hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
+			PostToolUseCommands:      hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
+			UserPromptSubmitCommands: hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
+			StopCommands:             hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4502,6 +4510,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 func parseHooksArgs(args []string) (hooksRequest, error) {
 	req := hooksRequest{Format: "text", Action: "list", Event: "pre_tool_use", Tool: "bash", Input: `{}`, TimeoutMS: 30000}
 	var positionals []string
+	toolSet := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
@@ -4521,8 +4530,10 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 				return req, errors.New("hooks tool is required")
 			}
 			req.Tool = args[i]
+			toolSet = true
 		case strings.HasPrefix(arg, "--tool="):
 			req.Tool = strings.TrimPrefix(arg, "--tool=")
+			toolSet = true
 		case arg == "--input":
 			i++
 			if i >= len(args) {
@@ -4585,6 +4596,9 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "stop") {
+		req.Tool = ""
+	}
 	return req, nil
 }
 
@@ -4594,6 +4608,10 @@ func normalizeHookEvent(value string) (string, error) {
 		return "pre_tool_use", nil
 	case "post", "post_tool_use", "post-tool-use":
 		return "post_tool_use", nil
+	case "prompt", "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
+		return "user_prompt_submit", nil
+	case "stop":
+		return "stop", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -4639,6 +4657,14 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Post tool use    %d\n", len(report.PostToolUse))
 	for _, command := range report.PostToolUseCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  User prompt submit %d\n", len(report.UserPromptSubmit))
+	for _, command := range report.UserPromptSubmitCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Stop             %d\n", len(report.Stop))
+	for _, command := range report.StopCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -9803,37 +9829,39 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	}
 	planState, _ := planmode.Load(a.Workspace)
 	return localstatus.Build(localstatus.Options{
-		Version:             version,
-		Workspace:           a.Workspace,
-		ConfigHome:          a.Config.ConfigHome,
-		Model:               a.Config.Model,
-		FastMode:            fastModeEnabled(a.Config.FastMode),
-		BaseURL:             a.Config.BaseURL,
-		PermissionMode:      a.Config.PermissionMode,
-		MaxTokens:           a.Config.MaxTokens,
-		MaxTurns:            a.Config.MaxTurns,
-		AutoCompactMessages: a.Config.AutoCompactMessages,
-		AuthConfigured:      a.Config.APIKey != "" || a.Config.AuthToken != "",
-		MCPServerCount:      len(a.Config.MCPServers),
-		PreHookCount:        len(a.Config.Hooks.PreToolUse),
-		PostHookCount:       len(a.Config.Hooks.PostToolUse),
-		EnabledSkillCount:   len(a.Config.EnabledSkills),
-		PlanActive:          planState.Active,
-		PlanText:            planState.Plan,
-		PlanUpdatedAt:       planState.UpdatedAt,
-		MemoryFiles:         memoryStatuses,
-		ToolNames:           toolNames,
-		SessionID:           sessionID,
-		SessionPath:         sessionPath,
-		SessionMessages:     sessionMessages,
-		SessionCount:        sessionCount,
-		GitStatus:           gitRaw,
-		GitError:            gitError,
-		SandboxOS:           sandboxStatus.OS,
-		SandboxDefault:      sandboxStatus.Default,
-		SandboxStrategies:   sandboxStatus.Strategies,
-		SandboxAvailable:    sandboxStatus.Available,
-		Executable:          executable,
+		Version:                   version,
+		Workspace:                 a.Workspace,
+		ConfigHome:                a.Config.ConfigHome,
+		Model:                     a.Config.Model,
+		FastMode:                  fastModeEnabled(a.Config.FastMode),
+		BaseURL:                   a.Config.BaseURL,
+		PermissionMode:            a.Config.PermissionMode,
+		MaxTokens:                 a.Config.MaxTokens,
+		MaxTurns:                  a.Config.MaxTurns,
+		AutoCompactMessages:       a.Config.AutoCompactMessages,
+		AuthConfigured:            a.Config.APIKey != "" || a.Config.AuthToken != "",
+		MCPServerCount:            len(a.Config.MCPServers),
+		UserPromptSubmitHookCount: len(a.Config.Hooks.UserPromptSubmit),
+		PreHookCount:              len(a.Config.Hooks.PreToolUse),
+		PostHookCount:             len(a.Config.Hooks.PostToolUse),
+		StopHookCount:             len(a.Config.Hooks.Stop),
+		EnabledSkillCount:         len(a.Config.EnabledSkills),
+		PlanActive:                planState.Active,
+		PlanText:                  planState.Plan,
+		PlanUpdatedAt:             planState.UpdatedAt,
+		MemoryFiles:               memoryStatuses,
+		ToolNames:                 toolNames,
+		SessionID:                 sessionID,
+		SessionPath:               sessionPath,
+		SessionMessages:           sessionMessages,
+		SessionCount:              sessionCount,
+		GitStatus:                 gitRaw,
+		GitError:                  gitError,
+		SandboxOS:                 sandboxStatus.OS,
+		SandboxDefault:            sandboxStatus.Default,
+		SandboxStrategies:         sandboxStatus.Strategies,
+		SandboxAvailable:          sandboxStatus.Available,
+		Executable:                executable,
 	})
 }
 
@@ -10353,20 +10381,22 @@ func (a *App) Doctor(args []string) error {
 	}
 	sandboxStatus := sandbox.Detect()
 	report := doctor.Run(doctor.Options{
-		Workspace:      a.Workspace,
-		ConfigHome:     a.Config.ConfigHome,
-		Model:          a.Config.Model,
-		BaseURL:        a.Config.BaseURL,
-		APIKey:         a.Config.APIKey,
-		AuthToken:      a.Config.AuthToken,
-		PermissionMode: a.Config.PermissionMode,
-		ToolCount:      toolCount,
-		SessionCount:   sessionCount,
-		MemoryFiles:    memoryPaths,
-		PreToolUse:     a.Config.Hooks.PreToolUse,
-		PostToolUse:    a.Config.Hooks.PostToolUse,
-		SandboxDefault: sandboxStatus.Default,
-		SandboxOK:      sandboxStatus.Available,
+		Workspace:        a.Workspace,
+		ConfigHome:       a.Config.ConfigHome,
+		Model:            a.Config.Model,
+		BaseURL:          a.Config.BaseURL,
+		APIKey:           a.Config.APIKey,
+		AuthToken:        a.Config.AuthToken,
+		PermissionMode:   a.Config.PermissionMode,
+		ToolCount:        toolCount,
+		SessionCount:     sessionCount,
+		MemoryFiles:      memoryPaths,
+		UserPromptSubmit: a.Config.Hooks.UserPromptSubmit,
+		PreToolUse:       a.Config.Hooks.PreToolUse,
+		PostToolUse:      a.Config.Hooks.PostToolUse,
+		Stop:             a.Config.Hooks.Stop,
+		SandboxDefault:   sandboxStatus.Default,
+		SandboxOK:        sandboxStatus.Available,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -16182,7 +16212,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|user-prompt-submit|stop] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

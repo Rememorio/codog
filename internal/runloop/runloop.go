@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
@@ -77,6 +78,9 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	if hookRunner.PromptRunner == nil {
 		hookRunner.PromptRunner = r.HookPromptRunner
 	}
+	if err := hookRunner.UserPromptSubmit(ctx, input); err != nil {
+		return TurnResult{}, err
+	}
 	var toolCalls []ToolCall
 	var messageUsages []MessageUsage
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
@@ -103,6 +107,9 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 
 		blocks := toolUseBlocks(assistant.Blocks)
 		if len(blocks) == 0 {
+			if err := hookRunner.Stop(ctx, assistantText(assistant.Blocks), false); err != nil {
+				return TurnResult{}, err
+			}
 			return TurnResult{
 				Messages:      messages,
 				MessageUsages: messageUsages,
@@ -154,8 +161,12 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 func hasHookConfig(cfg config.HookConfig) bool {
 	return len(cfg.PreToolUse) != 0 ||
 		len(cfg.PostToolUse) != 0 ||
+		len(cfg.UserPromptSubmit) != 0 ||
+		len(cfg.Stop) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
-		len(cfg.PostToolUseCommands) != 0
+		len(cfg.PostToolUseCommands) != 0 ||
+		len(cfg.UserPromptSubmitCommands) != 0 ||
+		len(cfg.StopCommands) != 0
 }
 
 func (r Runner) emitToolUse(call ToolCall) {
@@ -201,4 +212,14 @@ func toolUseBlocks(blocks []anthropic.ContentBlock) []anthropic.ContentBlock {
 		}
 	}
 	return result
+}
+
+func assistantText(blocks []anthropic.ContentBlock) string {
+	var values []string
+	for _, block := range blocks {
+		if block.Type == "text" && block.Text != "" {
+			values = append(values, block.Text)
+		}
+	}
+	return strings.Join(values, "")
 }
