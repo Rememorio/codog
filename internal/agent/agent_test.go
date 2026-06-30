@@ -701,6 +701,74 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 	require.NotContains(t, out, "missing_credentials")
 }
 
+func TestLocalSubcommandErrorContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := []struct {
+		name      string
+		args      []string
+		kind      string
+		action    string
+		errorKind string
+		hintPart  string
+	}{
+		{
+			name:      "agents unknown",
+			args:      []string{"--config", configPath, "--output-format", "json", "agents", "bogus"},
+			kind:      "agents",
+			action:    "bogus",
+			errorKind: "unknown_agents_subcommand",
+			hintPart:  "agents list",
+		},
+		{
+			name:      "plugins unknown",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "bogus"},
+			kind:      "plugins",
+			action:    "bogus",
+			errorKind: "unknown_plugins_action",
+			hintPart:  "plugins list",
+		},
+		{
+			name:      "mcp unknown",
+			args:      []string{"--config", configPath, "--output-format", "json", "mcp", "bogus"},
+			kind:      "mcp",
+			action:    "bogus",
+			errorKind: "unsupported_action",
+			hintPart:  "codog mcp",
+		},
+		{
+			name:      "mcp show missing",
+			args:      []string{"--config", configPath, "--output-format", "json", "mcp", "show"},
+			kind:      "mcp",
+			action:    "show",
+			errorKind: "missing_argument",
+			hintPart:  "mcp show <server>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report actionErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, tc.kind, report.Kind)
+			require.Equal(t, tc.action, report.Action)
+			require.Equal(t, "error", report.Status)
+			require.Equal(t, tc.errorKind, report.ErrorKind)
+			require.Contains(t, report.Hint, tc.hintPart)
+		})
+	}
+}
+
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",

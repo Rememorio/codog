@@ -2828,7 +2828,14 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		return nil
 	}
 	if args[0] != "run" {
-		return fmt.Errorf("unknown agents command %q", args[0])
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    args[0],
+			Status:    "error",
+			ErrorKind: "unknown_agents_subcommand",
+			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
+			Hint:      "Use `codog agents list`, `codog agents show NAME`, `codog agents run NAME PROMPT`, or `codog agents worktrees`.",
+		}, format)
 	}
 	req, err := parseAgentRunArgs(args[1:])
 	if err != nil {
@@ -3049,7 +3056,14 @@ func (a *App) Marketplace(args []string) error {
 		}
 		payload = map[string]any{"removed": true, "id": args[1]}
 	default:
-		return fmt.Errorf("unknown marketplace command %q", args[0])
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "plugins",
+			Action:    args[0],
+			Status:    "error",
+			ErrorKind: "unknown_plugins_action",
+			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
+			Hint:      "Use `codog plugins list`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
@@ -11469,6 +11483,15 @@ type cliErrorReport struct {
 	ToolAliases map[string]string `json:"tool_aliases,omitempty"`
 }
 
+type actionErrorReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	ErrorKind string `json:"error_kind"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+}
+
 type outputFormatError struct {
 	Command  string
 	Value    string
@@ -11540,6 +11563,16 @@ func renderMissingPrompt(out io.Writer, format string) error {
 	default:
 		return &ExitError{Code: 1, Err: err}
 	}
+}
+
+func renderActionError(out io.Writer, report actionErrorReport, format string) error {
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
 }
 
 func renderCLIError(out io.Writer, err error, format string) error {
@@ -18220,11 +18253,21 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	case "self", "self-test":
 		return a.mcpSelf(ctx, args[1:], format)
 	case "show":
-		return a.mcpShow(args[1:])
+		return a.mcpShow(args[1:], format)
 	case "add":
 		return a.mcpAdd(args[1:])
 	case "remove", "delete", "rm":
 		return a.mcpRemove(args[1:])
+	}
+	if !mcpRemoteAction(args[0]) {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "mcp",
+			Action:    args[0],
+			Status:    "error",
+			ErrorKind: "unsupported_action",
+			Message:   fmt.Sprintf("unsupported mcp action %q", args[0]),
+			Hint:      mcpUsage,
+		}, format)
 	}
 	if len(a.Config.MCPServers) == 0 {
 		fmt.Fprintln(a.Out, "No MCP servers configured.")
@@ -18275,6 +18318,15 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func mcpRemoteAction(action string) bool {
+	switch action {
+	case "tools", "list-tools", "auth", "call", "resources", "resource-templates", "resources-templates", "read", "read-resource", "prompts", "prompt", "get-prompt":
+		return true
+	default:
+		return false
+	}
 }
 
 type mcpListReport struct {
@@ -18439,9 +18491,16 @@ func mcpWriter(value io.Writer, fallback io.Writer) io.Writer {
 	return fallback
 }
 
-func (a *App) mcpShow(args []string) error {
+func (a *App) mcpShow(args []string, format string) error {
 	if len(args) != 1 {
-		return errors.New("usage: codog mcp show SERVER")
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "mcp",
+			Action:    "show",
+			Status:    "error",
+			ErrorKind: "missing_argument",
+			Message:   "mcp show requires a server name",
+			Hint:      "Usage: codog mcp show <server>.",
+		}, format)
 	}
 	name := args[0]
 	server, ok := a.Config.MCPServers[name]
