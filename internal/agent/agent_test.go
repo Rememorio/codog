@@ -529,6 +529,64 @@ func TestParseFlagsSupportsToolRuleOverrides(t *testing.T) {
 	require.Equal(t, []string{"hello"}, rest)
 }
 
+func TestGlobalToolRuleValidationContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--output-format", "json",
+			"--allowedTools", "teleport",
+			"status",
+		}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_tool_name", report.ErrorKind)
+	require.Equal(t, "teleport", report.ToolName)
+	require.Equal(t, "--allowed-tools", report.Argument)
+	require.Contains(t, report.Available, "web_fetch")
+	require.Equal(t, "web_fetch", report.ToolAliases["WebFetch"])
+	require.Contains(t, report.Hint, "canonical snake_case")
+	require.Contains(t, report.Hint, "aliases")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--output-format", "json",
+			"--allowed-tools", "Read,Bash(go test:*),mcp__playwright__*",
+			"status",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var status map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	require.Equal(t, "status", status["kind"])
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--allowedTools", "status",
+			"--output-format", "json",
+		}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "missing_argument", report.ErrorKind)
+	require.Equal(t, "--allowedTools", report.Argument)
+	require.Contains(t, report.Hint, "read,glob")
+}
+
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",

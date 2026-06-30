@@ -394,6 +394,11 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "multi_edit", CanonicalToolName("MultiEdit"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutput"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
+
+	aliases := ClaudeToolAliases()
+	require.Equal(t, "web_fetch", aliases["WebFetch"])
+	aliases["WebFetch"] = "changed"
+	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
 }
 
 func TestPrompterEmitsDecision(t *testing.T) {

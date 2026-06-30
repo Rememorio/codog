@@ -235,6 +235,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := app.RegisterPluginTools(); err != nil {
 		return err
 	}
+	if err := app.validateGlobalToolRules(overrides, requestedOutputFormat(originalArgs)); err != nil {
+		return err
+	}
 	if strings.HasPrefix(command, "/") {
 		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
 		if err != nil {
@@ -11411,6 +11414,17 @@ func sortedUniqueStrings(values []string) []string {
 	return out
 }
 
+func copyStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
 type commandNotFoundReport struct {
 	Kind      string   `json:"kind"`
 	ErrorKind string   `json:"error_kind"`
@@ -11431,13 +11445,17 @@ type slashErrorReport struct {
 }
 
 type cliErrorReport struct {
-	Kind      string   `json:"kind"`
-	ErrorKind string   `json:"error_kind"`
-	Status    string   `json:"status"`
-	Message   string   `json:"message"`
-	Hint      string   `json:"hint"`
-	Value     string   `json:"value,omitempty"`
-	Expected  []string `json:"expected,omitempty"`
+	Kind        string            `json:"kind"`
+	ErrorKind   string            `json:"error_kind"`
+	Status      string            `json:"status"`
+	Message     string            `json:"message"`
+	Hint        string            `json:"hint"`
+	Value       string            `json:"value,omitempty"`
+	Expected    []string          `json:"expected,omitempty"`
+	Argument    string            `json:"argument,omitempty"`
+	ToolName    string            `json:"tool_name,omitempty"`
+	Available   []string          `json:"available,omitempty"`
+	ToolAliases map[string]string `json:"tool_aliases,omitempty"`
 }
 
 type outputFormatError struct {
@@ -11452,6 +11470,26 @@ func (e outputFormatError) Error() string {
 		command = "command"
 	}
 	return fmt.Sprintf("invalid_output_format: unknown %s output format %q", command, e.Value)
+}
+
+type missingArgumentError struct {
+	Argument string
+	Example  string
+}
+
+func (e missingArgumentError) Error() string {
+	return fmt.Sprintf("missing_argument: %s requires a value", e.Argument)
+}
+
+type toolNameError struct {
+	Argument  string
+	ToolName  string
+	Available []string
+	Aliases   map[string]string
+}
+
+func (e toolNameError) Error() string {
+	return fmt.Sprintf("invalid_tool_name: unknown tool name %q for %s", e.ToolName, e.Argument)
 }
 
 type promptErrorReport struct {
@@ -11514,6 +11552,44 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      "Use `--output-format json` or `--output-format text`.",
 			Value:     formatErr.Value,
 			Expected:  expected,
+		}
+	}
+	var missingErr missingArgumentError
+	if errors.As(err, &missingErr) {
+		argument := strings.TrimSpace(missingErr.Argument)
+		if argument == "" {
+			argument = "argument"
+		}
+		example := strings.TrimSpace(missingErr.Example)
+		if example == "" {
+			example = argument + " read_file,grep"
+		}
+		return cliErrorReport{
+			Kind:      "missing_argument",
+			ErrorKind: "missing_argument",
+			Status:    "error",
+			Message:   fmt.Sprintf("%s requires a value", argument),
+			Hint:      fmt.Sprintf("Provide a comma-separated tool list, for example `%s`.", example),
+			Argument:  argument,
+		}
+	}
+	var toolErr toolNameError
+	if errors.As(err, &toolErr) {
+		argument := strings.TrimSpace(toolErr.Argument)
+		if argument == "" {
+			argument = "--allowed-tools"
+		}
+		toolName := strings.TrimSpace(toolErr.ToolName)
+		return cliErrorReport{
+			Kind:        "invalid_tool_name",
+			ErrorKind:   "invalid_tool_name",
+			Status:      "error",
+			Message:     fmt.Sprintf("unknown tool name %q for %s", toolName, argument),
+			Hint:        "Use canonical snake_case tool names or supported aliases; MCP tools may use mcp__server__tool or mcp__server__*.",
+			Argument:    argument,
+			ToolName:    toolName,
+			Available:   append([]string(nil), toolErr.Available...),
+			ToolAliases: copyStringMap(toolErr.Aliases),
 		}
 	}
 	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
@@ -19289,6 +19365,138 @@ func (a *App) permissionDecisionHandler(sessionID string) func(tools.PermissionD
 	}
 }
 
+func (a *App) validateGlobalToolRules(overrides config.FlagOverrides, format string) error {
+	if err := a.validateGlobalToolRuleList("--allowed-tools", overrides.AllowedTools, format); err != nil {
+		return err
+	}
+	if err := a.validateGlobalToolRuleList("--disallowed-tools", overrides.DisallowedTools, format); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *App) validateGlobalToolRuleList(argument string, rules []string, format string) error {
+	for _, rule := range rules {
+		toolName := toolRuleName(rule)
+		if a.validToolRuleName(toolName) {
+			continue
+		}
+		return renderCLIError(a.Out, toolNameError{
+			Argument:  argument,
+			ToolName:  toolName,
+			Available: a.availableToolNames(),
+			Aliases:   tools.ClaudeToolAliases(),
+		}, format)
+	}
+	return nil
+}
+
+func (a *App) validToolRuleName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "*" {
+		return true
+	}
+	if isMCPToolPattern(name) {
+		return true
+	}
+	if strings.Contains(name, "*") {
+		return a.toolWildcardMatchesRegisteredName(name)
+	}
+	if a.Tools == nil {
+		return tools.CanonicalToolName(name) != name
+	}
+	if _, ok := a.Tools.Info(name); ok {
+		return true
+	}
+	if canonical := tools.CanonicalToolName(name); canonical != name {
+		_, ok := a.Tools.Info(canonical)
+		return ok
+	}
+	return false
+}
+
+func (a *App) toolWildcardMatchesRegisteredName(pattern string) bool {
+	if a == nil || a.Tools == nil {
+		return false
+	}
+	for _, info := range a.Tools.Infos() {
+		if permissionNamePatternMatches(pattern, info.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) availableToolNames() []string {
+	if a == nil || a.Tools == nil {
+		return nil
+	}
+	infos := a.Tools.Infos()
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func toolRuleName(rule string) string {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return ""
+	}
+	if open := strings.Index(rule, "("); open > 0 && strings.HasSuffix(rule, ")") {
+		return strings.TrimSpace(rule[:open])
+	}
+	if toolName, _, ok := strings.Cut(rule, ":"); ok {
+		return strings.TrimSpace(toolName)
+	}
+	return rule
+}
+
+func isMCPToolPattern(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if !strings.HasPrefix(name, "mcp__") {
+		return false
+	}
+	parts := strings.Split(name, "__")
+	return len(parts) >= 3 && strings.TrimSpace(parts[1]) != "" && strings.TrimSpace(parts[2]) != ""
+}
+
+func permissionNamePatternMatches(pattern string, value string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	value = strings.ToLower(strings.TrimSpace(value))
+	if pattern == "" || value == "" {
+		return false
+	}
+	if pattern == "*" || pattern == value {
+		return true
+	}
+	if !strings.Contains(pattern, "*") {
+		return false
+	}
+	parts := strings.Split(pattern, "*")
+	position := 0
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		next := strings.Index(value[position:], part)
+		if next < 0 {
+			return false
+		}
+		if index == 0 && !strings.HasPrefix(pattern, "*") && next != 0 {
+			return false
+		}
+		position += next + len(part)
+	}
+	if !strings.HasSuffix(pattern, "*") && len(parts) > 0 {
+		last := parts[len(parts)-1]
+		return strings.HasSuffix(value, last)
+	}
+	return true
+}
+
 func skillAllowedToolRules(values []string) []string {
 	rules := []string{}
 	for _, value := range values {
@@ -19553,6 +19761,9 @@ func (v *stringListFlag) String() string {
 }
 
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
+	if missing, ok := missingToolFlagArgument(args); ok {
+		return base, "", nil, missing
+	}
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	printMode := false
@@ -19618,6 +19829,69 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
 	return base, command, rest, nil
+}
+
+func missingToolFlagArgument(args []string) (missingArgumentError, bool) {
+	for index := 0; index < len(args); index++ {
+		argument, inlineValue, inline, ok := parseToolRuleFlag(args[index])
+		if !ok {
+			continue
+		}
+		if inline {
+			if strings.TrimSpace(inlineValue) == "" {
+				return missingArgumentError{Argument: argument, Example: toolRuleFlagExample(argument)}, true
+			}
+			continue
+		}
+		nextIndex := index + 1
+		if nextIndex >= len(args) {
+			return missingArgumentError{Argument: argument, Example: toolRuleFlagExample(argument)}, true
+		}
+		next := strings.TrimSpace(args[nextIndex])
+		if next == "" || strings.HasPrefix(next, "-") || looksLikeCommandName(next) {
+			return missingArgumentError{Argument: argument, Example: toolRuleFlagExample(argument)}, true
+		}
+		index = nextIndex
+	}
+	return missingArgumentError{}, false
+}
+
+func parseToolRuleFlag(arg string) (argument string, value string, inline bool, ok bool) {
+	for _, candidate := range []string{"--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools"} {
+		if arg == candidate {
+			return candidate, "", false, true
+		}
+		prefix := candidate + "="
+		if strings.HasPrefix(arg, prefix) {
+			return candidate, strings.TrimPrefix(arg, prefix), true, true
+		}
+	}
+	return "", "", false, false
+}
+
+func looksLikeCommandName(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "/") {
+		return true
+	}
+	for _, command := range builtInCommandNames() {
+		if strings.EqualFold(value, command) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolRuleFlagExample(argument string) string {
+	switch argument {
+	case "--allowedTools", "--disallowedTools":
+		return argument + " read,glob"
+	default:
+		return argument + " read_file,grep"
+	}
 }
 
 func normalizeOutputFormat(command, value string, expected []string) (string, error) {

@@ -273,6 +273,43 @@ var claudeToolAliases = map[string]string{
 	"writetool":                    "write_file",
 }
 
+var claudeToolAliasDisplay = map[string]string{
+	"Agent":                    "agent",
+	"AskUserQuestion":          "ask_user_question",
+	"Bash":                     "bash",
+	"BashOutput":               "bash_output",
+	"Edit":                     "edit_file",
+	"GetMcpPrompt":             "get_mcp_prompt",
+	"Glob":                     "glob",
+	"Grep":                     "grep",
+	"KillBash":                 "kill_bash",
+	"LS":                       "ls",
+	"ListMcpPrompts":           "list_mcp_prompts",
+	"ListMcpResources":         "list_mcp_resources",
+	"ListMcpResourceTemplates": "list_mcp_resource_templates",
+	"McpAuth":                  "mcp_auth",
+	"MultiEdit":                "multi_edit",
+	"NotebookEdit":             "notebook_edit",
+	"NotebookRead":             "notebook_read",
+	"PowerShell":               "powershell",
+	"Read":                     "read_file",
+	"ReadMcpResource":          "read_mcp_resource",
+	"Task":                     "agent",
+	"TodoRead":                 "todo_read",
+	"TodoWrite":                "todo_write",
+	"WebFetch":                 "web_fetch",
+	"WebSearch":                "web_search",
+	"Write":                    "write_file",
+}
+
+func ClaudeToolAliases() map[string]string {
+	aliases := make(map[string]string, len(claudeToolAliasDisplay))
+	for alias, canonical := range claudeToolAliasDisplay {
+		aliases[alias] = canonical
+	}
+	return aliases
+}
+
 func CanonicalToolName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
