@@ -295,6 +295,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Review(rest)
 	case "feedback":
 		return app.Feedback(rest, overrides)
+	case "pr":
+		return app.PullRequestDraft(rest, overrides)
+	case "issue":
+		return app.IssueDraft(rest, overrides)
 	case "run":
 		return app.RunCommand(ctx, rest)
 	case "test":
@@ -4826,6 +4830,289 @@ func renderFeedbackMarkdown(bundle feedbackBundle) string {
 	return builder.String()
 }
 
+type draftRequest struct {
+	Format    string
+	Output    string
+	Context   string
+	SessionID string
+}
+
+type draftReport struct {
+	Kind            string `json:"kind"`
+	Action          string `json:"action"`
+	Status          string `json:"status"`
+	File            string `json:"file"`
+	Bytes           int    `json:"bytes"`
+	Title           string `json:"title"`
+	Context         string `json:"context,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	GitClean        bool   `json:"git_clean"`
+	SessionID       string `json:"session_id,omitempty"`
+	SessionMessages int    `json:"session_messages,omitempty"`
+}
+
+type draftBundle struct {
+	Kind       string
+	CreatedAt  time.Time
+	Context    string
+	Title      string
+	Status     localstatus.Snapshot
+	GitStatus  string
+	DiffStat   string
+	StagedStat string
+	RecentLog  string
+	Remote     string
+}
+
+func (a *App) PullRequestDraft(args []string, overrides config.FlagOverrides) error {
+	return a.writeDraft("pr", args, overrides)
+}
+
+func (a *App) IssueDraft(args []string, overrides config.FlagOverrides) error {
+	return a.writeDraft("issue", args, overrides)
+}
+
+func (a *App) writeDraft(kind string, args []string, overrides config.FlagOverrides) error {
+	req, err := parseDraftArgs(kind, args, overrides)
+	if err != nil {
+		return err
+	}
+	active, err := a.feedbackSession(req.SessionID)
+	if err != nil {
+		return err
+	}
+	createdAt := time.Now().UTC()
+	bundle := draftBundle{
+		Kind:       kind,
+		CreatedAt:  createdAt,
+		Context:    strings.TrimSpace(req.Context),
+		Status:     a.statusSnapshot(active),
+		GitStatus:  boundedGitOutput(a.Workspace, 12000, "status", "--short", "--branch"),
+		DiffStat:   boundedGitOutput(a.Workspace, 12000, "diff", "--stat"),
+		StagedStat: boundedGitOutput(a.Workspace, 12000, "diff", "--cached", "--stat"),
+		RecentLog:  boundedGitOutput(a.Workspace, 12000, "log", "--oneline", "--decorate", "--max-count=12"),
+		Remote:     boundedGitOutput(a.Workspace, 2000, "remote", "get-url", "origin"),
+	}
+	bundle.Title = draftTitle(kind, bundle)
+	path := a.draftOutputPath(kind, req.Output, createdAt)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := session.ValidateExportOutputPath(path); err != nil {
+		return err
+	}
+	data := []byte(renderDraftMarkdown(bundle))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	report := draftReport{
+		Kind:            kind,
+		Action:          "draft",
+		Status:          "ok",
+		File:            path,
+		Bytes:           len(data),
+		Title:           bundle.Title,
+		Context:         bundle.Context,
+		Branch:          bundle.Status.Git.Branch,
+		GitClean:        bundle.Status.Git.Clean,
+		SessionID:       bundle.Status.Session.ID,
+		SessionMessages: bundle.Status.Session.MessageCount,
+	}
+	if req.Format == "json" {
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return nil
+	}
+	renderDraftReport(a.Out, report)
+	return nil
+}
+
+func parseDraftArgs(kind string, args []string, overrides config.FlagOverrides) (draftRequest, error) {
+	req := draftRequest{Format: "text"}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	var contextParts []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", kind)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output path is required", kind)
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s session id is required", kind)
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s resume session id is required", kind)
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--context" || arg == "--message":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s context is required", kind)
+			}
+			contextParts = append(contextParts, args[index])
+		case strings.HasPrefix(arg, "--context="):
+			contextParts = append(contextParts, strings.TrimPrefix(arg, "--context="))
+		case strings.HasPrefix(arg, "--message="):
+			contextParts = append(contextParts, strings.TrimPrefix(arg, "--message="))
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown %s flag %q", kind, arg)
+		default:
+			contextParts = append(contextParts, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, kind); err != nil {
+		return req, err
+	}
+	req.Context = strings.TrimSpace(strings.Join(contextParts, " "))
+	return req, nil
+}
+
+func (a *App) draftOutputPath(kind, output string, createdAt time.Time) string {
+	filename := fmt.Sprintf("%s-%s-%d.md", kind, createdAt.Format("20060102T150405Z"), createdAt.UnixNano())
+	if strings.TrimSpace(output) == "" {
+		return filepath.Join(a.Workspace, ".codog", "drafts", filename)
+	}
+	path := a.resolveOutputPath(output)
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return path
+	}
+	return filepath.Join(path, filename)
+}
+
+func draftTitle(kind string, bundle draftBundle) string {
+	context := prompthistory.Preview(bundle.Context, 72)
+	if context != "" {
+		if kind == "issue" {
+			return "Issue: " + context
+		}
+		return "PR: " + context
+	}
+	if kind == "issue" {
+		return "Issue: " + emptyAs(bundle.Status.Workspace.Name, "workspace follow-up")
+	}
+	branch := emptyAs(bundle.Status.Git.Branch, "workspace changes")
+	return "PR: " + branch
+}
+
+func renderDraftReport(out io.Writer, report draftReport) {
+	label := "Pull Request Draft"
+	if report.Kind == "issue" {
+		label = "Issue Draft"
+	}
+	fmt.Fprintln(out, label)
+	fmt.Fprintf(out, "  File             %s\n", report.File)
+	fmt.Fprintf(out, "  Title            %s\n", report.Title)
+	fmt.Fprintf(out, "  Bytes            %d\n", report.Bytes)
+	if report.Branch != "" {
+		fmt.Fprintf(out, "  Branch           %s\n", report.Branch)
+	}
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s (%d messages)\n", report.SessionID, report.SessionMessages)
+	}
+}
+
+func renderDraftMarkdown(bundle draftBundle) string {
+	label := "Pull Request Draft"
+	if bundle.Kind == "issue" {
+		label = "Issue Draft"
+	}
+	var builder strings.Builder
+	builder.WriteString("# " + label + "\n\n")
+	builder.WriteString("## Title\n\n")
+	builder.WriteString(bundle.Title + "\n\n")
+	builder.WriteString("## Context\n\n")
+	if bundle.Context == "" {
+		builder.WriteString("No additional context provided.\n\n")
+	} else {
+		builder.WriteString(bundle.Context + "\n\n")
+	}
+	builder.WriteString("## Workspace\n\n")
+	builder.WriteString(fmt.Sprintf("- Created: %s\n", bundle.CreatedAt.Format(time.RFC3339)))
+	builder.WriteString(fmt.Sprintf("- Workspace: %s\n", bundle.Status.Workspace.Path))
+	builder.WriteString(fmt.Sprintf("- Branch: %s\n", emptyAs(bundle.Status.Git.Branch, "unknown")))
+	builder.WriteString(fmt.Sprintf("- Git clean: %t\n", bundle.Status.Git.Clean))
+	if bundle.Remote != "" {
+		builder.WriteString(fmt.Sprintf("- Origin: %s\n", bundle.Remote))
+	}
+	if bundle.Status.Session.Active {
+		builder.WriteString(fmt.Sprintf("- Session: %s (%d messages)\n", bundle.Status.Session.ID, bundle.Status.Session.MessageCount))
+	}
+	builder.WriteString("\n## Current Git Status\n\n")
+	writeDraftCodeBlock(&builder, bundle.GitStatus)
+	builder.WriteString("\n## Unstaged Diff Stat\n\n")
+	writeDraftCodeBlock(&builder, emptyAs(bundle.DiffStat, "No unstaged changes."))
+	builder.WriteString("\n## Staged Diff Stat\n\n")
+	writeDraftCodeBlock(&builder, emptyAs(bundle.StagedStat, "No staged changes."))
+	builder.WriteString("\n## Recent Commits\n\n")
+	writeDraftCodeBlock(&builder, bundle.RecentLog)
+	if bundle.Kind == "pr" {
+		builder.WriteString("\n## Checklist\n\n")
+		builder.WriteString("- [ ] Tests pass\n")
+		builder.WriteString("- [ ] Documentation updated if needed\n")
+		builder.WriteString("- [ ] Review risk noted\n")
+	} else {
+		builder.WriteString("\n## Expected Follow-Up\n\n")
+		builder.WriteString("- [ ] Reproduce or confirm the issue\n")
+		builder.WriteString("- [ ] Identify affected versions or environments\n")
+		builder.WriteString("- [ ] Attach logs, screenshots, or session details if useful\n")
+	}
+	return builder.String()
+}
+
+func writeDraftCodeBlock(builder *strings.Builder, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		text = "No data."
+	}
+	builder.WriteString("```text\n")
+	builder.WriteString(text)
+	builder.WriteString("\n```\n")
+}
+
+func boundedGitOutput(workspace string, limit int, args ...string) string {
+	out, err := gitops.Run(workspace, args...)
+	if err != nil {
+		return err.Error()
+	}
+	if limit <= 0 {
+		limit = 12000
+	}
+	runes := []rune(strings.TrimSpace(out))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "\n[truncated]"
+}
+
 func renderVersion(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("version", args)
 	if err != nil {
@@ -7026,6 +7313,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/feedback":
 		if err := a.Feedback(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/pr":
+		if err := a.PullRequestDraft(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/issue":
+		if err := a.IssueDraft(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/focus":
@@ -10534,6 +10829,8 @@ Usage:
   %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]
   %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
+  %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
+  %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
@@ -10590,7 +10887,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

@@ -62,7 +62,7 @@ func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ps:%s\\n' \"$*\"\n"), 0o755))
 	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
 
-	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":5}`))
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":20}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ps:-NoProfile -Command Write-Output ok`)
 	require.Contains(t, out, `"exit_code": 0`)

@@ -1660,6 +1660,58 @@ func TestFeedbackCommandAndSlashWritesReport(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
+func TestPullRequestAndIssueDraftCommands(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\nchange\n"), 0o644))
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "draft context")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.PullRequestDraft([]string{"ship", "readme", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "pr"`)
+	require.Contains(t, out.String(), `"action": "draft"`)
+	require.Contains(t, out.String(), `"session_id": "source"`)
+	files, err := filepath.Glob(filepath.Join(workspace, ".codog", "drafts", "pr-*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	data, err := os.ReadFile(files[0])
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Pull Request Draft")
+	require.Contains(t, string(data), "PR: ship readme")
+	require.Contains(t, string(data), "README.md")
+	require.Contains(t, string(data), "source (1 messages)")
+	out.Reset()
+
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/issue flaky workflow", sess))
+	require.Contains(t, out.String(), "Issue Draft")
+	require.Empty(t, errOut.String())
+	files, err = filepath.Glob(filepath.Join(workspace, ".codog", "drafts", "issue-*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	data, err = os.ReadFile(files[0])
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Issue Draft")
+	require.Contains(t, string(data), "Issue: flaky workflow")
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))
