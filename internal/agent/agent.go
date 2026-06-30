@@ -148,7 +148,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if command == "config" {
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
-			return err
+			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 		}
 		cfg = redactedConfig(cfg)
 		return renderConfigInspection(os.Stdout, cfg, paths, rest)
@@ -156,7 +156,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if command == "providers" {
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
-			return err
+			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 		}
 		applyStoredOAuthToken(&cfg, time.Now().UTC())
 		return renderProvidersCommand(os.Stdout, cfg, paths, rest)
@@ -211,7 +211,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
-		return err
+		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	applyStoredOAuthToken(&cfg, time.Now().UTC())
 	workspace, err := os.Getwd()
@@ -11425,6 +11425,43 @@ type slashErrorReport struct {
 	Command   string `json:"command"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint"`
+}
+
+type cliErrorReport struct {
+	Kind      string `json:"kind"`
+	ErrorKind string `json:"error_kind"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+}
+
+func renderCLIError(out io.Writer, err error, format string) error {
+	report := buildCLIErrorReport(err)
+	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: exitErr, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: exitErr}
+}
+
+func buildCLIErrorReport(err error) cliErrorReport {
+	message := strings.TrimSpace(err.Error())
+	kind := "config_load_failed"
+	hint := "Check `codog config paths` and fix the active configuration."
+	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
+		kind = "invalid_permission_mode"
+		message = strings.TrimSpace(rest)
+		hint = "Use one of: read-only, workspace-write, danger-full-access, prompt, allow."
+	}
+	return cliErrorReport{
+		Kind:      kind,
+		ErrorKind: kind,
+		Status:    "error",
+		Message:   message,
+		Hint:      hint,
+	}
 }
 
 func normalizeDirectSlashInvocation(out io.Writer, command string, args []string, format string) (string, []string, error) {

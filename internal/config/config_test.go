@@ -44,6 +44,19 @@ func TestLoadVerifiesSignedManagedPolicy(t *testing.T) {
 	require.Contains(t, cfg.PermissionRules.DeniedTools, "bash")
 }
 
+func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"bogus"}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_permission_mode")
+
+	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, PermissionMode: "PROMPT"})
+	require.NoError(t, err)
+}
+
 func TestLoadRejectsTamperedSignedManagedPolicy(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)

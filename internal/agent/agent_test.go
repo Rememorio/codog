@@ -243,6 +243,38 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 }
 
+func TestInvalidPermissionModeJSONContract(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--permission-mode", "bogus", "status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_permission_mode", report.Kind)
+	require.Equal(t, "invalid_permission_mode", report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.Contains(t, report.Message, "bogus")
+	require.Contains(t, report.Hint, "workspace-write")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--permission-mode", "bogus", "status"}, config.FlagOverrides{})
+	})
+	require.Empty(t, out)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.False(t, exitErr.Silent)
+	require.Contains(t, err.Error(), "invalid_permission_mode")
+}
+
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 	for _, tool := range report.Tools {
 		if tool.Name == name {

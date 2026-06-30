@@ -380,6 +380,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 	if cfg.AutoCompactMessages <= 0 {
 		cfg.AutoCompactMessages = 40
 	}
+	if err := validatePermissionMode(&cfg); err != nil {
+		return Config{}, err
+	}
 	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
 	return cfg, nil
 }
@@ -414,6 +417,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
 	if err := applyManagedPolicy(&cfg); err != nil {
+		return Config{}, paths, err
+	}
+	if err := validatePermissionMode(&cfg); err != nil {
 		return Config{}, paths, err
 	}
 	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
@@ -1395,17 +1401,30 @@ func ManagedPolicyPayload(policy ManagedPolicy) ([]byte, error) {
 }
 
 func permissionRank(mode string) int {
-	switch mode {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "read-only":
 		return 1
 	case "workspace-write":
 		return 2
-	case "danger-full-access":
+	case "prompt":
 		return 3
-	case "allow":
+	case "danger-full-access":
 		return 4
+	case "allow":
+		return 5
 	default:
 		return 0
+	}
+}
+
+func validatePermissionMode(cfg *Config) error {
+	mode := strings.ToLower(strings.TrimSpace(cfg.PermissionMode))
+	switch mode {
+	case "read-only", "workspace-write", "danger-full-access", "prompt", "allow":
+		cfg.PermissionMode = mode
+		return nil
+	default:
+		return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
 	}
 }
 
