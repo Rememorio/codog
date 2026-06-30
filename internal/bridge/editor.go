@@ -47,6 +47,21 @@ func (s Server) EditorState() (EditorState, error) {
 	return s.editorState()
 }
 
+func (s Server) EditorStatePath() (string, error) {
+	return s.editorStatePath()
+}
+
+func (s Server) ClearEditorState() error {
+	path, err := s.editorStatePath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (s Server) OpenEditorFile(params json.RawMessage) (*EditorOpenFile, error) {
 	return s.editorOpen(params)
 }

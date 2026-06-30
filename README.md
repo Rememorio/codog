@@ -56,7 +56,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -220,6 +220,9 @@ Claude Code source.
   prompt turns, workspace info, file listing/search/diff, diagnostics,
   code-intelligence queries, background task control/watch events, and bounded
   file read/write/edit operations.
+- `codog ide [status|clear]` and `/ide` inspect or clear the trusted editor
+  bridge state recorded by `codog bridge serve`, including the connected
+  editor, active file, and selection.
 - `codog updater check|download|install|rollback` checks releases, downloads
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.
@@ -293,6 +296,7 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "enterprise_policy_public_key": "",
     "sandbox_strategy": "detect",
     "editor_bridge_socket": "",
+    "editor_bridge_token": "",
     "updater_manifest_url": "",
     "plugin_marketplaces": [],
     "plugin_marketplace_public_keys": {}

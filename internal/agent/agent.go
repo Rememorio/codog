@@ -353,6 +353,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Remote(rest)
 	case "bridge":
 		return app.Bridge(rest)
+	case "ide":
+		return app.IDE(rest)
 	case "updater":
 		return app.Updater(ctx, rest)
 	case "enterprise":
@@ -435,6 +437,152 @@ func (a *App) Bridge(args []string) error {
 		TrustToken: a.Config.Future.EditorBridgeToken,
 		Executable: executable,
 	}.Serve(a.In, a.Out)
+}
+
+type ideRequest struct {
+	Action string
+	Format string
+}
+
+type ideReport struct {
+	Kind      string             `json:"kind"`
+	Action    string             `json:"action"`
+	Workspace string             `json:"workspace"`
+	Bridge    ideBridgeReport    `json:"bridge"`
+	StatePath string             `json:"state_path,omitempty"`
+	State     bridge.EditorState `json:"state"`
+	Cleared   bool               `json:"cleared,omitempty"`
+}
+
+type ideBridgeReport struct {
+	Command         string `json:"command"`
+	Socket          string `json:"socket,omitempty"`
+	TokenConfigured bool   `json:"token_configured"`
+}
+
+func (a *App) IDE(args []string) error {
+	req, err := parseIDEArgs(args)
+	if err != nil {
+		return err
+	}
+	server := bridge.Server{
+		Sessions:   a.Sessions,
+		Version:    version,
+		Workspace:  a.Workspace,
+		ConfigHome: a.Config.ConfigHome,
+		TrustToken: a.Config.Future.EditorBridgeToken,
+	}
+	if req.Action == "clear" {
+		if err := server.ClearEditorState(); err != nil {
+			return err
+		}
+	}
+	state, err := server.EditorState()
+	if err != nil {
+		return err
+	}
+	statePath, err := server.EditorStatePath()
+	if err != nil {
+		return err
+	}
+	report := ideReport{
+		Kind:      "ide",
+		Action:    req.Action,
+		Workspace: a.Workspace,
+		Bridge: ideBridgeReport{
+			Command:         "codog bridge serve",
+			Socket:          a.Config.Future.EditorBridgeSocket,
+			TokenConfigured: a.Config.Future.EditorBridgeToken != "",
+		},
+		StatePath: statePath,
+		State:     state,
+		Cleared:   req.Action == "clear",
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderIDEReport(a.Out, report)
+	return nil
+}
+
+func parseIDEArgs(args []string) (ideRequest, error) {
+	req := ideRequest{Action: "status", Format: "text"}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ide output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown ide flag %q", arg)
+		default:
+			if actionSet {
+				return req, fmt.Errorf("unexpected ide argument %q", arg)
+			}
+			action := strings.ToLower(arg)
+			switch action {
+			case "status", "state":
+				req.Action = "status"
+			case "clear", "reset", "disconnect":
+				req.Action = "clear"
+			default:
+				return req, fmt.Errorf("unknown ide action %q", arg)
+			}
+			actionSet = true
+		}
+	}
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return req, fmt.Errorf("unknown ide output format %q", req.Format)
+	}
+}
+
+func renderIDEReport(out io.Writer, report ideReport) {
+	fmt.Fprintln(out, "IDE Bridge")
+	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
+	fmt.Fprintf(out, "  Bridge command   %s\n", report.Bridge.Command)
+	fmt.Fprintf(out, "  Socket           %s\n", emptyAsNone(report.Bridge.Socket))
+	fmt.Fprintf(out, "  Token configured %t\n", report.Bridge.TokenConfigured)
+	if report.Cleared {
+		fmt.Fprintln(out, "  State cleared    true")
+	}
+	if report.State.Identity == nil {
+		fmt.Fprintln(out, "  Trusted editor   none")
+	} else {
+		identity := report.State.Identity.Editor
+		if report.State.Identity.Version != "" {
+			identity += " " + report.State.Identity.Version
+		}
+		fmt.Fprintf(out, "  Trusted editor   %s\n", identity)
+		fmt.Fprintf(out, "  Trusted          %t\n", report.State.Identity.Trusted)
+	}
+	if report.State.OpenFile == nil {
+		fmt.Fprintln(out, "  Open file        none")
+	} else {
+		fmt.Fprintf(out, "  Open file        %s\n", report.State.OpenFile.Path)
+	}
+	if report.State.Selection == nil {
+		fmt.Fprintln(out, "  Selection        none")
+	} else {
+		selection := report.State.Selection
+		fmt.Fprintf(out, "  Selection        %s:%d", selection.Path, selection.StartLine)
+		if selection.EndLine > 0 && selection.EndLine != selection.StartLine {
+			fmt.Fprintf(out, "-%d", selection.EndLine)
+		}
+		fmt.Fprintln(out)
+	}
 }
 
 func (a *App) Updater(ctx context.Context, args []string) error {
@@ -5816,6 +5964,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.MCP(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/ide":
+		if err := a.IDE(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/agents":
 		if err := a.AgentsWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -8862,7 +9014,7 @@ Usage:
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote serve [addr] | bridge serve | updater check|verify|download|install|rollback
+  %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
 

@@ -26,6 +26,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
@@ -1746,13 +1747,71 @@ func TestSlashAliasesForExistingSurfaces(t *testing.T) {
 	}
 	sess := &session.Session{ID: "session"}
 
-	for _, command := range []string{"/agents", "/tasks", "/background", "/plugin", "/plugins", "/marketplace", "/providers"} {
+	for _, command := range []string{"/ide", "/agents", "/tasks", "/background", "/plugin", "/plugins", "/marketplace", "/providers"} {
 		out.Reset()
 		errOut.Reset()
 		require.True(t, app.handleSlash(context.Background(), command, sess), command)
 		require.NotEmpty(t, strings.TrimSpace(out.String()), command)
 		require.Empty(t, errOut.String(), command)
 	}
+}
+
+func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	statePath := filepath.Join(configHome, "bridge", "editor-state.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+	state := bridge.EditorState{
+		Identity: &bridge.EditorIdentity{
+			Editor:    "VS Code",
+			Version:   "1.0",
+			Workspace: workspace,
+			Trusted:   true,
+			TrustedAt: time.Now().UTC(),
+		},
+		OpenFile: &bridge.EditorOpenFile{Path: "main.go", OpenedAt: time.Now().UTC()},
+		Selection: &bridge.EditorSelection{
+			Path:      "main.go",
+			StartLine: 3,
+			EndLine:   4,
+			Text:      "func main() {}",
+			UpdatedAt: time.Now().UTC(),
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statePath, data, 0o644))
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Future: config.FutureConfig{
+				EditorBridgeSocket: "codog.sock",
+				EditorBridgeToken:  "secret",
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.IDE([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "ide"`)
+	require.Contains(t, out.String(), `"editor": "VS Code"`)
+	require.Contains(t, out.String(), `"token_configured": true`)
+	require.Contains(t, out.String(), `"path": "main.go"`)
+
+	out.Reset()
+	require.NoError(t, app.IDE([]string{"clear", "--json"}))
+	require.Contains(t, out.String(), `"cleared": true`)
+	require.NoFileExists(t, statePath)
+
+	out.Reset()
+	require.True(t, app.handleSlash(context.Background(), "/ide", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "IDE Bridge")
+	require.Contains(t, out.String(), "Trusted editor   none")
 }
 
 func TestAgentMCPHelperProcess(t *testing.T) {
