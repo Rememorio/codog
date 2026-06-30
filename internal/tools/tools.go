@@ -2639,6 +2639,15 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 }
 
 func globPatternMatches(pattern string, rel string, base string) bool {
+	for _, expanded := range expandBracePatterns(pattern, 64) {
+		if globPatternMatchesSingle(expanded, rel, base) {
+			return true
+		}
+	}
+	return false
+}
+
+func globPatternMatchesSingle(pattern string, rel string, base string) bool {
 	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
 	rel = filepath.ToSlash(strings.TrimPrefix(rel, "./"))
 	base = filepath.ToSlash(base)
@@ -2658,6 +2667,43 @@ func globPatternMatches(pattern string, rel string, base string) bool {
 		return false
 	}
 	return re.MatchString(rel)
+}
+
+func expandBracePatterns(pattern string, limit int) []string {
+	if limit <= 0 {
+		return []string{pattern}
+	}
+	start := strings.Index(pattern, "{")
+	if start < 0 {
+		return []string{pattern}
+	}
+	end := strings.Index(pattern[start+1:], "}")
+	if end < 0 {
+		return []string{pattern}
+	}
+	end += start + 1
+	parts := strings.Split(pattern[start+1:end], ",")
+	if len(parts) <= 1 {
+		return []string{pattern}
+	}
+	out := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		next := pattern[:start] + part + pattern[end+1:]
+		for _, expanded := range expandBracePatterns(next, limit-len(out)) {
+			out = append(out, expanded)
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	if len(out) == 0 {
+		return []string{pattern}
+	}
+	return out
 }
 
 func pathMatch(pattern string, value string) (bool, error) {

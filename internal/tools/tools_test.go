@@ -283,6 +283,18 @@ func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {
 	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "nested.go")))
 	require.NotContains(t, out, "root.go")
 	require.NotContains(t, out, "notes.md")
+
+	out, err = registry.Execute(context.Background(), "Glob", []byte(`{"pattern":"src/**/*.{go,md}"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "main.go")))
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "nested.go")))
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "notes.md")))
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","glob":"src/**/*.{go,md}","output_mode":"files_with_matches"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "main.go")))
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "nested.go")))
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "notes.md")))
 }
 
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
