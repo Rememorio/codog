@@ -56,7 +56,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or

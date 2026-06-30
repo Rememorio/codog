@@ -5840,6 +5840,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Providers(args); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/login":
+		if err := a.Login(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/logout":
+		if err := a.Logout(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/session":
 		a.handleSessionSlash(fields[1:], sess)
 	case "/clear":

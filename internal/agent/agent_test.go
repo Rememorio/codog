@@ -2423,9 +2423,11 @@ func TestOAuthTokenCommands(t *testing.T) {
 func TestLoginLogoutAliases(t *testing.T) {
 	configHome := t.TempDir()
 	var out bytes.Buffer
+	var errOut bytes.Buffer
 	app := &App{
 		Config: config.Config{ConfigHome: configHome},
 		Out:    &out,
+		Err:    &errOut,
 	}
 
 	err := app.Login(nil)
@@ -2440,6 +2442,16 @@ func TestLoginLogoutAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, app.Logout(nil))
 	require.Contains(t, out.String(), `"deleted": true`)
+	_, err = oauth.LoadToken(configHome)
+	require.ErrorIs(t, err, oauth.ErrNoToken)
+
+	out.Reset()
+	require.Empty(t, errOut.String())
+	_, err = oauth.SaveToken(configHome, oauth.Token{AccessToken: "slash-access-1234"})
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/logout", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"deleted": true`)
+	require.Empty(t, errOut.String())
 	_, err = oauth.LoadToken(configHome)
 	require.ErrorIs(t, err, oauth.ErrNoToken)
 }

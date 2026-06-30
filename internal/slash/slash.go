@@ -104,6 +104,8 @@ func Specs() []Spec {
 		{Name: "/plugins", Usage: "/plugins [list|install|enable|disable|remove]", Description: "Alias for marketplace plugin management."},
 		{Name: "/marketplace", Usage: "/marketplace [list|remote|updates|install|update]", Description: "Manage local and remote plugins."},
 		{Name: "/providers", Usage: "/providers [status|list|show|set]", Description: "Inspect and configure LLM providers."},
+		{Name: "/login", Usage: "/login [browser|device] PROFILE", Description: "Start OAuth login through a configured provider profile."},
+		{Name: "/logout", Usage: "/logout [PROFILE]", Description: "Revoke and delete local OAuth credentials."},
 	}
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	return specs
