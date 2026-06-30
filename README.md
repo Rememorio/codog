@@ -255,7 +255,8 @@ Claude Code source.
 - Request context is automatically compacted for long sessions.
 - `codog mock-server :8089` starts a deterministic Anthropic-compatible
   streaming server for harness tests.
-- `codog self-test` runs the prompt loop against an in-process mock provider.
+- `codog self-test` runs a multi-scenario prompt/tool/permission parity harness
+  against in-process mock providers.
 - `codog dump-manifests [--json]` emits the Go resolver inventory for slash
   commands, tools, agents, and skills.
 - `codog system-prompt [--json]` renders the final local system prompt without
