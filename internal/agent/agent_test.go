@@ -924,6 +924,69 @@ func TestLocalListFlagOptionContracts(t *testing.T) {
 	}
 }
 
+func TestPluginMutationErrorContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := []struct {
+		name      string
+		args      []string
+		action    string
+		errorKind string
+		hint      string
+	}{
+		{
+			name:      "uninstall not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "uninstall", "no-such-plugin"},
+			action:    "uninstall",
+			errorKind: "plugin_not_found",
+			hint:      "plugins list",
+		},
+		{
+			name:      "remove not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "remove", "no-such-plugin"},
+			action:    "remove",
+			errorKind: "plugin_not_found",
+			hint:      "plugins list",
+		},
+		{
+			name:      "show not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "show", "no-such-plugin"},
+			action:    "show",
+			errorKind: "plugin_not_found",
+			hint:      "plugins list",
+		},
+		{
+			name:      "install source not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "install", filepath.Join(t.TempDir(), "missing-plugin")},
+			action:    "install",
+			errorKind: "plugin_source_not_found",
+			hint:      "plugin.json",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report actionErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "plugins", report.Kind)
+			require.Equal(t, tc.action, report.Action)
+			require.Equal(t, "error", report.Status)
+			require.Equal(t, tc.errorKind, report.ErrorKind)
+			require.Contains(t, report.Hint, tc.hint)
+		})
+	}
+}
+
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",

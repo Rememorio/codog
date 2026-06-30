@@ -3040,6 +3040,9 @@ func (a *App) Marketplace(args []string) error {
 		}
 		manifest, err := plugins.Install(a.Workspace, args[1])
 		if err != nil {
+			if os.IsNotExist(err) {
+				return renderPluginSourceNotFound(a.Out, args[0], args[1], format)
+			}
 			return err
 		}
 		payload = manifest
@@ -3061,6 +3064,9 @@ func (a *App) Marketplace(args []string) error {
 		}
 		manifest, err := plugins.Enable(a.Workspace, args[1])
 		if err != nil {
+			if os.IsNotExist(err) {
+				return renderPluginNotFound(a.Out, args[0], args[1], format)
+			}
 			return err
 		}
 		payload = manifest
@@ -3070,14 +3076,20 @@ func (a *App) Marketplace(args []string) error {
 		}
 		manifest, err := plugins.Disable(a.Workspace, args[1])
 		if err != nil {
+			if os.IsNotExist(err) {
+				return renderPluginNotFound(a.Out, args[0], args[1], format)
+			}
 			return err
 		}
 		payload = manifest
-	case "remove":
+	case "remove", "uninstall":
 		if len(args) < 2 {
 			return errors.New("usage: codog marketplace remove ID")
 		}
 		if err := plugins.Remove(a.Workspace, args[1]); err != nil {
+			if os.IsNotExist(err) {
+				return renderPluginNotFound(a.Out, args[0], args[1], format)
+			}
 			return err
 		}
 		payload = map[string]any{"removed": true, "id": args[1]}
@@ -3094,6 +3106,9 @@ func (a *App) Marketplace(args []string) error {
 		}
 		manifest, err := a.findPlugin(args[1])
 		if err != nil {
+			if errors.Is(err, errPluginNotFound) {
+				return renderPluginNotFound(a.Out, args[0], args[1], format)
+			}
 			return err
 		}
 		payload = map[string]any{"kind": "plugin", "action": "show", "status": "ok", "plugin": manifest}
@@ -3112,6 +3127,8 @@ func (a *App) Marketplace(args []string) error {
 	return nil
 }
 
+var errPluginNotFound = errors.New("plugin not found")
+
 func (a *App) findPlugin(id string) (plugins.Manifest, error) {
 	manifests, err := plugins.Load(a.Workspace)
 	if err != nil {
@@ -3122,7 +3139,29 @@ func (a *App) findPlugin(id string) (plugins.Manifest, error) {
 			return manifest, nil
 		}
 	}
-	return plugins.Manifest{}, fmt.Errorf("unknown plugin %q", id)
+	return plugins.Manifest{}, errPluginNotFound
+}
+
+func renderPluginNotFound(out io.Writer, action string, id string, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      "plugins",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "plugin_not_found",
+		Message:   fmt.Sprintf("plugin %q was not found", id),
+		Hint:      "Run `codog plugins list` to see installed plugins, then retry with one of those IDs.",
+	}, format)
+}
+
+func renderPluginSourceNotFound(out io.Writer, action string, source string, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      "plugins",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "plugin_source_not_found",
+		Message:   fmt.Sprintf("plugin source %q was not found", source),
+		Hint:      "Pass a directory containing plugin.json or the path to a plugin.json file.",
+	}, format)
 }
 
 func (a *App) marketplaceRemote(args []string) ([]plugins.MarketplaceIndex, error) {
