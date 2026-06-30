@@ -68,6 +68,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
 	localstatus "github.com/Rememorio/codog/internal/status"
+	"github.com/Rememorio/codog/internal/team"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/thinkback"
@@ -447,6 +448,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BackgroundWithOverrides(rest, overrides)
 	case "cron":
 		return app.Cron(rest)
+	case "team":
+		return app.Team(rest)
 	case "agents":
 		return app.AgentsWithOverrides(rest, overrides)
 	case "reload-plugins":
@@ -2343,7 +2346,7 @@ func (a *App) Cron(args []string) error {
 		if err != nil {
 			return err
 		}
-		exe, err := a.cronExecutable()
+		exe, err := a.executablePath()
 		if err != nil {
 			return err
 		}
@@ -2529,7 +2532,7 @@ func renderCronReport(out io.Writer, report cronCommandReport) {
 	}
 }
 
-func (a *App) cronExecutable() (string, error) {
+func (a *App) executablePath() (string, error) {
 	if strings.TrimSpace(a.Executable) != "" {
 		return a.Executable, nil
 	}
@@ -2538,6 +2541,258 @@ func (a *App) cronExecutable() (string, error) {
 
 func buildCronPromptCommand(exe string, prompt string) string {
 	return strings.Join([]string{shellQuote(exe), "prompt", shellQuote(prompt)}, " ")
+}
+
+type teamRequest struct {
+	Action    string
+	Format    string
+	Name      string
+	ID        string
+	Tasks     []team.TaskSpec
+	Status    string
+	SessionID string
+}
+
+type teamCommandReport struct {
+	Kind         string            `json:"kind"`
+	Action       string            `json:"action"`
+	Status       string            `json:"status"`
+	Count        int               `json:"count,omitempty"`
+	Teams        []team.Team       `json:"teams,omitempty"`
+	Team         *team.Team        `json:"team,omitempty"`
+	Tasks        []background.Task `json:"tasks,omitempty"`
+	StoppedTasks []string          `json:"stopped_tasks,omitempty"`
+	Message      string            `json:"message,omitempty"`
+}
+
+func (a *App) Team(args []string) error {
+	req, err := parseTeamArgs(args)
+	if err != nil {
+		return err
+	}
+	store := team.NewStore(a.Config.ConfigHome)
+	report := teamCommandReport{Kind: "team", Action: req.Action, Status: "ok"}
+	switch req.Action {
+	case "list":
+		teams, err := store.List()
+		if err != nil {
+			return err
+		}
+		for _, item := range teams {
+			if req.Status != "" && !strings.EqualFold(item.Status, req.Status) {
+				continue
+			}
+			report.Teams = append(report.Teams, item)
+		}
+		report.Count = len(report.Teams)
+	case "get":
+		item, err := store.Get(req.ID)
+		if err != nil {
+			return err
+		}
+		report.Team = &item
+		report.Count = 1
+	case "create":
+		exe, err := a.executablePath()
+		if err != nil {
+			return err
+		}
+		taskStore := background.NewStore(a.Config.ConfigHome)
+		taskIDs := make([]string, 0, len(req.Tasks))
+		for _, spec := range req.Tasks {
+			prompt := strings.TrimSpace(spec.Prompt)
+			if spec.Description != "" {
+				prompt = "Task: " + strings.TrimSpace(spec.Description) + "\n\n" + prompt
+			}
+			task, err := taskStore.RunWithOptions(buildCronPromptCommand(exe, prompt), a.Workspace, background.RunOptions{Kind: "team", SessionID: req.SessionID})
+			if err != nil {
+				return err
+			}
+			taskIDs = append(taskIDs, task.ID)
+			report.Tasks = append(report.Tasks, task)
+			a.runTaskCreatedHook(context.Background(), task)
+			a.runNotificationHook(context.Background(), "team_task_started", "Team task started", fmt.Sprintf("Team %s started background task %s", req.Name, task.ID))
+		}
+		item, err := store.Create(req.Name, req.Tasks, taskIDs)
+		if err != nil {
+			return err
+		}
+		report.Team = &item
+		report.Count = len(taskIDs)
+		report.Message = "Team created"
+	case "delete":
+		existing, err := store.Get(req.ID)
+		if err != nil {
+			return err
+		}
+		taskStore := background.NewStore(a.Config.ConfigHome)
+		for _, id := range existing.TaskIDs {
+			task, err := taskStore.Stop(id)
+			if err != nil {
+				continue
+			}
+			report.StoppedTasks = append(report.StoppedTasks, task.ID)
+			a.runTaskCompletedHook(context.Background(), task, "team_deleted")
+		}
+		item, err := store.MarkDeleted(req.ID)
+		if err != nil {
+			return err
+		}
+		report.Team = &item
+		report.Count = 1
+		report.Message = "Team deleted"
+	default:
+		return fmt.Errorf("unknown team command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTeamReport(a.Out, report)
+	return nil
+}
+
+func parseTeamArgs(args []string) (teamRequest, error) {
+	req := teamRequest{Action: "list", Format: "text"}
+	actionSet := false
+	positionals := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--task":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team task is required")
+			}
+			req.Tasks = append(req.Tasks, parseTeamTaskSpec(args[i]))
+		case strings.HasPrefix(arg, "--task="):
+			req.Tasks = append(req.Tasks, parseTeamTaskSpec(strings.TrimPrefix(arg, "--task=")))
+		case arg == "--status":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team status is required")
+			}
+			req.Status = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--status="):
+			req.Status = strings.TrimSpace(strings.TrimPrefix(arg, "--status="))
+		case arg == "--session-id" || arg == "--session":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team session id is required")
+			}
+			req.SessionID = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "--session-id="):
+			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session-id="))
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session="))
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown team flag %q", arg)
+		case !actionSet && isTeamAction(arg):
+			req.Action = normalizeTeamAction(arg)
+			actionSet = true
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	format, err := normalizeTextOrJSON(req.Format, "team")
+	if err != nil {
+		return req, err
+	}
+	req.Format = format
+	switch req.Action {
+	case "list":
+		if len(positionals) != 0 {
+			return req, errors.New("usage: codog team list [--status STATUS] [--json|--output-format text|json]")
+		}
+	case "get", "delete":
+		if len(positionals) != 1 {
+			return req, fmt.Errorf("usage: codog team %s TEAM_ID [--json|--output-format text|json]", req.Action)
+		}
+		req.ID = positionals[0]
+	case "create":
+		if len(positionals) < 1 {
+			return req, errors.New("usage: codog team create NAME [PROMPT...] [--task PROMPT] [--session-id ID] [--json|--output-format text|json]")
+		}
+		req.Name = positionals[0]
+		if len(req.Tasks) == 0 && len(positionals) > 1 {
+			req.Tasks = append(req.Tasks, team.TaskSpec{Prompt: strings.Join(positionals[1:], " ")})
+		}
+		if len(req.Tasks) == 0 {
+			return req, errors.New("team create requires at least one task prompt")
+		}
+	default:
+		return req, fmt.Errorf("unknown team command %q", req.Action)
+	}
+	return req, nil
+}
+
+func parseTeamTaskSpec(value string) team.TaskSpec {
+	value = strings.TrimSpace(value)
+	if description, prompt, ok := strings.Cut(value, "="); ok && strings.TrimSpace(description) != "" && strings.TrimSpace(prompt) != "" {
+		return team.TaskSpec{Description: strings.TrimSpace(description), Prompt: strings.TrimSpace(prompt)}
+	}
+	return team.TaskSpec{Prompt: value}
+}
+
+func isTeamAction(value string) bool {
+	switch normalizeTeamAction(value) {
+	case "list", "get", "create", "delete":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTeamAction(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "list", "ls":
+		return "list"
+	case "get", "show":
+		return "get"
+	case "create", "add", "new":
+		return "create"
+	case "delete", "remove", "rm":
+		return "delete"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func renderTeamReport(out io.Writer, report teamCommandReport) {
+	fmt.Fprintln(out, "Team")
+	switch report.Action {
+	case "list":
+		fmt.Fprintf(out, "  Teams            %d\n", report.Count)
+		for _, item := range report.Teams {
+			fmt.Fprintf(out, "  %s  %s  %s  tasks=%d\n", item.ID, item.Name, item.Status, len(item.Tasks))
+		}
+	case "get", "create", "delete":
+		if report.Team == nil {
+			return
+		}
+		fmt.Fprintf(out, "  Action           %s\n", report.Action)
+		fmt.Fprintf(out, "  ID               %s\n", report.Team.ID)
+		fmt.Fprintf(out, "  Name             %s\n", report.Team.Name)
+		fmt.Fprintf(out, "  Status           %s\n", report.Team.Status)
+		fmt.Fprintf(out, "  Tasks            %d\n", len(report.Team.Tasks))
+		if len(report.StoppedTasks) > 0 {
+			fmt.Fprintf(out, "  Stopped tasks    %d\n", len(report.StoppedTasks))
+		}
+		if report.Message != "" {
+			fmt.Fprintf(out, "  Message          %s\n", report.Message)
+		}
+	}
 }
 
 func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverrides) error {
@@ -15024,6 +15279,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Cron(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/team":
+		if err := a.Team(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/plugin", "/plugins", "/marketplace":
 		if err := a.Marketplace(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -20815,7 +21074,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "skills", "state", "status", "statusline",
-		"stash", "stickers", "stats", "system-prompt", "templates", "terminal-setup", "theme",
+		"stash", "stickers", "stats", "system-prompt", "team", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
 		return true
@@ -21202,6 +21461,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s tasks|bashes list|status|stop|restart|logs|watch ID
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
+  %s team list|create|get|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set

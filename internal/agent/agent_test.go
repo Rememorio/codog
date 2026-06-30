@@ -6610,6 +6610,61 @@ func TestCronCommandAndSlash(t *testing.T) {
 	require.Empty(t, empty.Entries)
 }
 
+func TestTeamCommandAndSlash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 5\n"), 0o755))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:     config.Config{ConfigHome: configHome},
+		Workspace:  workspace,
+		Executable: script,
+		Out:        &out,
+		Err:        &errOut,
+	}
+
+	require.NoError(t, app.Team([]string{"create", "reviewers", "--task", "auth=check auth", "--task", "check tests", "--json"}))
+	var created teamCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &created))
+	require.Equal(t, "team", created.Kind)
+	require.Equal(t, "create", created.Action)
+	require.NotNil(t, created.Team)
+	require.Equal(t, "reviewers", created.Team.Name)
+	require.Len(t, created.Team.Tasks, 2)
+	require.Len(t, created.Tasks, 2)
+	out.Reset()
+
+	require.NoError(t, app.Team([]string{"list", "--json"}))
+	var listed teamCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listed))
+	require.Equal(t, 1, listed.Count)
+	require.Equal(t, created.Team.ID, listed.Teams[0].ID)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/team list --json", &session.Session{ID: "session-1"}))
+	require.Contains(t, out.String(), `"kind": "team"`)
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.NoError(t, app.Team([]string{"get", created.Team.ID, "--json"}))
+	var fetched teamCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &fetched))
+	require.Equal(t, created.Team.ID, fetched.Team.ID)
+	out.Reset()
+
+	require.NoError(t, app.Team([]string{"delete", created.Team.ID, "--json"}))
+	var deleted teamCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleted))
+	require.Equal(t, "delete", deleted.Action)
+	require.Equal(t, "deleted", deleted.Team.Status)
+	require.Len(t, deleted.StoppedTasks, 2)
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)
