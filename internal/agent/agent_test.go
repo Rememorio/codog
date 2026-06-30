@@ -382,6 +382,7 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 func TestSystemPromptAndToolDetailsSlashCommands(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Use the project style."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("debug notes\n"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -402,6 +403,19 @@ func TestSystemPromptAndToolDetailsSlashCommands(t *testing.T) {
 	require.Contains(t, out.String(), "Name             bash")
 	require.Contains(t, out.String(), "Permission       danger-full-access")
 	require.Contains(t, out.String(), `"command"`)
+	out.Reset()
+
+	require.NoError(t, app.DebugToolCall(context.Background(), []string{"read_file", `{"path":"notes.txt"}`, "--json"}, config.FlagOverrides{SessionID: "session"}))
+	require.Contains(t, out.String(), `"kind": "debug_tool_call"`)
+	require.Contains(t, out.String(), `"tool": "read_file"`)
+	require.Contains(t, out.String(), `"success": true`)
+	require.Contains(t, out.String(), "debug notes")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), `/debug-tool-call read_file {"path": "notes.txt"}`, sess))
+	require.Contains(t, out.String(), "Tool Call")
+	require.Contains(t, out.String(), "Tool             read_file")
+	require.Contains(t, out.String(), "debug notes")
 	require.Empty(t, errOut.String())
 }
 

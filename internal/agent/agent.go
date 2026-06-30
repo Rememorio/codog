@@ -414,6 +414,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Mobile(append([]string{command}, rest...), overrides)
 	case "ide":
 		return app.IDE(rest)
+	case "debug-tool-call":
+		return app.DebugToolCall(ctx, rest, overrides)
 	case "updater":
 		return app.Updater(ctx, rest)
 	case "upgrade":
@@ -8945,6 +8947,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		fmt.Fprintln(a.Out, a.systemPrompt())
 	case "/tool-details":
 		a.handleToolDetailsSlash(fields[1:])
+	case "/debug-tool-call":
+		if err := a.DebugToolCall(ctx, fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/permissions":
 		a.handlePermissionsSlash(fields[1:])
 	case "/allowed-tools":
@@ -9430,6 +9436,143 @@ func renderToolInfo(out io.Writer, info tools.ToolInfo) {
 	data, _ := json.MarshalIndent(info.InputSchema, "  ", "  ")
 	fmt.Fprintln(out, "  Input schema")
 	fmt.Fprintln(out, string(data))
+}
+
+type debugToolCallRequest struct {
+	Tool      string
+	Input     json.RawMessage
+	Format    string
+	SessionID string
+}
+
+type debugToolCallReport struct {
+	Kind       string           `json:"kind"`
+	Tool       string           `json:"tool"`
+	Permission tools.Permission `json:"permission"`
+	Success    bool             `json:"success"`
+	DurationMS int64            `json:"duration_ms"`
+	Output     string           `json:"output,omitempty"`
+	Error      string           `json:"error,omitempty"`
+}
+
+func (a *App) DebugToolCall(ctx context.Context, args []string, overrides config.FlagOverrides) error {
+	req, err := parseDebugToolCallArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if a.Tools == nil {
+		return errors.New("tool registry is not initialized")
+	}
+	info, ok := a.Tools.Info(req.Tool)
+	if !ok && !a.mcpToolsLoaded && len(a.Config.MCPServers) > 0 {
+		if err := a.RegisterMCPTools(ctx); err != nil {
+			return err
+		}
+		info, ok = a.Tools.Info(req.Tool)
+	}
+	if !ok {
+		return fmt.Errorf("unknown tool %q", req.Tool)
+	}
+	start := time.Now()
+	output, execErr := a.Tools.Execute(ctx, req.Tool, req.Input, a.prompter(req.SessionID))
+	report := debugToolCallReport{
+		Kind:       "debug_tool_call",
+		Tool:       info.Name,
+		Permission: info.Permission,
+		Success:    execErr == nil,
+		DurationMS: time.Since(start).Milliseconds(),
+		Output:     output,
+	}
+	if execErr != nil {
+		report.Error = execErr.Error()
+	}
+	a.auditToolUse(req.SessionID)(runloop.ToolCall{
+		Name:    info.Name,
+		Input:   string(req.Input),
+		Output:  output,
+		IsError: execErr != nil,
+	})
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderDebugToolCallReport(a.Out, report)
+	return nil
+}
+
+func parseDebugToolCallArgs(args []string, overrides config.FlagOverrides) (debugToolCallRequest, error) {
+	req := debugToolCallRequest{Format: "text", SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID)}
+	inputParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("debug-tool-call output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("debug-tool-call session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("debug-tool-call resume session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case strings.HasPrefix(arg, "-") && req.Tool == "":
+			return req, fmt.Errorf("unknown debug-tool-call flag %q", arg)
+		default:
+			if req.Tool == "" {
+				req.Tool = arg
+				continue
+			}
+			inputParts = append(inputParts, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "debug-tool-call"); err != nil {
+		return req, err
+	}
+	if strings.TrimSpace(req.Tool) == "" {
+		return req, errors.New("usage: codog debug-tool-call TOOL JSON")
+	}
+	input := strings.TrimSpace(strings.Join(inputParts, " "))
+	if input == "" {
+		return req, errors.New("usage: codog debug-tool-call TOOL JSON")
+	}
+	if !json.Valid([]byte(input)) {
+		return req, errors.New("debug-tool-call input must be valid JSON")
+	}
+	req.Input = json.RawMessage(input)
+	return req, nil
+}
+
+func renderDebugToolCallReport(out io.Writer, report debugToolCallReport) {
+	fmt.Fprintln(out, "Tool Call")
+	fmt.Fprintf(out, "  Tool             %s\n", report.Tool)
+	fmt.Fprintf(out, "  Permission       %s\n", report.Permission)
+	fmt.Fprintf(out, "  Success          %t\n", report.Success)
+	fmt.Fprintf(out, "  Duration         %dms\n", report.DurationMS)
+	if report.Error != "" {
+		fmt.Fprintf(out, "  Error            %s\n", report.Error)
+	}
+	if report.Output != "" {
+		fmt.Fprintln(out, "Output:")
+		fmt.Fprintln(out, report.Output)
+	}
 }
 
 func (a *App) Permissions(args []string) error {
@@ -12542,6 +12685,7 @@ Usage:
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
   %s bootstrap-plan [--json|--output-format text|json]
   %s system-prompt [--json|--output-format text|json]
+  %s debug-tool-call TOOL JSON [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s reload-plugins [--json|--output-format text|json]
@@ -12577,7 +12721,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
