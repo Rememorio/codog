@@ -1622,6 +1622,37 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestResetLimitsCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"test","rate_limit":{"max_retries":4,"initial_backoff_ms":250}}`), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			RateLimit:  config.RateLimitConfig{MaxRetries: 4, InitialBackoffMS: 250},
+		},
+		Out: &out,
+		Err: &errOut,
+	}
+
+	require.NoError(t, app.ResetLimits([]string{"--path", configPath, "--json"}))
+	require.Contains(t, out.String(), `"kind": "reset_limits"`)
+	require.Contains(t, out.String(), `"max_retries": 4`)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "rate_limit")
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rate_limit":{"max_retries":3}}`), 0o644))
+	app.Config.RateLimit = config.RateLimitConfig{MaxRetries: 3}
+	require.True(t, app.handleSlash(context.Background(), "/reset-limits --path "+configPath, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Reset Limits")
+	require.Contains(t, out.String(), "Previous retries 3")
+	require.Empty(t, errOut.String())
+}
+
 func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -312,6 +312,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ExtraUsage(rest)
 	case "rate-limit-options":
 		return app.RateLimitOptions(rest)
+	case "reset-limits":
+		return app.ResetLimits(rest)
 	case "plan":
 		return app.Plan(rest)
 	case "ultraplan":
@@ -11522,6 +11524,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RateLimitOptions(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/reset-limits":
+		if err := a.ResetLimits(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/plan", "/ultraplan":
 		if err := a.Plan(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -15325,6 +15331,22 @@ type rateLimitOptionsReport struct {
 	RetryableStatuses []int  `json:"retryable_statuses"`
 }
 
+type resetLimitsRequest struct {
+	Format string
+	Target string
+	Path   string
+}
+
+type resetLimitsReport struct {
+	Kind     string                 `json:"kind"`
+	Action   string                 `json:"action"`
+	Status   string                 `json:"status"`
+	Path     string                 `json:"path"`
+	Target   string                 `json:"target,omitempty"`
+	Previous rateLimitOptionsReport `json:"previous"`
+	Current  rateLimitOptionsReport `json:"current"`
+}
+
 func (a *App) RateLimitOptions(args []string) error {
 	format, err := parseSimpleOutputFormat("rate-limit-options", args)
 	if err != nil {
@@ -15338,6 +15360,87 @@ func (a *App) RateLimitOptions(args []string) error {
 	}
 	renderRateLimitOptionsReport(a.Out, report)
 	return nil
+}
+
+func (a *App) ResetLimits(args []string) error {
+	req, err := parseResetLimitsArgs(args)
+	if err != nil {
+		return err
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	if _, err := config.UnsetFileValue(path, "rate_limit"); err != nil {
+		return err
+	}
+	previous := buildRateLimitOptionsReport(a.Config.RateLimit)
+	a.Config.RateLimit = config.RateLimitConfig{}
+	report := resetLimitsReport{
+		Kind:     "reset_limits",
+		Action:   "reset",
+		Status:   "ok",
+		Path:     path,
+		Target:   req.Target,
+		Previous: previous,
+		Current:  buildRateLimitOptionsReport(a.Config.RateLimit),
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderResetLimitsReport(a.Out, report)
+	return nil
+}
+
+func parseResetLimitsArgs(args []string) (resetLimitsRequest, error) {
+	req := resetLimitsRequest{Format: "text", Target: "user"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reset-limits output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reset-limits target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reset-limits config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			return req, fmt.Errorf("unknown reset-limits argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "reset-limits"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderResetLimitsReport(out io.Writer, report resetLimitsReport) {
+	fmt.Fprintln(out, "Reset Limits")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	fmt.Fprintf(out, "  Previous retries %d\n", report.Previous.MaxRetries)
+	fmt.Fprintf(out, "  Current retries  %d\n", report.Current.MaxRetries)
 }
 
 func buildRateLimitOptionsReport(cfg config.RateLimitConfig) rateLimitOptionsReport {
@@ -15715,6 +15818,7 @@ Usage:
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
+  %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]

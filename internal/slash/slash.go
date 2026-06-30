@@ -64,6 +64,7 @@ func Specs() []Spec {
 		{Name: "/thinkback-play", Usage: "/thinkback-play [--year YYYY]", Description: "Alias for /think-back."},
 		{Name: "/extra-usage", Usage: "/extra-usage [--admin|--personal] [--no-open]", Description: "Open or show Claude usage settings for extra usage."},
 		{Name: "/rate-limit-options", Usage: "/rate-limit-options", Description: "Show provider retry and backoff settings."},
+		{Name: "/reset-limits", Usage: "/reset-limits [--target user|project|local]", Description: "Reset local provider retry and backoff overrides."},
 		{Name: "/plan", Usage: "/plan [TEXT|show|exit|clear]", Description: "Enter or inspect read-only planning mode."},
 		{Name: "/ultraplan", Usage: "/ultraplan [TEXT]", Description: "Alias for local plan mode."},
 		{Name: "/exit-plan", Usage: "/exit-plan", Description: "Leave read-only planning mode."},

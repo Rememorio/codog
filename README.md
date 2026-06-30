@@ -62,7 +62,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/init-verifiers`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/pr_comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/pr_comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/reset-limits`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/node`, `/python`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/terminalSetup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/bridge`, `/bridge-kick`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/oauth-refresh`, `/logout`, `/copy`, `/stats`, `/backfill-sessions`.
@@ -203,7 +203,7 @@ Claude Code source.
   using the same message compaction logic as long prompt turns.
 - `codog rate-limit-options` reports provider retry/backoff settings; Anthropic
   streaming retries transport errors, 429, and selected 5xx responses according
-  to `rate_limit`.
+  to `rate_limit`. `codog reset-limits` removes local `rate_limit` overrides.
 - Request context is automatically compacted for long sessions.
 - `codog mock-server :8089` starts a deterministic Anthropic-compatible
   streaming server for harness tests.
