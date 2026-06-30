@@ -83,12 +83,18 @@ func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 }
 
 func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
-	out, err := BashTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"command":"printf ok; exit 7"}`))
+	workspace := t.TempDir()
+	out, err := BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"printf ok; exit 7"}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "ok"`)
 	require.Contains(t, out, `"exit_code": 7`)
 	require.Contains(t, out, `"duration_ms":`)
 	require.Contains(t, out, `"error": "exit status 7"`)
+
+	out, err = BashTool{Workspace: workspace, SandboxStrategy: "detect"}.Execute(context.Background(), []byte(`{"command":"printf bypass","timeout":1000,"dangerouslyDisableSandbox":true}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "bypass"`)
+	require.NotContains(t, out, `"sandbox":`)
 }
 
 func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {

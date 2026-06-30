@@ -1391,9 +1391,14 @@ func (BashTool) Definition() anthropic.ToolDefinition {
 			"type": "object",
 			"properties": map[string]any{
 				"command":           map[string]any{"type": "string"},
+				"timeout":           map[string]any{"type": "integer", "minimum": 1},
 				"timeout_ms":        map[string]any{"type": "integer", "minimum": 1},
 				"description":       map[string]any{"type": "string"},
 				"run_in_background": map[string]any{"type": "boolean"},
+				"dangerouslyDisableSandbox": map[string]any{
+					"type":        "boolean",
+					"description": "Claude-compatible per-call sandbox bypass.",
+				},
 			},
 			"required":             []string{"command"},
 			"additionalProperties": false,
@@ -1405,9 +1410,11 @@ func (BashTool) Permission() Permission { return PermissionDanger }
 
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Command         string `json:"command"`
-		TimeoutMS       int    `json:"timeout_ms"`
-		RunInBackground bool   `json:"run_in_background"`
+		Command                   string `json:"command"`
+		Timeout                   int    `json:"timeout"`
+		TimeoutMS                 int    `json:"timeout_ms"`
+		RunInBackground           bool   `json:"run_in_background"`
+		DangerouslyDisableSandbox bool   `json:"dangerouslyDisableSandbox"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -1415,7 +1422,11 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	if strings.TrimSpace(payload.Command) == "" {
 		return "", errors.New("command is required")
 	}
-	command, args, effectiveSandbox, err := sandbox.ShellCommand(t.SandboxStrategy, t.Workspace, payload.Command)
+	strategy := t.SandboxStrategy
+	if payload.DangerouslyDisableSandbox {
+		strategy = "off"
+	}
+	command, args, effectiveSandbox, err := sandbox.ShellCommand(strategy, t.Workspace, payload.Command)
 	if err != nil {
 		return "", err
 	}
@@ -1430,7 +1441,11 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		}
 		return pretty(result), nil
 	}
-	timeout := time.Duration(payload.TimeoutMS) * time.Millisecond
+	timeoutMS := payload.TimeoutMS
+	if timeoutMS <= 0 {
+		timeoutMS = payload.Timeout
+	}
+	timeout := time.Duration(timeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
