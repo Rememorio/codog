@@ -265,6 +265,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Effort(rest)
 	case "fast":
 		return app.Fast(rest)
+	case "voice":
+		return app.Voice(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
 	case "keybindings":
@@ -4029,6 +4031,228 @@ func renderFastReport(out io.Writer, report fastReport) {
 
 func fastModeEnabled(value *bool) bool {
 	return value != nil && *value
+}
+
+type voiceRequest struct {
+	Action  string
+	Format  string
+	Target  string
+	Path    string
+	Command string
+}
+
+type voiceReport struct {
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	Enabled           bool   `json:"enabled"`
+	CommandConfigured bool   `json:"command_configured"`
+	CommandAvailable  bool   `json:"command_available"`
+	Command           string `json:"command,omitempty"`
+	Path              string `json:"path,omitempty"`
+	Message           string `json:"message,omitempty"`
+}
+
+func (a *App) Voice(args []string) error {
+	req, err := parseVoiceArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+	case "on", "off", "toggle":
+		next := req.Action == "on"
+		if req.Action == "toggle" {
+			next = !boolPtrEnabled(a.Config.VoiceEnabled)
+		}
+		if next && !voiceCommandAvailable(a.Config.VoiceCommand) {
+			return errors.New("voice mode requires a configured executable command; run `codog voice set-command COMMAND`")
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "voice_enabled", next); err != nil {
+			return err
+		}
+		a.Config.VoiceEnabled = &next
+		req.Path = path
+	case "set-command":
+		command := strings.TrimSpace(req.Command)
+		if command == "" {
+			return errors.New("voice command is required")
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "voice_command", command); err != nil {
+			return err
+		}
+		a.Config.VoiceCommand = command
+		req.Path = path
+	case "clear-command":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "voice_command"); err != nil {
+			return err
+		}
+		disabled := false
+		if _, err := config.SetFileValue(path, "voice_enabled", disabled); err != nil {
+			return err
+		}
+		a.Config.VoiceCommand = ""
+		a.Config.VoiceEnabled = &disabled
+		req.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		for _, key := range []string{"voice_enabled", "voice_command"} {
+			if _, err := config.UnsetFileValue(path, key); err != nil {
+				return err
+			}
+		}
+		a.Config.VoiceEnabled = nil
+		a.Config.VoiceCommand = ""
+		req.Path = path
+	default:
+		return fmt.Errorf("unknown voice command %q", req.Action)
+	}
+	report := voiceReport{
+		Kind:              "voice",
+		Action:            req.Action,
+		Status:            "ok",
+		Enabled:           boolPtrEnabled(a.Config.VoiceEnabled),
+		CommandConfigured: strings.TrimSpace(a.Config.VoiceCommand) != "",
+		CommandAvailable:  voiceCommandAvailable(a.Config.VoiceCommand),
+		Command:           strings.TrimSpace(a.Config.VoiceCommand),
+		Path:              req.Path,
+	}
+	if !report.CommandConfigured {
+		report.Message = "Voice mode needs an external STT command before it can be enabled."
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderVoiceReport(a.Out, report)
+	return nil
+}
+
+func parseVoiceArgs(args []string) (voiceRequest, error) {
+	req := voiceRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("voice output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("voice target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("voice config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--command":
+			index++
+			if index >= len(args) {
+				return req, errors.New("voice command is required")
+			}
+			req.Command = args[index]
+		case strings.HasPrefix(arg, "--command="):
+			req.Command = strings.TrimPrefix(arg, "--command=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "voice"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "true":
+		req.Action = "on"
+	case "off", "disable", "disabled", "false":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	case "set-command", "command":
+		req.Action = "set-command"
+		if req.Command == "" && len(rest) > 1 {
+			req.Command = strings.Join(rest[1:], " ")
+		}
+	case "clear-command":
+		req.Action = "clear-command"
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+	default:
+		return req, fmt.Errorf("unknown voice command %q", rest[0])
+	}
+	if req.Action != "set-command" && len(rest) > 1 {
+		return req, fmt.Errorf("unexpected voice argument %q", rest[1])
+	}
+	return req, nil
+}
+
+func renderVoiceReport(out io.Writer, report voiceReport) {
+	fmt.Fprintln(out, "Voice")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Command          %t\n", report.CommandConfigured)
+	fmt.Fprintf(out, "  Available        %t\n", report.CommandAvailable)
+	if report.Command != "" {
+		fmt.Fprintf(out, "  Command value    %s\n", report.Command)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func boolPtrEnabled(value *bool) bool {
+	return value != nil && *value
+}
+
+func voiceCommandAvailable(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	name := fields[0]
+	if filepath.IsAbs(name) {
+		info, err := os.Stat(name)
+		return err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0
+	}
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 type vimRequest struct {
@@ -8115,6 +8339,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Fast(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/voice":
+		if err := a.Voice(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/privacy-settings":
 		if err := a.PrivacySettings(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -11720,6 +11948,7 @@ Usage:
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] voice [status|set-command|on|off|toggle|clear] [--command COMMAND] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [--json|--output-format text|json]
   %s [flags] cost --resume latest
@@ -11772,8 +12001,8 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

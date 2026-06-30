@@ -102,6 +102,7 @@ func Specs() []Spec {
 		{Name: "/vim", Usage: "/vim [on|off|toggle|status]", Description: "Toggle vim keybinding preference."},
 		{Name: "/effort", Usage: "/effort [auto|low|medium|high|clear]", Description: "Show or change reasoning effort preference."},
 		{Name: "/fast", Usage: "/fast [on|off|toggle|status|clear]", Description: "Show or change fast mode preference."},
+		{Name: "/voice", Usage: "/voice [status|set-command|on|off|clear]", Description: "Show or change external voice mode settings."},
 		{Name: "/privacy-settings", Usage: "/privacy-settings [show|set KEY on|off|clear KEY]", Description: "Show or change local privacy preferences."},
 		{Name: "/keybindings", Usage: "/keybindings", Description: "Show REPL and TUI keyboard shortcuts."},
 		{Name: "/skills", Usage: "/skills [list|show|invoke|install|uninstall]", Description: "List, show, install, remove, or render Markdown skills."},
@@ -231,6 +232,8 @@ func AllCandidates(options CandidateOptions) []string {
 		"/theme dark",
 		"/unfocus --all",
 		"/vim toggle",
+		"/voice status",
+		"/voice set-command ",
 	} {
 		add(candidate)
 	}

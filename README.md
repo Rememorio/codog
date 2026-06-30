@@ -60,7 +60,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -141,10 +141,10 @@ Claude Code source.
 - `codog model`, `codog max-tokens`, `codog max-turns`,
   `codog permissions`, and `codog allowed-tools` expose the matching runtime
   slash controls as scriptable CLI commands.
-- `/theme`, `/color`, `/vim`, `/effort`, `/fast`, and `/privacy-settings`
+- `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, and `/privacy-settings`
   persist local interface, reasoning, runtime, and privacy preferences such as
-  terminal theme, vim keybinding mode, reasoning effort, fast mode, and prompt
-  history recording.
+  terminal theme, vim keybinding mode, reasoning effort, fast mode, external
+  voice command enablement, and prompt history recording.
 - `/keybindings` and `codog keybindings` show the active editor mode plus REPL,
   TUI, vim, and slash-command keyboard shortcuts.
 - `codog mcp list|serve|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt`
@@ -226,6 +226,8 @@ Claude Code source.
 - `codog remote-env show|set|clear` and `/remote-env` manage default remote
   session enablement, auth-token presence, and lease duration without printing
   token values.
+- `codog voice set-command COMMAND` stores an external speech-to-text command;
+  `codog voice on` enables voice mode only when that command is executable.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and
   one-shot prompt runs update for local observability.
 - `codog version [--json]` reports version, Go runtime, target, build metadata,

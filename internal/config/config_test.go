@@ -127,6 +127,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 		"editorMode": "vim",
 		"reasoning_effort": "high",
 		"fast_mode": true,
+		"voice_enabled": true,
+		"voice_command": "cat",
 		"privacy_settings": {
 			"telemetry_enabled": true,
 			"crash_reports_enabled": false,
@@ -141,6 +143,9 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "high", cfg.ReasoningEffort)
 	require.NotNil(t, cfg.FastMode)
 	require.True(t, *cfg.FastMode)
+	require.NotNil(t, cfg.VoiceEnabled)
+	require.True(t, *cfg.VoiceEnabled)
+	require.Equal(t, "cat", cfg.VoiceCommand)
 	require.NotNil(t, cfg.Privacy.TelemetryEnabled)
 	require.True(t, *cfg.Privacy.TelemetryEnabled)
 	require.NotNil(t, cfg.Privacy.CrashReportsEnabled)
@@ -152,6 +157,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	t.Setenv("CODOG_EDITOR_MODE", "default")
 	t.Setenv("CODOG_REASONING_EFFORT", "low")
 	t.Setenv("CODOG_FAST_MODE", "false")
+	t.Setenv("CODOG_VOICE_ENABLED", "false")
+	t.Setenv("CODOG_VOICE_COMMAND", "printf")
 	t.Setenv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED", "true")
 	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
@@ -160,6 +167,9 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "low", cfg.ReasoningEffort)
 	require.NotNil(t, cfg.FastMode)
 	require.False(t, *cfg.FastMode)
+	require.NotNil(t, cfg.VoiceEnabled)
+	require.False(t, *cfg.VoiceEnabled)
+	require.Equal(t, "printf", cfg.VoiceCommand)
 	require.NotNil(t, cfg.Privacy.PromptHistoryEnabled)
 	require.True(t, *cfg.Privacy.PromptHistoryEnabled)
 }

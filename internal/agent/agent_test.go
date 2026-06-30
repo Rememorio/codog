@@ -1493,6 +1493,26 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"fast_mode": true`)
 	out.Reset()
 
+	voiceCommand := os.Args[0]
+	require.NoError(t, app.Voice([]string{"set-command", voiceCommand, "--json"}))
+	require.Contains(t, out.String(), `"kind": "voice"`)
+	require.Contains(t, out.String(), `"command_configured": true`)
+	require.Contains(t, out.String(), `"command_available": true`)
+	require.Equal(t, voiceCommand, app.Config.VoiceCommand)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"voice_command"`)
+	out.Reset()
+
+	require.NoError(t, app.Voice([]string{"on", "--json"}))
+	require.Contains(t, out.String(), `"enabled": true`)
+	require.NotNil(t, app.Config.VoiceEnabled)
+	require.True(t, *app.Config.VoiceEnabled)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"voice_enabled": true`)
+	out.Reset()
+
 	require.NoError(t, app.PrivacySettings([]string{"set", "prompt-history", "off", "--json"}))
 	require.Contains(t, out.String(), `"kind": "privacy_settings"`)
 	require.Contains(t, out.String(), `"prompt_history_enabled": false`)
@@ -1521,6 +1541,16 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"fast_mode"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/voice clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Voice")
+	require.Nil(t, app.Config.VoiceEnabled)
+	require.Equal(t, "", app.Config.VoiceCommand)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"voice_enabled"`)
+	require.NotContains(t, string(data), `"voice_command"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/privacy-settings enable prompt-history", &session.Session{ID: "session"}))
