@@ -413,7 +413,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AgentsWithOverrides(rest, overrides)
 	case "reload-plugins":
 		return app.ReloadPlugins(rest)
-	case "marketplace":
+	case "plugin", "plugins", "marketplace":
 		return app.Marketplace(rest)
 	case "login":
 		return app.Login(rest)
@@ -2890,6 +2890,11 @@ func (a *App) ListPlugins() error {
 }
 
 func (a *App) Marketplace(args []string) error {
+	var err error
+	args, _, err = stripJSONOnlyOutputFormat("marketplace", args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 || args[0] == "list" {
 		return a.ListPlugins()
 	}
@@ -17860,8 +17865,8 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
-		"mcp", "memory", "mobile", "output-style", "passes", "pr", "pr-comments", "prompt",
-		"privacy-settings", "project", "rate-limit-options", "reload-plugins",
+		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
+		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "skills", "state", "status", "statusline",
 		"stickers", "stats", "system-prompt", "templates", "terminal-setup", "theme",
@@ -17984,7 +17989,7 @@ Usage:
   %s tasks|bashes list|status|stop|restart|logs|watch ID
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
-  %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
+  %s plugin|plugins|marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp

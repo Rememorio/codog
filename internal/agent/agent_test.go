@@ -246,6 +246,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello", "--output-format", "json"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "plugins"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "plugins", command)
+	require.Equal(t, []string{"--output-format", "json"}, rest)
 }
 
 func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
@@ -5662,6 +5667,22 @@ func oauthRevocationTestServer(t *testing.T) (*httptest.Server, *[]string) {
 		}
 	}))
 	return server, &revoked
+}
+
+func TestMarketplaceAcceptsOutputFormatFlags(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","name":"Demo"}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out}
+	require.NoError(t, app.Marketplace([]string{"--output-format", "json", "list"}))
+	require.Contains(t, out.String(), `"id": "demo"`)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"list", "--json"}))
+	require.Contains(t, out.String(), `"name": "Demo"`)
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
