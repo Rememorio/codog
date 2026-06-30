@@ -185,6 +185,45 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	}, cfg.Hooks.PostToolUseCommands)
 }
 
+func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	require.NoError(t, os.Chdir(workspace))
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.MkdirAll(configHome, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{
+		"hooks": {
+			"pre_tool_use": ["echo user-pre"],
+			"post_tool_use": ["echo user-post"]
+		}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
+		"hooks": {
+			"PreToolUse": [
+				{"matcher": "Write", "command": "echo project-pre"}
+			]
+		}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{
+		"hooks": {
+			"pre_tool_use": ["echo user-pre", "echo local-pre"]
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"echo user-pre", "echo project-pre", "echo local-pre"}, cfg.Hooks.PreToolUse)
+	require.Equal(t, []string{"echo user-post"}, cfg.Hooks.PostToolUse)
+	require.Equal(t, []HookCommand{
+		{Command: "echo user-pre"},
+		{Matcher: "Write", Command: "echo project-pre"},
+		{Command: "echo local-pre"},
+	}, cfg.Hooks.PreToolUseCommands)
+}
+
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

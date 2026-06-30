@@ -513,18 +513,7 @@ func merge(dst *Config, src Config) {
 	if len(src.EnabledSkills) != 0 {
 		dst.EnabledSkills = append([]string(nil), src.EnabledSkills...)
 	}
-	if len(src.Hooks.PreToolUse) != 0 {
-		dst.Hooks.PreToolUse = append([]string(nil), src.Hooks.PreToolUse...)
-	}
-	if len(src.Hooks.PostToolUse) != 0 {
-		dst.Hooks.PostToolUse = append([]string(nil), src.Hooks.PostToolUse...)
-	}
-	if len(src.Hooks.PreToolUseCommands) != 0 {
-		dst.Hooks.PreToolUseCommands = append([]HookCommand(nil), src.Hooks.PreToolUseCommands...)
-	}
-	if len(src.Hooks.PostToolUseCommands) != 0 {
-		dst.Hooks.PostToolUseCommands = append([]HookCommand(nil), src.Hooks.PostToolUseCommands...)
-	}
+	mergeHookConfig(&dst.Hooks, src.Hooks)
 	if len(src.MCPServers) != 0 {
 		if dst.MCPServers == nil {
 			dst.MCPServers = map[string]MCPServerConfig{}
@@ -602,6 +591,53 @@ func mergeRateLimitConfig(dst *RateLimitConfig, src RateLimitConfig) {
 	if src.MaxBackoffMS != 0 {
 		dst.MaxBackoffMS = src.MaxBackoffMS
 	}
+}
+
+func mergeHookConfig(dst *HookConfig, src HookConfig) {
+	if len(src.PreToolUseCommands) != 0 {
+		dst.PreToolUseCommands = mergeHookCommands(dst.PreToolUseCommands, src.PreToolUseCommands)
+	} else if len(src.PreToolUse) != 0 {
+		dst.PreToolUseCommands = mergeHookCommands(dst.PreToolUseCommands, hookCommandsFromStrings(src.PreToolUse))
+	}
+	if len(src.PostToolUseCommands) != 0 {
+		dst.PostToolUseCommands = mergeHookCommands(dst.PostToolUseCommands, src.PostToolUseCommands)
+	} else if len(src.PostToolUse) != 0 {
+		dst.PostToolUseCommands = mergeHookCommands(dst.PostToolUseCommands, hookCommandsFromStrings(src.PostToolUse))
+	}
+	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
+	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
+}
+
+func hookCommandsFromStrings(values []string) []HookCommand {
+	commands := make([]HookCommand, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			commands = append(commands, HookCommand{Command: value})
+		}
+	}
+	return commands
+}
+
+func mergeHookCommands(dst []HookCommand, src []HookCommand) []HookCommand {
+	out := compactHookCommands(dst)
+	seen := map[string]struct{}{}
+	for _, command := range out {
+		seen[hookCommandKey(command)] = struct{}{}
+	}
+	for _, command := range compactHookCommands(src) {
+		key := hookCommandKey(command)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, command)
+	}
+	return out
+}
+
+func hookCommandKey(command HookCommand) string {
+	return strings.ToLower(strings.TrimSpace(command.Matcher)) + "\x00" + strings.TrimSpace(command.Command)
 }
 
 func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
