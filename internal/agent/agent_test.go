@@ -1814,6 +1814,31 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Contains(t, out.String(), "Trusted editor   none")
 }
 
+func TestBriefCommandUsesToolPayloadAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("brief attachment\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Brief([]string{"Build", "passed", "--status", "proactive", "--attach", "notes.md", "--json"}))
+	require.Contains(t, out.String(), `"message": "Build passed"`)
+	require.Contains(t, out.String(), `"status": "proactive"`)
+	require.Contains(t, out.String(), `"is_image": false`)
+
+	out.Reset()
+	require.True(t, app.handleSlash(context.Background(), "/brief Ready for review", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Ready for review")
+	require.Contains(t, out.String(), "status: normal")
+	require.Empty(t, errOut.String())
+}
+
 func TestAgentMCPHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_AGENT_MCP_HELPER") != "1" {
 		return

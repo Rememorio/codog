@@ -56,7 +56,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session` and `codog sessions` manage saved sessions with list, show,
   exists, fork, switch, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -139,6 +139,9 @@ Claude Code source.
   `CODOG_HOOK_EVENT`, `CODOG_HOOK_TOOL`, `CODOG_HOOK_INPUT`,
   `CODOG_HOOK_OUTPUT`, and `CODOG_HOOK_IS_ERROR`; run reports include stdout,
   stderr, duration, success, and exit code.
+- `codog brief MESSAGE [--status normal|proactive] [--attach PATH]` and
+  `/brief` expose the built-in `brief` tool as a human command with optional
+  workspace-scoped attachment metadata.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
   Both commands use recorded provider token usage when available, including

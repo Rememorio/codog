@@ -303,6 +303,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OAuth(rest)
 	case "providers":
 		return app.Providers(rest)
+	case "brief":
+		return app.Brief(rest)
 	case "status":
 		return app.Status(rest, overrides)
 	case "context":
@@ -582,6 +584,133 @@ func renderIDEReport(out io.Writer, report ideReport) {
 			fmt.Fprintf(out, "-%d", selection.EndLine)
 		}
 		fmt.Fprintln(out)
+	}
+}
+
+type briefRequest struct {
+	Message     string
+	Status      string
+	Attachments []string
+	Format      string
+}
+
+type briefReport struct {
+	Message     string                  `json:"message"`
+	Status      string                  `json:"status"`
+	Attachments []briefAttachmentReport `json:"attachments"`
+	SentAt      string                  `json:"sent_at"`
+}
+
+type briefAttachmentReport struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	IsImage bool   `json:"is_image"`
+}
+
+func (a *App) Brief(args []string) error {
+	req, err := parseBriefArgs(args)
+	if err != nil {
+		return err
+	}
+	input, err := json.Marshal(map[string]any{
+		"message":     req.Message,
+		"status":      req.Status,
+		"attachments": req.Attachments,
+	})
+	if err != nil {
+		return err
+	}
+	result, err := (tools.BriefTool{
+		Workspace:      a.Workspace,
+		AdditionalDirs: a.Config.AdditionalDirs,
+	}).Execute(context.Background(), input)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		fmt.Fprintln(a.Out, result)
+		return nil
+	}
+	var report briefReport
+	if err := json.Unmarshal([]byte(result), &report); err != nil {
+		return err
+	}
+	renderBriefReport(a.Out, report)
+	return nil
+}
+
+func parseBriefArgs(args []string) (briefRequest, error) {
+	req := briefRequest{Status: "normal", Format: "text"}
+	var message []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("brief output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--status":
+			index++
+			if index >= len(args) {
+				return req, errors.New("brief status is required")
+			}
+			req.Status = args[index]
+		case strings.HasPrefix(arg, "--status="):
+			req.Status = strings.TrimPrefix(arg, "--status=")
+		case arg == "--attach" || arg == "--attachment" || arg == "--file":
+			index++
+			if index >= len(args) {
+				return req, errors.New("brief attachment path is required")
+			}
+			req.Attachments = append(req.Attachments, args[index])
+		case strings.HasPrefix(arg, "--attach="):
+			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--attach="))
+		case strings.HasPrefix(arg, "--attachment="):
+			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--attachment="))
+		case strings.HasPrefix(arg, "--file="):
+			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--file="))
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown brief flag %q", arg)
+		default:
+			message = append(message, arg)
+		}
+	}
+	req.Message = strings.TrimSpace(strings.Join(message, " "))
+	if req.Message == "" {
+		return req, errors.New("usage: codog brief MESSAGE [--status normal|proactive] [--attach PATH] [--json]")
+	}
+	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
+	switch req.Status {
+	case "normal", "proactive":
+	default:
+		return req, fmt.Errorf("unknown brief status %q", req.Status)
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown brief output format %q", req.Format)
+	}
+	return req, nil
+}
+
+func renderBriefReport(out io.Writer, report briefReport) {
+	fmt.Fprintln(out, report.Message)
+	fmt.Fprintf(out, "status: %s\n", report.Status)
+	if len(report.Attachments) > 0 {
+		fmt.Fprintln(out, "attachments:")
+		for _, attachment := range report.Attachments {
+			image := ""
+			if attachment.IsImage {
+				image = " image"
+			}
+			fmt.Fprintf(out, "- %s (%d bytes%s)\n", attachment.Path, attachment.Size, image)
+		}
 	}
 }
 
@@ -5964,6 +6093,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.MCP(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/brief":
+		if err := a.Brief(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/ide":
 		if err := a.IDE(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -8971,6 +9104,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
+  %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
@@ -9036,7 +9170,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
