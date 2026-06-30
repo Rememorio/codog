@@ -260,6 +260,30 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NotContains(t, out, "a.go")
 }
 
+func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "root.go"), []byte("needle root\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "main.go"), []byte("needle main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "pkg", "nested.go"), []byte("needle nested\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "pkg", "notes.md"), []byte("needle docs\n"), 0o644))
+
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "Glob", []byte(`{"pattern":"**/*.go"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "root.go")
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "main.go")))
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "nested.go")))
+	require.NotContains(t, out, "notes.md")
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","glob":"src/**/*.go","output_mode":"files_with_matches"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "main.go")))
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "nested.go")))
+	require.NotContains(t, out, "root.go")
+	require.NotContains(t, out, "notes.md")
+}
+
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "a.txt")

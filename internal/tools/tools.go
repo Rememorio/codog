@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -2377,8 +2378,8 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			return nil
 		}
 		if payload.Glob != "" {
-			ok, _ := filepath.Match(payload.Glob, filepath.Base(path))
-			if !ok {
+			rel, _ := filepath.Rel(root, path)
+			if !globPatternMatches(payload.Glob, rel, filepath.Base(path)) {
 				return nil
 			}
 		}
@@ -2567,11 +2568,7 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
-		ok, _ := filepath.Match(payload.Pattern, rel)
-		if !ok {
-			ok, _ = filepath.Match(payload.Pattern, filepath.Base(path))
-		}
-		if ok {
+		if globPatternMatches(payload.Pattern, rel, filepath.Base(path)) {
 			files = append(files, displayPath(t.Workspace, path))
 		}
 		return nil
@@ -2581,6 +2578,62 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	sort.Strings(files)
 	return pretty(map[string]any{"files": files, "truncated": len(files) >= limit}), nil
+}
+
+func globPatternMatches(pattern string, rel string, base string) bool {
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	rel = filepath.ToSlash(strings.TrimPrefix(rel, "./"))
+	base = filepath.ToSlash(base)
+	if pattern == "" {
+		return true
+	}
+	if ok, _ := pathMatch(pattern, rel); ok {
+		return true
+	}
+	if !strings.Contains(pattern, "/") {
+		if ok, _ := pathMatch(pattern, base); ok {
+			return true
+		}
+	}
+	re, err := regexp.Compile(globPatternRegexp(pattern))
+	if err != nil {
+		return false
+	}
+	return re.MatchString(rel)
+}
+
+func pathMatch(pattern string, value string) (bool, error) {
+	pattern = filepath.ToSlash(pattern)
+	value = filepath.ToSlash(value)
+	return path.Match(pattern, value)
+}
+
+func globPatternRegexp(pattern string) string {
+	var builder strings.Builder
+	builder.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				i++
+				if i+1 < len(pattern) && pattern[i+1] == '/' {
+					i++
+					builder.WriteString("(?:.*/)?")
+				} else {
+					builder.WriteString(".*")
+				}
+				continue
+			}
+			builder.WriteString("[^/]*")
+		case '?':
+			builder.WriteString("[^/]")
+		default:
+			builder.WriteString(regexp.QuoteMeta(string(ch)))
+		}
+	}
+	builder.WriteString("$")
+	return builder.String()
 }
 
 type LSTool struct {
