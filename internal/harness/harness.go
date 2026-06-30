@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -17,40 +18,50 @@ import (
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/usage"
 )
 
 type Report struct {
-	OK           bool             `json:"ok"`
-	Passed       int              `json:"passed"`
-	Total        int              `json:"total"`
-	Workspace    string           `json:"workspace"`
-	Output       string           `json:"output"`
-	Iterations   int              `json:"iterations"`
-	MessageCount int              `json:"message_count"`
-	ToolCalls    int              `json:"tool_calls"`
-	Scenarios    []ScenarioReport `json:"scenarios"`
+	OK            bool             `json:"ok"`
+	Passed        int              `json:"passed"`
+	Total         int              `json:"total"`
+	Workspace     string           `json:"workspace"`
+	Output        string           `json:"output"`
+	Iterations    int              `json:"iterations"`
+	MessageCount  int              `json:"message_count"`
+	ToolCalls     int              `json:"tool_calls"`
+	UsageSummary  usage.Summary    `json:"usage_summary"`
+	EstimatedCost float64          `json:"estimated_cost"`
+	Scenarios     []ScenarioReport `json:"scenarios"`
 }
 
 type ScenarioReport struct {
-	Name         string `json:"name"`
-	OK           bool   `json:"ok"`
-	Workspace    string `json:"workspace"`
-	Output       string `json:"output,omitempty"`
-	Iterations   int    `json:"iterations,omitempty"`
-	MessageCount int    `json:"message_count,omitempty"`
-	ToolCalls    int    `json:"tool_calls,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Name                 string        `json:"name"`
+	OK                   bool          `json:"ok"`
+	Workspace            string        `json:"workspace"`
+	Output               string        `json:"output,omitempty"`
+	Iterations           int           `json:"iterations,omitempty"`
+	MessageCount         int           `json:"message_count,omitempty"`
+	ToolCalls            int           `json:"tool_calls,omitempty"`
+	UsageSummary         usage.Summary `json:"usage_summary"`
+	EstimatedCost        float64       `json:"estimated_cost"`
+	RequestMessageCounts []int         `json:"request_message_counts,omitempty"`
+	Compactions          int           `json:"compactions,omitempty"`
+	Error                string        `json:"error,omitempty"`
 }
 
 type scenario struct {
-	name       string
-	turns      []mockanthropic.Turn
-	prompt     string
-	promptIn   string
-	permission tools.Permission
-	plugins    bool
-	setup      func(string) error
-	verify     func(string, runloop.TurnResult, string) error
+	name                string
+	turns               []mockanthropic.Turn
+	prompt              string
+	promptIn            string
+	previous            []anthropic.Message
+	autoCompactMessages int
+	permission          tools.Permission
+	plugins             bool
+	setup               func(string) error
+	verify              func(string, runloop.TurnResult, string) error
+	verifyRequests      func([]anthropic.Request) error
 }
 
 func Run(ctx context.Context) (Report, error) {
@@ -293,6 +304,59 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		{
+			name: "auto_compact_triggered",
+			turns: []mockanthropic.Turn{
+				{Text: "compact harness ok"},
+			},
+			prompt:              "trigger compact",
+			autoCompactMessages: 1,
+			previous: []anthropic.Message{
+				anthropic.TextMessage("user", "one"),
+				anthropic.TextMessage("assistant", "two"),
+				anthropic.TextMessage("user", "three"),
+			},
+			verify: func(_ string, _ runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "compact harness ok") {
+					return fmt.Errorf("missing compact final response")
+				}
+				return nil
+			},
+			verifyRequests: func(requests []anthropic.Request) error {
+				if len(requests) != 1 {
+					return fmt.Errorf("expected 1 compacted request, got %d", len(requests))
+				}
+				if len(requests[0].Messages) != 2 {
+					return fmt.Errorf("expected compacted request to keep 2 messages, got %d", len(requests[0].Messages))
+				}
+				if len(requests[0].Messages[0].Content) == 0 ||
+					!strings.Contains(requests[0].Messages[0].Content[0].Text, "auto-compacted") {
+					return fmt.Errorf("missing auto-compaction summary message")
+				}
+				return nil
+			},
+		},
+		{
+			name:   "token_cost_reporting",
+			turns:  []mockanthropic.Turn{{Text: "token cost harness ok"}},
+			prompt: "report token cost",
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "token cost harness ok") {
+					return fmt.Errorf("missing token cost final response")
+				}
+				summary := usageSummaryForResult(result)
+				if summary.Source != "actual" {
+					return fmt.Errorf("expected actual token usage source, got %q", summary.Source)
+				}
+				if summary.TotalTokens == 0 {
+					return fmt.Errorf("missing provider token counts")
+				}
+				if summary.EstimatedUSD <= 0 {
+					return fmt.Errorf("missing estimated cost")
+				}
+				return nil
+			},
+		},
 	}
 
 	report := Report{Total: len(scenarios)}
@@ -307,6 +371,8 @@ func Run(ctx context.Context) (Report, error) {
 		report.Iterations = scenarioReport.Iterations
 		report.MessageCount = scenarioReport.MessageCount
 		report.ToolCalls = scenarioReport.ToolCalls
+		report.UsageSummary = addUsageSummary(report.UsageSummary, scenarioReport.UsageSummary)
+		report.EstimatedCost = report.UsageSummary.EstimatedUSD
 	}
 	report.OK = report.Passed == report.Total
 	return report, nil
@@ -324,13 +390,27 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		}
 	}
 
-	server := httptest.NewServer(mockanthropic.Server{Turns: item.turns}.Handler())
+	var requests []anthropic.Request
+	mockServer := mockanthropic.Server{
+		Turns: item.turns,
+		OnRequest: func(raw json.RawMessage) {
+			var request anthropic.Request
+			if err := json.Unmarshal(raw, &request); err == nil {
+				requests = append(requests, request)
+			}
+		},
+	}
+	server := httptest.NewServer(mockServer.Handler())
 	defer server.Close()
 	var out bytes.Buffer
 	client := anthropic.New(server.URL, "mock-key", "")
 	permission := item.permission
 	if permission == "" {
 		permission = tools.PermissionWorkspace
+	}
+	autoCompactMessages := item.autoCompactMessages
+	if autoCompactMessages == 0 {
+		autoCompactMessages = 20
 	}
 	registry, err := registryForScenario(workspace, item)
 	if err != nil {
@@ -341,22 +421,26 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			Model:               "mock",
 			MaxTokens:           128,
 			MaxTurns:            3,
-			AutoCompactMessages: 20,
+			AutoCompactMessages: autoCompactMessages,
 		},
 		Client:    client,
 		Tools:     registry,
 		Prompter:  &tools.Prompter{Mode: permission, In: strings.NewReader(item.promptIn), Err: io.Discard},
 		Workspace: workspace,
 		Out:       &out,
-	}.Run(ctx, nil, item.prompt)
+	}.Run(ctx, item.previous, item.prompt)
 	scenarioReport := ScenarioReport{
-		Name:         item.name,
-		Workspace:    workspace,
-		Output:       out.String(),
-		Iterations:   result.Iterations,
-		MessageCount: len(result.Messages),
-		ToolCalls:    len(result.ToolCalls),
+		Name:                 item.name,
+		Workspace:            workspace,
+		Output:               out.String(),
+		Iterations:           result.Iterations,
+		MessageCount:         len(result.Messages),
+		ToolCalls:            len(result.ToolCalls),
+		UsageSummary:         usageSummaryForResult(result),
+		RequestMessageCounts: requestMessageCounts(requests),
+		Compactions:          compactRequestCount(requests),
 	}
+	scenarioReport.EstimatedCost = scenarioReport.UsageSummary.EstimatedUSD
 	if err != nil {
 		scenarioReport.Error = err.Error()
 		return scenarioReport
@@ -367,8 +451,65 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			return scenarioReport
 		}
 	}
+	if item.verifyRequests != nil {
+		if err := item.verifyRequests(requests); err != nil {
+			scenarioReport.Error = err.Error()
+			return scenarioReport
+		}
+	}
 	scenarioReport.OK = true
 	return scenarioReport
+}
+
+func usageSummaryForResult(result runloop.TurnResult) usage.Summary {
+	values := make([]anthropic.Usage, 0, len(result.MessageUsages))
+	for _, messageUsage := range result.MessageUsages {
+		values = append(values, messageUsage.Usage)
+	}
+	if summary, ok := usage.ActualSummary(values, "mock"); ok {
+		return summary
+	}
+	return usage.Estimate(result.Messages, "mock")
+}
+
+func addUsageSummary(total, next usage.Summary) usage.Summary {
+	total.InputTokens += next.InputTokens
+	total.OutputTokens += next.OutputTokens
+	total.CacheCreationInputTokens += next.CacheCreationInputTokens
+	total.CacheReadInputTokens += next.CacheReadInputTokens
+	total.TotalTokens += next.TotalTokens
+	total.EstimatedUSD = math.Round((total.EstimatedUSD+next.EstimatedUSD)*100000) / 100000
+	switch {
+	case total.Source == "":
+		total.Source = next.Source
+	case next.Source != "" && total.Source != next.Source:
+		total.Source = "mixed"
+	}
+	return total
+}
+
+func requestMessageCounts(requests []anthropic.Request) []int {
+	if len(requests) == 0 {
+		return nil
+	}
+	counts := make([]int, 0, len(requests))
+	for _, request := range requests {
+		counts = append(counts, len(request.Messages))
+	}
+	return counts
+}
+
+func compactRequestCount(requests []anthropic.Request) int {
+	count := 0
+	for _, request := range requests {
+		if len(request.Messages) == 0 || len(request.Messages[0].Content) == 0 {
+			continue
+		}
+		if strings.Contains(request.Messages[0].Content[0].Text, "auto-compacted") {
+			count++
+		}
+	}
+	return count
 }
 
 func registryForScenario(workspace string, item scenario) (*tools.Registry, error) {

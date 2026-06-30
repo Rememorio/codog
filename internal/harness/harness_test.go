@@ -12,7 +12,10 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
-	require.GreaterOrEqual(t, report.Total, 6)
+	require.GreaterOrEqual(t, report.Total, 12)
+	require.Equal(t, "actual", report.UsageSummary.Source)
+	require.Greater(t, report.UsageSummary.TotalTokens, 0)
+	require.Greater(t, report.EstimatedCost, 0.0)
 
 	readFile := findScenario(t, report, "read_file_roundtrip")
 	require.Contains(t, readFile.Output, "codog harness ok")
@@ -43,6 +46,19 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
 	require.Contains(t, pluginTool.Output, "plugin harness ok")
+
+	autoCompact := findScenario(t, report, "auto_compact_triggered")
+	require.True(t, autoCompact.OK)
+	require.Equal(t, 1, autoCompact.Compactions)
+	require.Equal(t, []int{2}, autoCompact.RequestMessageCounts)
+	require.Contains(t, autoCompact.Output, "compact harness ok")
+
+	tokenCost := findScenario(t, report, "token_cost_reporting")
+	require.True(t, tokenCost.OK)
+	require.Equal(t, "actual", tokenCost.UsageSummary.Source)
+	require.Greater(t, tokenCost.UsageSummary.TotalTokens, 0)
+	require.Greater(t, tokenCost.EstimatedCost, 0.0)
+	require.Contains(t, tokenCost.Output, "token cost harness ok")
 }
 
 func findScenario(t *testing.T, report Report, name string) ScenarioReport {

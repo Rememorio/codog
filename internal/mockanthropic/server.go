@@ -3,14 +3,16 @@ package mockanthropic
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
 )
 
 type Server struct {
-	Text  string
-	Turns []Turn
+	Text      string
+	Turns     []Turn
+	OnRequest func(json.RawMessage)
 
 	mu      sync.Mutex
 	request int
@@ -39,6 +41,10 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+	if s.OnRequest != nil {
+		data, _ := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
+		s.OnRequest(json.RawMessage(append([]byte(nil), data...)))
 	}
 	w.Header().Set("content-type", "text/event-stream")
 	turn := s.nextTurn()
