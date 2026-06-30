@@ -2405,6 +2405,35 @@ func TestInitCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Init")
 }
 
+func TestInitVerifiersCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/app\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.InitVerifiers([]string{"--dry-run", "--json"}))
+	require.Contains(t, out.String(), `"kind": "init_verifiers"`)
+	require.Contains(t, out.String(), `"dry_run": true`)
+	require.NoFileExists(t, filepath.Join(workspace, ".claude", "skills", "verifier-cli", "SKILL.md"))
+	out.Reset()
+
+	require.NoError(t, app.InitVerifiers(nil))
+	require.Contains(t, out.String(), "Verifier Init")
+	require.FileExists(t, filepath.Join(workspace, ".claude", "skills", "verifier-cli", "SKILL.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/init-verifiers --target codog --force", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Verifier Init")
+	require.FileExists(t, filepath.Join(workspace, ".codog", "skills", "verifier-cli", "SKILL.md"))
+	require.Empty(t, errOut.String())
+}
+
 func TestStateCommandAndREPLWritesWorkerState(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

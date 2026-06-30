@@ -61,7 +61,7 @@ Claude Code source.
   current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/init-verifiers`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
@@ -195,6 +195,9 @@ Claude Code source.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
 - `codog init [--json]` initializes `.codog/instructions.md`, `.codog.json`,
   and `.gitignore` entries for project-local setup.
+- `codog init-verifiers [--dry-run] [--force]` and `/init-verifiers` scan
+  top-level project areas and generate verifier skill templates under
+  `.claude/skills` or `.codog/skills`.
 - Project memory files (`AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`,
   `CLAW.md`, and `.codog/instructions.md`) are loaded from the git root to the
   workspace and injected into the system prompt.

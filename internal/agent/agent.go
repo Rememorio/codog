@@ -70,6 +70,7 @@ import (
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
+	"github.com/Rememorio/codog/internal/verifiers"
 	"github.com/Rememorio/codog/internal/versioninfo"
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/Rememorio/codog/internal/workspaceops"
@@ -388,6 +389,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Bughunter(rest)
 	case "init":
 		return app.Init(rest)
+	case "init-verifiers":
+		return app.InitVerifiers(rest)
 	case "state":
 		return app.State(rest)
 	case "memory":
@@ -3989,6 +3992,86 @@ func renderHeapDumpReport(out io.Writer, report heapDumpReport) {
 
 func (a *App) Init(args []string) error {
 	return initProject(a.Out, a.Workspace, args)
+}
+
+type initVerifiersRequest struct {
+	Format    string
+	Target    string
+	Workspace string
+	Force     bool
+	DryRun    bool
+}
+
+func (a *App) InitVerifiers(args []string) error {
+	req, err := parseInitVerifiersArgs(args)
+	if err != nil {
+		return err
+	}
+	workspace := a.Workspace
+	if req.Workspace != "" {
+		workspace = a.resolveOutputPath(req.Workspace)
+	}
+	report, err := verifiers.Initialize(verifiers.Options{
+		Workspace: workspace,
+		Target:    req.Target,
+		Force:     req.Force,
+		DryRun:    req.DryRun,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, verifiers.RenderText(report))
+	return nil
+}
+
+func parseInitVerifiersArgs(args []string) (initVerifiersRequest, error) {
+	req := initVerifiersRequest{Format: "text", Target: "claude"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("init-verifiers output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("init-verifiers target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--workspace":
+			index++
+			if index >= len(args) {
+				return req, errors.New("init-verifiers workspace is required")
+			}
+			req.Workspace = args[index]
+		case strings.HasPrefix(arg, "--workspace="):
+			req.Workspace = strings.TrimPrefix(arg, "--workspace=")
+		case arg == "--force":
+			req.Force = true
+		case arg == "--dry-run":
+			req.DryRun = true
+		default:
+			return req, fmt.Errorf("unknown init-verifiers option %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "init-verifiers"); err != nil {
+		return req, err
+	}
+	return req, nil
 }
 
 func (a *App) State(args []string) error {
@@ -10826,6 +10909,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Init(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/init-verifiers":
+		if err := a.InitVerifiers(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/state":
 		if err := a.State(nil); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -14908,6 +14995,7 @@ Usage:
   %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
+  %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
   %s [flags] memory [list|show|add|path|ensure|edit] [ARGS...] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]
@@ -14999,7 +15087,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
