@@ -4309,7 +4309,13 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
-		report, runErr := hooks.Runner{Config: a.Config.Hooks, Workspace: a.Workspace, Timeout: timeout}.RunHooks(ctx, hookList, payload)
+		runner := hooks.Runner{
+			Config:       a.Config.Hooks,
+			Workspace:    a.Workspace,
+			Timeout:      timeout,
+			PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
+		}
+		report, runErr := runner.RunHooks(ctx, hookList, payload)
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -10635,14 +10641,15 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 	a.writeWorkerState(mode, "running", sess, "")
 	effectiveConfig := a.effectiveConfig()
 	runner := runloop.Runner{
-		Config:    effectiveConfig,
-		Client:    a.Client,
-		Tools:     a.Tools,
-		Prompter:  a.prompter(sess.ID),
-		Workspace: a.Workspace,
-		Out:       a.Out,
-		System:    a.systemPrompt(),
-		OnToolUse: a.auditToolUse(sess.ID),
+		Config:           effectiveConfig,
+		Client:           a.Client,
+		Tools:            a.Tools,
+		Prompter:         a.prompter(sess.ID),
+		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
+		Workspace:        a.Workspace,
+		Out:              a.Out,
+		System:           a.systemPrompt(),
+		OnToolUse:        a.auditToolUse(sess.ID),
 	}
 	result, err := runner.Run(ctx, sess.Messages, modelInput)
 	if err != nil {
@@ -10665,6 +10672,46 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 	sess.Messages = result.Messages
 	a.writeWorkerState(mode, successStatus, sess, "")
 	return nil
+}
+
+func (a *App) hookPromptRunner(cfg config.Config) hooks.PromptRunner {
+	return func(ctx context.Context, req hooks.PromptRequest) (string, error) {
+		if a.Client == nil {
+			return "", errors.New("missing model client")
+		}
+		prompt := strings.TrimSpace(req.Prompt)
+		if prompt == "" {
+			return "", errors.New("hook prompt is empty")
+		}
+		model := firstNonEmpty(strings.TrimSpace(req.Model), cfg.Model, config.DefaultModel)
+		maxTokens := cfg.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 1024
+		}
+		var streamed strings.Builder
+		assistant, err := a.Client.Stream(ctx, anthropic.Request{
+			Model:     model,
+			MaxTokens: maxTokens,
+			System:    "You are executing a Codog hook. Evaluate the hook prompt and return a concise result for the calling process.",
+			Messages:  []anthropic.Message{anthropic.TextMessage("user", prompt)},
+		}, func(delta string) {
+			streamed.WriteString(delta)
+		})
+		if err != nil {
+			return "", err
+		}
+		output := strings.TrimSpace(streamed.String())
+		if output != "" {
+			return output, nil
+		}
+		var builder strings.Builder
+		for _, block := range assistant.Blocks {
+			if block.Type == "text" {
+				builder.WriteString(block.Text)
+			}
+		}
+		return strings.TrimSpace(builder.String()), nil
+	}
 }
 
 func usageByMessageIndex(usages []runloop.MessageUsage) map[int]anthropic.Usage {

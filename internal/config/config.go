@@ -29,6 +29,7 @@ type HookCommand struct {
 	Command        string
 	URL            string
 	Prompt         string
+	Model          string
 	If             string
 	Shell          string
 	TimeoutSeconds float64
@@ -504,6 +505,9 @@ func parseHookEntry(data json.RawMessage, inheritedMatcher string) ([]HookComman
 	if rawPrompt, ok := object["prompt"]; ok {
 		hook.Prompt, _ = parseJSONString(rawPrompt)
 	}
+	if rawModel, ok := object["model"]; ok {
+		hook.Model, _ = parseJSONString(rawModel)
+	}
 	if rawHooks, ok := object["hooks"]; ok {
 		return parseHookCommandListWithMatcher(rawHooks, matcher)
 	}
@@ -532,6 +536,7 @@ func compactHookCommands(values []HookCommand) []HookCommand {
 		value.Command = strings.TrimSpace(value.Command)
 		value.URL = strings.TrimSpace(value.URL)
 		value.Prompt = strings.TrimSpace(value.Prompt)
+		value.Model = strings.TrimSpace(value.Model)
 		value.If = strings.TrimSpace(value.If)
 		value.Shell = strings.TrimSpace(value.Shell)
 		value.StatusMessage = strings.TrimSpace(value.StatusMessage)

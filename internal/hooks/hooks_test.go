@@ -93,6 +93,29 @@ func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	require.Equal(t, "done", gotPayload.Output)
 }
 
+func TestRunHooksExecutesPromptHookWithRenderedArguments(t *testing.T) {
+	var got PromptRequest
+	report, err := Runner{
+		Workspace: t.TempDir(),
+		PromptRunner: func(_ context.Context, req PromptRequest) (string, error) {
+			got = req
+			return "verified", nil
+		},
+	}.RunHooks(context.Background(), []config.HookCommand{{
+		Type:   "prompt",
+		Prompt: "verify $ARGUMENTS",
+		Model:  "fast-model",
+	}}, Payload{Event: "pre_tool_use", Tool: "write_file", Input: `{"path":"notes.txt"}`})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, "prompt", report.Results[0].Type)
+	require.Equal(t, "verified", report.Results[0].Stdout)
+	require.Equal(t, "fast-model", got.Model)
+	require.Contains(t, got.Prompt, "verify")
+	require.Contains(t, got.Prompt, "notes.txt")
+	require.Equal(t, "write_file", got.Payload.Tool)
+}
+
 func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	cfg := config.HookConfig{
 		PreToolUse: []string{"legacy"},

@@ -162,10 +162,12 @@ Claude Code source.
 - Hook commands can run before and after tool use; `codog hooks list|run`
   inspects and test-runs configured hooks with the same JSON payload shape used
   by model tool calls. Hook config accepts simple string arrays and the
-  documented Claude Code object format with nested command and HTTP hooks,
+  documented Claude Code object format with nested command, HTTP, prompt, and
+  agent hooks,
   matcher filtering, `if` conditions, per-hook timeouts, shell selection, and
-  allow-listed header environment interpolation. Hook commands receive the
-  payload on stdin plus
+  allow-listed header environment interpolation. Prompt and agent hooks run
+  through the configured model with `$ARGUMENTS` expanded to the hook payload.
+  Hook commands receive the payload on stdin plus
   `CODOG_HOOK_EVENT`, `CODOG_HOOK_TOOL`, `CODOG_HOOK_INPUT`,
   `CODOG_HOOK_OUTPUT`, and `CODOG_HOOK_IS_ERROR`; run reports include stdout,
   stderr, HTTP status, duration, success, and exit code.

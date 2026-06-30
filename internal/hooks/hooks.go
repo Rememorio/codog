@@ -20,9 +20,19 @@ import (
 )
 
 type Runner struct {
-	Config    config.HookConfig
-	Workspace string
-	Timeout   time.Duration
+	Config       config.HookConfig
+	Workspace    string
+	Timeout      time.Duration
+	PromptRunner PromptRunner
+}
+
+type PromptRunner func(context.Context, PromptRequest) (string, error)
+
+type PromptRequest struct {
+	Type    string  `json:"type"`
+	Prompt  string  `json:"prompt"`
+	Model   string  `json:"model,omitempty"`
+	Payload Payload `json:"payload"`
 }
 
 type Payload struct {
@@ -152,14 +162,7 @@ func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, payload
 	case "http":
 		return r.runHTTPHook(ctx, hook, data, defaultTimeout)
 	case "prompt", "agent":
-		result := CommandResult{
-			Type:     hookType(hook),
-			Command:  config.HookCommandDisplay(hook),
-			ExitCode: -1,
-			Success:  false,
-			Error:    "hook type is parsed but not executable in this Go runner",
-		}
-		return result, fmt.Errorf("%s hook execution is not supported", hookType(hook))
+		return r.runPromptHook(ctx, hook, payload, data, defaultTimeout)
 	default:
 		result := CommandResult{
 			Type:     hookType(hook),
@@ -170,6 +173,47 @@ func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, payload
 		}
 		return result, fmt.Errorf("unknown hook type %q", hookType(hook))
 	}
+}
+
+func (r Runner) runPromptHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+	typ := hookType(hook)
+	prompt := strings.ReplaceAll(strings.TrimSpace(hook.Prompt), "$ARGUMENTS", string(data))
+	result := CommandResult{
+		Command:  config.HookCommandDisplay(hook),
+		Type:     typ,
+		ExitCode: 0,
+		Success:  true,
+	}
+	if r.PromptRunner == nil {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = "prompt runner is not configured"
+		return result, fmt.Errorf("%s hook requires a prompt runner", typ)
+	}
+	hookCtx, cancel := context.WithTimeout(ctx, hookTimeout(hook, defaultTimeout))
+	defer cancel()
+	started := time.Now()
+	output, err := r.PromptRunner(hookCtx, PromptRequest{
+		Type:    typ,
+		Prompt:  prompt,
+		Model:   strings.TrimSpace(hook.Model),
+		Payload: payload,
+	})
+	result.DurationMS = time.Since(started).Milliseconds()
+	result.Stdout = output
+	if hookCtx.Err() == context.DeadlineExceeded {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = "timeout"
+		return result, fmt.Errorf("hook timed out: %s", config.HookCommandDisplay(hook))
+	}
+	if err != nil {
+		result.Success = false
+		result.ExitCode = -1
+		result.Error = err.Error()
+		return result, fmt.Errorf("%s hook failed: %w", typ, err)
+	}
+	return result, nil
 }
 
 func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {

@@ -40,15 +40,16 @@ type MessageUsage struct {
 }
 
 type Runner struct {
-	Config    config.Config
-	Client    ModelClient
-	Tools     *tools.Registry
-	Prompter  *tools.Prompter
-	Hooks     hooks.Runner
-	Workspace string
-	Out       io.Writer
-	System    string
-	OnToolUse func(ToolCall)
+	Config           config.Config
+	Client           ModelClient
+	Tools            *tools.Registry
+	Prompter         *tools.Prompter
+	Hooks            hooks.Runner
+	HookPromptRunner hooks.PromptRunner
+	Workspace        string
+	Out              io.Writer
+	System           string
+	OnToolUse        func(ToolCall)
 }
 
 func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input string) (TurnResult, error) {
@@ -72,6 +73,9 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	}
 	if hookRunner.Workspace == "" {
 		hookRunner.Workspace = r.Workspace
+	}
+	if hookRunner.PromptRunner == nil {
+		hookRunner.PromptRunner = r.HookPromptRunner
 	}
 	var toolCalls []ToolCall
 	var messageUsages []MessageUsage
