@@ -143,6 +143,12 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		SessionStartCommands: []config.HookCommand{
 			{Type: "command", Command: "session"},
 		},
+		SessionEndCommands: []config.HookCommand{
+			{Type: "command", Command: "session-end"},
+		},
+		SetupCommands: []config.HookCommand{
+			{Type: "command", Command: "setup"},
+		},
 		StopCommands: []config.HookCommand{
 			{Type: "command", Command: "stop"},
 		},
@@ -172,6 +178,8 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"permission-denied"}, CommandsForEvent(cfg, "permission-denied", "bash"))
 	require.Equal(t, []string{"prompt"}, CommandsForEvent(cfg, "user-prompt-submit", ""))
 	require.Equal(t, []string{"session"}, CommandsForEvent(cfg, "session-start", ""))
+	require.Equal(t, []string{"session-end"}, CommandsForEvent(cfg, "session-end", ""))
+	require.Equal(t, []string{"setup"}, CommandsForEvent(cfg, "setup", ""))
 	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))
 	require.Equal(t, []string{"compact"}, CommandsForEvent(cfg, "pre-compact", ""))
 	require.Equal(t, []string{"post-compact"}, CommandsForEvent(cfg, "post-compact", ""))

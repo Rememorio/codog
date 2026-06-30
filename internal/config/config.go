@@ -24,6 +24,8 @@ type HookConfig struct {
 	PermissionDenied           []string      `json:"permission_denied,omitempty"`
 	UserPromptSubmit           []string      `json:"user_prompt_submit,omitempty"`
 	SessionStart               []string      `json:"session_start,omitempty"`
+	SessionEnd                 []string      `json:"session_end,omitempty"`
+	Setup                      []string      `json:"setup,omitempty"`
 	Stop                       []string      `json:"stop,omitempty"`
 	PreCompact                 []string      `json:"pre_compact,omitempty"`
 	PostCompact                []string      `json:"post_compact,omitempty"`
@@ -37,6 +39,8 @@ type HookConfig struct {
 	PermissionDeniedCommands   []HookCommand `json:"-"`
 	UserPromptSubmitCommands   []HookCommand `json:"-"`
 	SessionStartCommands       []HookCommand `json:"-"`
+	SessionEndCommands         []HookCommand `json:"-"`
+	SetupCommands              []HookCommand `json:"-"`
 	StopCommands               []HookCommand `json:"-"`
 	PreCompactCommands         []HookCommand `json:"-"`
 	PostCompactCommands        []HookCommand `json:"-"`
@@ -96,6 +100,14 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	sessionEnd, err := hookCommands(raw, "session_end", "SessionEnd")
+	if err != nil {
+		return err
+	}
+	setup, err := hookCommands(raw, "setup", "Setup")
+	if err != nil {
+		return err
+	}
 	stop, err := hookCommands(raw, "stop", "Stop")
 	if err != nil {
 		return err
@@ -127,6 +139,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.PermissionDeniedCommands = permissionDenied
 	h.UserPromptSubmitCommands = userPromptSubmit
 	h.SessionStartCommands = sessionStart
+	h.SessionEndCommands = sessionEnd
+	h.SetupCommands = setup
 	h.StopCommands = stop
 	h.PreCompactCommands = preCompact
 	h.PostCompactCommands = postCompact
@@ -140,6 +154,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.PermissionDenied = hookCommandStrings(permissionDenied)
 	h.UserPromptSubmit = hookCommandStrings(userPromptSubmit)
 	h.SessionStart = hookCommandStrings(sessionStart)
+	h.SessionEnd = hookCommandStrings(sessionEnd)
+	h.Setup = hookCommandStrings(setup)
 	h.Stop = hookCommandStrings(stop)
 	h.PreCompact = hookCommandStrings(preCompact)
 	h.PostCompact = hookCommandStrings(postCompact)
@@ -954,6 +970,16 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.SessionStart) != 0 {
 		dst.SessionStartCommands = mergeHookCommands(dst.SessionStartCommands, hookCommandsFromStrings(src.SessionStart))
 	}
+	if len(src.SessionEndCommands) != 0 {
+		dst.SessionEndCommands = mergeHookCommands(dst.SessionEndCommands, src.SessionEndCommands)
+	} else if len(src.SessionEnd) != 0 {
+		dst.SessionEndCommands = mergeHookCommands(dst.SessionEndCommands, hookCommandsFromStrings(src.SessionEnd))
+	}
+	if len(src.SetupCommands) != 0 {
+		dst.SetupCommands = mergeHookCommands(dst.SetupCommands, src.SetupCommands)
+	} else if len(src.Setup) != 0 {
+		dst.SetupCommands = mergeHookCommands(dst.SetupCommands, hookCommandsFromStrings(src.Setup))
+	}
 	if len(src.StopCommands) != 0 {
 		dst.StopCommands = mergeHookCommands(dst.StopCommands, src.StopCommands)
 	} else if len(src.Stop) != 0 {
@@ -991,6 +1017,8 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.PermissionDenied = hookCommandStrings(dst.PermissionDeniedCommands)
 	dst.UserPromptSubmit = hookCommandStrings(dst.UserPromptSubmitCommands)
 	dst.SessionStart = hookCommandStrings(dst.SessionStartCommands)
+	dst.SessionEnd = hookCommandStrings(dst.SessionEndCommands)
+	dst.Setup = hookCommandStrings(dst.SetupCommands)
 	dst.Stop = hookCommandStrings(dst.StopCommands)
 	dst.PreCompact = hookCommandStrings(dst.PreCompactCommands)
 	dst.PostCompact = hookCommandStrings(dst.PostCompactCommands)

@@ -183,7 +183,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		return initProject(os.Stdout, workspace, rest)
+		return initProject(os.Stdout, workspace, rest, func(report projectinit.Report) error {
+			cfg, _, err := config.LoadForInspection(overrides)
+			if err != nil {
+				return nil
+			}
+			return runSetupHookPayload(ctx, hooks.Runner{Config: cfg.Hooks, Workspace: workspace}, workspace, "init", report.Status)
+		})
 	}
 	if command == "state" {
 		workspace, err := os.Getwd()
@@ -4185,7 +4191,9 @@ func renderHeapDumpReport(out io.Writer, report heapDumpReport) {
 }
 
 func (a *App) Init(args []string) error {
-	return initProject(a.Out, a.Workspace, args)
+	return initProject(a.Out, a.Workspace, args, func(report projectinit.Report) error {
+		return a.runSetupHook(context.Background(), "init", report.Status)
+	})
 }
 
 type initVerifiersRequest struct {
@@ -4470,6 +4478,8 @@ type hooksListReport struct {
 	PermissionDenied           []string             `json:"permission_denied"`
 	UserPromptSubmit           []string             `json:"user_prompt_submit"`
 	SessionStart               []string             `json:"session_start"`
+	SessionEnd                 []string             `json:"session_end"`
+	Setup                      []string             `json:"setup"`
 	Stop                       []string             `json:"stop"`
 	PreCompact                 []string             `json:"pre_compact"`
 	PostCompact                []string             `json:"post_compact"`
@@ -4483,6 +4493,8 @@ type hooksListReport struct {
 	PermissionDeniedCommands   []hookCommandSummary `json:"permission_denied_commands,omitempty"`
 	UserPromptSubmitCommands   []hookCommandSummary `json:"user_prompt_submit_commands,omitempty"`
 	SessionStartCommands       []hookCommandSummary `json:"session_start_commands,omitempty"`
+	SessionEndCommands         []hookCommandSummary `json:"session_end_commands,omitempty"`
+	SetupCommands              []hookCommandSummary `json:"setup_commands,omitempty"`
 	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
 	PreCompactCommands         []hookCommandSummary `json:"pre_compact_commands,omitempty"`
 	PostCompactCommands        []hookCommandSummary `json:"post_compact_commands,omitempty"`
@@ -4516,6 +4528,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			PermissionDenied:           append([]string(nil), a.Config.Hooks.PermissionDenied...),
 			UserPromptSubmit:           append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
 			SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
+			SessionEnd:                 append([]string(nil), a.Config.Hooks.SessionEnd...),
+			Setup:                      append([]string(nil), a.Config.Hooks.Setup...),
 			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
 			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
 			PostCompact:                append([]string(nil), a.Config.Hooks.PostCompact...),
@@ -4529,6 +4543,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			PermissionDeniedCommands:   hookCommandsForList(a.Config.Hooks.PermissionDeniedCommands, a.Config.Hooks.PermissionDenied),
 			UserPromptSubmitCommands:   hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
 			SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
+			SessionEndCommands:         hookCommandsForList(a.Config.Hooks.SessionEndCommands, a.Config.Hooks.SessionEnd),
+			SetupCommands:              hookCommandsForList(a.Config.Hooks.SetupCommands, a.Config.Hooks.Setup),
 			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
 			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
 			PostCompactCommands:        hookCommandsForList(a.Config.Hooks.PostCompactCommands, a.Config.Hooks.PostCompact),
@@ -4595,6 +4611,21 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TranscriptPath = ""
 			payload.LastAssistant = ""
 			payload.StopHookActive = false
+		} else if req.Event == "session_end" || req.Event == "setup" {
+			payload.Tool = ""
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.ToolName = ""
+			payload.ToolInput = nil
+			if req.Event == "setup" {
+				payload.Reason = ""
+			}
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4804,6 +4835,10 @@ func normalizeHookEvent(value string) (string, error) {
 		return "user_prompt_submit", nil
 	case "session", "sessionstart", "session_start", "session-start":
 		return "session_start", nil
+	case "session-end", "sessionend", "session_end":
+		return "session_end", nil
+	case "setup":
+		return "setup", nil
 	case "stop":
 		return "stop", nil
 	case "compact", "precompact", "pre_compact", "pre-compact":
@@ -4881,6 +4916,14 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Session start   %d\n", len(report.SessionStart))
 	for _, command := range report.SessionStartCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Session end     %d\n", len(report.SessionEnd))
+	for _, command := range report.SessionEndCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Setup           %d\n", len(report.Setup))
+	for _, command := range report.SetupCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  Stop             %d\n", len(report.Stop))
@@ -9419,7 +9462,7 @@ func acpLastAssistantText(messages []anthropic.Message) string {
 	return ""
 }
 
-func initProject(out io.Writer, workspace string, args []string) error {
+func initProject(out io.Writer, workspace string, args []string, setupHook func(projectinit.Report) error) error {
 	format, err := parseSimpleOutputFormat("init", args)
 	if err != nil {
 		return err
@@ -9427,6 +9470,11 @@ func initProject(out io.Writer, workspace string, args []string) error {
 	report, err := projectinit.Initialize(workspace)
 	if err != nil {
 		return err
+	}
+	if setupHook != nil {
+		if err := setupHook(report); err != nil {
+			return err
+		}
 	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -10194,6 +10242,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		MCPServerCount:             len(a.Config.MCPServers),
 		UserPromptSubmitHookCount:  len(a.Config.Hooks.UserPromptSubmit),
 		SessionStartHookCount:      len(a.Config.Hooks.SessionStart),
+		SessionEndHookCount:        len(a.Config.Hooks.SessionEnd),
+		SetupHookCount:             len(a.Config.Hooks.Setup),
 		PreHookCount:               len(a.Config.Hooks.PreToolUse),
 		PostHookCount:              len(a.Config.Hooks.PostToolUse),
 		PostFailureHookCount:       len(a.Config.Hooks.PostToolUseFailure),
@@ -10758,6 +10808,8 @@ func (a *App) Doctor(args []string) error {
 		PostToolUseFailure: a.Config.Hooks.PostToolUseFailure,
 		PermissionRequest:  a.Config.Hooks.PermissionRequest,
 		PermissionDenied:   a.Config.Hooks.PermissionDenied,
+		SessionEnd:         a.Config.Hooks.SessionEnd,
+		Setup:              a.Config.Hooks.Setup,
 		Stop:               a.Config.Hooks.Stop,
 		PreCompact:         a.Config.Hooks.PreCompact,
 		PostCompact:        a.Config.Hooks.PostCompact,
@@ -11560,8 +11612,22 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
 		return err
 	}
-	if err := a.runSessionTurn(ctx, "prompt", sess, input, "completed"); err != nil {
-		return err
+	runErr := a.runSessionTurn(ctx, "prompt", sess, input, "completed")
+	endReason := "completed"
+	if runErr != nil {
+		endReason = "error"
+	}
+	if endErr := a.runSessionEndHook(ctx, sess, endReason); endErr != nil {
+		if runErr != nil {
+			if a.Err != nil {
+				fmt.Fprintf(a.Err, "session end hook error: %v\n", endErr)
+			}
+			return runErr
+		}
+		return endErr
+	}
+	if runErr != nil {
+		return runErr
 	}
 	fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
 	return nil
@@ -11855,9 +11921,26 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 		return err
 	} else if ok {
 		defer rl.Close()
-		return a.replReadline(ctx, sess, rl)
+		return a.finishREPL(ctx, sess, a.replReadline(ctx, sess, rl))
 	}
-	return a.replScanner(ctx, sess)
+	return a.finishREPL(ctx, sess, a.replScanner(ctx, sess))
+}
+
+func (a *App) finishREPL(ctx context.Context, sess *session.Session, loopErr error) error {
+	reason := "exit"
+	if loopErr != nil {
+		reason = "error"
+	}
+	if err := a.runSessionEndHook(ctx, sess, reason); err != nil {
+		if loopErr != nil {
+			if a.Err != nil {
+				fmt.Fprintf(a.Err, "session end hook error: %v\n", err)
+			}
+			return loopErr
+		}
+		return err
+	}
+	return loopErr
 }
 
 func (a *App) replScanner(ctx context.Context, sess *session.Session) error {
@@ -12500,9 +12583,9 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/clear":
-		a.handleClearSlash(fields[1:], sess)
+		a.handleClearSlash(ctx, fields[1:], sess)
 	case "/resume":
-		a.handleResumeSlash(fields[1:], sess)
+		a.handleResumeSlash(ctx, fields[1:], sess)
 	case "/rewind":
 		a.handleRewindSlash(fields[1:], sess)
 	default:
@@ -12570,7 +12653,7 @@ func (a *App) handleCustomSlash(ctx context.Context, line string, sess *session.
 	return true
 }
 
-func (a *App) handleClearSlash(args []string, sess *session.Session) {
+func (a *App) handleClearSlash(ctx context.Context, args []string, sess *session.Session) {
 	for _, arg := range args {
 		if arg != "--confirm" {
 			fmt.Fprintln(a.Err, "usage: /clear [--confirm]")
@@ -12582,12 +12665,20 @@ func (a *App) handleClearSlash(args []string, sess *session.Session) {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
+	if err := a.runSessionEndHook(ctx, sess, "clear"); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if err := a.runSessionStartHook(ctx, next, "clear"); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
 	*sess = *next
 	a.writeWorkerState("repl", "idle", sess, "")
 	fmt.Fprintf(a.Err, "session cleared: %s\n", sess.ID)
 }
 
-func (a *App) handleResumeSlash(args []string, sess *session.Session) {
+func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *session.Session) {
 	id := "latest"
 	if len(args) > 0 {
 		id = args[0]
@@ -12598,6 +12689,14 @@ func (a *App) handleResumeSlash(args []string, sess *session.Session) {
 	}
 	next, err := a.Sessions.Open(id)
 	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if err := a.runSessionEndHook(ctx, sess, "resume"); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if err := a.runSessionStartHook(ctx, next, "resume"); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
@@ -16295,6 +16394,51 @@ func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, so
 	return a.lifecycleHookRunner().SessionStart(ctx, string(data))
 }
 
+func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reason string) error {
+	if sess == nil {
+		return nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "exit"
+	}
+	data, err := json.Marshal(map[string]string{
+		"reason":     reason,
+		"session_id": sess.ID,
+	})
+	if err != nil {
+		return err
+	}
+	return a.lifecycleHookRunner().SessionEnd(ctx, string(data), reason)
+}
+
+func (a *App) runSetupHook(ctx context.Context, source string, status string) error {
+	return runSetupHookPayload(ctx, a.lifecycleHookRunner(), a.Workspace, source, status)
+}
+
+func runSetupHookPayload(ctx context.Context, runner hooks.Runner, workspace string, source string, status string) error {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "manual"
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "ok"
+	}
+	if runner.Workspace == "" {
+		runner.Workspace = workspace
+	}
+	data, err := json.Marshal(map[string]string{
+		"source":    source,
+		"status":    status,
+		"workspace": workspace,
+	})
+	if err != nil {
+		return err
+	}
+	return runner.Setup(ctx, string(data))
+}
+
 func (a *App) writeWorkerState(mode string, status string, sess *session.Session, lastError string) {
 	if sess == nil {
 		return
@@ -16701,7 +16845,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|stop|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

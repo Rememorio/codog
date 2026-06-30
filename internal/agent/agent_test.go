@@ -2727,8 +2727,27 @@ func TestInitCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/app\n"), 0o644))
 	var out bytes.Buffer
+	var setupPayloads []struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	setupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Event string `json:"event"`
+			Input string `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		setupPayloads = append(setupPayloads, payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer setupServer.Close()
 	app := &App{
-		Config:    config.Config{ConfigHome: t.TempDir()},
+		Config: config.Config{
+			ConfigHome: t.TempDir(),
+			Hooks: config.HookConfig{
+				SetupCommands: []config.HookCommand{{Type: "http", URL: setupServer.URL}},
+			},
+		},
 		Workspace: workspace,
 		Out:       &out,
 		Err:       io.Discard,
@@ -2739,15 +2758,20 @@ func TestInitCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), ".codog/instructions.md")
 	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
 	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
+	require.Len(t, setupPayloads, 1)
+	require.Equal(t, "setup", setupPayloads[0].Event)
+	require.Contains(t, setupPayloads[0].Input, `"source":"init"`)
 	out.Reset()
 
 	require.NoError(t, app.Init([]string{"--json"}))
 	require.Contains(t, out.String(), `"kind": "init"`)
 	require.Contains(t, out.String(), `"already_initialized": true`)
+	require.Len(t, setupPayloads, 2)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/init", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Init")
+	require.Len(t, setupPayloads, 3)
 }
 
 func TestInitVerifiersCommandAndSlash(t *testing.T) {
@@ -2830,6 +2854,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	postFailurePath := filepath.Join(workspace, "post-failure.json")
 	permissionRequestPath := filepath.Join(workspace, "permission-request.json")
 	permissionDeniedPath := filepath.Join(workspace, "permission-denied.json")
+	sessionEndPath := filepath.Join(workspace, "session-end.json")
+	setupPath := filepath.Join(workspace, "setup.json")
 	stopPath := filepath.Join(workspace, "stop.json")
 	compactPath := filepath.Join(workspace, "compact.json")
 	postCompactPath := filepath.Join(workspace, "post-compact.json")
@@ -2848,6 +2874,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				PostToolUseFailure: []string{"cat > " + shellQuote(postFailurePath)},
 				PermissionRequest:  []string{"cat > " + shellQuote(permissionRequestPath)},
 				PermissionDenied:   []string{"cat > " + shellQuote(permissionDeniedPath)},
+				SessionEnd:         []string{"cat > " + shellQuote(sessionEndPath)},
+				Setup:              []string{"cat > " + shellQuote(setupPath)},
 				Stop:               []string{"cat > " + shellQuote(stopPath)},
 				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
 				PostCompact:        []string{"cat > " + shellQuote(postCompactPath)},
@@ -2874,6 +2902,12 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				},
 				PermissionDeniedCommands: []config.HookCommand{
 					{Matcher: "bash", Command: "cat > " + shellQuote(permissionDeniedPath)},
+				},
+				SessionEndCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(sessionEndPath)},
+				},
+				SetupCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(setupPath)},
 				},
 				StopCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(stopPath)},
@@ -2909,6 +2943,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"post_tool_use_failure"`)
 	require.Contains(t, out.String(), `"permission_request"`)
 	require.Contains(t, out.String(), `"permission_denied"`)
+	require.Contains(t, out.String(), `"session_end"`)
+	require.Contains(t, out.String(), `"setup"`)
 	require.Contains(t, out.String(), `"stop"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
 	require.Contains(t, out.String(), `"post_compact"`)
@@ -2924,6 +2960,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "bash", hooksList.PostToolUseFailureCommands[0].Matcher)
 	require.Equal(t, "bash", hooksList.PermissionRequestCommands[0].Matcher)
 	require.Equal(t, "bash", hooksList.PermissionDeniedCommands[0].Matcher)
+	require.Contains(t, hooksList.SessionEndCommands[0].Command, "cat >")
+	require.Contains(t, hooksList.SetupCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PostCompactCommands[0].Command, "cat >")
@@ -2986,6 +3024,32 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"permission_denied"`)
 	require.Contains(t, string(data), `"reason":"deny_rule"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run session-end --input={\"session_id\":\"session\"} --reason=exit", sess))
+	data, err = os.ReadFile(sessionEndPath)
+	require.NoError(t, err)
+	var sessionEndHook struct {
+		Event  string `json:"event"`
+		Input  string `json:"input"`
+		Reason string `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(data, &sessionEndHook))
+	require.Equal(t, "session_end", sessionEndHook.Event)
+	require.Equal(t, "exit", sessionEndHook.Reason)
+	require.Contains(t, sessionEndHook.Input, `"session_id"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run setup --input={\"source\":\"init\"}", sess))
+	data, err = os.ReadFile(setupPath)
+	require.NoError(t, err)
+	var setupHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(data, &setupHook))
+	require.Equal(t, "setup", setupHook.Event)
+	require.Contains(t, setupHook.Input, `"source"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/hooks run stop --output=done", sess))
@@ -3427,12 +3491,23 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 		Event string `json:"event"`
 		Input string `json:"input"`
 	}
+	var gotEndHook struct {
+		Event  string `json:"event"`
+		Input  string `json:"input"`
+		Reason string `json:"reason"`
+	}
 	var hookDecodeErr error
+	var endHookDecodeErr error
 	hookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hookDecodeErr = json.NewDecoder(r.Body).Decode(&gotHook)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer hookServer.Close()
+	endHookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		endHookDecodeErr = json.NewDecoder(r.Body).Decode(&gotEndHook)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer endHookServer.Close()
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
@@ -3449,6 +3524,7 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 			EnabledSkills:       nil,
 			Hooks: config.HookConfig{
 				SessionStartCommands: []config.HookCommand{{Type: "http", URL: hookServer.URL}},
+				SessionEndCommands:   []config.HookCommand{{Type: "http", URL: endHookServer.URL}},
 			},
 			Future:    config.FutureConfig{},
 			AuthToken: "",
@@ -3471,6 +3547,10 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	require.NoError(t, hookDecodeErr)
 	require.Equal(t, "session_start", gotHook.Event)
 	require.Contains(t, gotHook.Input, `"source":"resume"`)
+	require.NoError(t, endHookDecodeErr)
+	require.Equal(t, "session_end", gotEndHook.Event)
+	require.Equal(t, "completed", gotEndHook.Reason)
+	require.Contains(t, gotEndHook.Input, `"session_id":"prompt-session"`)
 	history, err := app.Sessions.PromptHistory("prompt-session")
 	require.NoError(t, err)
 	require.Len(t, history, 1)

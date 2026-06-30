@@ -39,6 +39,8 @@ type Options struct {
 	PermissionRequest  []string
 	PermissionDenied   []string
 	Stop               []string
+	SessionEnd         []string
+	Setup              []string
 	PreCompact         []string
 	PostCompact        []string
 	Notification       []string
@@ -252,16 +254,20 @@ func checkHooks(opts Options) Check {
 	postFailure := compactHookCommands(opts.PostToolUseFailure)
 	permissionRequest := compactHookCommands(opts.PermissionRequest)
 	permissionDenied := compactHookCommands(opts.PermissionDenied)
+	sessionEnd := compactHookCommands(opts.SessionEnd)
+	setup := compactHookCommands(opts.Setup)
 	stop := compactHookCommands(opts.Stop)
 	preCompact := compactHookCommands(opts.PreCompact)
 	postCompact := compactHookCommands(opts.PostCompact)
 	notification := compactHookCommands(opts.Notification)
 	subagentStart := compactHookCommands(opts.SubagentStart)
 	subagentStop := compactHookCommands(opts.SubagentStop)
-	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
+	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
+		fmt.Sprintf("SessionEnd hooks: %d", len(sessionEnd)),
+		fmt.Sprintf("Setup hooks: %d", len(setup)),
 		fmt.Sprintf("PreToolUse hooks: %d", len(pre)),
 		fmt.Sprintf("PostToolUse hooks: %d", len(post)),
 		fmt.Sprintf("PostToolUseFailure hooks: %d", len(postFailure)),
@@ -282,6 +288,8 @@ func checkHooks(opts Options) Check {
 	}
 	issues := hookPathIssues(opts.Workspace, "UserPromptSubmit", userPromptSubmit)
 	issues = append(issues, hookPathIssues(opts.Workspace, "SessionStart", sessionStart)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "SessionEnd", sessionEnd)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "Setup", setup)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreToolUse", pre)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUse", post)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUseFailure", postFailure)...)

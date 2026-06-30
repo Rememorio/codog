@@ -146,6 +146,23 @@ func (r Runner) SessionStart(ctx context.Context, input string) error {
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) SessionEnd(ctx context.Context, input string, reason string) error {
+	payload := Payload{
+		Event:  "session_end",
+		Input:  input,
+		Reason: reason,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) Setup(ctx context.Context, input string) error {
+	payload := Payload{
+		Event: "setup",
+		Input: input,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func (r Runner) Stop(ctx context.Context, output string, isError bool) error {
 	payload := Payload{
 		Event:   "stop",
@@ -241,6 +258,10 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit, payload)
 	case "session_start":
 		return matchingHooks(cfg.SessionStartCommands, cfg.SessionStart, payload)
+	case "session_end":
+		return matchingHooks(cfg.SessionEndCommands, cfg.SessionEnd, payload)
+	case "setup":
+		return matchingHooks(cfg.SetupCommands, cfg.Setup, payload)
 	case "stop":
 		return matchingHooks(cfg.StopCommands, cfg.Stop, payload)
 	case "pre_compact":
@@ -766,6 +787,10 @@ func normalizeEvent(event string) string {
 		return "user_prompt_submit"
 	case "sessionstart", "session_start", "session-start":
 		return "session_start"
+	case "sessionend", "session_end", "session-end":
+		return "session_end"
+	case "setup":
+		return "setup"
 	case "stop":
 		return "stop"
 	case "precompact", "pre_compact", "pre-compact":

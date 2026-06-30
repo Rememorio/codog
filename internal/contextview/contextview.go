@@ -53,6 +53,8 @@ type ConfigSummary struct {
 	EnabledSkillCount          int    `json:"enabled_skill_count"`
 	UserPromptSubmitHookCount  int    `json:"user_prompt_submit_hook_count"`
 	SessionStartHookCount      int    `json:"session_start_hook_count"`
+	SessionEndHookCount        int    `json:"session_end_hook_count"`
+	SetupHookCount             int    `json:"setup_hook_count"`
 	PreHookCount               int    `json:"pre_hook_count"`
 	PostHookCount              int    `json:"post_hook_count"`
 	PostFailureHookCount       int    `json:"post_tool_use_failure_hook_count"`
@@ -153,6 +155,8 @@ func Build(options Options) Report {
 			EnabledSkillCount:          options.Status.Config.EnabledSkillCount,
 			UserPromptSubmitHookCount:  options.Status.Config.UserPromptSubmitHookCount,
 			SessionStartHookCount:      options.Status.Config.SessionStartHookCount,
+			SessionEndHookCount:        options.Status.Config.SessionEndHookCount,
+			SetupHookCount:             options.Status.Config.SetupHookCount,
 			PreHookCount:               options.Status.Config.PreHookCount,
 			PostHookCount:              options.Status.Config.PostHookCount,
 			PostFailureHookCount:       options.Status.Config.PostFailureHookCount,

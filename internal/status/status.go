@@ -23,6 +23,8 @@ type Options struct {
 	MCPServerCount             int
 	UserPromptSubmitHookCount  int
 	SessionStartHookCount      int
+	SessionEndHookCount        int
+	SetupHookCount             int
 	PreHookCount               int
 	PostHookCount              int
 	PostFailureHookCount       int
@@ -96,6 +98,8 @@ type ConfigStatus struct {
 	MCPServerCount             int    `json:"mcp_server_count"`
 	UserPromptSubmitHookCount  int    `json:"user_prompt_submit_hook_count"`
 	SessionStartHookCount      int    `json:"session_start_hook_count"`
+	SessionEndHookCount        int    `json:"session_end_hook_count"`
+	SetupHookCount             int    `json:"setup_hook_count"`
 	PreHookCount               int    `json:"pre_hook_count"`
 	PostHookCount              int    `json:"post_hook_count"`
 	PostFailureHookCount       int    `json:"post_tool_use_failure_hook_count"`
@@ -185,6 +189,8 @@ func Build(opts Options) Snapshot {
 			MCPServerCount:             opts.MCPServerCount,
 			UserPromptSubmitHookCount:  opts.UserPromptSubmitHookCount,
 			SessionStartHookCount:      opts.SessionStartHookCount,
+			SessionEndHookCount:        opts.SessionEndHookCount,
+			SetupHookCount:             opts.SetupHookCount,
 			PreHookCount:               opts.PreHookCount,
 			PostHookCount:              opts.PostHookCount,
 			PostFailureHookCount:       opts.PostFailureHookCount,

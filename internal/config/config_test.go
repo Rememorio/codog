@@ -271,6 +271,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"PostToolUseFailure": ["echo post-failure"],
 			"PermissionRequest": [{"matcher": "Bash", "command": "echo permission-request"}],
 			"PermissionDenied": [{"matcher": "Bash", "command": "echo permission-denied"}],
+			"SessionEnd": [{"command": "echo session-end"}],
+			"Setup": [{"command": "echo setup"}],
 			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
 			"PreCompact": ["echo pre-compact"],
 			"PostCompact": ["echo post-compact"],
@@ -289,6 +291,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo post-failure"}, cfg.Hooks.PostToolUseFailure)
 	require.Equal(t, []string{"echo permission-request"}, cfg.Hooks.PermissionRequest)
 	require.Equal(t, []string{"echo permission-denied"}, cfg.Hooks.PermissionDenied)
+	require.Equal(t, []string{"echo session-end"}, cfg.Hooks.SessionEnd)
+	require.Equal(t, []string{"echo setup"}, cfg.Hooks.Setup)
 	require.Equal(t, []string{"echo stop"}, cfg.Hooks.Stop)
 	require.Equal(t, []string{"echo pre-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []string{"echo post-compact"}, cfg.Hooks.PostCompact)
@@ -306,6 +310,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo post-failure"}}, cfg.Hooks.PostToolUseFailureCommands)
 	require.Equal(t, []HookCommand{{Matcher: "Bash", Type: "command", Command: "echo permission-request"}}, cfg.Hooks.PermissionRequestCommands)
 	require.Equal(t, []HookCommand{{Matcher: "Bash", Type: "command", Command: "echo permission-denied"}}, cfg.Hooks.PermissionDeniedCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo session-end"}}, cfg.Hooks.SessionEndCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo setup"}}, cfg.Hooks.SetupCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop"}}, cfg.Hooks.StopCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo pre-compact"}}, cfg.Hooks.PreCompactCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo post-compact"}}, cfg.Hooks.PostCompactCommands)
@@ -332,6 +338,8 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"post_tool_use_failure": ["echo user-post-failure"],
 			"permission_request": ["echo user-permission-request"],
 			"permission_denied": ["echo user-permission-denied"],
+			"session_end": ["echo user-session-end"],
+			"setup": ["echo user-setup"],
 			"stop": ["echo user-stop"],
 			"pre_compact": ["echo user-compact"],
 			"post_compact": ["echo user-post-compact"],
@@ -350,6 +358,8 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"PostToolUseFailure": [{"command": "echo project-post-failure"}],
 			"PermissionRequest": [{"matcher": "Bash", "command": "echo project-permission-request"}],
 			"PermissionDenied": [{"matcher": "Bash", "command": "echo project-permission-denied"}],
+			"SessionEnd": [{"command": "echo project-session-end"}],
+			"Setup": [{"command": "echo project-setup"}],
 			"Stop": [{"command": "echo project-stop"}],
 			"PreCompact": [{"command": "echo project-compact"}],
 			"PostCompact": [{"command": "echo project-post-compact"}],
@@ -366,6 +376,8 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"post_tool_use_failure": ["echo user-post-failure", "echo local-post-failure"],
 			"permission_request": ["echo user-permission-request", "echo local-permission-request"],
 			"permission_denied": ["echo user-permission-denied", "echo local-permission-denied"],
+			"session_end": ["echo user-session-end", "echo local-session-end"],
+			"setup": ["echo user-setup", "echo local-setup"],
 			"stop": ["echo user-stop", "echo local-stop"],
 			"pre_compact": ["echo user-compact", "echo local-compact"],
 			"post_compact": ["echo user-post-compact", "echo local-post-compact"],
@@ -384,6 +396,8 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-post-failure", "echo project-post-failure", "echo local-post-failure"}, cfg.Hooks.PostToolUseFailure)
 	require.Equal(t, []string{"echo user-permission-request", "echo project-permission-request", "echo local-permission-request"}, cfg.Hooks.PermissionRequest)
 	require.Equal(t, []string{"echo user-permission-denied", "echo project-permission-denied", "echo local-permission-denied"}, cfg.Hooks.PermissionDenied)
+	require.Equal(t, []string{"echo user-session-end", "echo project-session-end", "echo local-session-end"}, cfg.Hooks.SessionEnd)
+	require.Equal(t, []string{"echo user-setup", "echo project-setup", "echo local-setup"}, cfg.Hooks.Setup)
 	require.Equal(t, []string{"echo user-stop", "echo project-stop", "echo local-stop"}, cfg.Hooks.Stop)
 	require.Equal(t, []string{"echo user-compact", "echo project-compact", "echo local-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []string{"echo user-post-compact", "echo project-post-compact", "echo local-post-compact"}, cfg.Hooks.PostCompact)
@@ -420,6 +434,16 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Matcher: "Bash", Type: "command", Command: "echo project-permission-denied"},
 		{Type: "command", Command: "echo local-permission-denied"},
 	}, cfg.Hooks.PermissionDeniedCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-session-end"},
+		{Type: "command", Command: "echo project-session-end"},
+		{Type: "command", Command: "echo local-session-end"},
+	}, cfg.Hooks.SessionEndCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-setup"},
+		{Type: "command", Command: "echo project-setup"},
+		{Type: "command", Command: "echo local-setup"},
+	}, cfg.Hooks.SetupCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-stop"},
 		{Type: "command", Command: "echo project-stop"},

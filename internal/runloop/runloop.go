@@ -182,8 +182,12 @@ func hasHookConfig(cfg config.HookConfig) bool {
 	return len(cfg.PreToolUse) != 0 ||
 		len(cfg.PostToolUse) != 0 ||
 		len(cfg.PostToolUseFailure) != 0 ||
+		len(cfg.PermissionRequest) != 0 ||
+		len(cfg.PermissionDenied) != 0 ||
 		len(cfg.UserPromptSubmit) != 0 ||
 		len(cfg.SessionStart) != 0 ||
+		len(cfg.SessionEnd) != 0 ||
+		len(cfg.Setup) != 0 ||
 		len(cfg.Stop) != 0 ||
 		len(cfg.PreCompact) != 0 ||
 		len(cfg.PostCompact) != 0 ||
@@ -193,8 +197,12 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
 		len(cfg.PostToolUseFailureCommands) != 0 ||
+		len(cfg.PermissionRequestCommands) != 0 ||
+		len(cfg.PermissionDeniedCommands) != 0 ||
 		len(cfg.UserPromptSubmitCommands) != 0 ||
 		len(cfg.SessionStartCommands) != 0 ||
+		len(cfg.SessionEndCommands) != 0 ||
+		len(cfg.SetupCommands) != 0 ||
 		len(cfg.StopCommands) != 0 ||
 		len(cfg.PreCompactCommands) != 0 ||
 		len(cfg.PostCompactCommands) != 0 ||

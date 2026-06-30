@@ -188,7 +188,8 @@ Claude Code source.
 - `codog acp`, `codog acp serve`, `codog --acp`, and `/acp` expose ACP/Zed
   integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
-- Hook commands can run on `session_start`, `user_prompt_submit`,
+- Hook commands can run on `session_start`, `session_end`, `setup`,
+  `user_prompt_submit`,
   `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`,
   `permission_request`, `permission_denied`, `stop`, `pre_compact`,
   `post_compact`, `notification`, `subagent_start`, and `subagent_stop`; `codog hooks
@@ -416,6 +417,8 @@ URL --model MODEL` as a focused provider configuration shortcut.
   "enabled_skills": ["go-review"],
   "hooks": {
     "session_start": ["echo session >&2"],
+    "session_end": ["echo session-end >&2"],
+    "setup": ["echo setup >&2"],
     "user_prompt_submit": ["echo prompt >&2"],
     "pre_tool_use": ["echo pre >&2"],
     "post_tool_use": ["echo post >&2"],
