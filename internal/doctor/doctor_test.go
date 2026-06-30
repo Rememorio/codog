@@ -3,6 +3,7 @@ package doctor
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,6 +115,45 @@ func TestRunAcceptsExistingHookPath(t *testing.T) {
 	require.Contains(t, hooks.Summary, "runnable")
 }
 
+func TestRunWarnsForStaleBranchFreshness(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runTestGit(t, workspace, "init", "-b", "main")
+	runTestGit(t, workspace, "config", "user.email", "codog@example.test")
+	runTestGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runTestGit(t, workspace, "add", ".")
+	runTestGit(t, workspace, "commit", "-m", "chore: base")
+	runTestGit(t, workspace, "switch", "-c", "topic")
+	runTestGit(t, workspace, "switch", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
+	runTestGit(t, workspace, "add", ".")
+	runTestGit(t, workspace, "commit", "-m", "fix: main update")
+	runTestGit(t, workspace, "switch", "topic")
+
+	report := Run(Options{
+		Workspace:      workspace,
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	git := findCheck(t, report, "Git")
+	require.Equal(t, StatusWarn, git.Status)
+	require.Contains(t, git.Summary, "behind or diverged")
+	require.Contains(t, strings.Join(git.Details, "\n"), "Freshness: stale")
+	require.Contains(t, strings.Join(git.Details, "\n"), "Behind: 1")
+	require.Contains(t, strings.Join(git.Details, "\n"), "Missing: fix: main update")
+}
+
 func TestRunWarnsForUnavailableMCPServer(t *testing.T) {
 	report := Run(Options{
 		Workspace:      t.TempDir(),
@@ -137,6 +177,14 @@ func TestRunWarnsForUnavailableMCPServer(t *testing.T) {
 	require.Equal(t, StatusWarn, check.Status)
 	require.Contains(t, check.Summary, "1 MCP server")
 	require.Contains(t, strings.Join(check.Details, "\n"), "missing: command_not_found")
+}
+
+func runTestGit(t *testing.T, workspace string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	data, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(data))
 }
 
 func findCheck(t *testing.T, report Report, name string) Check {

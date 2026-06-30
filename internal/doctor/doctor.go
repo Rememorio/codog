@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 )
 
@@ -437,8 +438,30 @@ func checkGit(workspace string) Check {
 		return Check{Name: "Git", Status: StatusWarn, Summary: "Workspace is not inside a git worktree.", Hint: "Run codog from a git worktree to enable diff, commit, and agent worktree features."}
 	}
 	details := []string{"Inside worktree: true"}
-	if branch, err := runGit(workspace, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		details = append(details, "Branch: "+strings.TrimSpace(branch))
+	branch := ""
+	if rawBranch, err := runGit(workspace, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		branch = strings.TrimSpace(rawBranch)
+		details = append(details, "Branch: "+branch)
+	}
+	if freshness, err := gitops.CheckBranchFreshness(workspace, branch, "main"); err == nil {
+		details = append(details,
+			"Base: "+freshness.Base,
+			fmt.Sprintf("Ahead: %d", freshness.Ahead),
+			fmt.Sprintf("Behind: %d", freshness.Behind),
+			"Freshness: "+freshness.Status,
+		)
+		for _, subject := range freshness.MissingFixes {
+			details = append(details, "Missing: "+subject)
+		}
+		if !freshness.Fresh {
+			return Check{
+				Name:    "Git",
+				Status:  StatusWarn,
+				Summary: "Current branch is behind or diverged from base.",
+				Details: details,
+				Hint:    "Review `codog branch freshness` and update the branch before risky edits or PR work.",
+			}
+		}
 	}
 	return Check{Name: "Git", Status: StatusOK, Summary: "git worktree is available.", Details: details}
 }
