@@ -213,7 +213,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 66)
+	require.Len(t, infos, 68)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -248,6 +248,11 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("team_create")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	for _, name := range []string{"team_list", "team_get"} {
+		info, ok = registry.Info(name)
+		require.True(t, ok)
+		require.Equal(t, PermissionReadOnly, info.Permission)
+	}
 	info, ok = registry.Info("team_delete")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -729,6 +734,19 @@ func TestTeamToolsCreateAndDeleteBackgroundTasks(t *testing.T) {
 		logs, err := store.Logs(created.TaskIDs[0], 4096)
 		return err == nil && strings.Contains(logs, "Task: auth") && strings.Contains(logs, "check auth")
 	}, 5*time.Second, 50*time.Millisecond)
+
+	listOut, err := TeamListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"status":"running"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "team_list"`)
+	require.Contains(t, listOut, `"total": 1`)
+	require.Contains(t, listOut, created.ID)
+	require.Contains(t, listOut, `"task_statuses": [`)
+
+	getOut, err := TeamGetTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"team_id":"`+created.ID+`"}`))
+	require.NoError(t, err)
+	require.Contains(t, getOut, `"kind": "team"`)
+	require.Contains(t, getOut, `"tasks": [`)
+	require.Contains(t, getOut, created.TaskIDs[0])
 
 	deleteOut, err := TeamDeleteTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"team_id":"`+created.ID+`"}`))
 	require.NoError(t, err)

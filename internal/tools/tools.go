@@ -147,6 +147,8 @@ func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(CronListTool{ConfigHome: opts.ConfigHome})
 	reg.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TeamListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(TeamGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(WorkerListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -2913,6 +2915,95 @@ func (t TeamCreateTool) Execute(_ context.Context, input json.RawMessage) (strin
 	}), nil
 }
 
+type TeamListTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TeamListTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "team_list",
+		Description: "List team task groups and summarize their background task states.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"status": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (TeamListTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TeamListTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	status := strings.TrimSpace(payload.Status)
+	teams, err := team.NewStore(t.ConfigHome).List()
+	if err != nil {
+		return "", err
+	}
+	out := make([]map[string]any, 0, len(teams))
+	for _, item := range teams {
+		if status != "" && !strings.EqualFold(item.Status, status) {
+			continue
+		}
+		out = append(out, teamSummary(t.ConfigHome, item))
+	}
+	return pretty(map[string]any{
+		"kind":   "team_list",
+		"total":  len(out),
+		"status": status,
+		"teams":  out,
+	}), nil
+}
+
+type TeamGetTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TeamGetTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "team_get",
+		Description: "Fetch a team task group with task prompts and current background task states.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"team_id": map[string]any{"type": "string"},
+			},
+			"required": []string{"team_id"},
+		},
+	}
+}
+
+func (TeamGetTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TeamGetTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		TeamID string `json:"team_id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	item, err := team.NewStore(t.ConfigHome).Get(payload.TeamID)
+	if err != nil {
+		return "", err
+	}
+	summary := teamSummary(t.ConfigHome, item)
+	summary["kind"] = "team"
+	summary["tasks"] = item.Tasks
+	return pretty(summary), nil
+}
+
 type TeamDeleteTool struct {
 	ConfigHome string
 }
@@ -2964,6 +3055,39 @@ func (t TeamDeleteTool) Execute(_ context.Context, input json.RawMessage) (strin
 		"stopped_tasks": stopped,
 		"message":       "Team deleted",
 	}), nil
+}
+
+func teamSummary(configHome string, item team.Team) map[string]any {
+	return map[string]any{
+		"team_id":       item.ID,
+		"name":          item.Name,
+		"status":        item.Status,
+		"task_count":    len(item.Tasks),
+		"task_ids":      item.TaskIDs,
+		"task_statuses": teamTaskStatuses(configHome, item.TaskIDs),
+		"created_at":    item.CreatedAt,
+		"updated_at":    item.UpdatedAt,
+	}
+}
+
+func teamTaskStatuses(configHome string, ids []string) []map[string]any {
+	out := make([]map[string]any, 0, len(ids))
+	store := background.NewStore(configHome)
+	for _, id := range ids {
+		status := map[string]any{"id": id, "status": "unknown"}
+		task, err := store.Status(id)
+		if err != nil {
+			status["error"] = err.Error()
+		} else {
+			status["status"] = task.Status
+			status["kind"] = task.Kind
+			status["exit_code"] = task.ExitCode
+			status["started_at"] = task.StartedAt
+			status["completed_at"] = task.CompletedAt
+		}
+		out = append(out, status)
+	}
+	return out
 }
 
 func buildTeamTaskCommand(executable string, prompt string) string {

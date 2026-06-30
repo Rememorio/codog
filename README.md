@@ -15,7 +15,7 @@ Claude Code source.
   `multi_edit`, `grep`, `glob`, `web_fetch`, `web_search`, `remote_trigger`,
   `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
-  `team_create`, `team_delete`,
+  `team_create`, `team_list`, `team_get`, `team_delete`,
   `worker_create`, `worker_list`, `worker_get`, `worker_observe`, `worker_resolve_trust`,
   `worker_await_ready`, `worker_send_prompt`, `worker_restart`,
   `worker_terminate`, `worker_observe_completion`,
