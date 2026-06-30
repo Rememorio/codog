@@ -36,6 +36,7 @@ import (
 	"github.com/Rememorio/codog/internal/fileinventory"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/githubcomments"
+	"github.com/Rememorio/codog/internal/githubsetup"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
@@ -327,6 +328,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.PullRequestDraft(rest, overrides)
 	case "pr-comments", "pr_comments":
 		return app.PRComments(ctx, rest)
+	case "install-github-app":
+		return app.InstallGitHubApp(rest)
 	case "issue":
 		return app.IssueDraft(rest, overrides)
 	case "run":
@@ -7258,6 +7261,14 @@ type prCommentsRequest struct {
 	Format string
 }
 
+type installGitHubAppRequest struct {
+	Format     string
+	SecretName string
+	Workflows  []string
+	Force      bool
+	DryRun     bool
+}
+
 func (a *App) PRComments(ctx context.Context, args []string) error {
 	req, err := parsePRCommentsArgs(args)
 	if err != nil {
@@ -7319,6 +7330,109 @@ func parsePRCommentsArgs(args []string) (prCommentsRequest, error) {
 		req.PR = rest[0]
 	}
 	return req, nil
+}
+
+func (a *App) InstallGitHubApp(args []string) error {
+	req, err := parseInstallGitHubAppArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := githubsetup.Setup(githubsetup.Options{
+		Workspace:  a.Workspace,
+		SecretName: req.SecretName,
+		Workflows:  req.Workflows,
+		Force:      req.Force,
+		DryRun:     req.DryRun,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderInstallGitHubAppReport(a.Out, report)
+	return nil
+}
+
+func parseInstallGitHubAppArgs(args []string) (installGitHubAppRequest, error) {
+	req := installGitHubAppRequest{Format: "text"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("install-github-app output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--secret-name" || arg == "--secret":
+			index++
+			if index >= len(args) {
+				return req, errors.New("GitHub secret name is required")
+			}
+			req.SecretName = args[index]
+		case strings.HasPrefix(arg, "--secret-name="):
+			req.SecretName = strings.TrimPrefix(arg, "--secret-name=")
+		case strings.HasPrefix(arg, "--secret="):
+			req.SecretName = strings.TrimPrefix(arg, "--secret=")
+		case arg == "--workflow" || arg == "--workflows":
+			index++
+			if index >= len(args) {
+				return req, errors.New("GitHub workflow name is required")
+			}
+			req.Workflows = append(req.Workflows, args[index])
+		case strings.HasPrefix(arg, "--workflow="):
+			req.Workflows = append(req.Workflows, strings.TrimPrefix(arg, "--workflow="))
+		case strings.HasPrefix(arg, "--workflows="):
+			req.Workflows = append(req.Workflows, strings.TrimPrefix(arg, "--workflows="))
+		case arg == "--force":
+			req.Force = true
+		case arg == "--dry-run":
+			req.DryRun = true
+		default:
+			return req, fmt.Errorf("unknown install-github-app option %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "install-github-app"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderInstallGitHubAppReport(out io.Writer, report githubsetup.Report) {
+	fmt.Fprintln(out, "GitHub App Setup")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	if report.Repo != "" {
+		fmt.Fprintf(out, "  Repository       %s\n", report.Repo)
+	}
+	fmt.Fprintf(out, "  Secret           %s\n", report.SecretName)
+	fmt.Fprintf(out, "  Dry run          %t\n", report.DryRun)
+	fmt.Fprintf(out, "  Docs             %s\n", report.DocsURL)
+	for _, workflow := range report.Workflows {
+		state := "ready"
+		switch {
+		case workflow.Created:
+			state = "created"
+		case workflow.Overwritten:
+			state = "overwritten"
+		case workflow.Exists:
+			state = "exists"
+		}
+		fmt.Fprintf(out, "  Workflow         %s %s %s\n", workflow.Name, state, workflow.Path)
+	}
+	for _, warning := range report.Warnings {
+		fmt.Fprintf(out, "  Warning          %s\n", warning)
+	}
+	for _, instruction := range report.Instructions {
+		fmt.Fprintf(out, "  Next             %s\n", instruction)
+	}
 }
 
 func (a *App) IssueDraft(args []string, overrides config.FlagOverrides) error {
@@ -10086,6 +10200,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/pr-comments", "/pr_comments":
 		if err := a.PRComments(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/install-github-app":
+		if err := a.InstallGitHubApp(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/issue":
@@ -13943,6 +14061,7 @@ Usage:
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
+  %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
@@ -14016,7 +14135,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

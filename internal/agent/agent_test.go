@@ -2115,6 +2115,32 @@ func TestPullRequestAndIssueDraftCommands(t *testing.T) {
 	require.Contains(t, string(data), "Issue: flaky workflow")
 }
 
+func TestInstallGitHubAppCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.InstallGitHubApp([]string{"--workflow", "claude", "--dry-run", "--json"}))
+	require.Contains(t, out.String(), `"kind": "install_github_app"`)
+	require.Contains(t, out.String(), `"dry_run": true`)
+	require.False(t, fileExists(filepath.Join(workspace, ".github", "workflows", "claude.yml")))
+	out.Reset()
+
+	require.NoError(t, app.InstallGitHubApp([]string{"--workflow=review", "--secret-name", "CLAUDE_KEY"}))
+	require.Contains(t, out.String(), "GitHub App Setup")
+	path := filepath.Join(workspace, ".github", "workflows", "claude-code-review.yml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "anthropics/claude-code-action@v1")
+	require.Contains(t, string(data), "${{ secrets.CLAUDE_KEY }}")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/install-github-app --workflow claude --dry-run", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "GitHub App Setup")
+	require.Empty(t, errOut.String())
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))
