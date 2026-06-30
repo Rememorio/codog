@@ -296,6 +296,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "compact":
 		return app.Compact(rest, overrides)
+	case "extra-usage":
+		return app.ExtraUsage(rest)
 	case "rate-limit-options":
 		return app.RateLimitOptions(rest)
 	case "plan":
@@ -7311,8 +7313,31 @@ type stickersReport struct {
 	Message    string `json:"message,omitempty"`
 }
 
+type extraUsageRequest struct {
+	Format string
+	Target string
+	Path   string
+	Open   bool
+	Mode   string
+}
+
+type extraUsageReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Mode       string `json:"mode"`
+	URL        string `json:"url"`
+	Opened     bool   `json:"opened"`
+	Opener     string `json:"opener,omitempty"`
+	VisitCount int    `json:"visit_count"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
 const stickerOrderURL = "https://www.stickermule.com/claudecode"
+const extraUsagePersonalURL = "https://claude.ai/settings/usage"
+const extraUsageAdminURL = "https://claude.ai/admin-settings/usage"
 
 var openExternalURL = openSystemURL
 
@@ -7688,6 +7713,139 @@ func renderStickersReport(out io.Writer, report stickersReport) {
 		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
 	}
 	fmt.Fprintf(out, "  Order count      %d\n", report.OrderCount)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func (a *App) ExtraUsage(args []string) error {
+	req, err := parseExtraUsageArgs(args)
+	if err != nil {
+		return err
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	count := a.Config.Future.ExtraUsageVisitCount + 1
+	if _, err := config.SetFileValue(path, "future.extra_usage_visit_count", count); err != nil {
+		return err
+	}
+	a.Config.Future.ExtraUsageVisitCount = count
+
+	url := extraUsageURL(req.Mode)
+	report := extraUsageReport{
+		Kind:       "extra_usage",
+		Action:     "open",
+		Status:     "ok",
+		Mode:       req.Mode,
+		URL:        url,
+		VisitCount: count,
+		Path:       path,
+		Message:    extraUsageMessage(req.Mode),
+	}
+	if req.Open {
+		opener, err := openExternalURL(url)
+		if err != nil {
+			report.Status = "open_failed"
+			report.Message = "Could not open a browser automatically. Visit the URL manually."
+		} else {
+			report.Opened = true
+			report.Opener = opener
+			report.Message = "Opening Claude usage settings in browser."
+		}
+	} else {
+		report.Action = "show"
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderExtraUsageReport(a.Out, report)
+	return nil
+}
+
+func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
+	req := extraUsageRequest{Format: "text", Target: "user", Open: true, Mode: "personal"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("extra-usage output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("extra-usage target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("extra-usage config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--open":
+			req.Open = true
+		case arg == "--no-open":
+			req.Open = false
+		case arg == "--admin":
+			req.Mode = "admin"
+		case arg == "--personal":
+			req.Mode = "personal"
+		case arg == "admin" || arg == "team" || arg == "enterprise" || arg == "org" || arg == "organization":
+			req.Mode = "admin"
+		case arg == "personal" || arg == "user" || arg == "individual":
+			req.Mode = "personal"
+		default:
+			return req, fmt.Errorf("unknown extra-usage option %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "extra-usage"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func extraUsageURL(mode string) string {
+	if mode == "admin" {
+		return extraUsageAdminURL
+	}
+	return extraUsagePersonalURL
+}
+
+func extraUsageMessage(mode string) string {
+	if mode == "admin" {
+		return "Visit Claude admin usage settings to manage organization extra usage."
+	}
+	return "Visit Claude usage settings to manage extra usage."
+}
+
+func renderExtraUsageReport(out io.Writer, report extraUsageReport) {
+	fmt.Fprintln(out, "Extra Usage")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Mode             %s\n", report.Mode)
+	fmt.Fprintf(out, "  URL              %s\n", report.URL)
+	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
+	if report.Opener != "" {
+		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
+	}
+	fmt.Fprintf(out, "  Visit count      %d\n", report.VisitCount)
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
 	}
@@ -10561,6 +10719,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/stats":
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/extra-usage":
+		if err := a.ExtraUsage(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/rate-limit-options":
@@ -14369,6 +14531,7 @@ Usage:
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] plan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
@@ -14426,7 +14589,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

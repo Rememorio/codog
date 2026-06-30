@@ -2209,6 +2209,41 @@ func TestStickersCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestExtraUsageCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: t.TempDir(), Out: &out, Err: &errOut}
+	openedURL := ""
+	previousOpen := openExternalURL
+	openExternalURL = func(url string) (string, error) {
+		openedURL = url
+		return "test-open", nil
+	}
+	t.Cleanup(func() { openExternalURL = previousOpen })
+
+	require.NoError(t, app.ExtraUsage([]string{"--admin", "--json"}))
+	require.Equal(t, extraUsageAdminURL, openedURL)
+	require.Contains(t, out.String(), `"kind": "extra_usage"`)
+	require.Contains(t, out.String(), `"mode": "admin"`)
+	require.Contains(t, out.String(), `"opened": true`)
+	require.Contains(t, out.String(), `"visit_count": 1`)
+	require.Equal(t, 1, app.Config.Future.ExtraUsageVisitCount)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"extra_usage_visit_count": 1`)
+	out.Reset()
+	openedURL = ""
+
+	require.True(t, app.handleSlash(context.Background(), "/extra-usage --personal --no-open", &session.Session{ID: "session"}))
+	require.Empty(t, openedURL)
+	require.Contains(t, out.String(), "Extra Usage")
+	require.Contains(t, out.String(), extraUsagePersonalURL)
+	require.Equal(t, 2, app.Config.Future.ExtraUsageVisitCount)
+	require.Empty(t, errOut.String())
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))

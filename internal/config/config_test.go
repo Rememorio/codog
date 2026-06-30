@@ -132,7 +132,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 		"future": {
 			"chrome_default_enabled": true,
 			"slack_app_install_count": 3,
-			"sticker_order_count": 2
+			"sticker_order_count": 2,
+			"extra_usage_visit_count": 4
 		},
 		"privacy_settings": {
 			"telemetry_enabled": true,
@@ -155,6 +156,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.True(t, *cfg.Future.ChromeDefaultEnabled)
 	require.Equal(t, 3, cfg.Future.SlackAppInstallCount)
 	require.Equal(t, 2, cfg.Future.StickerOrderCount)
+	require.Equal(t, 4, cfg.Future.ExtraUsageVisitCount)
 	require.NotNil(t, cfg.Privacy.TelemetryEnabled)
 	require.True(t, *cfg.Privacy.TelemetryEnabled)
 	require.NotNil(t, cfg.Privacy.CrashReportsEnabled)

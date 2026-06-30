@@ -82,6 +82,7 @@ type FutureConfig struct {
 	ChromeDefaultEnabled      *bool             `json:"chrome_default_enabled,omitempty"`
 	SlackAppInstallCount      int               `json:"slack_app_install_count,omitempty"`
 	StickerOrderCount         int               `json:"sticker_order_count,omitempty"`
+	ExtraUsageVisitCount      int               `json:"extra_usage_visit_count,omitempty"`
 }
 
 type PermissionRules struct {

@@ -62,7 +62,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -175,6 +175,9 @@ Claude Code source.
   block, and tool-use breakdowns.
   Both commands use recorded provider token usage when available, including
   cache token fields, and fall back to local estimates for older sessions.
+- `codog extra-usage [--admin|--personal] [--no-open]` and `/extra-usage`
+  open or print Claude usage settings for managing extra usage, and record a
+  local visit count.
 - `codog compact --resume latest --keep N` persists a compacted session context
   using the same message compaction logic as long prompt turns.
 - `codog rate-limit-options` reports provider retry/backoff settings; Anthropic
