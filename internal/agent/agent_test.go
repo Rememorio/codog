@@ -270,6 +270,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "plugins", command)
 	require.Equal(t, []string{"--output-format", "json"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "diff"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "diff", command)
+	require.Equal(t, []string{"--output-format", "json"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -704,6 +709,26 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "+again")
 	out.Reset()
 
+	require.NoError(t, app.Git([]string{"diff", "--json", "notes.txt"}))
+	var diffJSON diffReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &diffJSON))
+	require.Equal(t, "diff", diffJSON.Kind)
+	require.Equal(t, "show", diffJSON.Action)
+	require.Equal(t, "ok", diffJSON.Status)
+	require.False(t, diffJSON.Staged)
+	require.False(t, diffJSON.Empty)
+	require.Equal(t, []string{"notes.txt"}, diffJSON.Paths)
+	require.Contains(t, diffJSON.Diff, "+again")
+	out.Reset()
+
+	runGit(t, workspace, "add", "notes.txt")
+	require.NoError(t, app.Git([]string{"diff", "--staged", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &diffJSON))
+	require.True(t, diffJSON.Staged)
+	require.False(t, diffJSON.Empty)
+	require.Contains(t, diffJSON.Diff, "+again")
+	out.Reset()
+
 	require.NoError(t, app.Stash([]string{"push", "agent stash"}))
 	require.Contains(t, out.String(), "Saved working directory")
 	out.Reset()
@@ -750,6 +775,16 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, "+again")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "diff"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var diffJSON diffReport
+	require.NoError(t, json.Unmarshal([]byte(out), &diffJSON))
+	require.Equal(t, "diff", diffJSON.Kind)
+	require.Equal(t, "ok", diffJSON.Status)
+	require.Contains(t, diffJSON.Diff, "+again")
 }
 
 func TestGitSlashDiffAndCommit(t *testing.T) {
@@ -792,6 +827,15 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\nchanged\n"), 0o644))
 	require.True(t, app.handleSlash(context.Background(), "/diff", sess))
 	require.Contains(t, out.String(), "+changed")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/diff --json", sess))
+	var diffJSON diffReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &diffJSON))
+	require.Equal(t, "diff", diffJSON.Kind)
+	require.Equal(t, "ok", diffJSON.Status)
+	require.False(t, diffJSON.Empty)
+	require.Contains(t, diffJSON.Diff, "+changed")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/stash push slash stash", sess))

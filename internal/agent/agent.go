@@ -14330,7 +14330,7 @@ func validPermissionMode(mode string) bool {
 
 func (a *App) Git(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog git status | git diff [--staged] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] | git changelog [count] | git blame FILE [line] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
 	switch args[0] {
 	case "status":
@@ -14340,11 +14340,7 @@ func (a *App) Git(args []string) error {
 		}
 		fmt.Fprintln(a.Out, status)
 	case "diff":
-		diff, err := gitops.Diff(a.Workspace, containsFold(args[1:], "--staged") || containsFold(args[1:], "--cached"))
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(a.Out, diff)
+		return a.Diff(args[1:])
 	case "log":
 		limit, err := parseOptionalPositiveInt(args[1:], 20, "git log count")
 		if err != nil {
@@ -14385,6 +14381,90 @@ func (a *App) Git(args []string) error {
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
 	return nil
+}
+
+type diffRequest struct {
+	Format string
+	Staged bool
+	Paths  []string
+}
+
+type diffReport struct {
+	Kind   string   `json:"kind"`
+	Action string   `json:"action"`
+	Status string   `json:"status"`
+	Staged bool     `json:"staged"`
+	Empty  bool     `json:"empty"`
+	Bytes  int      `json:"bytes"`
+	Paths  []string `json:"paths,omitempty"`
+	Diff   string   `json:"diff"`
+}
+
+func (a *App) Diff(args []string) error {
+	req, err := parseDiffArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := a.buildDiffReport(req)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, report.Diff)
+	return nil
+}
+
+func (a *App) buildDiffReport(req diffRequest) (diffReport, error) {
+	diff, err := gitops.DiffWithOptions(a.Workspace, gitops.DiffOptions{Staged: req.Staged, Paths: req.Paths})
+	if err != nil {
+		return diffReport{}, err
+	}
+	return diffReport{
+		Kind:   "diff",
+		Action: "show",
+		Status: "ok",
+		Staged: req.Staged,
+		Empty:  diff == "",
+		Bytes:  len(diff),
+		Paths:  append([]string(nil), req.Paths...),
+		Diff:   diff,
+	}, nil
+}
+
+func parseDiffArgs(args []string) (diffRequest, error) {
+	req := diffRequest{Format: "text"}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("diff output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--staged" || arg == "--cached":
+			req.Staged = true
+		case arg == "--":
+			req.Paths = append(req.Paths, args[i+1:]...)
+			i = len(args)
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown diff flag %q", arg)
+		default:
+			req.Paths = append(req.Paths, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "diff"); err != nil {
+		return req, err
+	}
+	return req, nil
 }
 
 type branchRequest struct {
@@ -15021,16 +15101,26 @@ func parseGitBlameArgs(args []string) (string, int, error) {
 }
 
 func (a *App) handleDiffSlash(args []string) {
-	diff, err := gitops.Diff(a.Workspace, containsFold(args, "--staged") || containsFold(args, "--cached"))
+	req, err := parseDiffArgs(args)
 	if err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
-	if diff == "" {
+	report, err := a.buildDiffReport(req)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return
+	}
+	if report.Empty {
 		fmt.Fprintln(a.Out, "No diff.")
 		return
 	}
-	fmt.Fprintln(a.Out, diff)
+	fmt.Fprintln(a.Out, report.Diff)
 }
 
 func (a *App) handleLogSlash(args []string) {
@@ -17924,7 +18014,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "background", "brief", "bughunter", "chrome",
 		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
-		"debug-tool-call", "desktop", "doctor", "dump-manifests", "effort", "env",
+		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
 		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
@@ -18099,8 +18189,8 @@ Usage:
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
-  %s [flags] diff [--staged] | log [count] | blame FILE [line] | commit [--all] MESSAGE
-  %s [flags] git status | git diff [--staged] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
+  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] | blame FILE [line] | commit [--all] MESSAGE
+  %s [flags] git status | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]

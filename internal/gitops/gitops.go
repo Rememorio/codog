@@ -52,6 +52,11 @@ type StashPushOptions struct {
 	IncludeUntracked bool
 }
 
+type DiffOptions struct {
+	Staged bool
+	Paths  []string
+}
+
 func Status(workspace string) (string, error) {
 	return git(workspace, "status", "--short", "--branch")
 }
@@ -61,9 +66,17 @@ func Run(workspace string, args ...string) (string, error) {
 }
 
 func Diff(workspace string, staged bool) (string, error) {
+	return DiffWithOptions(workspace, DiffOptions{Staged: staged})
+}
+
+func DiffWithOptions(workspace string, options DiffOptions) (string, error) {
 	args := []string{"diff"}
-	if staged {
+	if options.Staged {
 		args = append(args, "--cached")
+	}
+	if len(options.Paths) > 0 {
+		args = append(args, "--")
+		args = append(args, options.Paths...)
 	}
 	return git(workspace, args...)
 }
