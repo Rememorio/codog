@@ -290,6 +290,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "changelog", command)
 	require.Equal(t, []string{"1", "--output-format", "json"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "stash", "list"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "stash", command)
+	require.Equal(t, []string{"list", "--output-format", "json"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -810,6 +815,25 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 
 	require.NoError(t, app.Git([]string{"stash", "list"}))
 	require.Contains(t, out.String(), "agent stash")
+	out.Reset()
+
+	require.NoError(t, app.Stash([]string{"list", "--json"}))
+	var stashJSON stashReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stashJSON))
+	require.Equal(t, "stash", stashJSON.Kind)
+	require.Equal(t, "list", stashJSON.Action)
+	require.Equal(t, "ok", stashJSON.Status)
+	require.Equal(t, 1, stashJSON.Count)
+	require.Len(t, stashJSON.Stashes, 1)
+	require.Equal(t, "stash@{0}", stashJSON.Stashes[0].Ref)
+	require.Contains(t, stashJSON.Stashes[0].Subject, "agent stash")
+	require.Contains(t, stashJSON.Output, "agent stash")
+	out.Reset()
+
+	require.NoError(t, app.Git([]string{"--json", "stash", "list"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stashJSON))
+	require.Equal(t, "stash", stashJSON.Kind)
+	require.Equal(t, 1, stashJSON.Count)
 }
 
 func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
@@ -857,6 +881,16 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &statusJSON))
 	require.Equal(t, "git_status", statusJSON.Kind)
 	require.True(t, statusJSON.Clean)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "stash", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var emptyStashJSON stashReport
+	require.NoError(t, json.Unmarshal([]byte(out), &emptyStashJSON))
+	require.Equal(t, "stash", emptyStashJSON.Kind)
+	require.Equal(t, "ok", emptyStashJSON.Status)
+	require.Equal(t, 0, emptyStashJSON.Count)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "changelog", "1"}, config.FlagOverrides{})
@@ -1004,6 +1038,21 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/stash list", sess))
 	require.Contains(t, out.String(), "slash stash")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/stash list --json", sess))
+	var stashJSON stashReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stashJSON))
+	require.Equal(t, "stash", stashJSON.Kind)
+	require.Equal(t, "ok", stashJSON.Status)
+	require.Equal(t, 1, stashJSON.Count)
+	require.Contains(t, stashJSON.Stashes[0].Subject, "slash stash")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/git --json stash list", sess))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stashJSON))
+	require.Equal(t, "stash", stashJSON.Kind)
+	require.Equal(t, 1, stashJSON.Count)
 }
 
 func TestBranchCommandAndSlash(t *testing.T) {

@@ -75,6 +75,12 @@ type StashPushOptions struct {
 	IncludeUntracked bool
 }
 
+type StashInfo struct {
+	Ref     string `json:"ref"`
+	Commit  string `json:"commit,omitempty"`
+	Subject string `json:"subject,omitempty"`
+}
+
 type DiffOptions struct {
 	Staged bool
 	Paths  []string
@@ -150,6 +156,34 @@ func Changelog(workspace string, limit int) (string, error) {
 
 func StashList(workspace string) (string, error) {
 	return git(workspace, "stash", "list")
+}
+
+func ListStashes(workspace string) ([]StashInfo, error) {
+	raw, err := git(workspace, "stash", "list", "--format=%gd%x00%H%x00%gs")
+	if err != nil {
+		return nil, err
+	}
+	var stashes []StashInfo
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\x00")
+		for len(parts) < 3 {
+			parts = append(parts, "")
+		}
+		ref := strings.TrimSpace(parts[0])
+		if ref == "" {
+			continue
+		}
+		stashes = append(stashes, StashInfo{
+			Ref:     ref,
+			Commit:  strings.TrimSpace(parts[1]),
+			Subject: strings.TrimSpace(parts[2]),
+		})
+	}
+	return stashes, nil
 }
 
 func StashPush(workspace string, options StashPushOptions) (string, error) {

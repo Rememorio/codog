@@ -14406,7 +14406,7 @@ func rewriteLeadingGitOutputFormat(args []string) ([]string, error) {
 
 func gitSubcommandAcceptsOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "status", "diff", "log", "changelog", "blame", "branch", "tag":
+	case "status", "diff", "log", "changelog", "blame", "branch", "tag", "stash":
 		return true
 	default:
 		return false
@@ -15336,43 +15336,22 @@ func parseReleaseNotesArgs(args []string) (releaseNotesRequest, error) {
 }
 
 func (a *App) Stash(args []string) error {
-	action := "list"
-	rest := args
-	if len(args) > 0 {
-		action = strings.ToLower(args[0])
-		rest = args[1:]
+	req, err := parseStashArgs(args)
+	if err != nil {
+		return err
 	}
 	var output string
-	var err error
-	switch action {
+	switch req.Action {
 	case "list", "show":
-		if len(rest) != 0 {
-			return errors.New("usage: codog stash list")
-		}
 		output, err = gitops.StashList(a.Workspace)
 	case "push", "save":
-		options := parseStashPushArgs(rest)
-		output, err = gitops.StashPush(a.Workspace, options)
+		output, err = gitops.StashPush(a.Workspace, req.Push)
 	case "apply":
-		if len(rest) > 1 {
-			return errors.New("usage: codog stash apply [stash-ref]")
-		}
-		ref := ""
-		if len(rest) == 1 {
-			ref = rest[0]
-		}
-		output, err = gitops.StashApply(a.Workspace, ref)
+		output, err = gitops.StashApply(a.Workspace, req.Ref)
 	case "pop":
-		if len(rest) > 1 {
-			return errors.New("usage: codog stash pop [stash-ref]")
-		}
-		ref := ""
-		if len(rest) == 1 {
-			ref = rest[0]
-		}
-		output, err = gitops.StashPop(a.Workspace, ref)
+		output, err = gitops.StashPop(a.Workspace, req.Ref)
 	default:
-		return fmt.Errorf("unknown stash action %q", action)
+		return fmt.Errorf("unknown stash action %q", req.Action)
 	}
 	if err != nil {
 		return err
@@ -15380,8 +15359,103 @@ func (a *App) Stash(args []string) error {
 	if output == "" {
 		output = "No output."
 	}
+	if req.Format == "json" {
+		stashes, err := gitops.ListStashes(a.Workspace)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(stashReport{
+			Kind:    "stash",
+			Action:  req.Action,
+			Status:  "ok",
+			Ref:     req.Ref,
+			Output:  output,
+			Count:   len(stashes),
+			Stashes: stashes,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	fmt.Fprintln(a.Out, output)
 	return nil
+}
+
+type stashRequest struct {
+	Format string
+	Action string
+	Ref    string
+	Push   gitops.StashPushOptions
+}
+
+type stashReport struct {
+	Kind    string             `json:"kind"`
+	Action  string             `json:"action"`
+	Status  string             `json:"status"`
+	Ref     string             `json:"ref,omitempty"`
+	Output  string             `json:"output"`
+	Count   int                `json:"count"`
+	Stashes []gitops.StashInfo `json:"stashes"`
+}
+
+func parseStashArgs(args []string) (stashRequest, error) {
+	req := stashRequest{Format: "text", Action: "list"}
+	var positionals []string
+	var pushArgs []string
+	collectPushArgs := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("stash output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case collectPushArgs:
+			pushArgs = append(pushArgs, arg)
+		default:
+			positionals = append(positionals, arg)
+			if len(positionals) == 1 {
+				action := strings.ToLower(strings.TrimSpace(positionals[0]))
+				collectPushArgs = action == "push" || action == "save"
+			}
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "stash")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	req.Action = strings.ToLower(strings.TrimSpace(positionals[0]))
+	switch req.Action {
+	case "list", "show":
+		if len(positionals) > 1 || len(pushArgs) > 0 {
+			return req, errors.New("usage: codog stash list [--json|--output-format text|json]")
+		}
+	case "push", "save":
+		req.Push = parseStashPushArgs(pushArgs)
+	case "apply", "pop":
+		rest := positionals[1:]
+		if len(pushArgs) > 0 {
+			rest = append(rest, pushArgs...)
+		}
+		if len(rest) > 1 {
+			return req, fmt.Errorf("usage: codog stash %s [stash-ref] [--json|--output-format text|json]", req.Action)
+		}
+		if len(rest) == 1 {
+			req.Ref = rest[0]
+		}
+	default:
+		return req, fmt.Errorf("unknown stash action %q", req.Action)
+	}
+	return req, nil
 }
 
 func parseStashPushArgs(args []string) gitops.StashPushOptions {
@@ -18407,7 +18481,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "skills", "state", "status", "statusline",
-		"stickers", "stats", "system-prompt", "templates", "terminal-setup", "theme",
+		"stash", "stickers", "stats", "system-prompt", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
 		return true
@@ -18576,8 +18650,8 @@ Usage:
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE
-  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
-  %s [flags] stash [list|push|apply|pop] [ARGS...]
+  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE
+  %s [flags] stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json]
   %s [flags] changelog [count] [--json|--output-format text|json]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
