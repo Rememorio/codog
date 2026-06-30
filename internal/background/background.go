@@ -16,6 +16,7 @@ import (
 type Task struct {
 	ID            string         `json:"id"`
 	Kind          string         `json:"kind,omitempty"`
+	AgentType     string         `json:"agent_type,omitempty"`
 	Command       string         `json:"command"`
 	Workspace     string         `json:"workspace,omitempty"`
 	SessionID     string         `json:"session_id,omitempty"`
@@ -56,6 +57,7 @@ type WatchOptions struct {
 
 type RunOptions struct {
 	Kind          string
+	AgentType     string
 	SessionID     string
 	RestartedFrom string
 	RestartPolicy *RestartPolicy
@@ -155,6 +157,7 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 	}
 	restarted, err := s.run(task.Command, workspace, RunOptions{
 		Kind:          task.Kind,
+		AgentType:     task.AgentType,
 		SessionID:     task.SessionID,
 		RestartedFrom: task.ID,
 		RestartPolicy: task.RestartPolicy,
@@ -249,6 +252,7 @@ func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
 		}
 		restarted, err := s.run(task.Command, task.Workspace, RunOptions{
 			Kind:          task.Kind,
+			AgentType:     task.AgentType,
 			SessionID:     task.SessionID,
 			RestartedFrom: task.ID,
 			RestartPolicy: policy,
@@ -296,6 +300,7 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 	task := Task{
 		ID:            id,
 		Kind:          options.Kind,
+		AgentType:     options.AgentType,
 		Command:       command,
 		Workspace:     cwd,
 		SessionID:     options.SessionID,

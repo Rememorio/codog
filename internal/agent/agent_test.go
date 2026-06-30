@@ -2820,6 +2820,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	stopPath := filepath.Join(workspace, "stop.json")
 	compactPath := filepath.Join(workspace, "compact.json")
 	notificationPath := filepath.Join(workspace, "notification.json")
+	subagentStartPath := filepath.Join(workspace, "subagent-start.json")
+	subagentStopPath := filepath.Join(workspace, "subagent-stop.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -2833,6 +2835,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				Stop:               []string{"cat > " + shellQuote(stopPath)},
 				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
 				Notification:       []string{"cat > " + shellQuote(notificationPath)},
+				SubagentStart:      []string{"cat > " + shellQuote(subagentStartPath)},
+				SubagentStop:       []string{"cat > " + shellQuote(subagentStopPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
 				},
@@ -2857,6 +2861,12 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				NotificationCommands: []config.HookCommand{
 					{Matcher: "background_*", Command: "cat > " + shellQuote(notificationPath)},
 				},
+				SubagentStartCommands: []config.HookCommand{
+					{Matcher: "reviewer", Command: "cat > " + shellQuote(subagentStartPath)},
+				},
+				SubagentStopCommands: []config.HookCommand{
+					{Matcher: "reviewer", Command: "cat > " + shellQuote(subagentStopPath)},
+				},
 			},
 		},
 		Workspace: workspace,
@@ -2874,6 +2884,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"stop"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
 	require.Contains(t, out.String(), `"notification"`)
+	require.Contains(t, out.String(), `"subagent_start"`)
+	require.Contains(t, out.String(), `"subagent_stop"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
 	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
@@ -2884,6 +2896,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
 	require.Equal(t, "background_*", hooksList.NotificationCommands[0].Matcher)
+	require.Equal(t, "reviewer", hooksList.SubagentStartCommands[0].Matcher)
+	require.Equal(t, "reviewer", hooksList.SubagentStopCommands[0].Matcher)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
@@ -2962,6 +2976,42 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "task started", notificationHook.Message)
 	require.Equal(t, "Started", notificationHook.Title)
 	require.Equal(t, "background_task_started", notificationHook.NotificationType)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "subagent-start", "--agent-id", "task-1", "--agent-type", "reviewer"}))
+	data, err = os.ReadFile(subagentStartPath)
+	require.NoError(t, err)
+	var subagentStartHook struct {
+		Event     string `json:"event"`
+		Tool      string `json:"tool"`
+		AgentID   string `json:"agent_id"`
+		AgentType string `json:"agent_type"`
+	}
+	require.NoError(t, json.Unmarshal(data, &subagentStartHook))
+	require.Equal(t, "subagent_start", subagentStartHook.Event)
+	require.Equal(t, "reviewer", subagentStartHook.Tool)
+	require.Equal(t, "task-1", subagentStartHook.AgentID)
+	require.Equal(t, "reviewer", subagentStartHook.AgentType)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "subagent-stop", "--agent-id", "task-1", "--agent-type", "reviewer", "--agent-transcript-path", "logs/task-1.log", "--last-assistant-message", "done", "--stop-hook-active"}))
+	data, err = os.ReadFile(subagentStopPath)
+	require.NoError(t, err)
+	var subagentStopHook struct {
+		Event          string `json:"event"`
+		AgentID        string `json:"agent_id"`
+		AgentType      string `json:"agent_type"`
+		TranscriptPath string `json:"agent_transcript_path"`
+		LastAssistant  string `json:"last_assistant_message"`
+		StopHookActive bool   `json:"stop_hook_active"`
+	}
+	require.NoError(t, json.Unmarshal(data, &subagentStopHook))
+	require.Equal(t, "subagent_stop", subagentStopHook.Event)
+	require.Equal(t, "task-1", subagentStopHook.AgentID)
+	require.Equal(t, "reviewer", subagentStopHook.AgentType)
+	require.Equal(t, "logs/task-1.log", subagentStopHook.TranscriptPath)
+	require.Equal(t, "done", subagentStopHook.LastAssistant)
+	require.True(t, subagentStopHook.StopHookActive)
 	require.Empty(t, errOut.String())
 }
 
@@ -4079,6 +4129,65 @@ func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	require.Contains(t, command, "'\"'\"'$HOME'\"'\"'")
 }
 
+func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","model":"agent-model","prompt":"Base review instructions"}`), 0o644))
+	received := make(chan struct {
+		Event     string `json:"event"`
+		AgentID   string `json:"agent_id"`
+		AgentType string `json:"agent_type"`
+	}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload struct {
+			Event     string `json:"event"`
+			AgentID   string `json:"agent_id"`
+			AgentType string `json:"agent_type"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Hooks: config.HookConfig{
+				SubagentStartCommands: []config.HookCommand{
+					{Matcher: "reviewer", Type: "http", URL: server.URL},
+				},
+			},
+		},
+		Sessions:  session.NewStore(configHome),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"run", "reviewer", "check auth"}, config.FlagOverrides{SessionID: "session-1"}))
+	require.Contains(t, out.String(), `"agent": "reviewer"`)
+	require.Contains(t, out.String(), `"kind": "agent"`)
+	select {
+	case payload := <-received:
+		require.Equal(t, "subagent_start", payload.Event)
+		require.NotEmpty(t, payload.AgentID)
+		require.Equal(t, "reviewer", payload.AgentType)
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent start hook was not called")
+	}
+	require.Empty(t, errOut.String())
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -4222,6 +4331,74 @@ func TestBackgroundRunEmitsNotificationHook(t *testing.T) {
 		require.Contains(t, payload.Message, "echo attached")
 	case <-time.After(2 * time.Second):
 		t.Fatal("notification hook was not called")
+	}
+	require.Empty(t, errOut.String())
+}
+
+func TestBackgroundStopEmitsSubagentStopHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := background.NewStore(configHome)
+	task, err := store.RunWithOptions("printf 'final line\\n'; sleep 5", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-1"})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(task.ID, 4096)
+		return err == nil && strings.Contains(logs, "final line")
+	}, 2*time.Second, 50*time.Millisecond)
+	received := make(chan struct {
+		Event          string `json:"event"`
+		AgentID        string `json:"agent_id"`
+		AgentType      string `json:"agent_type"`
+		TranscriptPath string `json:"agent_transcript_path"`
+		LastAssistant  string `json:"last_assistant_message"`
+	}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload struct {
+			Event          string `json:"event"`
+			AgentID        string `json:"agent_id"`
+			AgentType      string `json:"agent_type"`
+			TranscriptPath string `json:"agent_transcript_path"`
+			LastAssistant  string `json:"last_assistant_message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		received <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Hooks: config.HookConfig{
+				SubagentStopCommands: []config.HookCommand{
+					{Matcher: "reviewer", Type: "http", URL: server.URL},
+				},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"stop", task.ID}, config.FlagOverrides{SessionID: "session-1"}))
+	require.Contains(t, out.String(), `"status": "stopped"`)
+	select {
+	case payload := <-received:
+		require.Equal(t, "subagent_stop", payload.Event)
+		require.Equal(t, task.ID, payload.AgentID)
+		require.Equal(t, "reviewer", payload.AgentType)
+		require.Equal(t, task.LogPath, payload.TranscriptPath)
+		require.Equal(t, "final line", payload.LastAssistant)
+	case <-time.After(2 * time.Second):
+		t.Fatal("subagent stop hook was not called")
 	}
 	require.Empty(t, errOut.String())
 }

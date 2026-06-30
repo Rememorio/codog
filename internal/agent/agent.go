@@ -2223,6 +2223,9 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
+		if task.Kind == "agent" {
+			a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
+		}
 		return nil
 	case "restart":
 		task, err := store.Restart(args[1], a.Workspace)
@@ -2685,7 +2688,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		return err
 	}
-	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, runWorkspace, background.RunOptions{SessionID: sessionID})
+	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, runWorkspace, background.RunOptions{Kind: "agent", AgentType: selected.Name, SessionID: sessionID})
 	if err != nil {
 		if allocation != nil {
 			_ = worktree.Remove(a.Workspace, allocation.ID)
@@ -2698,6 +2701,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	}
 	data, _ := json.MarshalIndent(response, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
+	a.runSubagentStartHook(context.Background(), task.ID, selected.Name)
 	return nil
 }
 
@@ -4447,6 +4451,11 @@ type hooksRequest struct {
 	TimeoutMS        int
 	NotificationType string
 	Title            string
+	AgentID          string
+	AgentType        string
+	TranscriptPath   string
+	LastAssistant    string
+	StopHookActive   bool
 }
 
 type hooksListReport struct {
@@ -4461,6 +4470,8 @@ type hooksListReport struct {
 	Stop                       []string             `json:"stop"`
 	PreCompact                 []string             `json:"pre_compact"`
 	Notification               []string             `json:"notification"`
+	SubagentStart              []string             `json:"subagent_start"`
+	SubagentStop               []string             `json:"subagent_stop"`
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
@@ -4469,6 +4480,8 @@ type hooksListReport struct {
 	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
 	PreCompactCommands         []hookCommandSummary `json:"pre_compact_commands,omitempty"`
 	NotificationCommands       []hookCommandSummary `json:"notification_commands,omitempty"`
+	SubagentStartCommands      []hookCommandSummary `json:"subagent_start_commands,omitempty"`
+	SubagentStopCommands       []hookCommandSummary `json:"subagent_stop_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4497,6 +4510,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
 			PreCompact:                 append([]string(nil), a.Config.Hooks.PreCompact...),
 			Notification:               append([]string(nil), a.Config.Hooks.Notification...),
+			SubagentStart:              append([]string(nil), a.Config.Hooks.SubagentStart...),
+			SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
@@ -4505,6 +4520,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
 			PreCompactCommands:         hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
 			NotificationCommands:       hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification),
+			SubagentStartCommands:      hookCommandsForList(a.Config.Hooks.SubagentStartCommands, a.Config.Hooks.SubagentStart),
+			SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4523,15 +4540,37 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Message:          req.Input,
 			Title:            req.Title,
 			NotificationType: req.NotificationType,
+			AgentID:          req.AgentID,
+			AgentType:        req.AgentType,
+			TranscriptPath:   req.TranscriptPath,
+			LastAssistant:    req.LastAssistant,
+			StopHookActive:   req.StopHookActive,
 		}
 		if req.Event == "notification" {
 			payload.NotificationType = firstNonEmpty(req.NotificationType, req.Tool, "generic")
 			payload.Tool = payload.NotificationType
 			payload.Message = req.Input
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+		} else if req.Event == "subagent_start" || req.Event == "subagent_stop" {
+			payload.AgentType = firstNonEmpty(req.AgentType, req.Tool, "general")
+			payload.Tool = payload.AgentType
+			payload.Input = req.Input
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
 		} else {
 			payload.Message = ""
 			payload.Title = ""
 			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4613,6 +4652,40 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Title = args[i]
 		case strings.HasPrefix(arg, "--title="):
 			req.Title = strings.TrimPrefix(arg, "--title=")
+		case arg == "--agent-id":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks agent id is required")
+			}
+			req.AgentID = args[i]
+		case strings.HasPrefix(arg, "--agent-id="):
+			req.AgentID = strings.TrimPrefix(arg, "--agent-id=")
+		case arg == "--agent-type":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks agent type is required")
+			}
+			req.AgentType = args[i]
+		case strings.HasPrefix(arg, "--agent-type="):
+			req.AgentType = strings.TrimPrefix(arg, "--agent-type=")
+		case arg == "--agent-transcript-path":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks agent transcript path is required")
+			}
+			req.TranscriptPath = args[i]
+		case strings.HasPrefix(arg, "--agent-transcript-path="):
+			req.TranscriptPath = strings.TrimPrefix(arg, "--agent-transcript-path=")
+		case arg == "--last-assistant-message":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks last assistant message is required")
+			}
+			req.LastAssistant = args[i]
+		case strings.HasPrefix(arg, "--last-assistant-message="):
+			req.LastAssistant = strings.TrimPrefix(arg, "--last-assistant-message=")
+		case arg == "--stop-hook-active":
+			req.StopHookActive = true
 		case arg == "--error":
 			req.IsError = true
 		case arg == "--timeout-ms":
@@ -4659,11 +4732,14 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "notification") {
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop") {
 		req.Tool = ""
 	}
 	if req.Event == "notification" && strings.TrimSpace(req.NotificationType) == "" && strings.TrimSpace(req.Tool) != "" {
 		req.NotificationType = req.Tool
+	}
+	if (req.Event == "subagent_start" || req.Event == "subagent_stop") && strings.TrimSpace(req.AgentType) == "" && strings.TrimSpace(req.Tool) != "" {
+		req.AgentType = req.Tool
 	}
 	return req, nil
 }
@@ -4686,6 +4762,10 @@ func normalizeHookEvent(value string) (string, error) {
 		return "pre_compact", nil
 	case "notification", "notify":
 		return "notification", nil
+	case "subagent-start", "subagentstart", "subagent_start":
+		return "subagent_start", nil
+	case "subagent-stop", "subagentstop", "subagent_stop":
+		return "subagent_stop", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -4755,6 +4835,14 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Notification     %d\n", len(report.Notification))
 	for _, command := range report.NotificationCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Subagent start   %d\n", len(report.SubagentStart))
+	for _, command := range report.SubagentStartCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Subagent stop    %d\n", len(report.SubagentStop))
+	for _, command := range report.SubagentStopCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -10050,6 +10138,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		StopHookCount:             len(a.Config.Hooks.Stop),
 		PreCompactHookCount:       len(a.Config.Hooks.PreCompact),
 		NotificationHookCount:     len(a.Config.Hooks.Notification),
+		SubagentStartHookCount:    len(a.Config.Hooks.SubagentStart),
+		SubagentStopHookCount:     len(a.Config.Hooks.SubagentStop),
 		EnabledSkillCount:         len(a.Config.EnabledSkills),
 		PlanActive:                planState.Active,
 		PlanText:                  planState.Plan,
@@ -10604,6 +10694,8 @@ func (a *App) Doctor(args []string) error {
 		Stop:               a.Config.Hooks.Stop,
 		PreCompact:         a.Config.Hooks.PreCompact,
 		Notification:       a.Config.Hooks.Notification,
+		SubagentStart:      a.Config.Hooks.SubagentStart,
+		SubagentStop:       a.Config.Hooks.SubagentStop,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
 	})
@@ -16074,6 +16166,49 @@ func (a *App) runNotificationHook(ctx context.Context, notificationType string, 
 	}
 }
 
+func (a *App) runSubagentStartHook(ctx context.Context, agentID string, agentType string) {
+	if strings.TrimSpace(agentID) == "" {
+		return
+	}
+	if err := a.lifecycleHookRunner().SubagentStart(ctx, agentID, firstNonEmpty(agentType, "agent")); err != nil && a.Err != nil {
+		fmt.Fprintf(a.Err, "subagent start hook error: %v\n", err)
+	}
+}
+
+func (a *App) runSubagentStopHook(ctx context.Context, agentID string, agentType string, transcriptPath string, lastAssistant string, stopHookActive bool) {
+	if strings.TrimSpace(agentID) == "" {
+		return
+	}
+	if err := a.lifecycleHookRunner().SubagentStop(ctx, agentID, firstNonEmpty(agentType, "agent"), transcriptPath, lastAssistant, stopHookActive); err != nil && a.Err != nil {
+		fmt.Fprintf(a.Err, "subagent stop hook error: %v\n", err)
+	}
+}
+
+func subagentTypeForTask(task background.Task) string {
+	if strings.TrimSpace(task.AgentType) != "" {
+		return strings.TrimSpace(task.AgentType)
+	}
+	if strings.TrimSpace(task.Kind) != "" {
+		return strings.TrimSpace(task.Kind)
+	}
+	return "agent"
+}
+
+func lastBackgroundLogLine(store background.Store, task background.Task) string {
+	logs, err := store.Logs(task.ID, 64*1024)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(logs, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
 func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, source string) error {
 	if sess == nil {
 		return nil
@@ -16470,7 +16605,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact|notification] [--tool NAME] [--input JSON] [--output TEXT] [--notification-type TYPE] [--title TEXT] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

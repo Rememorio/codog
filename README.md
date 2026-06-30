@@ -190,7 +190,7 @@ Claude Code source.
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
 - Hook commands can run on `session_start`, `user_prompt_submit`,
   `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `stop`,
-  `pre_compact`, and `notification`; `codog hooks
+  `pre_compact`, `notification`, `subagent_start`, and `subagent_stop`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -201,7 +201,10 @@ Claude Code source.
   Hook commands receive the payload on stdin plus
   `CODOG_HOOK_EVENT`, `CODOG_HOOK_TOOL`, `CODOG_HOOK_INPUT`,
   `CODOG_HOOK_OUTPUT`, `CODOG_HOOK_IS_ERROR`, `CODOG_HOOK_MESSAGE`,
-  `CODOG_HOOK_TITLE`, and `CODOG_HOOK_NOTIFICATION_TYPE`; run reports include stdout,
+  `CODOG_HOOK_TITLE`, `CODOG_HOOK_NOTIFICATION_TYPE`,
+  `CODOG_HOOK_AGENT_ID`, `CODOG_HOOK_AGENT_TYPE`,
+  `CODOG_HOOK_AGENT_TRANSCRIPT_PATH`, `CODOG_HOOK_STOP_HOOK_ACTIVE`, and
+  `CODOG_HOOK_LAST_ASSISTANT_MESSAGE`; run reports include stdout,
   stderr, HTTP status, duration, success, and exit code.
 - `codog brief MESSAGE [--status normal|proactive] [--attach PATH]` and
   `/brief` expose the built-in `brief` tool as a human command with optional
@@ -416,7 +419,9 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "post_tool_use_failure": ["echo post-failure >&2"],
     "stop": ["echo stop >&2"],
     "pre_compact": ["echo compact >&2"],
-    "notification": ["echo notify >&2"]
+    "notification": ["echo notify >&2"],
+    "subagent_start": ["echo agent-start >&2"],
+    "subagent_stop": ["echo agent-stop >&2"]
   },
   "mcp_servers": {
     "example": {

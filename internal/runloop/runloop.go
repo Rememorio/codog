@@ -180,6 +180,8 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.Stop) != 0 ||
 		len(cfg.PreCompact) != 0 ||
 		len(cfg.Notification) != 0 ||
+		len(cfg.SubagentStart) != 0 ||
+		len(cfg.SubagentStop) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
 		len(cfg.PostToolUseFailureCommands) != 0 ||
@@ -187,7 +189,9 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SessionStartCommands) != 0 ||
 		len(cfg.StopCommands) != 0 ||
 		len(cfg.PreCompactCommands) != 0 ||
-		len(cfg.NotificationCommands) != 0
+		len(cfg.NotificationCommands) != 0 ||
+		len(cfg.SubagentStartCommands) != 0 ||
+		len(cfg.SubagentStopCommands) != 0
 }
 
 func (r Runner) emitToolUse(call ToolCall) {

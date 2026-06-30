@@ -39,6 +39,8 @@ type Options struct {
 	Stop               []string
 	PreCompact         []string
 	Notification       []string
+	SubagentStart      []string
+	SubagentStop       []string
 	SandboxDefault     string
 	SandboxOK          bool
 }
@@ -248,7 +250,9 @@ func checkHooks(opts Options) Check {
 	stop := compactHookCommands(opts.Stop)
 	preCompact := compactHookCommands(opts.PreCompact)
 	notification := compactHookCommands(opts.Notification)
-	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(stop) + len(preCompact) + len(notification)
+	subagentStart := compactHookCommands(opts.SubagentStart)
+	subagentStop := compactHookCommands(opts.SubagentStop)
+	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(stop) + len(preCompact) + len(notification) + len(subagentStart) + len(subagentStop)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
@@ -258,6 +262,8 @@ func checkHooks(opts Options) Check {
 		fmt.Sprintf("Stop hooks: %d", len(stop)),
 		fmt.Sprintf("PreCompact hooks: %d", len(preCompact)),
 		fmt.Sprintf("Notification hooks: %d", len(notification)),
+		fmt.Sprintf("SubagentStart hooks: %d", len(subagentStart)),
+		fmt.Sprintf("SubagentStop hooks: %d", len(subagentStop)),
 	}
 	if total == 0 {
 		return Check{Name: "Hooks", Status: StatusOK, Summary: "No hooks are configured.", Details: details}
@@ -273,6 +279,8 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "Stop", stop)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreCompact", preCompact)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Notification", notification)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "SubagentStart", subagentStart)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "SubagentStop", subagentStop)...)
 	if len(issues) != 0 {
 		details = append(details, issues...)
 		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Some hook command paths could not be found.", Details: details, Hint: "Fix missing hook script paths or use a command available on PATH."}

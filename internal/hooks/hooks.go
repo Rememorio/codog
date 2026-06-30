@@ -44,6 +44,11 @@ type Payload struct {
 	Message          string `json:"message,omitempty"`
 	Title            string `json:"title,omitempty"`
 	NotificationType string `json:"notification_type,omitempty"`
+	AgentID          string `json:"agent_id,omitempty"`
+	AgentType        string `json:"agent_type,omitempty"`
+	TranscriptPath   string `json:"agent_transcript_path,omitempty"`
+	StopHookActive   bool   `json:"stop_hook_active,omitempty"`
+	LastAssistant    string `json:"last_assistant_message,omitempty"`
 }
 
 type CommandResult struct {
@@ -147,6 +152,29 @@ func (r Runner) Notification(ctx context.Context, notificationType string, title
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) SubagentStart(ctx context.Context, agentID string, agentType string) error {
+	payload := Payload{
+		Event:     "subagent_start",
+		Tool:      agentType,
+		AgentID:   agentID,
+		AgentType: agentType,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) SubagentStop(ctx context.Context, agentID string, agentType string, transcriptPath string, lastAssistant string, stopHookActive bool) error {
+	payload := Payload{
+		Event:          "subagent_stop",
+		Tool:           agentType,
+		AgentID:        agentID,
+		AgentType:      agentType,
+		TranscriptPath: transcriptPath,
+		StopHookActive: stopHookActive,
+		LastAssistant:  lastAssistant,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
 	payload := Payload{Event: event, Tool: tool}
 	hooks := HooksForPayload(cfg, payload)
@@ -180,6 +208,10 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.PreCompactCommands, cfg.PreCompact, payload)
 	case "notification":
 		return matchingHooks(cfg.NotificationCommands, cfg.Notification, payload)
+	case "subagent_start":
+		return matchingHooks(cfg.SubagentStartCommands, cfg.SubagentStart, payload)
+	case "subagent_stop":
+		return matchingHooks(cfg.SubagentStopCommands, cfg.SubagentStop, payload)
 	default:
 		return nil
 	}
@@ -307,6 +339,11 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 		"CODOG_HOOK_MESSAGE="+payload.Message,
 		"CODOG_HOOK_TITLE="+payload.Title,
 		"CODOG_HOOK_NOTIFICATION_TYPE="+payload.NotificationType,
+		"CODOG_HOOK_AGENT_ID="+payload.AgentID,
+		"CODOG_HOOK_AGENT_TYPE="+payload.AgentType,
+		"CODOG_HOOK_AGENT_TRANSCRIPT_PATH="+payload.TranscriptPath,
+		"CODOG_HOOK_STOP_HOOK_ACTIVE="+strconv.FormatBool(payload.StopHookActive),
+		"CODOG_HOOK_LAST_ASSISTANT_MESSAGE="+payload.LastAssistant,
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -455,7 +492,19 @@ func matcherTarget(payload Payload) string {
 	if normalizeEvent(payload.Event) == "notification" && strings.TrimSpace(payload.NotificationType) != "" {
 		return payload.NotificationType
 	}
+	if isSubagentEvent(payload.Event) && strings.TrimSpace(payload.AgentType) != "" {
+		return payload.AgentType
+	}
 	return payload.Tool
+}
+
+func isSubagentEvent(event string) bool {
+	switch normalizeEvent(event) {
+	case "subagent_start", "subagent_stop":
+		return true
+	default:
+		return false
+	}
 }
 
 func hookCommandsFromStrings(values []string) []config.HookCommand {
@@ -544,7 +593,7 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant}
 	var decoded any
 	if err := json.Unmarshal([]byte(payload.Input), &decoded); err == nil {
 		collectJSONStrings(decoded, &values)
@@ -672,6 +721,10 @@ func normalizeEvent(event string) string {
 		return "pre_compact"
 	case "notification", "notify":
 		return "notification"
+	case "subagentstart", "subagent_start", "subagent-start":
+		return "subagent_start"
+	case "subagentstop", "subagent_stop", "subagent-stop":
+		return "subagent_stop"
 	default:
 		return event
 	}

@@ -271,7 +271,9 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"PostToolUseFailure": ["echo post-failure"],
 			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
 			"PreCompact": ["echo pre-compact"],
-			"Notification": [{"matcher": "background_*", "command": "echo notify"}]
+			"Notification": [{"matcher": "background_*", "command": "echo notify"}],
+			"SubagentStart": [{"matcher": "reviewer", "command": "echo agent-start"}],
+			"SubagentStop": [{"matcher": "reviewer", "command": "echo agent-stop"}]
 		}
 	}`), 0o644))
 
@@ -285,6 +287,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo stop"}, cfg.Hooks.Stop)
 	require.Equal(t, []string{"echo pre-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []string{"echo notify"}, cfg.Hooks.Notification)
+	require.Equal(t, []string{"echo agent-start"}, cfg.Hooks.SubagentStart)
+	require.Equal(t, []string{"echo agent-stop"}, cfg.Hooks.SubagentStop)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo prompt-submit"}}, cfg.Hooks.UserPromptSubmitCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo session-start"}}, cfg.Hooks.SessionStartCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
@@ -297,6 +301,8 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop"}}, cfg.Hooks.StopCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo pre-compact"}}, cfg.Hooks.PreCompactCommands)
 	require.Equal(t, []HookCommand{{Matcher: "background_*", Type: "command", Command: "echo notify"}}, cfg.Hooks.NotificationCommands)
+	require.Equal(t, []HookCommand{{Matcher: "reviewer", Type: "command", Command: "echo agent-start"}}, cfg.Hooks.SubagentStartCommands)
+	require.Equal(t, []HookCommand{{Matcher: "reviewer", Type: "command", Command: "echo agent-stop"}}, cfg.Hooks.SubagentStopCommands)
 }
 
 func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
@@ -317,7 +323,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"post_tool_use_failure": ["echo user-post-failure"],
 			"stop": ["echo user-stop"],
 			"pre_compact": ["echo user-compact"],
-			"notification": ["echo user-notification"]
+			"notification": ["echo user-notification"],
+			"subagent_start": ["echo user-subagent-start"],
+			"subagent_stop": ["echo user-subagent-stop"]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
@@ -330,7 +338,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"PostToolUseFailure": [{"command": "echo project-post-failure"}],
 			"Stop": [{"command": "echo project-stop"}],
 			"PreCompact": [{"command": "echo project-compact"}],
-			"Notification": [{"matcher": "background_task_started", "command": "echo project-notification"}]
+			"Notification": [{"matcher": "background_task_started", "command": "echo project-notification"}],
+			"SubagentStart": [{"matcher": "reviewer", "command": "echo project-subagent-start"}],
+			"SubagentStop": [{"matcher": "reviewer", "command": "echo project-subagent-stop"}]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{
@@ -341,7 +351,9 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"post_tool_use_failure": ["echo user-post-failure", "echo local-post-failure"],
 			"stop": ["echo user-stop", "echo local-stop"],
 			"pre_compact": ["echo user-compact", "echo local-compact"],
-			"notification": ["echo user-notification", "echo local-notification"]
+			"notification": ["echo user-notification", "echo local-notification"],
+			"subagent_start": ["echo user-subagent-start", "echo local-subagent-start"],
+			"subagent_stop": ["echo user-subagent-stop", "echo local-subagent-stop"]
 		}
 	}`), 0o644))
 
@@ -355,6 +367,8 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-stop", "echo project-stop", "echo local-stop"}, cfg.Hooks.Stop)
 	require.Equal(t, []string{"echo user-compact", "echo project-compact", "echo local-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []string{"echo user-notification", "echo project-notification", "echo local-notification"}, cfg.Hooks.Notification)
+	require.Equal(t, []string{"echo user-subagent-start", "echo project-subagent-start", "echo local-subagent-start"}, cfg.Hooks.SubagentStart)
+	require.Equal(t, []string{"echo user-subagent-stop", "echo project-subagent-stop", "echo local-subagent-stop"}, cfg.Hooks.SubagentStop)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-prompt"},
 		{Type: "command", Command: "echo project-prompt"},
@@ -390,6 +404,16 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Matcher: "background_task_started", Type: "command", Command: "echo project-notification"},
 		{Type: "command", Command: "echo local-notification"},
 	}, cfg.Hooks.NotificationCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-subagent-start"},
+		{Matcher: "reviewer", Type: "command", Command: "echo project-subagent-start"},
+		{Type: "command", Command: "echo local-subagent-start"},
+	}, cfg.Hooks.SubagentStartCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-subagent-stop"},
+		{Matcher: "reviewer", Type: "command", Command: "echo project-subagent-stop"},
+		{Type: "command", Command: "echo local-subagent-stop"},
+	}, cfg.Hooks.SubagentStopCommands)
 }
 
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {

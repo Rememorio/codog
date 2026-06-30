@@ -146,6 +146,12 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		NotificationCommands: []config.HookCommand{
 			{Matcher: "background_*", Type: "command", Command: "notify"},
 		},
+		SubagentStartCommands: []config.HookCommand{
+			{Matcher: "reviewer", Type: "command", Command: "agent-start"},
+		},
+		SubagentStopCommands: []config.HookCommand{
+			{Matcher: "reviewer", Type: "command", Command: "agent-stop"},
+		},
 	}
 
 	require.Equal(t, []string{"write-only", "all"}, CommandsForEvent(cfg, "pre_tool_use", "write_file"))
@@ -158,6 +164,8 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))
 	require.Equal(t, []string{"compact"}, CommandsForEvent(cfg, "pre-compact", ""))
 	require.Equal(t, []string{"notify"}, CommandsForEvent(cfg, "notification", "background_task_started"))
+	require.Equal(t, []string{"agent-start"}, CommandsForEvent(cfg, "subagent-start", "reviewer"))
+	require.Equal(t, []string{"agent-stop"}, CommandsForEvent(cfg, "subagent-stop", "reviewer"))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
 }
 
@@ -174,6 +182,30 @@ func TestHooksForPayloadFiltersIfConditions(t *testing.T) {
 	matched = HooksForPayload(cfg, Payload{Event: "pre_tool_use", Tool: "bash", Input: `{"command":"npm test"}`})
 	require.Len(t, matched, 1)
 	require.Equal(t, "http", matched[0].Type)
+}
+
+func TestHooksForPayloadFiltersSubagentMatchersAndConditions(t *testing.T) {
+	cfg := config.HookConfig{SubagentStopCommands: []config.HookCommand{
+		{Matcher: "reviewer", Type: "command", If: "reviewer(*done*)", Command: "reviewer-stop"},
+		{Matcher: "writer", Type: "command", Command: "writer-stop"},
+	}}
+
+	matched := HooksForPayload(cfg, Payload{
+		Event:         "subagent_stop",
+		AgentID:       "task-1",
+		AgentType:     "reviewer",
+		LastAssistant: "review done",
+	})
+	require.Len(t, matched, 1)
+	require.Equal(t, "reviewer-stop", matched[0].Command)
+
+	matched = HooksForPayload(cfg, Payload{
+		Event:         "subagent_stop",
+		AgentID:       "task-1",
+		AgentType:     "reviewer",
+		LastAssistant: "still working",
+	})
+	require.Empty(t, matched)
 }
 
 func TestHooksForPayloadFiltersNotificationMatchersAndConditions(t *testing.T) {

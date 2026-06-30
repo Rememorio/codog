@@ -3531,6 +3531,7 @@ func (t AgentTool) Execute(_ context.Context, input json.RawMessage) (string, er
 	command := buildAgentToolCommand(executable, def, payload.Description, payload.Prompt, payload.Model)
 	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{
 		Kind:      "agent",
+		AgentType: agentName,
 		SessionID: payload.SessionID,
 	})
 	if err != nil {

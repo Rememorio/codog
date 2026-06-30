@@ -953,6 +953,7 @@ func TestAgentToolLaunchesBackgroundAgent(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &payload))
 	require.NotEmpty(t, payload.Task.ID)
 	require.Equal(t, "agent", payload.Task.Kind)
+	require.Equal(t, "reviewer", payload.Task.AgentType)
 	require.Equal(t, "session-1", payload.Task.SessionID)
 
 	store := background.NewStore(configHome)

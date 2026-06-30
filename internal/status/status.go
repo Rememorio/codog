@@ -29,6 +29,8 @@ type Options struct {
 	StopHookCount             int
 	PreCompactHookCount       int
 	NotificationHookCount     int
+	SubagentStartHookCount    int
+	SubagentStopHookCount     int
 	EnabledSkillCount         int
 	PlanActive                bool
 	PlanText                  string
@@ -97,6 +99,8 @@ type ConfigStatus struct {
 	StopHookCount             int    `json:"stop_hook_count"`
 	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
 	NotificationHookCount     int    `json:"notification_hook_count"`
+	SubagentStartHookCount    int    `json:"subagent_start_hook_count"`
+	SubagentStopHookCount     int    `json:"subagent_stop_hook_count"`
 	EnabledSkillCount         int    `json:"enabled_skill_count"`
 }
 
@@ -181,6 +185,8 @@ func Build(opts Options) Snapshot {
 			StopHookCount:             opts.StopHookCount,
 			PreCompactHookCount:       opts.PreCompactHookCount,
 			NotificationHookCount:     opts.NotificationHookCount,
+			SubagentStartHookCount:    opts.SubagentStartHookCount,
+			SubagentStopHookCount:     opts.SubagentStopHookCount,
 			EnabledSkillCount:         opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{

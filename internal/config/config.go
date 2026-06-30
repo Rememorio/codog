@@ -25,6 +25,8 @@ type HookConfig struct {
 	Stop                       []string      `json:"stop,omitempty"`
 	PreCompact                 []string      `json:"pre_compact,omitempty"`
 	Notification               []string      `json:"notification,omitempty"`
+	SubagentStart              []string      `json:"subagent_start,omitempty"`
+	SubagentStop               []string      `json:"subagent_stop,omitempty"`
 	PreToolUseCommands         []HookCommand `json:"-"`
 	PostToolUseCommands        []HookCommand `json:"-"`
 	PostToolUseFailureCommands []HookCommand `json:"-"`
@@ -33,6 +35,8 @@ type HookConfig struct {
 	StopCommands               []HookCommand `json:"-"`
 	PreCompactCommands         []HookCommand `json:"-"`
 	NotificationCommands       []HookCommand `json:"-"`
+	SubagentStartCommands      []HookCommand `json:"-"`
+	SubagentStopCommands       []HookCommand `json:"-"`
 }
 
 type HookCommand struct {
@@ -90,6 +94,14 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	subagentStart, err := hookCommands(raw, "subagent_start", "SubagentStart")
+	if err != nil {
+		return err
+	}
+	subagentStop, err := hookCommands(raw, "subagent_stop", "SubagentStop")
+	if err != nil {
+		return err
+	}
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
 	h.PostToolUseFailureCommands = postFailure
@@ -98,6 +110,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.StopCommands = stop
 	h.PreCompactCommands = preCompact
 	h.NotificationCommands = notification
+	h.SubagentStartCommands = subagentStart
+	h.SubagentStopCommands = subagentStop
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
 	h.PostToolUseFailure = hookCommandStrings(postFailure)
@@ -106,6 +120,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.Stop = hookCommandStrings(stop)
 	h.PreCompact = hookCommandStrings(preCompact)
 	h.Notification = hookCommandStrings(notification)
+	h.SubagentStart = hookCommandStrings(subagentStart)
+	h.SubagentStop = hookCommandStrings(subagentStop)
 	return nil
 }
 
@@ -919,6 +935,16 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.Notification) != 0 {
 		dst.NotificationCommands = mergeHookCommands(dst.NotificationCommands, hookCommandsFromStrings(src.Notification))
 	}
+	if len(src.SubagentStartCommands) != 0 {
+		dst.SubagentStartCommands = mergeHookCommands(dst.SubagentStartCommands, src.SubagentStartCommands)
+	} else if len(src.SubagentStart) != 0 {
+		dst.SubagentStartCommands = mergeHookCommands(dst.SubagentStartCommands, hookCommandsFromStrings(src.SubagentStart))
+	}
+	if len(src.SubagentStopCommands) != 0 {
+		dst.SubagentStopCommands = mergeHookCommands(dst.SubagentStopCommands, src.SubagentStopCommands)
+	} else if len(src.SubagentStop) != 0 {
+		dst.SubagentStopCommands = mergeHookCommands(dst.SubagentStopCommands, hookCommandsFromStrings(src.SubagentStop))
+	}
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
 	dst.PostToolUseFailure = hookCommandStrings(dst.PostToolUseFailureCommands)
@@ -927,6 +953,8 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.Stop = hookCommandStrings(dst.StopCommands)
 	dst.PreCompact = hookCommandStrings(dst.PreCompactCommands)
 	dst.Notification = hookCommandStrings(dst.NotificationCommands)
+	dst.SubagentStart = hookCommandStrings(dst.SubagentStartCommands)
+	dst.SubagentStop = hookCommandStrings(dst.SubagentStopCommands)
 }
 
 func hookCommandsFromStrings(values []string) []HookCommand {
