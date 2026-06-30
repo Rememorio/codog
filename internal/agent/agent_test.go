@@ -3406,6 +3406,41 @@ func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
 	require.False(t, app.Tools.Has("demo_tool"))
 }
 
+func TestReloadPluginsRebuildsCurrentToolRegistry(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(t.TempDir(), workspace),
+		Out:       &out,
+		Err:       &errOut,
+	}
+	require.False(t, app.Tools.Has("demo_tool"))
+
+	require.NoError(t, app.ReloadPlugins([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "reload_plugins"`)
+	require.Contains(t, out.String(), `"plugins": 1`)
+	require.Contains(t, out.String(), `"plugin_tools": 1`)
+	require.True(t, app.Tools.Has("demo_tool"))
+	out.Reset()
+
+	require.NoError(t, app.ReloadPlugins(nil))
+	require.Contains(t, out.String(), "Plugins Reloaded")
+	require.True(t, app.Tools.Has("demo_tool"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/reload-plugins", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Plugins Reloaded")
+	require.Empty(t, errOut.String())
+}
+
 func TestMarketplaceInstallRemoteCommandUsesConfiguredMarketplace(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)

@@ -336,6 +336,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BackgroundWithOverrides(rest, overrides)
 	case "agents":
 		return app.AgentsWithOverrides(rest, overrides)
+	case "reload-plugins":
+		return app.ReloadPlugins(rest)
 	case "marketplace":
 		return app.Marketplace(rest)
 	case "login":
@@ -1909,6 +1911,157 @@ func (a *App) RegisterPluginTools() error {
 		}
 	}
 	return nil
+}
+
+type reloadPluginsRequest struct {
+	Format string
+}
+
+type reloadPluginsReport struct {
+	Kind             string   `json:"kind"`
+	Action           string   `json:"action"`
+	Status           string   `json:"status"`
+	Workspace        string   `json:"workspace"`
+	Plugins          int      `json:"plugins"`
+	EnabledPlugins   int      `json:"enabled_plugins"`
+	PluginTools      int      `json:"plugin_tools"`
+	ToolCountBefore  int      `json:"tool_count_before"`
+	ToolCountAfter   int      `json:"tool_count_after"`
+	MCPToolsReloaded bool     `json:"mcp_tools_reloaded"`
+	PluginIDs        []string `json:"plugin_ids,omitempty"`
+	EnabledPluginIDs []string `json:"enabled_plugin_ids,omitempty"`
+	Reloaded         bool     `json:"reloaded"`
+}
+
+func (a *App) ReloadPlugins(args []string) error {
+	req, err := parseReloadPluginsArgs(args)
+	if err != nil {
+		return err
+	}
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	before := 0
+	if a.Tools != nil {
+		before = len(a.Tools.Infos())
+	}
+	oldRegistry := a.Tools
+	oldMCPLoaded := a.mcpToolsLoaded
+	nextRegistry, err := a.newToolRegistry()
+	if err != nil {
+		return err
+	}
+	a.Tools = nextRegistry
+	a.mcpToolsLoaded = false
+	if err := a.RegisterPluginTools(); err != nil {
+		a.Tools = oldRegistry
+		a.mcpToolsLoaded = oldMCPLoaded
+		return err
+	}
+	report := buildReloadPluginsReport(a.Workspace, manifests, before, len(a.Tools.Infos()), oldMCPLoaded)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderReloadPluginsReport(a.Out, report)
+	return nil
+}
+
+func (a *App) newToolRegistry() (*tools.Registry, error) {
+	additionalDirs, err := pathscope.EffectiveDirs(a.Workspace, a.Config.AdditionalDirs)
+	if err != nil {
+		return nil, err
+	}
+	questionIn := a.In
+	if questionIn == nil {
+		questionIn = os.Stdin
+	}
+	questionOut := a.Err
+	if questionOut == nil {
+		questionOut = io.Discard
+	}
+	return tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
+		SandboxStrategy: a.Config.Future.SandboxStrategy,
+		AdditionalDirs:  additionalDirs,
+		ConfigHome:      a.Config.ConfigHome,
+		MCPServers:      a.Config.MCPServers,
+		QuestionIn:      questionIn,
+		QuestionOut:     questionOut,
+	}), nil
+}
+
+func parseReloadPluginsArgs(args []string) (reloadPluginsRequest, error) {
+	req := reloadPluginsRequest{Format: "text"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reload-plugins output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "reload" || arg == "refresh":
+		default:
+			return req, fmt.Errorf("unexpected reload-plugins argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "reload-plugins"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func buildReloadPluginsReport(workspace string, manifests []plugins.Manifest, before, after int, oldMCPLoaded bool) reloadPluginsReport {
+	report := reloadPluginsReport{
+		Kind:             "reload_plugins",
+		Action:           "reload",
+		Status:           "ok",
+		Workspace:        workspace,
+		Plugins:          len(manifests),
+		ToolCountBefore:  before,
+		ToolCountAfter:   after,
+		MCPToolsReloaded: oldMCPLoaded,
+		Reloaded:         true,
+	}
+	for _, manifest := range manifests {
+		report.PluginIDs = append(report.PluginIDs, manifest.ID)
+		if !manifest.Enabled {
+			continue
+		}
+		report.EnabledPlugins++
+		report.EnabledPluginIDs = append(report.EnabledPluginIDs, manifest.ID)
+		for _, tool := range manifest.Tools {
+			if strings.TrimSpace(tool.Name) != "" && strings.TrimSpace(tool.Command) != "" {
+				report.PluginTools++
+			}
+		}
+	}
+	sort.Strings(report.PluginIDs)
+	sort.Strings(report.EnabledPluginIDs)
+	return report
+}
+
+func renderReloadPluginsReport(out io.Writer, report reloadPluginsReport) {
+	fmt.Fprintln(out, "Plugins Reloaded")
+	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
+	fmt.Fprintf(out, "  Plugins          %d\n", report.Plugins)
+	fmt.Fprintf(out, "  Enabled          %d\n", report.EnabledPlugins)
+	fmt.Fprintf(out, "  Plugin tools     %d\n", report.PluginTools)
+	fmt.Fprintf(out, "  Tools before     %d\n", report.ToolCountBefore)
+	fmt.Fprintf(out, "  Tools after      %d\n", report.ToolCountAfter)
+	if len(report.EnabledPluginIDs) > 0 {
+		fmt.Fprintf(out, "  Enabled IDs      %s\n", strings.Join(report.EnabledPluginIDs, ", "))
+	}
+	if report.MCPToolsReloaded {
+		fmt.Fprintln(out, "  MCP tools        will reload on next provider turn")
+	}
 }
 
 func (a *App) RegisterMCPTools(ctx context.Context) error {
@@ -8946,6 +9099,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Marketplace(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/reload-plugins":
+		if err := a.ReloadPlugins(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/providers":
 		args := fields[1:]
 		if len(args) == 0 {
@@ -12356,6 +12513,7 @@ Usage:
   %s system-prompt [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
+  %s reload-plugins [--json|--output-format text|json]
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
@@ -12386,7 +12544,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

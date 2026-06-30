@@ -205,6 +205,9 @@ Claude Code source.
 - `codog marketplace list|remote|updates|install|install-remote|update|enable|disable|remove`
   manages local plugins, checks marketplace updates, and can install or update
   SHA-256 verified zip bundles from signed remote marketplace indexes.
+- `codog reload-plugins` and `/reload-plugins` rebuild the current process
+  tool registry from installed local plugins after install, update, enable, or
+  disable operations.
 - `codog oauth pkce|discover|provider|device|browser` generates PKCE material,
   discovers and stores provider profiles, and runs profile-backed device or
   browser authorization; `oauth status` inspects local auth readiness; `oauth
