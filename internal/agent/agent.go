@@ -11290,7 +11290,8 @@ func (a *App) btwSideSession(source *session.Session) (*session.Session, error) 
 }
 
 type turnOptions struct {
-	Skill *skills.Skill
+	Skill        *skills.Skill
+	AllowedTools []string
 }
 
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
@@ -11312,6 +11313,10 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 	if activeSkill == nil {
 		modelInput, activeSkill = a.expandSkillInvocationWithSkill(input)
 	}
+	allowedTools := append([]string(nil), opts.AllowedTools...)
+	if activeSkill != nil {
+		allowedTools = append(allowedTools, activeSkill.AllowedTools...)
+	}
 	modelInput = a.expandPromptReferences(modelInput)
 	a.writeWorkerState(mode, "running", sess, "")
 	effectiveConfig := a.effectiveConfig()
@@ -11319,7 +11324,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		Config:           effectiveConfig,
 		Client:           a.Client,
 		Tools:            a.Tools,
-		Prompter:         a.prompterWithSkill(sess.ID, activeSkill),
+		Prompter:         a.prompterWithAllowedTools(sess.ID, allowedTools),
 		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
 		Workspace:        a.Workspace,
 		Out:              a.Out,
@@ -12154,7 +12159,7 @@ func (a *App) handleCustomSlash(ctx context.Context, line string, sess *session.
 		fmt.Fprintf(a.Err, "custom command %s rendered an empty prompt\n", fields[0])
 		return true
 	}
-	if err := a.runSessionTurn(ctx, "repl", sess, rendered.Rendered, "idle"); err != nil {
+	if err := a.runSessionTurnWithOptions(ctx, "repl", sess, rendered.Rendered, "idle", turnOptions{AllowedTools: command.AllowedTools}); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 	}
 	return true
@@ -15831,14 +15836,21 @@ func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, er
 }
 
 func (a *App) prompter(sessionID string) *tools.Prompter {
-	return a.prompterWithSkill(sessionID, nil)
+	return a.prompterWithAllowedTools(sessionID, nil)
 }
 
 func (a *App) prompterWithSkill(sessionID string, activeSkill *skills.Skill) *tools.Prompter {
+	if activeSkill == nil {
+		return a.prompterWithAllowedTools(sessionID, nil)
+	}
+	return a.prompterWithAllowedTools(sessionID, activeSkill.AllowedTools)
+}
+
+func (a *App) prompterWithAllowedTools(sessionID string, allowedTools []string) *tools.Prompter {
 	cfg := a.effectiveConfig()
 	allowRules := append([]string(nil), cfg.PermissionRules.Allow...)
-	if activeSkill != nil && !a.planModeActive() {
-		allowRules = addRuleValues(allowRules, skillAllowedToolRules(activeSkill.AllowedTools))
+	if len(allowedTools) > 0 && !a.planModeActive() {
+		allowRules = addRuleValues(allowRules, skillAllowedToolRules(allowedTools))
 	}
 	return &tools.Prompter{
 		Mode:        tools.Permission(cfg.PermissionMode),

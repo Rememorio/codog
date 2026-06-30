@@ -3696,6 +3696,57 @@ func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
 	require.Equal(t, "Review this target: target.go", history[0].Text)
 }
 
+func TestCustomSlashAllowedToolsApplyToActiveTurn(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Turns: []mockanthropic.Turn{
+		{ToolUses: []mockanthropic.ToolUse{{
+			ID:    "toolu_1",
+			Name:  "Bash",
+			Input: json.RawMessage(`{"command":"echo command-ok"}`),
+		}}},
+		{Text: "custom done"},
+	}}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "check.md"), []byte(`---
+allowed-tools: Bash(echo:*)
+---
+Check this target: $ARGUMENTS`), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            2,
+			AutoCompactMessages: 40,
+			PermissionMode:      "read-only",
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+	sess, err := app.Sessions.Open("custom-allowed")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/check target.go", sess))
+
+	require.Contains(t, out.String(), "custom done")
+	require.Empty(t, errOut.String())
+	require.Len(t, sess.Messages, 4)
+	require.Equal(t, "tool_result", sess.Messages[2].Content[0].Type)
+	require.False(t, sess.Messages[2].Content[0].IsError)
+	require.Contains(t, sess.Messages[2].Content[0].Content, "command-ok")
+}
+
 func TestSkillSlashRunsRenderedPrompt(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "skill done"}.Handler())
 	defer server.Close()

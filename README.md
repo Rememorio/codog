@@ -162,7 +162,8 @@ Claude Code source.
   `team:review`; command frontmatter such as `description`, `allowed-tools`,
   `argument-hint`, and `arguments` is parsed for list/run metadata, then the
   Markdown body renders `$ARGUMENTS` and `{{args}}`. In the REPL, custom
-  commands can also run directly as `/name args` or `/team/review args`.
+  commands can also run directly as `/name args` or `/team/review args`, where
+  command `allowed-tools` applies as temporary per-turn allow rules.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
