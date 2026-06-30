@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/acpserver"
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/audit"
@@ -109,14 +111,21 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderVersion(os.Stdout, workspace, args[1:])
 		case "--acp", "-acp":
-			return renderACPStatus(os.Stdout, args[1:])
+			if !acpServeRequested(args[1:]) {
+				return renderACPStatus(os.Stdout, args[1:])
+			}
+			args = append([]string{"acp"}, args[1:]...)
 		}
 	}
 	if acpArgs, ok, err := parseACPGlobalInvocation(args); ok || err != nil {
 		if err != nil {
 			return err
 		}
-		return renderACPStatus(os.Stdout, acpArgs)
+		if acpServeRequested(acpArgs) {
+			args = append([]string{"acp"}, acpArgs...)
+		} else {
+			return renderACPStatus(os.Stdout, acpArgs)
+		}
 	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
@@ -133,7 +142,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return renderVersion(os.Stdout, workspace, rest)
 	}
-	if command == "acp" {
+	if command == "acp" && !acpServeRequested(rest) {
 		return renderACPStatus(os.Stdout, rest)
 	}
 	if command == "config" {
@@ -243,6 +252,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			input = string(data)
 		}
 		return app.Prompt(ctx, input, overrides)
+	case "acp":
+		return app.ACP(ctx, rest)
 	case "btw":
 		return app.BTW(ctx, rest, overrides, nil)
 	case "sessions":
@@ -8938,40 +8949,46 @@ type acpUnsupportedReport struct {
 	Hint          string   `json:"hint"`
 }
 
+type acpRequest struct {
+	Format      string
+	Serve       bool
+	Unsupported []string
+}
+
 func renderACPStatus(out io.Writer, args []string) error {
-	format, unsupported, err := parseACPArgs(args)
+	req, err := parseACPRequest(args)
 	if err != nil {
 		return err
 	}
-	if len(unsupported) > 0 {
+	if len(req.Unsupported) > 0 {
 		report := acpUnsupportedReport{
 			SchemaVersion: "1.0",
 			Kind:          "unsupported_acp_invocation",
 			Action:        "status",
 			Status:        "error",
 			Supported:     false,
-			Message:       "unsupported ACP invocation. Use `codog acp` or `codog acp serve`.",
+			Message:       "unsupported ACP invocation. Use `codog acp` for status or `codog acp serve` for stdio JSON-RPC.",
 			Invocation:    append([]string(nil), args...),
-			Hint:          "ACP/Zed editor integration is not implemented yet; `codog acp serve` reports status only.",
+			Hint:          "Start the editor bridge with `codog acp serve`, then send line-delimited JSON-RPC requests on stdin.",
 		}
-		if format == "json" {
+		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(out, string(data))
 		}
-		return fmt.Errorf("unsupported_acp_invocation: unsupported ACP invocation %q", strings.Join(unsupported, " "))
+		return fmt.Errorf("unsupported_acp_invocation: unsupported ACP invocation %q", strings.Join(req.Unsupported, " "))
 	}
 	report := buildACPStatusReport()
-	if format == "json" {
+	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(out, string(data))
 		return nil
 	}
 	fmt.Fprintln(out, "ACP / Zed")
-	fmt.Fprintln(out, "  Status           not implemented")
-	fmt.Fprintln(out, "  Supported        false")
-	fmt.Fprintln(out, "  Serve            status only; no daemon is started")
-	fmt.Fprintln(out, "  Protocol         no JSON-RPC endpoint is available")
-	fmt.Fprintln(out, "  Surface          codog acp [serve] --output-format json")
+	fmt.Fprintln(out, "  Status           ok")
+	fmt.Fprintln(out, "  Supported        true")
+	fmt.Fprintln(out, "  Serve            codog acp serve")
+	fmt.Fprintln(out, "  Protocol         stdio JSON-RPC")
+	fmt.Fprintln(out, "  Surface          initialize, status, session/new, prompt, shutdown")
 	fmt.Fprintln(out, "  Message          "+report.Message)
 	return nil
 }
@@ -8981,22 +8998,25 @@ func buildACPStatusReport() acpStatusReport {
 		SchemaVersion: "1.0",
 		Kind:          "acp",
 		Action:        "status",
-		Status:        "not_implemented",
-		Supported:     false,
-		Message:       "ACP/Zed editor integration is not implemented in Codog yet. `codog acp serve` reports status only and does not launch a daemon or JSON-RPC endpoint. Use `codog prompt`, the REPL, or `codog doctor` for local verification.",
+		Status:        "ok",
+		Supported:     true,
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve` and use initialize, status, session/new, prompt, and shutdown requests.",
+		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
-			JSONRPC:           false,
+			JSONRPC:           true,
 			Daemon:            false,
-			ServeStartsDaemon: false,
+			Endpoint:          stringPtr("stdio"),
+			ServeStartsDaemon: true,
 		},
 		Contracts: acpContracts{
 			BlockingGates: []string{
-				"task_packet_schema",
-				"session_control_schema",
-				"event_report_schema",
+				"initialize",
+				"session/new",
+				"prompt",
+				"shutdown",
 			},
-			StableStatusSurface:       "codog acp [serve] --output-format json",
+			StableStatusSurface:       "codog acp --output-format json",
 			UnsupportedInvocationKind: "unsupported_acp_invocation",
 		},
 		Aliases: []string{"acp", "--acp", "-acp"},
@@ -9031,41 +9051,140 @@ func parseACPGlobalInvocation(args []string) ([]string, bool, error) {
 }
 
 func parseACPArgs(args []string) (string, []string, error) {
-	format := "text"
-	unsupported := []string{}
+	req, err := parseACPRequest(args)
+	if err != nil {
+		return "", nil, err
+	}
+	return req.Format, req.Unsupported, nil
+}
+
+func parseACPRequest(args []string) (acpRequest, error) {
+	req := acpRequest{Format: "text"}
 	serveSeen := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
 		case arg == "serve":
 			if serveSeen {
-				unsupported = append(unsupported, arg)
+				req.Unsupported = append(req.Unsupported, arg)
 			}
 			serveSeen = true
+			req.Serve = true
 		case arg == "--json":
-			format = "json"
+			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return "", nil, errors.New("acp output format is required")
+				return acpRequest{}, errors.New("acp output format is required")
 			}
-			format = args[i]
+			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
-			format = strings.TrimPrefix(arg, "--output-format=")
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		default:
-			unsupported = append(unsupported, arg)
+			req.Unsupported = append(req.Unsupported, arg)
 		}
 	}
-	switch format {
+	switch req.Format {
 	case "text", "json":
-		return format, unsupported, nil
+		return req, nil
 	default:
-		return "", nil, fmt.Errorf("unknown acp output format %q", format)
+		return acpRequest{}, fmt.Errorf("unknown acp output format %q", req.Format)
 	}
 }
 
-func (a *App) ACP(args []string) error {
-	return renderACPStatus(a.Out, args)
+func acpServeRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "serve" {
+			return true
+		}
+	}
+	return false
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func (a *App) ACP(ctx context.Context, args []string) error {
+	req, err := parseACPRequest(args)
+	if err != nil {
+		return err
+	}
+	if len(req.Unsupported) != 0 || !req.Serve {
+		return renderACPStatus(a.Out, args)
+	}
+	return a.serveACP(ctx)
+}
+
+func (a *App) serveACP(ctx context.Context) error {
+	in := a.In
+	if in == nil {
+		in = os.Stdin
+	}
+	out := a.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	return acpserver.Serve(ctx, in, out, acpserver.Handlers{
+		NewSession: func(context.Context) (acpserver.SessionInfo, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionInfo{}, errors.New("session store is unavailable")
+			}
+			sess, err := a.Sessions.Open("")
+			if err != nil {
+				return acpserver.SessionInfo{}, err
+			}
+			return acpserver.SessionInfo{SessionID: sess.ID, Workspace: a.Workspace}, nil
+		},
+		Prompt: func(ctx context.Context, req acpserver.PromptRequest) (acpserver.PromptResult, error) {
+			if a.Sessions == nil {
+				return acpserver.PromptResult{}, errors.New("session store is unavailable")
+			}
+			if a.Tools == nil {
+				return acpserver.PromptResult{}, errors.New("tool registry is not initialized")
+			}
+			if err := a.RegisterMCPTools(ctx); err != nil {
+				return acpserver.PromptResult{}, err
+			}
+			sess, err := a.Sessions.Open(req.SessionID)
+			if err != nil {
+				return acpserver.PromptResult{}, err
+			}
+			var streamed bytes.Buffer
+			previousOut := a.Out
+			a.Out = &streamed
+			defer func() {
+				a.Out = previousOut
+			}()
+			if err := a.runSessionTurn(ctx, "acp", sess, req.Prompt, "completed"); err != nil {
+				return acpserver.PromptResult{}, err
+			}
+			output := strings.TrimSpace(streamed.String())
+			if output == "" {
+				output = acpLastAssistantText(sess.Messages)
+			}
+			return acpserver.PromptResult{SessionID: sess.ID, Output: output}, nil
+		},
+		Status: func(context.Context) (any, error) {
+			return buildACPStatusReport(), nil
+		},
+	}, acpserver.Options{Version: version, Workspace: a.Workspace})
+}
+
+func acpLastAssistantText(messages []anthropic.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		var out strings.Builder
+		for _, block := range messages[i].Content {
+			if block.Type == "text" {
+				out.WriteString(block.Text)
+			}
+		}
+		return strings.TrimSpace(out.String())
+	}
+	return ""
 }
 
 func initProject(out io.Writer, workspace string, args []string) error {
@@ -12055,7 +12174,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/acp":
-		if err := a.ACP(fields[1:]); err != nil {
+		if err := a.ACP(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/brief":

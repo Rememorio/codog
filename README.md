@@ -185,9 +185,9 @@ Claude Code source.
   inspected through `mcp_auth`. Configured MCP resources can be discovered and
   read by the model through `list_mcp_resources` and `read_mcp_resource`; `mcp serve`
   exposes Codog's local tools over stdio MCP.
-- `codog acp`, `codog acp serve`, `codog --acp`, and `/acp` expose a stable
-  text/JSON status surface for ACP/Zed editor integration. The current report
-  is explicit that no editor daemon or JSON-RPC endpoint is implemented yet.
+- `codog acp`, `codog acp serve`, `codog --acp`, and `/acp` expose ACP/Zed
+  integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
+  `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
 - Hook commands can run on `user_prompt_submit`, `pre_tool_use`,
   `post_tool_use`, and `stop`; `codog hooks list|run` inspects and test-runs
   configured hooks with the same JSON payload shape used by live sessions. Hook

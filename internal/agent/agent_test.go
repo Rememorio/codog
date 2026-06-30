@@ -107,8 +107,8 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 
 	require.NoError(t, renderACPStatus(&out, nil))
 	require.Contains(t, out.String(), "ACP / Zed")
-	require.Contains(t, out.String(), "not implemented")
-	require.Contains(t, out.String(), "no daemon is started")
+	require.Contains(t, out.String(), "Supported        true")
+	require.Contains(t, out.String(), "stdio JSON-RPC")
 	out.Reset()
 
 	require.NoError(t, renderACPStatus(&out, []string{"serve", "--output-format", "json"}))
@@ -117,16 +117,16 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Equal(t, "1.0", report.SchemaVersion)
 	require.Equal(t, "acp", report.Kind)
 	require.Equal(t, "status", report.Action)
-	require.Equal(t, "not_implemented", report.Status)
-	require.False(t, report.Supported)
-	require.Nil(t, report.LaunchCommand)
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.Supported)
+	require.NotNil(t, report.LaunchCommand)
 	require.Equal(t, "ACP/Zed", report.Protocol.Name)
-	require.False(t, report.Protocol.JSONRPC)
+	require.True(t, report.Protocol.JSONRPC)
 	require.False(t, report.Protocol.Daemon)
-	require.Nil(t, report.Protocol.Endpoint)
-	require.False(t, report.Protocol.ServeStartsDaemon)
+	require.NotNil(t, report.Protocol.Endpoint)
+	require.True(t, report.Protocol.ServeStartsDaemon)
 	require.Equal(t, "unsupported_acp_invocation", report.Contracts.UnsupportedInvocationKind)
-	require.Contains(t, report.Contracts.BlockingGates, "task_packet_schema")
+	require.Contains(t, report.Contracts.BlockingGates, "prompt")
 	require.Contains(t, report.Aliases, "--acp")
 	out.Reset()
 
@@ -448,7 +448,7 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/acp --json", sess))
 	require.Contains(t, out.String(), `"kind": "acp"`)
-	require.Contains(t, out.String(), `"status": "not_implemented"`)
+	require.Contains(t, out.String(), `"status": "ok"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/sandbox", sess))
