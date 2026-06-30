@@ -15,12 +15,14 @@ type Options struct {
 }
 
 type Handlers struct {
-	NewSession   func(context.Context) (SessionInfo, error)
-	ListSessions func(context.Context) (SessionList, error)
-	GetSession   func(context.Context, SessionLookupRequest) (SessionDetail, error)
-	History      func(context.Context, SessionHistoryRequest) (SessionHistory, error)
-	Prompt       func(context.Context, PromptRequest) (PromptResult, error)
-	Status       func(context.Context) (any, error)
+	NewSession    func(context.Context) (SessionInfo, error)
+	ListSessions  func(context.Context) (SessionList, error)
+	GetSession    func(context.Context, SessionLookupRequest) (SessionDetail, error)
+	History       func(context.Context, SessionHistoryRequest) (SessionHistory, error)
+	RenameSession func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
+	DeleteSession func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
+	Prompt        func(context.Context, PromptRequest) (PromptResult, error)
+	Status        func(context.Context) (any, error)
 }
 
 type SessionInfo struct {
@@ -64,6 +66,21 @@ type SessionHistory struct {
 	SessionID string `json:"session_id"`
 	Count     int    `json:"count"`
 	Entries   any    `json:"entries"`
+}
+
+type SessionRenameRequest struct {
+	SessionID    string `json:"session_id"`
+	NewSessionID string `json:"new_session_id"`
+}
+
+type SessionMutationResult struct {
+	Kind         string `json:"kind"`
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	SessionID    string `json:"session_id,omitempty"`
+	NewSessionID string `json:"new_session_id,omitempty"`
+	Path         string `json:"path,omitempty"`
+	MessageCount int    `json:"message_count,omitempty"`
 }
 
 type PromptRequest struct {
@@ -145,6 +162,10 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleGetSession(ctx, out, handlers, opts, req)
 	case "session/history", "sessions/history", "history":
 		return false, handleHistory(ctx, out, handlers, req)
+	case "session/rename", "sessions/rename":
+		return false, handleRenameSession(ctx, out, handlers, req)
+	case "session/delete", "sessions/delete":
+		return false, handleDeleteSession(ctx, out, handlers, req)
 	case "prompt", "session/prompt":
 		return false, handlePrompt(ctx, out, handlers, req)
 	default:
@@ -166,6 +187,8 @@ func initializeResult(opts Options) map[string]any {
 				"list":    true,
 				"get":     true,
 				"history": true,
+				"rename":  true,
+				"delete":  true,
 			},
 			"prompt": true,
 			"status": true,
@@ -256,6 +279,54 @@ func handleHistory(ctx context.Context, out io.Writer, handlers Handlers, req re
 	return writeResult(out, req.ID, history)
 }
 
+func handleRenameSession(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.RenameSession == nil {
+		return writeError(out, req.ID, -32603, "session rename handler is not configured")
+	}
+	renameReq, err := parseSessionRenameRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.RenameSession(ctx, renameReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(result.Kind) == "" {
+		result.Kind = "session_mutation"
+	}
+	if strings.TrimSpace(result.Action) == "" {
+		result.Action = "rename"
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "ok"
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleDeleteSession(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.DeleteSession == nil {
+		return writeError(out, req.ID, -32603, "session delete handler is not configured")
+	}
+	lookup, err := parseSessionLookupRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.DeleteSession(ctx, lookup)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(result.Kind) == "" {
+		result.Kind = "session_mutation"
+	}
+	if strings.TrimSpace(result.Action) == "" {
+		result.Action = "delete"
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "ok"
+	}
+	return writeResult(out, req.ID, result)
+}
+
 func handlePrompt(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
 	if handlers.Prompt == nil {
 		return writeError(out, req.ID, -32603, "prompt handler is not configured")
@@ -310,6 +381,32 @@ func parseSessionHistoryRequest(params json.RawMessage) (SessionHistoryRequest, 
 		sessionID = "latest"
 	}
 	return SessionHistoryRequest{SessionID: sessionID, Limit: raw.Limit}, nil
+}
+
+func parseSessionRenameRequest(params json.RawMessage) (SessionRenameRequest, error) {
+	var raw struct {
+		SessionID         string `json:"session_id"`
+		SessionIDCamel    string `json:"sessionId"`
+		ID                string `json:"id"`
+		NewSessionID      string `json:"new_session_id"`
+		NewSessionIDCamel string `json:"newSessionId"`
+		NewID             string `json:"new_id"`
+		Name              string `json:"name"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionRenameRequest{}, err
+		}
+	}
+	sessionID := firstNonEmpty(raw.SessionID, raw.SessionIDCamel, raw.ID)
+	newSessionID := firstNonEmpty(raw.NewSessionID, raw.NewSessionIDCamel, raw.NewID, raw.Name)
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionRenameRequest{}, fmt.Errorf("session_id is required")
+	}
+	if strings.TrimSpace(newSessionID) == "" {
+		return SessionRenameRequest{}, fmt.Errorf("new_session_id is required")
+	}
+	return SessionRenameRequest{SessionID: sessionID, NewSessionID: newSessionID}, nil
 }
 
 func parsePromptRequest(params json.RawMessage) (PromptRequest, error) {

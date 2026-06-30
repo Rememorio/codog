@@ -9835,7 +9835,7 @@ func renderACPStatus(out io.Writer, args []string) error {
 	fmt.Fprintln(out, "  Supported        true")
 	fmt.Fprintln(out, "  Serve            codog acp serve")
 	fmt.Fprintln(out, "  Protocol         stdio JSON-RPC")
-	fmt.Fprintln(out, "  Surface          initialize, status, session/new, session/list, session/get, session/history, prompt, shutdown")
+	fmt.Fprintln(out, "  Surface          initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, prompt, shutdown")
 	fmt.Fprintln(out, "  Message          "+report.Message)
 	return nil
 }
@@ -9847,7 +9847,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve` and use initialize, status, session/new, session/list, session/get, session/history, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve` and use initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -10045,6 +10045,52 @@ func (a *App) serveACP(ctx context.Context) error {
 				SessionID: sessionID,
 				Count:     len(entries),
 				Entries:   entries,
+			}, nil
+		},
+		RenameSession: func(_ context.Context, req acpserver.SessionRenameRequest) (acpserver.SessionMutationResult, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionMutationResult{}, errors.New("session store is unavailable")
+			}
+			result, err := a.Sessions.Rename(req.SessionID, req.NewSessionID)
+			if err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			return acpserver.SessionMutationResult{
+				Kind:         "session_mutation",
+				Action:       "rename",
+				Status:       "ok",
+				SessionID:    result.OldID,
+				NewSessionID: result.NewID,
+				Path:         result.NewPath,
+				MessageCount: result.MessageCount,
+			}, nil
+		},
+		DeleteSession: func(_ context.Context, req acpserver.SessionLookupRequest) (acpserver.SessionMutationResult, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionMutationResult{}, errors.New("session store is unavailable")
+			}
+			sessionID := strings.TrimSpace(req.SessionID)
+			if sessionID == "" || sessionID == "latest" {
+				latest, err := a.Sessions.LatestID()
+				if err != nil {
+					return acpserver.SessionMutationResult{}, err
+				}
+				sessionID = latest
+			}
+			sess, err := a.Sessions.Open(sessionID)
+			if err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			if err := a.Sessions.Delete(sessionID); err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			return acpserver.SessionMutationResult{
+				Kind:         "session_mutation",
+				Action:       "delete",
+				Status:       "ok",
+				SessionID:    sess.ID,
+				Path:         sess.Path,
+				MessageCount: len(sess.Messages),
 			}, nil
 		},
 		Prompt: func(ctx context.Context, req acpserver.PromptRequest) (acpserver.PromptResult, error) {

@@ -176,7 +176,9 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"session/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"session/get","params":{"session_id":"` + sess.ID + `"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"session/history","params":{"session_id":"` + sess.ID + `","limit":1}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"session/rename","params":{"session_id":"` + sess.ID + `","new_session_id":"renamed-acp-session"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"session/delete","params":{"session_id":"renamed-acp-session"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -190,7 +192,7 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 
 	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
 	responses := decodeJSONRPCResponses(t, out.String())
-	require.Len(t, responses, 4)
+	require.Len(t, responses, 6)
 	listResult := responses[0]["result"].(map[string]any)
 	require.Equal(t, "session_list", listResult["kind"])
 	require.EqualValues(t, 1, listResult["count"])
@@ -209,6 +211,20 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.EqualValues(t, 1, historyResult["count"])
 	entries := historyResult["entries"].([]any)
 	require.Equal(t, "second prompt", entries[0].(map[string]any)["text"])
+
+	renameResult := responses[3]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", renameResult["kind"])
+	require.Equal(t, "rename", renameResult["action"])
+	require.Equal(t, sess.ID, renameResult["session_id"])
+	require.Equal(t, "renamed-acp-session", renameResult["new_session_id"])
+	exists, err := store.Exists("renamed-acp-session")
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	deleteResult := responses[4]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", deleteResult["kind"])
+	require.Equal(t, "delete", deleteResult["action"])
+	require.Equal(t, "renamed-acp-session", deleteResult["session_id"])
 }
 
 func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T) {

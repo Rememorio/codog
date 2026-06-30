@@ -20,7 +20,9 @@ func TestServeHandlesACPRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"session/get","params":{"sessionId":"session-1"}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"session/history","params":{"session_id":"session-1","limit":1}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"session/delete","params":{"session_id":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -49,15 +51,27 @@ func TestServeHandlesACPRequests(t *testing.T) {
 			require.Equal(t, 1, req.Limit)
 			return SessionHistory{SessionID: "session-1", Entries: []map[string]any{{"text": "hello"}}}, nil
 		},
+		RenameSession: func(_ context.Context, req SessionRenameRequest) (SessionMutationResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, "session-2", req.NewSessionID)
+			return SessionMutationResult{SessionID: req.SessionID, NewSessionID: req.NewSessionID}, nil
+		},
+		DeleteSession: func(_ context.Context, req SessionLookupRequest) (SessionMutationResult, error) {
+			require.Equal(t, "session-2", req.SessionID)
+			return SessionMutationResult{SessionID: req.SessionID}, nil
+		},
 	}, Options{Version: "test", Workspace: "/workspace"})
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 8)
+	require.Len(t, responses, 10)
 	require.Equal(t, "test", responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)["version"])
 	capabilities := responses[0]["result"].(map[string]any)["capabilities"].(map[string]any)
 	require.Equal(t, true, capabilities["prompt"])
-	require.Equal(t, true, capabilities["sessions"].(map[string]any)["history"])
+	sessionCaps := capabilities["sessions"].(map[string]any)
+	require.Equal(t, true, sessionCaps["history"])
+	require.Equal(t, true, sessionCaps["rename"])
+	require.Equal(t, true, sessionCaps["delete"])
 	require.Equal(t, "session-1", responses[1]["result"].(map[string]any)["session_id"])
 	promptResult := responses[2]["result"].(map[string]any)
 	require.Equal(t, "world", promptResult["text"])
@@ -71,7 +85,15 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	historyResult := responses[6]["result"].(map[string]any)
 	require.Equal(t, "session_history", historyResult["kind"])
 	require.Equal(t, "session-1", historyResult["session_id"])
-	require.NotNil(t, responses[7]["result"])
+	renameResult := responses[7]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", renameResult["kind"])
+	require.Equal(t, "rename", renameResult["action"])
+	require.Equal(t, "session-2", renameResult["new_session_id"])
+	deleteResult := responses[8]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", deleteResult["kind"])
+	require.Equal(t, "delete", deleteResult["action"])
+	require.Equal(t, "session-2", deleteResult["session_id"])
+	require.NotNil(t, responses[9]["result"])
 }
 
 func TestServeReportsPromptValidationErrors(t *testing.T) {
