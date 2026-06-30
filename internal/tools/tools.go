@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,6 +20,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
@@ -1782,6 +1788,12 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	data, truncated, err := readFileLimited(path, maxFileToolBytes)
 	if err != nil {
 		return "", err
+	}
+	if mediaType, ok := imageMediaType(path, data); ok {
+		if truncated {
+			return "", fmt.Errorf("image exceeds maximum readable size of %d bytes", maxFileToolBytes)
+		}
+		return pretty(imageReadResult(path, data, mediaType)), nil
 	}
 	if bytes.Contains(data[:min(len(data), 8192)], []byte{0}) {
 		return "", errors.New("file appears to be binary")
@@ -5715,6 +5727,45 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func imageMediaType(path string, data []byte) (string, bool) {
+	detected := strings.ToLower(http.DetectContentType(data[:min(len(data), 512)]))
+	if strings.HasPrefix(detected, "image/") {
+		return detected, true
+	}
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(path), ".")) {
+	case "bmp":
+		return "image/bmp", true
+	case "gif":
+		return "image/gif", true
+	case "jpg", "jpeg":
+		return "image/jpeg", true
+	case "png":
+		return "image/png", true
+	case "svg":
+		return "image/svg+xml", true
+	case "webp":
+		return "image/webp", true
+	default:
+		return "", false
+	}
+}
+
+func imageReadResult(path string, data []byte, mediaType string) map[string]any {
+	result := map[string]any{
+		"kind":       "image",
+		"path":       path,
+		"bytes":      len(data),
+		"media_type": mediaType,
+		"encoding":   "base64",
+		"base64":     base64.StdEncoding.EncodeToString(data),
+	}
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		result["width"] = cfg.Width
+		result["height"] = cfg.Height
+	}
+	return result
 }
 
 func safePathInScope(workspace string, additionalDirs []string, requested string, allowMissing bool) (string, error) {

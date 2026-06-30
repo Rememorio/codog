@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -553,6 +554,22 @@ func TestFileToolsAcceptClaudeFilePathParameter(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "delta gamma delta\n", string(data))
+}
+
+func TestReadFileToolReadsImages(t *testing.T) {
+	workspace := t.TempDir()
+	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pixel.png"), imageData, 0o644))
+
+	out, err := NewRegistry(workspace).Execute(context.Background(), "Read", []byte(`{"file_path":"pixel.png"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "image"`)
+	require.Contains(t, out, `"media_type": "image/png"`)
+	require.Contains(t, out, `"encoding": "base64"`)
+	require.Contains(t, out, `"width": 1`)
+	require.Contains(t, out, `"height": 1`)
+	require.Contains(t, out, base64.StdEncoding.EncodeToString(imageData))
 }
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
