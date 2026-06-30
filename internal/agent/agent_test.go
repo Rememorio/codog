@@ -4790,6 +4790,36 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestPluginHooksLoadedByRunCLI(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	pluginRoot := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(filepath.Join(pluginRoot, "hooks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "hooks", "hooks.json"), []byte(`{"user_prompt_submit":["echo plugin-prompt"],"pre_tool_use":[{"matcher":"bash","command":"echo plugin-pre"}]}`), 0o644))
+
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "hooks", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report hooksListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Contains(t, report.UserPromptSubmit, "echo plugin-prompt")
+	require.Len(t, report.PreToolUseCommands, 1)
+	require.Equal(t, "bash", report.PreToolUseCommands[0].Matcher)
+	require.Equal(t, "echo plugin-pre", report.PreToolUseCommands[0].Command)
+}
+
 func TestPermissionHooksFromPrompter(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

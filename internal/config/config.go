@@ -1146,6 +1146,10 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.FileChanged = hookCommandStrings(dst.FileChangedCommands)
 }
 
+func MergeHookConfig(dst *HookConfig, src HookConfig) {
+	mergeHookConfig(dst, src)
+}
+
 func hookCommandsFromStrings(values []string) []HookCommand {
 	commands := make([]HookCommand, 0, len(values))
 	for _, value := range values {

@@ -227,6 +227,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return err
 	}
+	if err := applyPluginHookConfigs(&cfg, workspace); err != nil {
+		return err
+	}
 	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
 	if err != nil {
 		return err
@@ -591,6 +594,17 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 		token = refreshed
 	}
 	cfg.AuthToken = token.AccessToken
+}
+
+func applyPluginHookConfigs(cfg *config.Config, workspace string) error {
+	files, err := plugins.LoadHookConfigs(workspace)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		config.MergeHookConfig(&cfg.Hooks, file.Config)
+	}
+	return nil
 }
 
 func anthropicRateLimitOptions(cfg config.RateLimitConfig) anthropic.RateLimitOptions {
