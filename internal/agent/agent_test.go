@@ -806,6 +806,68 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 	}
 }
 
+func TestLocalExtraArgumentErrorContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := []struct {
+		name    string
+		args    []string
+		command string
+		extra   []string
+		hint    string
+	}{
+		{
+			name:    "config show extra",
+			args:    []string{"--config", configPath, "--output-format", "json", "config", "show", "bogus-key"},
+			command: "config show",
+			extra:   []string{"bogus-key"},
+			hint:    "codog config show",
+		},
+		{
+			name:    "agents show extra",
+			args:    []string{"--config", configPath, "--output-format", "json", "agents", "show", "some-agent", "--extra-flag"},
+			command: "agents show",
+			extra:   []string{"--extra-flag"},
+			hint:    "codog agents show",
+		},
+		{
+			name:    "skills show extra",
+			args:    []string{"--config", configPath, "--output-format", "json", "skills", "show", "some-skill", "--extra-flag"},
+			command: "skills show",
+			extra:   []string{"--extra-flag"},
+			hint:    "codog skills show",
+		},
+		{
+			name:    "plugins show extra",
+			args:    []string{"--config", configPath, "--output-format", "json", "plugins", "show", "some-plugin", "extra-arg"},
+			command: "plugins show",
+			extra:   []string{"extra-arg"},
+			hint:    "codog plugins show",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "unexpected_extra_args", report.ErrorKind)
+			require.Equal(t, tc.command, report.Command)
+			require.Equal(t, tc.extra, report.Args)
+			require.Contains(t, report.Hint, tc.hint)
+		})
+	}
+}
+
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",

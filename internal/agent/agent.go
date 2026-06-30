@@ -2795,8 +2795,15 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		return a.listAgents(format, strings.Join(args[1:], " "))
 	}
 	if args[0] == "show" {
-		if len(args) != 2 {
+		if len(args) < 2 {
 			return errors.New("usage: codog agents show NAME")
+		}
+		if len(args) > 2 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "agents show",
+				Args:    append([]string(nil), args[2:]...),
+				Usage:   "codog agents show NAME [--json|--output-format text|json]",
+			}, format)
 		}
 		return a.showAgent(args[1], format)
 	}
@@ -3055,6 +3062,22 @@ func (a *App) Marketplace(args []string) error {
 			return err
 		}
 		payload = map[string]any{"removed": true, "id": args[1]}
+	case "show":
+		if len(args) < 2 {
+			return errors.New("usage: codog plugins show ID")
+		}
+		if len(args) > 2 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "plugins show",
+				Args:    append([]string(nil), args[2:]...),
+				Usage:   "codog plugins show ID [--json|--output-format text|json]",
+			}, format)
+		}
+		manifest, err := a.findPlugin(args[1])
+		if err != nil {
+			return err
+		}
+		payload = map[string]any{"kind": "plugin", "action": "show", "status": "ok", "plugin": manifest}
 	default:
 		return renderActionError(a.Out, actionErrorReport{
 			Kind:      "plugins",
@@ -3062,12 +3085,25 @@ func (a *App) Marketplace(args []string) error {
 			Status:    "error",
 			ErrorKind: "unknown_plugins_action",
 			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      "Use `codog plugins list`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+			Hint:      "Use `codog plugins list`, `show`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
 		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) findPlugin(id string) (plugins.Manifest, error) {
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		return plugins.Manifest{}, err
+	}
+	for _, manifest := range manifests {
+		if strings.EqualFold(manifest.ID, id) || strings.EqualFold(manifest.Name, id) {
+			return manifest, nil
+		}
+	}
+	return plugins.Manifest{}, fmt.Errorf("unknown plugin %q", id)
 }
 
 func (a *App) marketplaceRemote(args []string) ([]plugins.MarketplaceIndex, error) {
@@ -15303,6 +15339,16 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	if strings.EqualFold(args[0], "paths") {
 		return renderConfigInspectionPayload(out, req.Format, map[string]any{"paths": paths})
 	}
+	if strings.EqualFold(args[0], "show") {
+		if len(args) > 1 {
+			return renderCLIError(out, unexpectedExtraArgsError{
+				Command: "config show",
+				Args:    append([]string(nil), args[1:]...),
+				Usage:   "codog config show [--json|--output-format text|json]",
+			}, req.Format)
+		}
+		return renderConfigInspectionPayload(out, req.Format, map[string]any{"config": cfg, "paths": paths})
+	}
 	if strings.EqualFold(args[0], "get") {
 		if len(args) < 2 {
 			return errors.New("usage: codog config get SECTION")
@@ -17746,8 +17792,15 @@ func (a *App) Skills(args []string) error {
 		if err != nil {
 			return err
 		}
-		if len(remaining) != 1 {
+		if len(remaining) < 1 {
 			return errors.New("usage: codog skills show NAME [--json]")
+		}
+		if len(remaining) > 1 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "skills show",
+				Args:    append([]string(nil), remaining[1:]...),
+				Usage:   "codog skills show NAME [--json|--output-format text|json]",
+			}, format)
 		}
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
