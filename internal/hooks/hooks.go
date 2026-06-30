@@ -92,11 +92,27 @@ func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) SessionStart(ctx context.Context, input string) error {
+	payload := Payload{
+		Event: "session_start",
+		Input: input,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func (r Runner) Stop(ctx context.Context, output string, isError bool) error {
 	payload := Payload{
 		Event:   "stop",
 		Output:  output,
 		IsError: isError,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) PreCompact(ctx context.Context, input string) error {
+	payload := Payload{
+		Event: "pre_compact",
+		Input: input,
 	}
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
@@ -124,8 +140,12 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.PostToolUseCommands, cfg.PostToolUse, payload)
 	case "user_prompt_submit":
 		return matchingHooks(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit, payload)
+	case "session_start":
+		return matchingHooks(cfg.SessionStartCommands, cfg.SessionStart, payload)
 	case "stop":
 		return matchingHooks(cfg.StopCommands, cfg.Stop, payload)
+	case "pre_compact":
+		return matchingHooks(cfg.PreCompactCommands, cfg.PreCompact, payload)
 	default:
 		return nil
 	}
@@ -597,8 +617,12 @@ func normalizeEvent(event string) string {
 		return "post_tool_use"
 	case "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
 		return "user_prompt_submit"
+	case "sessionstart", "session_start", "session-start":
+		return "session_start"
 	case "stop":
 		return "stop"
+	case "precompact", "pre_compact", "pre-compact":
+		return "pre_compact"
 	default:
 		return event
 	}

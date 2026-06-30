@@ -20,11 +20,15 @@ type HookConfig struct {
 	PreToolUse               []string      `json:"pre_tool_use,omitempty"`
 	PostToolUse              []string      `json:"post_tool_use,omitempty"`
 	UserPromptSubmit         []string      `json:"user_prompt_submit,omitempty"`
+	SessionStart             []string      `json:"session_start,omitempty"`
 	Stop                     []string      `json:"stop,omitempty"`
+	PreCompact               []string      `json:"pre_compact,omitempty"`
 	PreToolUseCommands       []HookCommand `json:"-"`
 	PostToolUseCommands      []HookCommand `json:"-"`
 	UserPromptSubmitCommands []HookCommand `json:"-"`
+	SessionStartCommands     []HookCommand `json:"-"`
 	StopCommands             []HookCommand `json:"-"`
+	PreCompactCommands       []HookCommand `json:"-"`
 }
 
 type HookCommand struct {
@@ -62,18 +66,30 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	sessionStart, err := hookCommands(raw, "session_start", "SessionStart")
+	if err != nil {
+		return err
+	}
 	stop, err := hookCommands(raw, "stop", "Stop")
+	if err != nil {
+		return err
+	}
+	preCompact, err := hookCommands(raw, "pre_compact", "PreCompact")
 	if err != nil {
 		return err
 	}
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
 	h.UserPromptSubmitCommands = userPromptSubmit
+	h.SessionStartCommands = sessionStart
 	h.StopCommands = stop
+	h.PreCompactCommands = preCompact
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
 	h.UserPromptSubmit = hookCommandStrings(userPromptSubmit)
+	h.SessionStart = hookCommandStrings(sessionStart)
 	h.Stop = hookCommandStrings(stop)
+	h.PreCompact = hookCommandStrings(preCompact)
 	return nil
 }
 
@@ -862,15 +878,27 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.UserPromptSubmit) != 0 {
 		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, hookCommandsFromStrings(src.UserPromptSubmit))
 	}
+	if len(src.SessionStartCommands) != 0 {
+		dst.SessionStartCommands = mergeHookCommands(dst.SessionStartCommands, src.SessionStartCommands)
+	} else if len(src.SessionStart) != 0 {
+		dst.SessionStartCommands = mergeHookCommands(dst.SessionStartCommands, hookCommandsFromStrings(src.SessionStart))
+	}
 	if len(src.StopCommands) != 0 {
 		dst.StopCommands = mergeHookCommands(dst.StopCommands, src.StopCommands)
 	} else if len(src.Stop) != 0 {
 		dst.StopCommands = mergeHookCommands(dst.StopCommands, hookCommandsFromStrings(src.Stop))
 	}
+	if len(src.PreCompactCommands) != 0 {
+		dst.PreCompactCommands = mergeHookCommands(dst.PreCompactCommands, src.PreCompactCommands)
+	} else if len(src.PreCompact) != 0 {
+		dst.PreCompactCommands = mergeHookCommands(dst.PreCompactCommands, hookCommandsFromStrings(src.PreCompact))
+	}
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
 	dst.UserPromptSubmit = hookCommandStrings(dst.UserPromptSubmitCommands)
+	dst.SessionStart = hookCommandStrings(dst.SessionStartCommands)
 	dst.Stop = hookCommandStrings(dst.StopCommands)
+	dst.PreCompact = hookCommandStrings(dst.PreCompactCommands)
 }
 
 func hookCommandsFromStrings(values []string) []HookCommand {

@@ -84,6 +84,11 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	var toolCalls []ToolCall
 	var messageUsages []MessageUsage
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
+		if shouldCompactMessages(messages, r.Config.AutoCompactMessages) {
+			if err := hookRunner.PreCompact(ctx, CompactHookPayload("auto", "", len(messages), r.Config.AutoCompactMessages)); err != nil {
+				return TurnResult{}, err
+			}
+		}
 		requestMessages := CompactMessages(messages, r.Config.AutoCompactMessages)
 		req := anthropic.Request{
 			Model:     r.Config.Model,
@@ -162,11 +167,15 @@ func hasHookConfig(cfg config.HookConfig) bool {
 	return len(cfg.PreToolUse) != 0 ||
 		len(cfg.PostToolUse) != 0 ||
 		len(cfg.UserPromptSubmit) != 0 ||
+		len(cfg.SessionStart) != 0 ||
 		len(cfg.Stop) != 0 ||
+		len(cfg.PreCompact) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
 		len(cfg.UserPromptSubmitCommands) != 0 ||
-		len(cfg.StopCommands) != 0
+		len(cfg.SessionStartCommands) != 0 ||
+		len(cfg.StopCommands) != 0 ||
+		len(cfg.PreCompactCommands) != 0
 }
 
 func (r Runner) emitToolUse(call ToolCall) {
@@ -176,7 +185,7 @@ func (r Runner) emitToolUse(call ToolCall) {
 }
 
 func CompactMessages(messages []anthropic.Message, keep int) []anthropic.Message {
-	if keep <= 0 || len(messages) <= keep {
+	if !shouldCompactMessages(messages, keep) {
 		return messages
 	}
 	omitted := len(messages) - keep
@@ -185,6 +194,23 @@ func CompactMessages(messages []anthropic.Message, keep int) []anthropic.Message
 	out = append(out, summary)
 	out = append(out, messages[len(messages)-keep:]...)
 	return out
+}
+
+func shouldCompactMessages(messages []anthropic.Message, keep int) bool {
+	return keep > 0 && len(messages) > keep
+}
+
+func CompactHookPayload(source string, sessionID string, messages int, keep int) string {
+	data, err := json.Marshal(map[string]any{
+		"source":     source,
+		"session_id": sessionID,
+		"messages":   messages,
+		"keep":       keep,
+	})
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func MarshalToolInput(raw json.RawMessage) string {

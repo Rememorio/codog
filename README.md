@@ -188,11 +188,12 @@ Claude Code source.
 - `codog acp`, `codog acp serve`, `codog --acp`, and `/acp` expose ACP/Zed
   integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
-- Hook commands can run on `user_prompt_submit`, `pre_tool_use`,
-  `post_tool_use`, and `stop`; `codog hooks list|run` inspects and test-runs
-  configured hooks with the same JSON payload shape used by live sessions. Hook
-  config accepts simple string arrays and the documented Claude Code object
-  format with nested command, HTTP, prompt, and agent hooks,
+- Hook commands can run on `session_start`, `user_prompt_submit`,
+  `pre_tool_use`, `post_tool_use`, `stop`, and `pre_compact`; `codog hooks
+  list|run` inspects and test-runs configured hooks with the same JSON payload
+  shape used by live sessions. Hook config accepts simple string arrays and the
+  documented Claude Code object format with nested command, HTTP, prompt, and
+  agent hooks,
   matcher filtering, `if` conditions, per-hook timeouts, shell selection, and
   allow-listed header environment interpolation. Prompt and agent hooks run
   through the configured model with `$ARGUMENTS` expanded to the hook payload.
@@ -406,10 +407,12 @@ URL --model MODEL` as a focused provider configuration shortcut.
   "max_tokens": 4096,
   "enabled_skills": ["go-review"],
   "hooks": {
+    "session_start": ["echo session >&2"],
     "user_prompt_submit": ["echo prompt >&2"],
     "pre_tool_use": ["echo pre >&2"],
     "post_tool_use": ["echo post >&2"],
-    "stop": ["echo stop >&2"]
+    "stop": ["echo stop >&2"],
+    "pre_compact": ["echo compact >&2"]
   },
   "mcp_servers": {
     "example": {

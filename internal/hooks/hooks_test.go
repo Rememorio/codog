@@ -131,8 +131,14 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		UserPromptSubmitCommands: []config.HookCommand{
 			{Type: "command", Command: "prompt"},
 		},
+		SessionStartCommands: []config.HookCommand{
+			{Type: "command", Command: "session"},
+		},
 		StopCommands: []config.HookCommand{
 			{Type: "command", Command: "stop"},
+		},
+		PreCompactCommands: []config.HookCommand{
+			{Type: "command", Command: "compact"},
 		},
 	}
 
@@ -141,7 +147,9 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"regex", "all"}, CommandsForEvent(cfg, "pre_tool_use", "bash"))
 	require.Equal(t, []string{"edits"}, CommandsForEvent(cfg, "post", "multi_edit"))
 	require.Equal(t, []string{"prompt"}, CommandsForEvent(cfg, "user-prompt-submit", ""))
+	require.Equal(t, []string{"session"}, CommandsForEvent(cfg, "session-start", ""))
 	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))
+	require.Equal(t, []string{"compact"}, CommandsForEvent(cfg, "pre-compact", ""))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
 }
 

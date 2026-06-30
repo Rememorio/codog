@@ -22,9 +22,11 @@ type Options struct {
 	AuthConfigured            bool
 	MCPServerCount            int
 	UserPromptSubmitHookCount int
+	SessionStartHookCount     int
 	PreHookCount              int
 	PostHookCount             int
 	StopHookCount             int
+	PreCompactHookCount       int
 	EnabledSkillCount         int
 	PlanActive                bool
 	PlanText                  string
@@ -86,9 +88,11 @@ type ConfigStatus struct {
 	AuthConfigured            bool   `json:"auth_configured"`
 	MCPServerCount            int    `json:"mcp_server_count"`
 	UserPromptSubmitHookCount int    `json:"user_prompt_submit_hook_count"`
+	SessionStartHookCount     int    `json:"session_start_hook_count"`
 	PreHookCount              int    `json:"pre_hook_count"`
 	PostHookCount             int    `json:"post_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
+	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
 	EnabledSkillCount         int    `json:"enabled_skill_count"`
 }
 
@@ -166,9 +170,11 @@ func Build(opts Options) Snapshot {
 			AuthConfigured:            opts.AuthConfigured,
 			MCPServerCount:            opts.MCPServerCount,
 			UserPromptSubmitHookCount: opts.UserPromptSubmitHookCount,
+			SessionStartHookCount:     opts.SessionStartHookCount,
 			PreHookCount:              opts.PreHookCount,
 			PostHookCount:             opts.PostHookCount,
 			StopHookCount:             opts.StopHookCount,
+			PreCompactHookCount:       opts.PreCompactHookCount,
 			EnabledSkillCount:         opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{

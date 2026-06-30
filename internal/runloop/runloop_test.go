@@ -2,6 +2,7 @@ package runloop
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"runtime"
 	"strings"
@@ -116,6 +117,52 @@ func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(stopPayload), `"event":"stop"`)
 	require.Contains(t, string(stopPayload), `"output":"done"`)
+}
+
+func TestRunnerExecutesPreCompactHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{{
+			Blocks: []anthropic.ContentBlock{{
+				Type: "text",
+				Text: "done",
+			}},
+		}},
+	}
+	previous := []anthropic.Message{
+		anthropic.TextMessage("user", "one"),
+		anthropic.TextMessage("assistant", "two"),
+		anthropic.TextMessage("user", "three"),
+	}
+	_, err := Runner{
+		Config: config.Config{
+			Model:               "mock",
+			MaxTokens:           128,
+			MaxTurns:            2,
+			AutoCompactMessages: 1,
+			Hooks: config.HookConfig{
+				PreCompactCommands: []config.HookCommand{{Command: "cat > compact.json"}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), previous, "four")
+	require.NoError(t, err)
+
+	payload, err := os.ReadFile(workspace + "/compact.json")
+	require.NoError(t, err)
+	var hookPayload struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &hookPayload))
+	require.Equal(t, "pre_compact", hookPayload.Event)
+	require.Contains(t, hookPayload.Input, `"messages":4`)
+	require.Contains(t, hookPayload.Input, `"keep":1`)
 }
 
 func TestCompactMessagesKeepsRecentContext(t *testing.T) {

@@ -4448,11 +4448,15 @@ type hooksListReport struct {
 	PreToolUse               []string             `json:"pre_tool_use"`
 	PostToolUse              []string             `json:"post_tool_use"`
 	UserPromptSubmit         []string             `json:"user_prompt_submit"`
+	SessionStart             []string             `json:"session_start"`
 	Stop                     []string             `json:"stop"`
+	PreCompact               []string             `json:"pre_compact"`
 	PreToolUseCommands       []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands      []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	UserPromptSubmitCommands []hookCommandSummary `json:"user_prompt_submit_commands,omitempty"`
+	SessionStartCommands     []hookCommandSummary `json:"session_start_commands,omitempty"`
 	StopCommands             []hookCommandSummary `json:"stop_commands,omitempty"`
+	PreCompactCommands       []hookCommandSummary `json:"pre_compact_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4476,11 +4480,15 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			PreToolUse:               append([]string(nil), a.Config.Hooks.PreToolUse...),
 			PostToolUse:              append([]string(nil), a.Config.Hooks.PostToolUse...),
 			UserPromptSubmit:         append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
+			SessionStart:             append([]string(nil), a.Config.Hooks.SessionStart...),
 			Stop:                     append([]string(nil), a.Config.Hooks.Stop...),
+			PreCompact:               append([]string(nil), a.Config.Hooks.PreCompact...),
 			PreToolUseCommands:       hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:      hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			UserPromptSubmitCommands: hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
+			SessionStartCommands:     hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
 			StopCommands:             hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
+			PreCompactCommands:       hookCommandsForList(a.Config.Hooks.PreCompactCommands, a.Config.Hooks.PreCompact),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4607,7 +4615,7 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "stop") {
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact") {
 		req.Tool = ""
 	}
 	return req, nil
@@ -4621,8 +4629,12 @@ func normalizeHookEvent(value string) (string, error) {
 		return "post_tool_use", nil
 	case "prompt", "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
 		return "user_prompt_submit", nil
+	case "session", "sessionstart", "session_start", "session-start":
+		return "session_start", nil
 	case "stop":
 		return "stop", nil
+	case "compact", "precompact", "pre_compact", "pre-compact":
+		return "pre_compact", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -4674,8 +4686,16 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	for _, command := range report.UserPromptSubmitCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
+	fmt.Fprintf(out, "  Session start   %d\n", len(report.SessionStart))
+	for _, command := range report.SessionStartCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
 	fmt.Fprintf(out, "  Stop             %d\n", len(report.Stop))
 	for _, command := range report.StopCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Pre compact      %d\n", len(report.PreCompact))
+	for _, command := range report.PreCompactCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -9150,6 +9170,9 @@ func (a *App) serveACP(ctx context.Context) error {
 			if err != nil {
 				return acpserver.PromptResult{}, err
 			}
+			if err := a.runSessionStartHook(ctx, sess, "acp"); err != nil {
+				return acpserver.PromptResult{}, err
+			}
 			var streamed bytes.Buffer
 			previousOut := a.Out
 			a.Out = &streamed
@@ -9961,9 +9984,11 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		AuthConfigured:            a.Config.APIKey != "" || a.Config.AuthToken != "",
 		MCPServerCount:            len(a.Config.MCPServers),
 		UserPromptSubmitHookCount: len(a.Config.Hooks.UserPromptSubmit),
+		SessionStartHookCount:     len(a.Config.Hooks.SessionStart),
 		PreHookCount:              len(a.Config.Hooks.PreToolUse),
 		PostHookCount:             len(a.Config.Hooks.PostToolUse),
 		StopHookCount:             len(a.Config.Hooks.Stop),
+		PreCompactHookCount:       len(a.Config.Hooks.PreCompact),
 		EnabledSkillCount:         len(a.Config.EnabledSkills),
 		PlanActive:                planState.Active,
 		PlanText:                  planState.Plan,
@@ -10511,9 +10536,11 @@ func (a *App) Doctor(args []string) error {
 		SessionCount:     sessionCount,
 		MemoryFiles:      memoryPaths,
 		UserPromptSubmit: a.Config.Hooks.UserPromptSubmit,
+		SessionStart:     a.Config.Hooks.SessionStart,
 		PreToolUse:       a.Config.Hooks.PreToolUse,
 		PostToolUse:      a.Config.Hooks.PostToolUse,
 		Stop:             a.Config.Hooks.Stop,
+		PreCompact:       a.Config.Hooks.PreCompact,
 		SandboxDefault:   sandboxStatus.Default,
 		SandboxOK:        sandboxStatus.Available,
 	})
@@ -11307,6 +11334,9 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err != nil {
 		return err
 	}
+	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
+		return err
+	}
 	if err := a.runSessionTurn(ctx, "prompt", sess, input, "completed"); err != nil {
 		return err
 	}
@@ -11591,6 +11621,9 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 	}
 	sess, err := a.openSession(overrides)
 	if err != nil {
+		return err
+	}
+	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
 		return err
 	}
 	a.writeWorkerState("repl", "idle", sess, "")
@@ -15691,6 +15724,9 @@ func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
+	if err := a.lifecycleHookRunner().PreCompact(context.Background(), runloop.CompactHookPayload("manual", sess.ID, len(sess.Messages), req.Keep)); err != nil {
+		return err
+	}
 	compacted := runloop.CompactMessages(sess.Messages, req.Keep)
 	var result session.ReplaceResult
 	if len(compacted) == len(sess.Messages) {
@@ -15947,6 +15983,36 @@ func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, err
 		}
 	}
 	return a.Sessions.Open(id)
+}
+
+func sessionStartSource(overrides config.FlagOverrides) string {
+	if strings.TrimSpace(overrides.Resume) != "" || strings.TrimSpace(overrides.SessionID) != "" {
+		return "resume"
+	}
+	return "startup"
+}
+
+func (a *App) lifecycleHookRunner() hooks.Runner {
+	cfg := a.effectiveConfig()
+	return hooks.Runner{
+		Config:       cfg.Hooks,
+		Workspace:    a.Workspace,
+		PromptRunner: a.hookPromptRunner(cfg),
+	}
+}
+
+func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, source string) error {
+	if sess == nil {
+		return nil
+	}
+	data, err := json.Marshal(map[string]string{
+		"source":     source,
+		"session_id": sess.ID,
+	})
+	if err != nil {
+		return err
+	}
+	return a.lifecycleHookRunner().SessionStart(ctx, string(data))
 }
 
 func (a *App) writeWorkerState(mode string, status string, sess *session.Session, lastError string) {
@@ -16331,7 +16397,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|user-prompt-submit|stop] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|user-prompt-submit|session-start|stop|pre-compact] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

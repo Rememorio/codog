@@ -52,9 +52,11 @@ type ConfigSummary struct {
 	MCPServerCount            int    `json:"mcp_server_count"`
 	EnabledSkillCount         int    `json:"enabled_skill_count"`
 	UserPromptSubmitHookCount int    `json:"user_prompt_submit_hook_count"`
+	SessionStartHookCount     int    `json:"session_start_hook_count"`
 	PreHookCount              int    `json:"pre_hook_count"`
 	PostHookCount             int    `json:"post_hook_count"`
 	StopHookCount             int    `json:"stop_hook_count"`
+	PreCompactHookCount       int    `json:"pre_compact_hook_count"`
 }
 
 type SessionSummary struct {
@@ -143,9 +145,11 @@ func Build(options Options) Report {
 			MCPServerCount:            options.Status.Config.MCPServerCount,
 			EnabledSkillCount:         options.Status.Config.EnabledSkillCount,
 			UserPromptSubmitHookCount: options.Status.Config.UserPromptSubmitHookCount,
+			SessionStartHookCount:     options.Status.Config.SessionStartHookCount,
 			PreHookCount:              options.Status.Config.PreHookCount,
 			PostHookCount:             options.Status.Config.PostHookCount,
 			StopHookCount:             options.Status.Config.StopHookCount,
+			PreCompactHookCount:       options.Status.Config.PreCompactHookCount,
 		},
 		Git: options.Status.Git,
 		Session: SessionSummary{

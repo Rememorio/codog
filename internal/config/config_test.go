@@ -261,23 +261,28 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"hooks": {
 			"UserPromptSubmit": ["echo prompt-submit"],
+			"SessionStart": ["echo session-start"],
 			"pre_tool_use": ["echo simple-pre"],
 			"PostToolUse": [
 				{"matcher": "Write", "hooks": [{"type": "command", "command": "echo documented-post"}]},
 				{"matcher": "Bash", "hooks": [{"type": "http", "url": "https://example.test/hook", "if": "Bash(git *)", "headers": {"Authorization": "Bearer $HOOK_TOKEN"}, "allowedEnvVars": ["HOOK_TOKEN"], "timeout": 1.5}]},
 				{"command": "echo direct-post"}
 			],
-			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}]
+			"Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
+			"PreCompact": ["echo pre-compact"]
 		}
 	}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, []string{"echo prompt-submit"}, cfg.Hooks.UserPromptSubmit)
+	require.Equal(t, []string{"echo session-start"}, cfg.Hooks.SessionStart)
 	require.Equal(t, []string{"echo simple-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo documented-post", "http POST https://example.test/hook", "echo direct-post"}, cfg.Hooks.PostToolUse)
 	require.Equal(t, []string{"echo stop"}, cfg.Hooks.Stop)
+	require.Equal(t, []string{"echo pre-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo prompt-submit"}}, cfg.Hooks.UserPromptSubmitCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo session-start"}}, cfg.Hooks.SessionStartCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo simple-pre"}}, cfg.Hooks.PreToolUseCommands)
 	require.Equal(t, []HookCommand{
 		{Matcher: "Write", Type: "command", Command: "echo documented-post"},
@@ -285,6 +290,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 		{Type: "command", Command: "echo direct-post"},
 	}, cfg.Hooks.PostToolUseCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo stop"}}, cfg.Hooks.StopCommands)
+	require.Equal(t, []HookCommand{{Type: "command", Command: "echo pre-compact"}}, cfg.Hooks.PreCompactCommands)
 }
 
 func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
@@ -299,39 +305,52 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{
 		"hooks": {
 			"user_prompt_submit": ["echo user-prompt"],
+			"session_start": ["echo user-session"],
 			"pre_tool_use": ["echo user-pre"],
 			"post_tool_use": ["echo user-post"],
-			"stop": ["echo user-stop"]
+			"stop": ["echo user-stop"],
+			"pre_compact": ["echo user-compact"]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
 		"hooks": {
 			"UserPromptSubmit": [{"command": "echo project-prompt"}],
+			"SessionStart": [{"command": "echo project-session"}],
 			"PreToolUse": [
 				{"matcher": "Write", "command": "echo project-pre"}
 			],
-			"Stop": [{"command": "echo project-stop"}]
+			"Stop": [{"command": "echo project-stop"}],
+			"PreCompact": [{"command": "echo project-compact"}]
 		}
 	}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{
 		"hooks": {
 			"user_prompt_submit": ["echo user-prompt", "echo local-prompt"],
+			"session_start": ["echo user-session", "echo local-session"],
 			"pre_tool_use": ["echo user-pre", "echo local-pre"],
-			"stop": ["echo user-stop", "echo local-stop"]
+			"stop": ["echo user-stop", "echo local-stop"],
+			"pre_compact": ["echo user-compact", "echo local-compact"]
 		}
 	}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"echo user-prompt", "echo project-prompt", "echo local-prompt"}, cfg.Hooks.UserPromptSubmit)
+	require.Equal(t, []string{"echo user-session", "echo project-session", "echo local-session"}, cfg.Hooks.SessionStart)
 	require.Equal(t, []string{"echo user-pre", "echo project-pre", "echo local-pre"}, cfg.Hooks.PreToolUse)
 	require.Equal(t, []string{"echo user-post"}, cfg.Hooks.PostToolUse)
 	require.Equal(t, []string{"echo user-stop", "echo project-stop", "echo local-stop"}, cfg.Hooks.Stop)
+	require.Equal(t, []string{"echo user-compact", "echo project-compact", "echo local-compact"}, cfg.Hooks.PreCompact)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-prompt"},
 		{Type: "command", Command: "echo project-prompt"},
 		{Type: "command", Command: "echo local-prompt"},
 	}, cfg.Hooks.UserPromptSubmitCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-session"},
+		{Type: "command", Command: "echo project-session"},
+		{Type: "command", Command: "echo local-session"},
+	}, cfg.Hooks.SessionStartCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-pre"},
 		{Matcher: "Write", Type: "command", Command: "echo project-pre"},
@@ -342,6 +361,11 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Type: "command", Command: "echo project-stop"},
 		{Type: "command", Command: "echo local-stop"},
 	}, cfg.Hooks.StopCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-compact"},
+		{Type: "command", Command: "echo project-compact"},
+		{Type: "command", Command: "echo local-compact"},
+	}, cfg.Hooks.PreCompactCommands)
 }
 
 func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {

@@ -1654,8 +1654,12 @@ func TestUsageCommandAndSlash(t *testing.T) {
 }
 
 func TestCompactCommandPersistsCompactedSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	compactPath := filepath.Join(workspace, "compact-hook.json")
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("user", "one")))
 	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("assistant", "two")))
@@ -1663,7 +1667,13 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 	require.NoError(t, store.Append("compact-session", anthropic.TextMessage("assistant", "four")))
 	var out bytes.Buffer
 	app := &App{
-		Config:    config.Config{ConfigHome: configHome, AutoCompactMessages: 2},
+		Config: config.Config{
+			ConfigHome:          configHome,
+			AutoCompactMessages: 2,
+			Hooks: config.HookConfig{
+				PreCompactCommands: []config.HookCommand{{Command: "cat > " + shellQuote(compactPath)}},
+			},
+		},
 		Sessions:  store,
 		Workspace: workspace,
 		Out:       &out,
@@ -1679,6 +1689,15 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 	require.Contains(t, opened.Messages[0].Content[0].Text, "auto-compacted")
 	require.Equal(t, "three", opened.Messages[1].Content[0].Text)
 	require.Equal(t, "four", opened.Messages[2].Content[0].Text)
+	hookPayload, err := os.ReadFile(compactPath)
+	require.NoError(t, err)
+	var compactHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(hookPayload, &compactHook))
+	require.Equal(t, "pre_compact", compactHook.Event)
+	require.Contains(t, compactHook.Input, `"session_id":"compact-session"`)
 }
 
 func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
@@ -2794,20 +2813,27 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	}
 	workspace := t.TempDir()
 	promptPath := filepath.Join(workspace, "prompt.json")
+	sessionPath := filepath.Join(workspace, "session.json")
 	prePath := filepath.Join(workspace, "pre.json")
 	postPath := filepath.Join(workspace, "post.json")
 	stopPath := filepath.Join(workspace, "stop.json")
+	compactPath := filepath.Join(workspace, "compact.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
 		Config: config.Config{
 			Hooks: config.HookConfig{
 				UserPromptSubmit: []string{"cat > " + shellQuote(promptPath)},
+				SessionStart:     []string{"cat > " + shellQuote(sessionPath)},
 				PreToolUse:       []string{"cat > " + shellQuote(prePath)},
 				PostToolUse:      []string{"cat > " + shellQuote(postPath)},
 				Stop:             []string{"cat > " + shellQuote(stopPath)},
+				PreCompact:       []string{"cat > " + shellQuote(compactPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
+				},
+				SessionStartCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(sessionPath)},
 				},
 				PreToolUseCommands: []config.HookCommand{
 					{Matcher: "read_*", Command: "cat > " + shellQuote(prePath)},
@@ -2817,6 +2843,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				},
 				StopCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(stopPath)},
+				},
+				PreCompactCommands: []config.HookCommand{
+					{Command: "cat > " + shellQuote(compactPath)},
 				},
 			},
 		},
@@ -2828,15 +2857,19 @@ func TestHooksCommandAndSlash(t *testing.T) {
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"list", "--json"}))
 	require.Contains(t, out.String(), `"user_prompt_submit"`)
+	require.Contains(t, out.String(), `"session_start"`)
 	require.Contains(t, out.String(), `"pre_tool_use"`)
 	require.Contains(t, out.String(), `"post_tool_use"`)
 	require.Contains(t, out.String(), `"stop"`)
+	require.Contains(t, out.String(), `"pre_compact"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
 	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
+	require.Contains(t, hooksList.SessionStartCommands[0].Command, "cat >")
 	require.Equal(t, "read_*", hooksList.PreToolUseCommands[0].Matcher)
 	require.Contains(t, hooksList.PreToolUseCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
+	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
@@ -2844,6 +2877,18 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"user_prompt_submit"`)
 	require.Contains(t, string(data), `"input":"hello"`)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "session-start", "--input", `{"source":"startup","session_id":"session"}`}))
+	data, err = os.ReadFile(sessionPath)
+	require.NoError(t, err)
+	var sessionHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(data, &sessionHook))
+	require.Equal(t, "session_start", sessionHook.Event)
+	require.Contains(t, sessionHook.Input, `"session_id"`)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "pre", "--tool", "read_file", "--input", `{"path":"README.md"}`}))
@@ -2866,6 +2911,18 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"stop"`)
 	require.Contains(t, string(data), `"output":"done"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run pre-compact --input={\"source\":\"manual\"}", sess))
+	data, err = os.ReadFile(compactPath)
+	require.NoError(t, err)
+	var compactHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	require.NoError(t, json.Unmarshal(data, &compactHook))
+	require.Equal(t, "pre_compact", compactHook.Event)
+	require.Contains(t, compactHook.Input, `"source"`)
 	require.Empty(t, errOut.String())
 }
 
@@ -3178,6 +3235,16 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	defer server.Close()
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	var gotHook struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	var hookDecodeErr error
+	hookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hookDecodeErr = json.NewDecoder(r.Body).Decode(&gotHook)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer hookServer.Close()
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
@@ -3192,9 +3259,11 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 			PermissionRules:     config.PermissionRules{},
 			MCPServers:          map[string]config.MCPServerConfig{},
 			EnabledSkills:       nil,
-			Hooks:               config.HookConfig{},
-			Future:              config.FutureConfig{},
-			AuthToken:           "",
+			Hooks: config.HookConfig{
+				SessionStartCommands: []config.HookCommand{{Type: "http", URL: hookServer.URL}},
+			},
+			Future:    config.FutureConfig{},
+			AuthToken: "",
 		},
 		Client:    anthropic.New(server.URL, "test-key", ""),
 		Tools:     tools.NewRegistry(workspace),
@@ -3211,6 +3280,9 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	require.Equal(t, "completed", loaded.Status)
 	require.Equal(t, "prompt-session", loaded.SessionID)
 	require.Contains(t, out.String(), "done")
+	require.NoError(t, hookDecodeErr)
+	require.Equal(t, "session_start", gotHook.Event)
+	require.Contains(t, gotHook.Input, `"source":"resume"`)
 	history, err := app.Sessions.PromptHistory("prompt-session")
 	require.NoError(t, err)
 	require.Len(t, history, 1)
