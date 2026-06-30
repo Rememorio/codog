@@ -168,14 +168,7 @@ func roots(configHome, workspace string) []root {
 		return out
 	}
 	for _, manifest := range manifests {
-		if !manifest.Enabled {
-			continue
-		}
-		out = append(out, root{
-			path:   filepath.Join(manifest.Root, "commands"),
-			source: "plugin:" + manifest.ID,
-			prefix: manifest.ID,
-		})
+		out = append(out, commandRootsForPlugin(manifest)...)
 	}
 	return out
 }
@@ -191,16 +184,45 @@ func rootsByPrecedence(configHome, workspace string) []root {
 		return base
 	}
 	for _, manifest := range manifests {
-		if !manifest.Enabled {
-			continue
-		}
-		base = append(base, root{
-			path:   filepath.Join(manifest.Root, "commands"),
-			source: "plugin:" + manifest.ID,
-			prefix: manifest.ID,
-		})
+		base = append(base, commandRootsForPlugin(manifest)...)
 	}
 	return base
+}
+
+func commandRootsForPlugin(manifest plugins.Manifest) []root {
+	if !manifest.Enabled {
+		return nil
+	}
+	out := []root{{
+		path:   filepath.Join(manifest.Root, "commands"),
+		source: "plugin:" + manifest.ID,
+		prefix: manifest.ID,
+	}}
+	seen := map[string]bool{filepath.Clean(out[0].path): true}
+	for _, spec := range manifest.Commands {
+		path, err := plugins.ResolveContentPath(manifest.Root, spec)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		rootPath := path
+		if !info.IsDir() {
+			if !strings.EqualFold(filepath.Ext(path), ".md") {
+				continue
+			}
+			rootPath = filepath.Dir(path)
+		}
+		key := filepath.Clean(rootPath)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID})
+	}
+	return out
 }
 
 func commandName(root root, path string) (string, error) {

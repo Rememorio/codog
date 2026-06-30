@@ -23,7 +23,7 @@ func TestLoadPluginManifest(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"name":"Demo","version":"0.1.0","commands":["demo"],"tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"name":"Demo","version":"0.1.0","commands":["demo"],"skills":["./skills/review"],"agents":["./agents/helper.json"],"tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
 
 	manifests, err := Load(workspace)
 	require.NoError(t, err)
@@ -31,6 +31,8 @@ func TestLoadPluginManifest(t *testing.T) {
 	require.Equal(t, "demo", manifests[0].ID)
 	require.Equal(t, "Demo", manifests[0].Name)
 	require.Equal(t, []string{"demo"}, manifests[0].Commands)
+	require.Equal(t, []string{"./skills/review"}, manifests[0].Skills)
+	require.Equal(t, []string{"./agents/helper.json"}, manifests[0].Agents)
 	require.Len(t, manifests[0].Tools, 1)
 	require.Equal(t, "demo_tool", manifests[0].Tools[0].Name)
 	require.Equal(t, "cat", manifests[0].Tools[0].Command)
@@ -157,6 +159,20 @@ func TestValidatePluginManifestRecognizesStandardContentDirs(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	requireNoValidationCode(t, result.Warnings, "empty_plugin")
+}
+
+func TestResolveContentPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "plugin")
+	path, err := ResolveContentPath(root, "./commands/deploy.md")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, "commands", "deploy.md"), path)
+
+	_, err = ResolveContentPath(root, "../outside.md")
+	require.Error(t, err)
+	_, err = ResolveContentPath(root, "/tmp/outside.md")
+	require.Error(t, err)
+	_, err = ResolveContentPath(root, `commands\deploy.md`)
+	require.Error(t, err)
 }
 
 func requireValidationCode(t *testing.T, messages []ValidationMessage, code string) {

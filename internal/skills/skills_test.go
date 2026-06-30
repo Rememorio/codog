@@ -16,16 +16,18 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "skills", "review"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "extra", "rewrite"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "plain.md"), []byte("Plain skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "review", "SKILL.md"), []byte("Review skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo","skills":["./extra/rewrite"]}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize", "SKILL.md"), []byte("Summarize skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "extra", "rewrite", "SKILL.md"), []byte("Rewrite skill"), 0o644))
 
 	all, err := Load(configHome, workspace)
 	require.NoError(t, err)
-	require.Len(t, all, 4)
-	require.Equal(t, []string{"demo:summarize", "plain", "review", "team:audit"}, skillNames(all))
+	require.Len(t, all, 5)
+	require.Equal(t, []string{"demo:rewrite", "demo:summarize", "plain", "review", "team:audit"}, skillNames(all))
 
 	skill, err := Find(configHome, workspace, "team:audit")
 	require.NoError(t, err)
@@ -39,6 +41,11 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "plugin:demo", skill.Source)
 	require.Equal(t, "Summarize skill", skill.Body)
+
+	skill, err = Find(configHome, workspace, "demo:rewrite")
+	require.NoError(t, err)
+	require.Equal(t, "plugin:demo", skill.Source)
+	require.Equal(t, "Rewrite skill", skill.Body)
 
 	_, err = Find(configHome, workspace, "missing")
 	require.True(t, errors.Is(err, ErrNotFound))

@@ -73,14 +73,43 @@ func roots(workspace string) []root {
 		return out
 	}
 	for _, manifest := range manifests {
-		if !manifest.Enabled {
+		out = append(out, agentRootsForPlugin(manifest)...)
+	}
+	return out
+}
+
+func agentRootsForPlugin(manifest plugins.Manifest) []root {
+	if !manifest.Enabled {
+		return nil
+	}
+	out := []root{{
+		path:   filepath.Join(manifest.Root, "agents"),
+		source: "plugin:" + manifest.ID,
+		prefix: manifest.ID,
+	}}
+	seen := map[string]bool{filepath.Clean(out[0].path): true}
+	for _, spec := range manifest.Agents {
+		path, err := plugins.ResolveContentPath(manifest.Root, spec)
+		if err != nil {
 			continue
 		}
-		out = append(out, root{
-			path:   filepath.Join(manifest.Root, "agents"),
-			source: "plugin:" + manifest.ID,
-			prefix: manifest.ID,
-		})
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		rootPath := path
+		if !info.IsDir() {
+			if !strings.EqualFold(filepath.Ext(path), ".json") {
+				continue
+			}
+			rootPath = filepath.Dir(path)
+		}
+		key := filepath.Clean(rootPath)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID})
 	}
 	return out
 }

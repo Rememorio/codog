@@ -367,6 +367,36 @@ func containsParentPathSegment(value string) bool {
 	return false
 }
 
+func ResolveContentPath(root string, value string) (string, error) {
+	root = strings.TrimSpace(root)
+	value = strings.TrimSpace(value)
+	if root == "" {
+		return "", errors.New("plugin root is required")
+	}
+	if value == "" {
+		return "", errors.New("plugin content path is required")
+	}
+	if filepath.IsAbs(value) {
+		return "", fmt.Errorf("plugin content path %q must be relative", value)
+	}
+	if strings.Contains(value, `\`) {
+		return "", fmt.Errorf("plugin content path %q must use forward slashes", value)
+	}
+	if containsParentPathSegment(value) {
+		return "", fmt.Errorf("plugin content path %q must not contain parent-directory segments", value)
+	}
+	clean := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(value, "./")))
+	if clean == "." {
+		return root, nil
+	}
+	target := filepath.Join(root, clean)
+	base := filepath.Clean(root)
+	if target != base && !strings.HasPrefix(target, base+string(os.PathSeparator)) {
+		return "", fmt.Errorf("plugin content path %q escapes plugin root", value)
+	}
+	return target, nil
+}
+
 func isKebabCase(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" {

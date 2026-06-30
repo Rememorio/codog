@@ -114,14 +114,47 @@ func roots(configHome, workspace string) []root {
 		return out
 	}
 	for _, manifest := range manifests {
-		if !manifest.Enabled {
+		out = append(out, skillRootsForPlugin(manifest)...)
+	}
+	return out
+}
+
+func skillRootsForPlugin(manifest plugins.Manifest) []root {
+	if !manifest.Enabled {
+		return nil
+	}
+	out := []root{{
+		path:   filepath.Join(manifest.Root, "skills"),
+		source: "plugin:" + manifest.ID,
+		prefix: manifest.ID,
+	}}
+	seen := map[string]bool{filepath.Clean(out[0].path): true}
+	for _, spec := range manifest.Skills {
+		path, err := plugins.ResolveContentPath(manifest.Root, spec)
+		if err != nil {
 			continue
 		}
-		out = append(out, root{
-			path:   filepath.Join(manifest.Root, "skills"),
-			source: "plugin:" + manifest.ID,
-			prefix: manifest.ID,
-		})
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		rootPath := path
+		if info.IsDir() {
+			if _, err := os.Stat(filepath.Join(path, "SKILL.md")); err == nil {
+				rootPath = filepath.Dir(path)
+			}
+		} else {
+			if !strings.EqualFold(filepath.Ext(path), ".md") {
+				continue
+			}
+			rootPath = filepath.Dir(path)
+		}
+		key := filepath.Clean(rootPath)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID})
 	}
 	return out
 }
