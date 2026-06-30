@@ -60,7 +60,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -138,9 +138,10 @@ Claude Code source.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
-- `/theme`, `/color`, `/vim`, `/effort`, and `/privacy-settings` persist local
-  interface, reasoning, and privacy preferences such as terminal theme, vim
-  keybinding mode, reasoning effort, and prompt history recording.
+- `/theme`, `/color`, `/vim`, `/effort`, `/fast`, and `/privacy-settings`
+  persist local interface, reasoning, runtime, and privacy preferences such as
+  terminal theme, vim keybinding mode, reasoning effort, fast mode, and prompt
+  history recording.
 - `/keybindings` and `codog keybindings` show the active editor mode plus REPL,
   TUI, vim, and slash-command keyboard shortcuts.
 - `codog mcp list|serve|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt`

@@ -251,6 +251,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Vim(rest)
 	case "effort":
 		return app.Effort(rest)
+	case "fast":
+		return app.Fast(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
 	case "keybindings":
@@ -3641,6 +3643,152 @@ func validateEffort(level string) error {
 	return fmt.Errorf("unknown effort level %q", level)
 }
 
+type fastRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+}
+
+type fastReport struct {
+	Kind     string `json:"kind"`
+	Action   string `json:"action"`
+	Status   string `json:"status"`
+	Enabled  bool   `json:"enabled"`
+	Previous bool   `json:"previous,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+func (a *App) Fast(args []string) error {
+	req, err := parseFastArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := fastModeEnabled(a.Config.FastMode)
+	report := fastReport{
+		Kind:    "fast",
+		Action:  req.Action,
+		Status:  "ok",
+		Enabled: previous,
+	}
+	switch req.Action {
+	case "status":
+	case "on", "off", "toggle":
+		next := req.Action == "on"
+		if req.Action == "toggle" {
+			next = !previous
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "fast_mode", next); err != nil {
+			return err
+		}
+		a.Config.FastMode = &next
+		report.Action = "set"
+		report.Enabled = next
+		report.Previous = previous
+		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "fast_mode"); err != nil {
+			return err
+		}
+		a.Config.FastMode = nil
+		report.Action = "clear"
+		report.Enabled = false
+		report.Previous = previous
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown fast command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderFastReport(a.Out, report)
+	return nil
+}
+
+func parseFastArgs(args []string) (fastRequest, error) {
+	req := fastRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("fast output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("fast target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("fast config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "fast"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected fast argument %q", rest[1])
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "true":
+		req.Action = "on"
+	case "off", "disable", "disabled", "false":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+	default:
+		return req, fmt.Errorf("unknown fast command %q", rest[0])
+	}
+	return req, nil
+}
+
+func renderFastReport(out io.Writer, report fastReport) {
+	fmt.Fprintln(out, "Fast Mode")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+}
+
+func fastModeEnabled(value *bool) bool {
+	return value != nil && *value
+}
+
 type vimRequest struct {
 	Action string
 	Format string
@@ -5460,6 +5608,7 @@ type statuslineReport struct {
 	Status          string `json:"status"`
 	Workspace       string `json:"workspace"`
 	Model           string `json:"model"`
+	FastMode        bool   `json:"fast_mode"`
 	PermissionMode  string `json:"permission_mode"`
 	SessionActive   bool   `json:"session_active"`
 	SessionID       string `json:"session_id,omitempty"`
@@ -5521,11 +5670,16 @@ func buildStatuslineReport(snapshot localstatus.Snapshot) statuslineReport {
 	if snapshot.Plan.Active {
 		planLabel = "plan=on"
 	}
+	fastLabel := "fast=off"
+	if snapshot.Config.FastMode {
+		fastLabel = "fast=on"
+	}
 	line := strings.Join([]string{
 		"codog",
 		workspace,
 		gitLabel,
 		emptyAs(snapshot.Config.Model, "model=unset"),
+		fastLabel,
 		emptyAs(snapshot.Config.PermissionMode, "permission=unset"),
 		sessionLabel,
 		planLabel,
@@ -5536,6 +5690,7 @@ func buildStatuslineReport(snapshot localstatus.Snapshot) statuslineReport {
 		Status:          snapshot.Status,
 		Workspace:       workspace,
 		Model:           snapshot.Config.Model,
+		FastMode:        snapshot.Config.FastMode,
 		PermissionMode:  snapshot.Config.PermissionMode,
 		SessionActive:   snapshot.Session.Active,
 		SessionID:       snapshot.Session.ID,
@@ -5818,6 +5973,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		Workspace:           a.Workspace,
 		ConfigHome:          a.Config.ConfigHome,
 		Model:               a.Config.Model,
+		FastMode:            fastModeEnabled(a.Config.FastMode),
 		BaseURL:             a.Config.BaseURL,
 		PermissionMode:      a.Config.PermissionMode,
 		MaxTokens:           a.Config.MaxTokens,
@@ -7531,6 +7687,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Effort(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/fast":
+		if err := a.Fast(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/privacy-settings":
 		if err := a.PrivacySettings(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -8238,7 +8398,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	}
 	switch strings.ToLower(args[0]) {
 	case "model":
-		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "reasoning_effort": cfg.ReasoningEffort}, nil
+		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
 	case "interface", "ui":
 		return map[string]any{"theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
 	case "privacy", "privacy-settings":
@@ -10836,6 +10996,9 @@ func (a *App) systemPrompt() string {
 		builder.WriteString(effectiveEffort(effort))
 		builder.WriteString("</codog_reasoning_effort>")
 	}
+	if fastModeEnabled(a.Config.FastMode) {
+		builder.WriteString("\n\n<codog_fast_mode>enabled</codog_fast_mode>")
+	}
 	for _, name := range a.Config.EnabledSkills {
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
 		if err != nil {
@@ -11027,6 +11190,7 @@ Usage:
   %s [flags] color [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [--json|--output-format text|json]
   %s [flags] cost --resume latest
@@ -11077,8 +11241,8 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

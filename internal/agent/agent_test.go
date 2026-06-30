@@ -1458,6 +1458,16 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"reasoning_effort": "high"`)
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/fast on", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Fast Mode")
+	require.NotNil(t, app.Config.FastMode)
+	require.True(t, *app.Config.FastMode)
+	require.Contains(t, app.systemPrompt(), "<codog_fast_mode>enabled</codog_fast_mode>")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"fast_mode": true`)
+	out.Reset()
+
 	require.NoError(t, app.PrivacySettings([]string{"set", "prompt-history", "off", "--json"}))
 	require.Contains(t, out.String(), `"kind": "privacy_settings"`)
 	require.Contains(t, out.String(), `"prompt_history_enabled": false`)
@@ -1477,6 +1487,15 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, out.String(), "Effort")
 	require.Equal(t, "", app.Config.ReasoningEffort)
 	require.NotContains(t, app.systemPrompt(), "<codog_reasoning_effort>")
+	out.Reset()
+
+	require.NoError(t, app.Fast([]string{"clear", "--json"}))
+	require.Contains(t, out.String(), `"kind": "fast"`)
+	require.Nil(t, app.Config.FastMode)
+	require.NotContains(t, app.systemPrompt(), "<codog_fast_mode>")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"fast_mode"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/privacy-settings enable prompt-history", &session.Session{ID: "session"}))

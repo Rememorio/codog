@@ -105,6 +105,7 @@ type Config struct {
 	Theme               string                     `json:"theme,omitempty"`
 	EditorMode          string                     `json:"editorMode,omitempty"`
 	ReasoningEffort     string                     `json:"reasoning_effort,omitempty"`
+	FastMode            *bool                      `json:"fast_mode,omitempty"`
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
@@ -505,6 +506,10 @@ func merge(dst *Config, src Config) {
 	if src.ReasoningEffort != "" {
 		dst.ReasoningEffort = src.ReasoningEffort
 	}
+	if src.FastMode != nil {
+		value := *src.FastMode
+		dst.FastMode = &value
+	}
 	if src.MaxTokens != 0 {
 		dst.MaxTokens = src.MaxTokens
 	}
@@ -729,6 +734,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_REASONING_EFFORT"); value != "" {
 		cfg.ReasoningEffort = value
+	}
+	if value, ok := parseBoolEnv("CODOG_FAST_MODE"); ok {
+		cfg.FastMode = &value
 	}
 	if value := os.Getenv("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value

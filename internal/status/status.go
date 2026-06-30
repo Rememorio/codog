@@ -13,6 +13,7 @@ type Options struct {
 	Workspace           string
 	ConfigHome          string
 	Model               string
+	FastMode            bool
 	BaseURL             string
 	PermissionMode      string
 	MaxTokens           int
@@ -74,6 +75,7 @@ type MemoryFileStatus struct {
 type ConfigStatus struct {
 	ConfigHome          string `json:"config_home"`
 	Model               string `json:"model"`
+	FastMode            bool   `json:"fast_mode"`
 	BaseURL             string `json:"base_url"`
 	PermissionMode      string `json:"permission_mode"`
 	MaxTokens           int    `json:"max_tokens"`
@@ -151,6 +153,7 @@ func Build(opts Options) Snapshot {
 		Config: ConfigStatus{
 			ConfigHome:          opts.ConfigHome,
 			Model:               opts.Model,
+			FastMode:            opts.FastMode,
 			BaseURL:             opts.BaseURL,
 			PermissionMode:      opts.PermissionMode,
 			MaxTokens:           opts.MaxTokens,
@@ -201,6 +204,7 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintf(w, "  Workspace        %s\n", snapshot.Workspace.Path)
 	fmt.Fprintf(w, "  Memory files     %d\n", snapshot.Workspace.MemoryFileCount)
 	fmt.Fprintf(w, "  Model            %s\n", snapshot.Config.Model)
+	fmt.Fprintf(w, "  Fast mode        %t\n", snapshot.Config.FastMode)
 	fmt.Fprintf(w, "  Permission       %s\n", snapshot.Config.PermissionMode)
 	if snapshot.Plan.Active {
 		fmt.Fprintln(w, "  Plan             active")
