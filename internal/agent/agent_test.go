@@ -951,6 +951,11 @@ func TestPlanCommandAndSlashEnforceReadOnlyPlanningMode(t *testing.T) {
 	require.Empty(t, errOut.String())
 	require.Equal(t, "workspace-write", app.effectiveConfig().PermissionMode)
 	require.NotContains(t, app.systemPrompt(), "<codog_plan_mode")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/ultraplan inspect the release", sess))
+	require.Contains(t, out.String(), "Status           active")
+	require.Contains(t, out.String(), "inspect the release")
 }
 
 func TestDoctorCommandAndSlash(t *testing.T) {
@@ -1539,6 +1544,13 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/think-back --year 2026 --output "+slashThinkBackPath, sess))
 	require.Contains(t, out.String(), "Think Back")
 	_, err = os.Stat(slashThinkBackPath)
+	require.NoError(t, err)
+	out.Reset()
+
+	playPath := filepath.Join(workspace, "thinkback-play.html")
+	require.True(t, app.handleSlash(context.Background(), "/thinkback-play --year 2026 --output "+playPath, sess))
+	require.Contains(t, out.String(), "Think Back")
+	_, err = os.Stat(playPath)
 	require.NoError(t, err)
 	out.Reset()
 

@@ -62,7 +62,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/init-verifiers`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/node`, `/python`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -114,9 +114,10 @@ Claude Code source.
 - `/context` and `codog context [--resume latest]` summarize prompt context,
   project memory, focused paths, session token estimates, git state, and local
   preflight signals before a provider request.
-- `/plan`, `/exit-plan`, and `codog plan` manage workspace-local read-only
-  planning mode; active plans are injected into the system prompt and force
-  model tool permissions to read-only for prompt and REPL turns.
+- `/plan`, `/ultraplan`, `/exit-plan`, `codog plan`, and `codog ultraplan`
+  manage workspace-local read-only planning mode; active plans are injected
+  into the system prompt and force model tool permissions to read-only for
+  prompt and REPL turns.
 - `/focus` and `codog focus [PATH...]` maintain focused context paths in
   `.codog/focus.json` and inject focused file contents into future prompts;
   `/unfocus` and `codog unfocus [PATH...|--all]` remove them.
@@ -189,9 +190,10 @@ Claude Code source.
   cache token fields, and fall back to local estimates for older sessions.
 - `codog insights [--limit N]` and `/insights` summarize local sessions,
   prompts, tool usage, and recorded token usage across the workspace.
-- `codog think-back [--year YYYY]` and `/think-back` write a local
-  year-in-review HTML report from saved sessions, prompts, tool usage, and
-  recorded token usage. Use `--output PATH` to choose the destination.
+- `codog think-back [--year YYYY]`, `codog thinkback-play`, `/think-back`,
+  and `/thinkback-play` write a local year-in-review HTML report from saved
+  sessions, prompts, tool usage, and recorded token usage. Use `--output PATH`
+  to choose the destination.
 - `codog extra-usage [--admin|--personal] [--no-open]` and `/extra-usage`
   open or print Claude usage settings for managing extra usage, and record a
   local visit count.

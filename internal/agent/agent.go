@@ -302,7 +302,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "insights":
 		return app.Insights(rest)
-	case "think-back", "thinkback":
+	case "think-back", "thinkback", "thinkback-play":
 		return app.ThinkBack(rest)
 	case "compact":
 		return app.Compact(rest, overrides)
@@ -311,6 +311,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "rate-limit-options":
 		return app.RateLimitOptions(rest)
 	case "plan":
+		return app.Plan(rest)
+	case "ultraplan":
 		return app.Plan(rest)
 	case "exit-plan":
 		return app.Plan(append([]string{"exit"}, rest...))
@@ -11361,7 +11363,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Insights(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/think-back", "/thinkback":
+	case "/think-back", "/thinkback", "/thinkback-play":
 		if err := a.ThinkBack(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -11373,7 +11375,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RateLimitOptions(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/plan":
+	case "/plan", "/ultraplan":
 		if err := a.Plan(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -15524,11 +15526,11 @@ Usage:
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] insights [--limit N] [--json|--output-format text|json]
-  %s [flags] think-back [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
+  %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
-  %s [flags] plan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
+  %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
