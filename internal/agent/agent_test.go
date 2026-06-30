@@ -160,6 +160,57 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Equal(t, []string{"start", "--json"}, unsupported.Invocation)
 }
 
+func TestACPServeExposesSessionQueries(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	sess, err := store.Open("")
+	require.NoError(t, err)
+	require.NoError(t, store.AppendInput(sess.ID, "first prompt"))
+	require.NoError(t, store.AppendInput(sess.ID, "second prompt"))
+	require.NoError(t, store.Append(sess.ID, anthropic.Message{
+		Role:    "assistant",
+		Content: []anthropic.ContentBlock{{Type: "text", Text: "answer"}},
+	}))
+
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"session/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/get","params":{"session_id":"` + sess.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/history","params":{"session_id":"` + sess.ID + `","limit":1}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 4)
+	listResult := responses[0]["result"].(map[string]any)
+	require.Equal(t, "session_list", listResult["kind"])
+	require.EqualValues(t, 1, listResult["count"])
+	sessions := listResult["sessions"].([]any)
+	require.Equal(t, sess.ID, sessions[0].(map[string]any)["session_id"])
+	require.EqualValues(t, 1, sessions[0].(map[string]any)["message_count"])
+
+	getResult := responses[1]["result"].(map[string]any)
+	require.Equal(t, sess.ID, getResult["session_id"])
+	require.EqualValues(t, 1, getResult["message_count"])
+	require.Len(t, getResult["messages"].([]any), 1)
+
+	historyResult := responses[2]["result"].(map[string]any)
+	require.Equal(t, "session_history", historyResult["kind"])
+	require.Equal(t, sess.ID, historyResult["session_id"])
+	require.EqualValues(t, 1, historyResult["count"])
+	entries := historyResult["entries"].([]any)
+	require.Equal(t, "second prompt", entries[0].(map[string]any)["text"])
+}
+
 func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T) {
 	args, ok, err := parseACPGlobalInvocation([]string{"--output-format", "json", "acp", "serve"})
 	require.NoError(t, err)
@@ -180,6 +231,20 @@ func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, args)
+}
+
+func decodeJSONRPCResponses(t *testing.T, output string) []map[string]any {
+	t.Helper()
+	var responses []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var response map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &response))
+		responses = append(responses, response)
+	}
+	return responses
 }
 
 func TestParseFlagsSupportsPermissionSkipAliases(t *testing.T) {

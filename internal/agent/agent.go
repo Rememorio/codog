@@ -9835,7 +9835,7 @@ func renderACPStatus(out io.Writer, args []string) error {
 	fmt.Fprintln(out, "  Supported        true")
 	fmt.Fprintln(out, "  Serve            codog acp serve")
 	fmt.Fprintln(out, "  Protocol         stdio JSON-RPC")
-	fmt.Fprintln(out, "  Surface          initialize, status, session/new, prompt, shutdown")
+	fmt.Fprintln(out, "  Surface          initialize, status, session/new, session/list, session/get, session/history, prompt, shutdown")
 	fmt.Fprintln(out, "  Message          "+report.Message)
 	return nil
 }
@@ -9847,7 +9847,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve` and use initialize, status, session/new, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve` and use initialize, status, session/new, session/list, session/get, session/history, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -9983,6 +9983,70 @@ func (a *App) serveACP(ctx context.Context) error {
 			}
 			return acpserver.SessionInfo{SessionID: sess.ID, Workspace: a.Workspace}, nil
 		},
+		ListSessions: func(context.Context) (acpserver.SessionList, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionList{}, errors.New("session store is unavailable")
+			}
+			sessions, err := a.Sessions.List()
+			if err != nil {
+				return acpserver.SessionList{}, err
+			}
+			summaries := make([]acpserver.SessionSummary, 0, len(sessions))
+			for _, sess := range sessions {
+				summaries = append(summaries, acpserver.SessionSummary{
+					SessionID:    sess.ID,
+					Workspace:    a.Workspace,
+					Path:         sess.Path,
+					MessageCount: len(sess.Messages),
+				})
+			}
+			return acpserver.SessionList{
+				Kind:      "session_list",
+				Count:     len(summaries),
+				Sessions:  summaries,
+				Workspace: a.Workspace,
+			}, nil
+		},
+		GetSession: func(_ context.Context, req acpserver.SessionLookupRequest) (acpserver.SessionDetail, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionDetail{}, errors.New("session store is unavailable")
+			}
+			sess, err := a.Sessions.Open(req.SessionID)
+			if err != nil {
+				return acpserver.SessionDetail{}, err
+			}
+			return acpserver.SessionDetail{
+				SessionID:    sess.ID,
+				Workspace:    a.Workspace,
+				Path:         sess.Path,
+				MessageCount: len(sess.Messages),
+				Messages:     sess.Messages,
+			}, nil
+		},
+		History: func(_ context.Context, req acpserver.SessionHistoryRequest) (acpserver.SessionHistory, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionHistory{}, errors.New("session store is unavailable")
+			}
+			sessionID := strings.TrimSpace(req.SessionID)
+			if sessionID == "" || sessionID == "latest" {
+				latest, err := a.Sessions.LatestID()
+				if err != nil {
+					return acpserver.SessionHistory{}, err
+				}
+				sessionID = latest
+			}
+			entries, err := a.Sessions.PromptHistory(sessionID)
+			if err != nil {
+				return acpserver.SessionHistory{}, err
+			}
+			entries = limitACPHistory(entries, req.Limit)
+			return acpserver.SessionHistory{
+				Kind:      "session_history",
+				SessionID: sessionID,
+				Count:     len(entries),
+				Entries:   entries,
+			}, nil
+		},
 		Prompt: func(ctx context.Context, req acpserver.PromptRequest) (acpserver.PromptResult, error) {
 			if a.Sessions == nil {
 				return acpserver.PromptResult{}, errors.New("session store is unavailable")
@@ -10035,6 +10099,13 @@ func acpLastAssistantText(messages []anthropic.Message) string {
 		return strings.TrimSpace(out.String())
 	}
 	return ""
+}
+
+func limitACPHistory(entries []session.PromptEntry, limit int) []session.PromptEntry {
+	if limit <= 0 || len(entries) <= limit {
+		return entries
+	}
+	return entries[len(entries)-limit:]
 }
 
 func initProject(out io.Writer, workspace string, args []string, setupHook func(projectinit.Report) error) error {

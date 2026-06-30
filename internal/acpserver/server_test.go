@@ -17,7 +17,10 @@ func TestServeHandlesACPRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"prompt","params":{"session_id":"session-1","prompt":"hello"}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"status","params":{}}`,
-		`{"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"session/get","params":{"sessionId":"session-1"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"session/history","params":{"session_id":"session-1","limit":1}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -34,17 +37,41 @@ func TestServeHandlesACPRequests(t *testing.T) {
 		Status: func(context.Context) (any, error) {
 			return map[string]any{"kind": "acp", "status": "ok"}, nil
 		},
+		ListSessions: func(context.Context) (SessionList, error) {
+			return SessionList{Sessions: []SessionSummary{{SessionID: "session-1", Workspace: "/workspace", MessageCount: 2}}}, nil
+		},
+		GetSession: func(_ context.Context, req SessionLookupRequest) (SessionDetail, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			return SessionDetail{SessionID: "session-1", MessageCount: 2, Messages: []map[string]string{{"role": "user"}}}, nil
+		},
+		History: func(_ context.Context, req SessionHistoryRequest) (SessionHistory, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, 1, req.Limit)
+			return SessionHistory{SessionID: "session-1", Entries: []map[string]any{{"text": "hello"}}}, nil
+		},
 	}, Options{Version: "test", Workspace: "/workspace"})
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 5)
+	require.Len(t, responses, 8)
 	require.Equal(t, "test", responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)["version"])
+	capabilities := responses[0]["result"].(map[string]any)["capabilities"].(map[string]any)
+	require.Equal(t, true, capabilities["prompt"])
+	require.Equal(t, true, capabilities["sessions"].(map[string]any)["history"])
 	require.Equal(t, "session-1", responses[1]["result"].(map[string]any)["session_id"])
 	promptResult := responses[2]["result"].(map[string]any)
 	require.Equal(t, "world", promptResult["text"])
 	require.Equal(t, "ok", responses[3]["result"].(map[string]any)["status"])
-	require.NotNil(t, responses[4]["result"])
+	listResult := responses[4]["result"].(map[string]any)
+	require.Equal(t, "session_list", listResult["kind"])
+	require.EqualValues(t, 1, listResult["count"])
+	getResult := responses[5]["result"].(map[string]any)
+	require.Equal(t, "session-1", getResult["session_id"])
+	require.EqualValues(t, 2, getResult["message_count"])
+	historyResult := responses[6]["result"].(map[string]any)
+	require.Equal(t, "session_history", historyResult["kind"])
+	require.Equal(t, "session-1", historyResult["session_id"])
+	require.NotNil(t, responses[7]["result"])
 }
 
 func TestServeReportsPromptValidationErrors(t *testing.T) {
