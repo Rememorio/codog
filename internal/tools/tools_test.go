@@ -445,6 +445,55 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 	out, err = registry.Execute(context.Background(), "Bash", []byte(`{"command":"printf alias-ok"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "alias-ok"`)
+
+	for alias, canonical := range map[string]string{
+		"CronCreate":                   "cron_create",
+		"CronDelete":                   "cron_delete",
+		"CronList":                     "cron_list",
+		"EnterWorktree":                "enter_worktree",
+		"ExitWorktree":                 "exit_worktree",
+		"GetMcpPromptTool":             "get_mcp_prompt",
+		"ListMcpPromptsTool":           "list_mcp_prompts",
+		"ListMcpResourcesTool":         "list_mcp_resources",
+		"ListMcpResourceTemplatesTool": "list_mcp_resource_templates",
+		"McpAuthTool":                  "mcp_auth",
+		"ReadMcpResourceTool":          "read_mcp_resource",
+		"RemoteTrigger":                "remote_trigger",
+		"RunTaskPacket":                "run_task_packet",
+		"SendMessage":                  "send_user_message",
+		"TaskCreate":                   "task_create",
+		"TaskGet":                      "task_get",
+		"TaskList":                     "task_list",
+		"TaskOutput":                   "task_output",
+		"TaskStatus":                   "task_status",
+		"TaskStop":                     "task_stop",
+		"TaskSupervise":                "task_supervise",
+		"TaskUpdate":                   "task_update",
+		"TeamCreate":                   "team_create",
+		"TeamDelete":                   "team_delete",
+		"TeamGet":                      "team_get",
+		"TeamList":                     "team_list",
+		"WorkerAwaitReady":             "worker_await_ready",
+		"WorkerCreate":                 "worker_create",
+		"WorkerGet":                    "worker_get",
+		"WorkerList":                   "worker_list",
+		"WorkerObserve":                "worker_observe",
+		"WorkerObserveCompletion":      "worker_observe_completion",
+		"WorkerResolveTrust":           "worker_resolve_trust",
+		"WorkerRestart":                "worker_restart",
+		"WorkerSendPrompt":             "worker_send_prompt",
+		"WorkerTerminate":              "worker_terminate",
+	} {
+		info, ok := registry.Info(alias)
+		require.True(t, ok, alias)
+		require.Equal(t, canonical, info.Name, alias)
+	}
+
+	out, err = registry.Execute(context.Background(), "TestingPermission", []byte(`{"target_tool":"Bash","input":{"command":"pwd"}}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"target_tool": "bash"`)
+	require.Contains(t, out, `"known_tool": true`)
+	require.Contains(t, out, `"required_permission": "danger-full-access"`)
 }
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
