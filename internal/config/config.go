@@ -330,6 +330,7 @@ type FlagOverrides struct {
 	AppendPrompt    string
 	PermissionMode  string
 	SkipPermissions bool
+	AllowBroadCWD   bool
 	AllowedTools    []string
 	DisallowedTools []string
 	MaxTurns        int

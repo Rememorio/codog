@@ -231,6 +231,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return err
 	}
+	if err := renderBroadCWDGuard(os.Stdout, command, rest, workspace, overrides.AllowBroadCWD, requestedOutputFormat(originalArgs)); err != nil {
+		return err
+	}
 	if err := applyPluginHookConfigs(&cfg, workspace); err != nil {
 		return err
 	}
@@ -12652,6 +12655,126 @@ func (e unexpectedExtraArgsError) Error() string {
 	return fmt.Sprintf("unexpected_extra_args: %s got unexpected arguments: %s", e.Command, strings.Join(e.Args, " "))
 }
 
+type broadCWDGuardReport struct {
+	Kind      string `json:"kind"`
+	ErrorKind string `json:"error_kind"`
+	Status    string `json:"status"`
+	Command   string `json:"command"`
+	Workspace string `json:"workspace"`
+	Reason    string `json:"reason"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+}
+
+func renderBroadCWDGuard(out io.Writer, command string, args []string, workspace string, allowed bool, format string) error {
+	if allowed || !commandRequiresBroadCWDGuard(command, args) {
+		return nil
+	}
+	reason, normalized, broad := broadWorkspaceReason(workspace, "")
+	if !broad {
+		return nil
+	}
+	displayCommand := strings.TrimSpace(command)
+	if displayCommand == "" {
+		displayCommand = "repl"
+	}
+	report := broadCWDGuardReport{
+		Kind:      "workspace_guard",
+		ErrorKind: "broad_cwd",
+		Status:    "error",
+		Command:   displayCommand,
+		Workspace: normalized,
+		Reason:    reason,
+		Message:   fmt.Sprintf("refusing to run %s from a broad workspace", displayCommand),
+		Hint:      "Run Codog from a project directory or pass --allow-broad-cwd when this broad workspace is intentional.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
+}
+
+func commandRequiresBroadCWDGuard(command string, args []string) bool {
+	command = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(command)), "/")
+	switch command {
+	case "", "repl", "tui", "prompt", "btw", "debug-tool-call":
+		return true
+	case "run", "test", "build", "lint", "node", "python", "review", "ultrareview", "security-review", "bughunter", "files", "search", "context", "ctx_viz":
+		return true
+	case "agents":
+		return firstMeaningfulArg(args) == "run"
+	case "team":
+		action := firstMeaningfulArg(args)
+		return action == "" || action == "create" || action == "add" || action == "new"
+	case "cron":
+		action := firstMeaningfulArg(args)
+		return action == "create" || action == "add" || action == "new" || action == "run" || action == "run-due"
+	case "background", "tasks", "bashes":
+		action := firstMeaningfulArg(args)
+		return action == "run" || action == "restart"
+	default:
+		return false
+	}
+}
+
+func firstMeaningfulArg(args []string) string {
+	meaningful := routeMeaningfulArgs(args)
+	if len(meaningful) == 0 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(meaningful[0]))
+}
+
+func broadWorkspaceReason(workspace string, home string) (string, string, bool) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	abs, err := filepath.Abs(workspace)
+	if err != nil {
+		abs = filepath.Clean(workspace)
+	}
+	abs = filepath.Clean(abs)
+	if isFilesystemRoot(abs) {
+		return "filesystem_root", abs, true
+	}
+	if strings.TrimSpace(home) == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return "", abs, false
+		}
+	}
+	homeAbs, err := filepath.Abs(home)
+	if err != nil {
+		homeAbs = filepath.Clean(home)
+	}
+	homeAbs = filepath.Clean(homeAbs)
+	if samePath(abs, homeAbs) {
+		return "home_directory", abs, true
+	}
+	return "", abs, false
+}
+
+func isFilesystemRoot(path string) bool {
+	path = filepath.Clean(path)
+	volume := filepath.VolumeName(path)
+	root := volume + string(os.PathSeparator)
+	return path == filepath.Clean(root)
+}
+
+func samePath(left string, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
 type promptErrorReport struct {
 	Kind      string `json:"kind"`
 	Action    string `json:"action"`
@@ -21246,6 +21369,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
+	flags.BoolVar(&base.AllowBroadCWD, "allow-broad-cwd", base.AllowBroadCWD, "allow model or agent commands from the home directory or filesystem root")
 	flags.Var(&allowedTools, "allowed-tools", "allow a tool or tool rule; repeat or comma-separate")
 	flags.Var(&allowedTools, "allowedTools", "allow a tool or tool rule; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowed-tools", "deny a tool; repeat or comma-separate")
@@ -21817,6 +21941,7 @@ Flags:
   --permission-mode read-only|workspace-write|danger-full-access|prompt|allow
   --dangerously-skip-permissions
   --skip-permissions
+  --allow-broad-cwd
   --allowed-tools TOOL[,TOOL]
   --disallowed-tools TOOL[,TOOL]
   --max-turns N

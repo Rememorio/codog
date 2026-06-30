@@ -44,6 +44,8 @@ Claude Code source.
   without executing that tool.
 - Bash execution includes preflight validation for read-only commands,
   destructive patterns, sed in-place edits, and suspicious path targets
+- Model, agent, and workspace-scanning commands refuse to run from the home
+  directory or filesystem root unless `--allow-broad-cwd` is passed.
 - Shell tools return stdout, stderr, exit code, timeout/interruption status, and
   execution duration.
 - `bash` keeps a session-scoped current working directory. A command that ends
@@ -421,6 +423,7 @@ Useful flags:
 codog --model claude-sonnet-4-5 prompt "write a small plan"
 codog --resume latest repl
 codog --permission-mode prompt prompt "inspect the repo"
+codog --allow-broad-cwd prompt "inspect my home directory"
 ```
 
 ## Config

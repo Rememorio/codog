@@ -601,6 +601,53 @@ func TestParseFlagsSupportsPermissionSkipAliases(t *testing.T) {
 	require.Empty(t, rest)
 }
 
+func TestParseFlagsSupportsBroadCWDOverride(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--allow-broad-cwd", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.True(t, overrides.AllowBroadCWD)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+}
+
+func TestBroadWorkspaceGuard(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	reason, normalized, broad := broadWorkspaceReason(home, home)
+	require.True(t, broad)
+	require.Equal(t, "home_directory", reason)
+	require.Equal(t, filepath.Clean(home), normalized)
+
+	root := filepath.VolumeName(home) + string(os.PathSeparator)
+	reason, _, broad = broadWorkspaceReason(root, home)
+	require.True(t, broad)
+	require.Equal(t, "filesystem_root", reason)
+
+	require.True(t, commandRequiresBroadCWDGuard("prompt", []string{"hello"}))
+	require.True(t, commandRequiresBroadCWDGuard("team", []string{"create", "reviewers", "--task", "check"}))
+	require.True(t, commandRequiresBroadCWDGuard("cron", []string{"run-due"}))
+	require.False(t, commandRequiresBroadCWDGuard("team", []string{"list"}))
+	require.False(t, commandRequiresBroadCWDGuard("status", nil))
+
+	var out bytes.Buffer
+	err := renderBroadCWDGuard(&out, "prompt", []string{"hello"}, home, false, "json")
+	require.Error(t, err)
+	var report broadCWDGuardReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "workspace_guard", report.Kind)
+	require.Equal(t, "broad_cwd", report.ErrorKind)
+	require.Equal(t, "home_directory", report.Reason)
+	require.Contains(t, report.Hint, "--allow-broad-cwd")
+
+	out.Reset()
+	require.NoError(t, renderBroadCWDGuard(&out, "prompt", []string{"hello"}, home, true, "json"))
+	require.Empty(t, out.String())
+
+	out.Reset()
+	require.NoError(t, renderBroadCWDGuard(&out, "status", nil, home, false, "json"))
+	require.Empty(t, out.String())
+}
+
 func TestParseFlagsSupportsPrintAliases(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"-p", "hello"}, config.FlagOverrides{})
 	require.NoError(t, err)
