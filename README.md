@@ -63,7 +63,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -219,6 +219,9 @@ Claude Code source.
 - `codog terminal-setup status|snippet|install|uninstall` and
   `/terminal-setup` inspect or manage idempotent shell integration snippets for
   zsh, bash, fish, and PowerShell.
+- `codog remote-env show|set|clear` and `/remote-env` manage default remote
+  session enablement, auth-token presence, and lease duration without printing
+  token values.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and
   one-shot prompt runs update for local observability.
 - `codog version [--json]` reports version, Go runtime, target, build metadata,

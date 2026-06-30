@@ -1549,6 +1549,35 @@ func TestTerminalSetupCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestRemoteEnvCommandPersistsSettings(t *testing.T) {
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.RemoteEnv([]string{"set", "--enabled", "on", "--auth-token", "secret-token", "--lease-seconds", "60", "--json"}))
+	require.Contains(t, out.String(), `"kind": "remote_env"`)
+	require.Contains(t, out.String(), `"enabled": true`)
+	require.Contains(t, out.String(), `"auth_token_configured": true`)
+	require.NotContains(t, out.String(), "secret-token")
+	require.True(t, app.Config.Future.RemoteEnabled)
+	require.Equal(t, "secret-token", app.Config.Future.RemoteAuthToken)
+	require.Equal(t, 60, app.Config.Future.RemoteLeaseSeconds)
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"remote_enabled": true`)
+	require.Contains(t, string(data), `"remote_auth_token": "secret-token"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/remote-env clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Remote Environment")
+	require.False(t, app.Config.Future.RemoteEnabled)
+	require.Equal(t, "", app.Config.Future.RemoteAuthToken)
+	require.Equal(t, 0, app.Config.Future.RemoteLeaseSeconds)
+	require.Empty(t, errOut.String())
+}
+
 func TestPromptHistoryPreferenceSkipsInputRecords(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
 	defer server.Close()

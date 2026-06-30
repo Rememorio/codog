@@ -385,6 +385,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.CodeIntel(rest)
 	case "remote":
 		return app.Remote(rest)
+	case "remote-env":
+		return app.RemoteEnv(rest)
 	case "bridge":
 		return app.Bridge(rest)
 	case "ide":
@@ -456,6 +458,228 @@ func (a *App) Remote(args []string) error {
 		Executable:  executable,
 		EditorToken: a.Config.Future.EditorBridgeToken,
 	}.Handler())
+}
+
+type remoteEnvRequest struct {
+	Action       string
+	Format       string
+	Target       string
+	Path         string
+	SetEnabled   bool
+	Enabled      bool
+	AuthToken    string
+	ClearToken   bool
+	SetLease     bool
+	LeaseSeconds int
+}
+
+type remoteEnvReport struct {
+	Kind                string `json:"kind"`
+	Action              string `json:"action"`
+	Status              string `json:"status"`
+	Enabled             bool   `json:"enabled"`
+	AuthTokenConfigured bool   `json:"auth_token_configured"`
+	LeaseSeconds        int    `json:"lease_seconds"`
+	Path                string `json:"path,omitempty"`
+}
+
+func (a *App) RemoteEnv(args []string) error {
+	req, err := parseRemoteEnvArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "show":
+	case "set":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if !req.SetEnabled && req.AuthToken == "" && !req.ClearToken && !req.SetLease {
+			return errors.New("remote-env set requires --enabled, --auth-token, --clear-auth-token, or --lease-seconds")
+		}
+		if req.SetEnabled {
+			if _, err := config.SetFileValue(path, "future.remote_enabled", req.Enabled); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteEnabled = req.Enabled
+		}
+		if req.AuthToken != "" {
+			if _, err := config.SetFileValue(path, "future.remote_auth_token", req.AuthToken); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteAuthToken = req.AuthToken
+		}
+		if req.ClearToken {
+			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteAuthToken = ""
+		}
+		if req.SetLease {
+			if _, err := config.SetFileValue(path, "future.remote_lease_seconds", req.LeaseSeconds); err != nil {
+				return err
+			}
+			a.Config.Future.RemoteLeaseSeconds = req.LeaseSeconds
+		}
+		req.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		for _, key := range []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
+			if _, err := config.UnsetFileValue(path, key); err != nil {
+				return err
+			}
+		}
+		a.Config.Future.RemoteEnabled = false
+		a.Config.Future.RemoteAuthToken = ""
+		a.Config.Future.RemoteLeaseSeconds = 0
+		req.Path = path
+	default:
+		return fmt.Errorf("unknown remote-env command %q", req.Action)
+	}
+	report := remoteEnvReport{
+		Kind:                "remote_env",
+		Action:              req.Action,
+		Status:              "ok",
+		Enabled:             a.Config.Future.RemoteEnabled,
+		AuthTokenConfigured: strings.TrimSpace(a.Config.Future.RemoteAuthToken) != "",
+		LeaseSeconds:        a.Config.Future.RemoteLeaseSeconds,
+		Path:                req.Path,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderRemoteEnvReport(a.Out, report)
+	return nil
+}
+
+func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
+	req := remoteEnvRequest{Action: "show", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-env output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-env target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-env path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--enabled":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-env enabled value is required")
+			}
+			enabled, err := parseOnOffBool(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.SetEnabled = true
+			req.Enabled = enabled
+		case strings.HasPrefix(arg, "--enabled="):
+			enabled, err := parseOnOffBool(strings.TrimPrefix(arg, "--enabled="))
+			if err != nil {
+				return req, err
+			}
+			req.SetEnabled = true
+			req.Enabled = enabled
+		case arg == "--auth-token":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-env auth token is required")
+			}
+			req.AuthToken = args[index]
+		case strings.HasPrefix(arg, "--auth-token="):
+			req.AuthToken = strings.TrimPrefix(arg, "--auth-token=")
+		case arg == "--clear-auth-token":
+			req.ClearToken = true
+		case arg == "--lease-seconds":
+			index++
+			if index >= len(args) {
+				return req, errors.New("remote-env lease seconds is required")
+			}
+			seconds, err := strconv.Atoi(args[index])
+			if err != nil || seconds < 0 {
+				return req, errors.New("remote-env lease seconds must be a non-negative integer")
+			}
+			req.SetLease = true
+			req.LeaseSeconds = seconds
+		case strings.HasPrefix(arg, "--lease-seconds="):
+			seconds, err := strconv.Atoi(strings.TrimPrefix(arg, "--lease-seconds="))
+			if err != nil || seconds < 0 {
+				return req, errors.New("remote-env lease seconds must be a non-negative integer")
+			}
+			req.SetLease = true
+			req.LeaseSeconds = seconds
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "remote-env"); err != nil {
+		return req, err
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected remote-env argument %q", rest[1])
+	}
+	if len(rest) == 1 {
+		switch strings.ToLower(rest[0]) {
+		case "show", "status":
+			req.Action = "show"
+		case "set":
+			req.Action = "set"
+		case "clear", "reset", "unset":
+			req.Action = "clear"
+		default:
+			return req, fmt.Errorf("unknown remote-env command %q", rest[0])
+		}
+	}
+	return req, nil
+}
+
+func renderRemoteEnvReport(out io.Writer, report remoteEnvReport) {
+	fmt.Fprintln(out, "Remote Environment")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Auth token       %t\n", report.AuthTokenConfigured)
+	fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+}
+
+func parseOnOffBool(value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "on", "yes", "enabled", "enable":
+		return true, nil
+	case "0", "false", "off", "no", "disabled", "disable":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown boolean value %q", value)
+	}
 }
 
 func (a *App) Bridge(args []string) error {
@@ -7771,6 +7995,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.TerminalSetup(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/remote-env":
+		if err := a.RemoteEnv(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/context":
 		if err := a.Context(nil, config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -11407,6 +11635,7 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
+  %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
 
@@ -11428,7 +11657,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
