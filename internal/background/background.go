@@ -417,6 +417,7 @@ func (s Store) Stop(id string) (Task, error) {
 	if err := killBackgroundProcess(task.PID); err != nil && processRunning(task.PID) {
 		return Task{}, err
 	}
+	waitForBackgroundProcessExit(task.PID, 500*time.Millisecond)
 	now := time.Now().UTC()
 	task.Status = "stopped"
 	task.CompletedAt = &now
@@ -424,6 +425,19 @@ func (s Store) Stop(id string) (Task, error) {
 		return Task{}, err
 	}
 	return task, nil
+}
+
+func waitForBackgroundProcessExit(pid int, timeout time.Duration) {
+	if pid <= 0 {
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	for processRunning(pid) {
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (s Store) Logs(id string, limitBytes int64) (string, error) {

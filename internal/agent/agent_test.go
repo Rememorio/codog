@@ -3671,7 +3671,7 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"language": "go"`)
 	out.Reset()
 
-	require.NoError(t, app.CodeIntel([]string{"lsp", "start", "go", "sh", "-c", "sleep 30"}))
+	require.NoError(t, app.CodeIntel([]string{"lsp", "start", "go", "sleep", "30"}))
 	require.Contains(t, out.String(), `"language": "go"`)
 	require.Contains(t, out.String(), `"status": "running"`)
 	t.Cleanup(func() { _ = app.CodeIntel([]string{"lsp", "stop", "go"}) })
