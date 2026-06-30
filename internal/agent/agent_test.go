@@ -235,12 +235,29 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	_, command, rest, err = parseFlags([]string{"--output-format=json", "prompt", "hello"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "prompt", command)
-	require.Equal(t, []string{"hello"}, rest)
+	require.Equal(t, []string{"hello", "--output-format", "json"}, rest)
 
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "status", "--output-format", "text"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "status", command)
 	require.Equal(t, []string{"--output-format", "text"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--json", "-p", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello", "--output-format", "json"}, rest)
+}
+
+func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
+	req, err := parsePromptArgs([]string{"hello", "--output-format", "json"})
+	require.NoError(t, err)
+	require.Equal(t, "hello", req.Prompt)
+	require.Equal(t, "json", req.Format)
+
+	req, err = parsePromptArgs([]string{"--output-format=stream-json", "--", "--json", "literal"})
+	require.NoError(t, err)
+	require.Equal(t, "--json literal", req.Prompt)
+	require.Equal(t, "stream-json", req.Format)
 }
 
 func TestDumpManifestsCommand(t *testing.T) {
@@ -4026,6 +4043,57 @@ func TestPromptWritesCompletedWorkerState(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, history, 1)
 	require.Equal(t, "hello", history[0].Text)
+}
+
+func TestPromptOutputFormats(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{},
+			MCPServers:          map[string]config.MCPServerConfig{},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.PromptWithOutput(context.Background(), "json prompt", config.FlagOverrides{SessionID: "json-session"}, "json"))
+	var report promptReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prompt", report.Kind)
+	require.Equal(t, "run", report.Action)
+	require.Equal(t, "completed", report.Status)
+	require.Equal(t, "json-session", report.SessionID)
+	require.Equal(t, "done", report.Response)
+	out.Reset()
+
+	require.NoError(t, app.PromptWithOutput(context.Background(), "stream prompt", config.FlagOverrides{SessionID: "stream-session"}, "stream-json"))
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.GreaterOrEqual(t, len(lines), 3)
+	var firstEvent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &firstEvent))
+	require.Equal(t, "start", firstEvent["type"])
+	var deltaEvent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &deltaEvent))
+	require.Equal(t, "assistant_delta", deltaEvent["type"])
+	var resultEvent map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &resultEvent))
+	require.Equal(t, "result", resultEvent["type"])
 }
 
 func TestBTWUsesForkedSideSession(t *testing.T) {

@@ -250,7 +250,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return app.Prompt(ctx, result.Prompt, overrides)
 	case "prompt":
-		input := strings.Join(rest, " ")
+		req, err := parsePromptArgs(rest)
+		if err != nil {
+			return err
+		}
+		input := req.Prompt
 		if strings.TrimSpace(input) == "" {
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil {
@@ -258,7 +262,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			input = string(data)
 		}
-		return app.Prompt(ctx, input, overrides)
+		return app.PromptWithOutput(ctx, input, overrides, req.Format)
 	case "acp":
 		return app.ACP(ctx, rest)
 	case "btw":
@@ -12122,6 +12126,19 @@ func (a *App) CodeIntelLSP(args []string) error {
 }
 
 func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOverrides) error {
+	return a.PromptWithOutput(ctx, input, overrides, "text")
+}
+
+func (a *App) PromptWithOutput(ctx context.Context, input string, overrides config.FlagOverrides, format string) error {
+	format = strings.TrimSpace(strings.ToLower(format))
+	if format == "" {
+		format = "text"
+	}
+	switch format {
+	case "text", "json", "stream-json":
+	default:
+		return fmt.Errorf("unknown prompt output format %q", format)
+	}
 	if strings.TrimSpace(input) == "" {
 		return errors.New("prompt is empty")
 	}
@@ -12135,7 +12152,21 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
 		return err
 	}
-	runErr := a.runSessionTurn(ctx, "prompt", sess, input, "completed")
+	var streamCapture bytes.Buffer
+	var turnOut io.Writer = a.Out
+	if format == "json" {
+		turnOut = &streamCapture
+	} else if format == "stream-json" {
+		writer := promptStreamJSONWriter{Out: a.Out}
+		if err := writer.Event("start", map[string]any{
+			"session_id": sess.ID,
+			"mode":       "prompt",
+		}); err != nil {
+			return err
+		}
+		turnOut = writer
+	}
+	runErr := a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", turnOptions{Out: turnOut})
 	endReason := "completed"
 	if runErr != nil {
 		endReason = "error"
@@ -12152,8 +12183,97 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 	if runErr != nil {
 		return runErr
 	}
+	if format == "json" || format == "stream-json" {
+		current, err := a.Sessions.Open(sess.ID)
+		if err != nil {
+			return err
+		}
+		report := promptOutputReport(current, streamCapture.String(), endReason)
+		if format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		writer := promptStreamJSONWriter{Out: a.Out}
+		return writer.Event("result", report)
+	}
 	fmt.Fprintf(a.Err, "\n\nsession: %s\n", sess.ID)
 	return nil
+}
+
+type promptReport struct {
+	Kind         string `json:"kind"`
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	SessionID    string `json:"session_id"`
+	MessageCount int    `json:"message_count"`
+	Response     string `json:"response"`
+}
+
+func promptOutputReport(sess *session.Session, streamed string, status string) promptReport {
+	response := strings.TrimSpace(streamed)
+	if response == "" && sess != nil {
+		response = strings.TrimSpace(lastAssistantText(sess.Messages))
+	}
+	messageCount := 0
+	sessionID := ""
+	if sess != nil {
+		messageCount = len(sess.Messages)
+		sessionID = sess.ID
+	}
+	return promptReport{
+		Kind:         "prompt",
+		Action:       "run",
+		Status:       status,
+		SessionID:    sessionID,
+		MessageCount: messageCount,
+		Response:     response,
+	}
+}
+
+func lastAssistantText(messages []anthropic.Message) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role != "assistant" {
+			continue
+		}
+		var builder strings.Builder
+		for _, block := range messages[index].Content {
+			if block.Type == "text" {
+				builder.WriteString(block.Text)
+			}
+		}
+		return builder.String()
+	}
+	return ""
+}
+
+type promptStreamJSONWriter struct {
+	Out io.Writer
+}
+
+func (w promptStreamJSONWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if err := w.Event("assistant_delta", map[string]any{"delta": string(p)}); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w promptStreamJSONWriter) Event(event string, payload any) error {
+	if w.Out == nil {
+		return nil
+	}
+	data, err := json.Marshal(map[string]any{
+		"type":    event,
+		"payload": payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(w.Out, string(data))
+	return err
 }
 
 type btwRequest struct {
@@ -12283,6 +12403,44 @@ func (a *App) btwSideSession(source *session.Session) (*session.Session, error) 
 type turnOptions struct {
 	Skill        *skills.Skill
 	AllowedTools []string
+	Out          io.Writer
+}
+
+type promptCLIRequest struct {
+	Prompt string
+	Format string
+}
+
+func parsePromptArgs(args []string) (promptCLIRequest, error) {
+	req := promptCLIRequest{Format: "text"}
+	parts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--":
+			parts = append(parts, args[index+1:]...)
+			index = len(args)
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("prompt output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			parts = append(parts, arg)
+		}
+	}
+	req.Prompt = strings.TrimSpace(strings.Join(parts, " "))
+	switch req.Format {
+	case "text", "json", "stream-json":
+		return req, nil
+	default:
+		return req, fmt.Errorf("unknown prompt output format %q", req.Format)
+	}
 }
 
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
@@ -12323,7 +12481,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
 		Workspace:        a.Workspace,
 		SessionID:        sess.ID,
-		Out:              a.Out,
+		Out:              firstWriter(opts.Out, a.Out),
 		System:           a.systemPromptForInput(input),
 		OnToolUse:        a.auditToolUse(sess.ID),
 	}
@@ -17316,6 +17474,15 @@ func skillAllowedToolRules(values []string) []string {
 	return addRuleValues(nil, rules)
 }
 
+func firstWriter(values ...io.Writer) io.Writer {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
 func (a *App) effectiveConfig() config.Config {
 	cfg := a.Config
 	if a.planModeActive() {
@@ -17577,6 +17744,10 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		if len(rest) > 0 && rest[0] == "prompt" {
 			rest = rest[1:]
 		}
+		if outputFormat == "" && jsonOutput {
+			outputFormat = "json"
+		}
+		rest = injectGlobalOutputFormat("prompt", rest, outputFormat)
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
@@ -17607,7 +17778,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
-		"mcp", "memory", "mobile", "output-style", "passes", "pr", "pr-comments",
+		"mcp", "memory", "mobile", "output-style", "passes", "pr", "pr-comments", "prompt",
 		"privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "skills", "state", "status", "statusline",
@@ -17634,7 +17805,7 @@ func printHelp(out io.Writer) {
 	help := `%s is a Go-native coding agent CLI.
 
 Usage:
-  %s [flags] prompt "explain this repo" | -p "explain this repo"
+  %s [flags] prompt "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
@@ -17764,7 +17935,7 @@ Flags:
   --max-turns N
   --max-tokens N
   --json
-  --output-format text|json
+  --output-format text|json (prompt also accepts stream-json)
   --config PATH
 
 Environment:
