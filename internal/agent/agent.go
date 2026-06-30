@@ -400,6 +400,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.TerminalSetup(rest)
 	case "context":
 		return app.Context(rest, overrides)
+	case "ctx_viz":
+		return app.ContextViz(rest, overrides)
 	case "files":
 		return app.Files(rest)
 	case "search":
@@ -9278,6 +9280,105 @@ func (a *App) Context(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type contextVizRequest struct {
+	Format string
+	Output string
+}
+
+type contextVizReport struct {
+	Kind    string             `json:"kind"`
+	Action  string             `json:"action"`
+	Status  string             `json:"status"`
+	File    string             `json:"file"`
+	Bytes   int                `json:"bytes"`
+	Context contextview.Report `json:"context"`
+}
+
+func (a *App) ContextViz(args []string, overrides config.FlagOverrides) error {
+	req, err := parseContextVizArgs(args)
+	if err != nil {
+		return err
+	}
+	active, err := a.contextSession(overrides)
+	if err != nil {
+		return err
+	}
+	contextReport := a.buildContextReport(active)
+	html := []byte(contextview.RenderHTML(contextReport))
+	output := req.Output
+	if output == "" {
+		output = filepath.Join(".codog", "context-viz.html")
+	}
+	path := a.resolveOutputPath(output)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, html, 0o644); err != nil {
+		return err
+	}
+	report := contextVizReport{
+		Kind:    "ctx_viz",
+		Action:  "write",
+		Status:  "ok",
+		File:    path,
+		Bytes:   len(html),
+		Context: contextReport,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderContextVizReport(a.Out, report)
+	return nil
+}
+
+func parseContextVizArgs(args []string) (contextVizRequest, error) {
+	req := contextVizRequest{Format: "text"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ctx_viz output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--output" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ctx_viz output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown ctx_viz flag %q", arg)
+		default:
+			if req.Output != "" {
+				return req, fmt.Errorf("unexpected ctx_viz argument %q", arg)
+			}
+			req.Output = arg
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "ctx_viz"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderContextVizReport(out io.Writer, report contextVizReport) {
+	fmt.Fprintln(out, "Context Viz")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  File             %s\n", report.File)
+	fmt.Fprintf(out, "  Bytes            %d\n", report.Bytes)
+	fmt.Fprintf(out, "  Context status   %s\n", report.Context.Status)
+}
+
 func (a *App) contextSession(overrides config.FlagOverrides) (*session.Session, error) {
 	sessionRef := overrides.Resume
 	if sessionRef == "" {
@@ -11346,6 +11447,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/context":
 		if err := a.Context(nil, config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/ctx_viz":
+		if err := a.ContextViz(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/sandbox":
@@ -15778,6 +15883,7 @@ Usage:
   %s [flags] statusline [--json|--output-format text|json]
   %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]

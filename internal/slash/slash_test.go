@@ -21,6 +21,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/env")
 	require.Contains(t, out.String(), "/init-verifiers")
 	require.Contains(t, out.String(), "/context")
+	require.Contains(t, out.String(), "/ctx_viz")
 	require.Contains(t, out.String(), "/config")
 	require.Contains(t, out.String(), "/model")
 	require.Contains(t, out.String(), "/advisor")

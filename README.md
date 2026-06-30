@@ -62,7 +62,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/init-verifiers`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/pr_comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/reset-limits`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/pr_comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/ctx_viz`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/reset-limits`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/node`, `/python`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/terminalSetup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/bridge`, `/bridge-kick`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/oauth-refresh`, `/logout`, `/copy`, `/stats`, `/backfill-sessions`.
@@ -115,7 +115,8 @@ Claude Code source.
   text/JSON command runner used by `/run`.
 - `/context` and `codog context [--resume latest]` summarize prompt context,
   project memory, focused paths, session token estimates, git state, and local
-  preflight signals before a provider request.
+  preflight signals before a provider request. `codog ctx_viz` writes the same
+  preflight data as a local HTML context visualization.
 - `/plan`, `/ultraplan`, `/exit-plan`, `codog plan`, and `codog ultraplan`
   manage workspace-local read-only planning mode; active plans are injected
   into the system prompt and force model tool permissions to read-only for

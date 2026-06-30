@@ -63,6 +63,12 @@ func TestBuildAndRenderText(t *testing.T) {
 	require.Contains(t, out.String(), "Memory files     1")
 	require.Contains(t, out.String(), "Focused paths    1")
 	require.Contains(t, out.String(), "notes.md")
+
+	html := RenderHTML(report)
+	require.Contains(t, html, "<!doctype html>")
+	require.Contains(t, html, "Codog Context")
+	require.Contains(t, html, "claude-test")
+	require.Contains(t, html, "Estimated tokens")
 }
 
 func TestBuildSignalsMissingContextInputs(t *testing.T) {

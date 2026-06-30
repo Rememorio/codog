@@ -1465,6 +1465,22 @@ func TestContextCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Session          context-session (2 messages)")
 	require.Contains(t, out.String(), "Focused paths    1")
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	vizPath := filepath.Join(workspace, "context.html")
+	require.NoError(t, app.ContextViz([]string{"--output", vizPath, "--json"}, config.FlagOverrides{SessionID: "context-session"}))
+	require.Contains(t, out.String(), `"kind": "ctx_viz"`)
+	require.Contains(t, out.String(), `"bytes":`)
+	data, err := os.ReadFile(vizPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "<!doctype html>")
+	require.Contains(t, string(data), "Codog Context")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/ctx_viz --output "+filepath.Join(workspace, "slash-context.html"), sess))
+	require.Contains(t, out.String(), "Context Viz")
+	require.FileExists(t, filepath.Join(workspace, "slash-context.html"))
+	require.Empty(t, errOut.String())
 }
 
 func TestUsageCommandAndSlash(t *testing.T) {

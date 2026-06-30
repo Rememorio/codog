@@ -44,6 +44,7 @@ func Specs() []Spec {
 		{Name: "/project", Usage: "/project", Description: "Show project detection info."},
 		{Name: "/env", Usage: "/env", Description: "Show environment variables visible to tools with sensitive values redacted."},
 		{Name: "/context", Usage: "/context", Description: "Show prompt context, memory, focus, session, and token preflight."},
+		{Name: "/ctx_viz", Usage: "/ctx_viz [--output PATH]", Description: "Write an HTML context visualization report."},
 		{Name: "/config", Usage: "/config [section]", Description: "Show effective runtime config."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
 		{Name: "/advisor", Usage: "/advisor [model|off]", Description: "Show or change the advisor model preference."},
