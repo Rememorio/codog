@@ -100,6 +100,7 @@ type App struct {
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
+	originalArgs := append([]string(nil), args...)
 	if len(args) > 0 {
 		switch args[0] {
 		case "--help", "-h":
@@ -519,10 +520,30 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SystemPromptCommand(rest)
 	default:
 		if command != "" {
-			return fmt.Errorf("unknown command %q", command)
+			return renderCommandNotFound(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
 		}
 		return app.REPL(ctx, overrides)
 	}
+}
+
+type ExitError struct {
+	Code   int
+	Err    error
+	Silent bool
+}
+
+func (e *ExitError) Error() string {
+	if e == nil || e.Err == nil {
+		return "exit"
+	}
+	return e.Err.Error()
+}
+
+func (e *ExitError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
@@ -11374,6 +11395,152 @@ func sortedUniqueStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+type commandNotFoundReport struct {
+	Kind      string   `json:"kind"`
+	ErrorKind string   `json:"error_kind"`
+	Status    string   `json:"status"`
+	Command   string   `json:"command"`
+	Args      []string `json:"args,omitempty"`
+	Message   string   `json:"message"`
+	Hint      string   `json:"hint"`
+}
+
+func renderCommandNotFound(out io.Writer, command string, args []string, format string) error {
+	report := buildCommandNotFoundReport(command, args)
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
+}
+
+func buildCommandNotFoundReport(command string, args []string) commandNotFoundReport {
+	command = strings.TrimSpace(command)
+	cleanArgs := append([]string(nil), args...)
+	message := fmt.Sprintf("unknown command %q", command)
+	suggestions := commandSuggestions(command, 4)
+	hint := "Run `codog --help` to list commands."
+	if len(cleanArgs) > 0 {
+		prompt := strings.TrimSpace(strings.Join(append([]string{command}, cleanArgs...), " "))
+		hint = fmt.Sprintf("Use `codog prompt %q` to send this as a prompt, or run `codog --help` to list commands.", prompt)
+	} else if len(suggestions) > 0 {
+		hint = fmt.Sprintf("Did you mean: %s? Run `codog --help` to list commands.", strings.Join(suggestions, ", "))
+	}
+	return commandNotFoundReport{
+		Kind:      "command_not_found",
+		ErrorKind: "command_not_found",
+		Status:    "error",
+		Command:   command,
+		Args:      cleanArgs,
+		Message:   message,
+		Hint:      hint,
+	}
+}
+
+func requestedOutputFormat(args []string) string {
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "--json":
+			return "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index < len(args) {
+				return strings.ToLower(strings.TrimSpace(args[index]))
+			}
+			return ""
+		case strings.HasPrefix(arg, "--output-format="):
+			return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, "--output-format=")))
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(os.Getenv("CODOG_OUTPUT_FORMAT")))
+}
+
+func commandSuggestions(command string, limit int) []string {
+	command = strings.ToLower(strings.TrimSpace(command))
+	if command == "" || limit <= 0 {
+		return nil
+	}
+	type candidate struct {
+		name  string
+		score int
+	}
+	candidates := []candidate{}
+	for _, name := range builtInCommandNames() {
+		lower := strings.ToLower(name)
+		score := levenshteinDistance(command, lower)
+		if strings.HasPrefix(lower, command) || strings.HasPrefix(command, lower) {
+			score--
+		}
+		if score <= 3 || strings.Contains(lower, command) {
+			candidates = append(candidates, candidate{name: name, score: score})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return candidates[i].name < candidates[j].name
+		}
+		return candidates[i].score < candidates[j].score
+	})
+	out := make([]string, 0, limit)
+	for _, candidate := range candidates {
+		if candidate.name == command {
+			continue
+		}
+		out = append(out, candidate.name)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func levenshteinDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return len([]rune(b))
+	}
+	if b == "" {
+		return len([]rune(a))
+	}
+	ar := []rune(a)
+	br := []rune(b)
+	prev := make([]int, len(br)+1)
+	curr := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i, ra := range ar {
+		curr[0] = i + 1
+		for j, rb := range br {
+			cost := 0
+			if ra != rb {
+				cost = 1
+			}
+			curr[j+1] = minInt(curr[j]+1, prev[j+1]+1, prev[j]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(br)]
+}
+
+func minInt(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	min := values[0]
+	for _, value := range values[1:] {
+		if value < min {
+			min = value
+		}
+	}
+	return min
 }
 
 func parseSimpleOutputFormat(command string, args []string) (string, error) {

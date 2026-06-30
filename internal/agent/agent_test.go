@@ -171,6 +171,40 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 }
 
+func TestUnknownCommandOutputContract(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "statuz"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report commandNotFoundReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "command_not_found", report.Kind)
+	require.Equal(t, "command_not_found", report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "statuz", report.Command)
+	require.Contains(t, report.Hint, "status")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "foobar", "baz"}, config.FlagOverrides{})
+	})
+	require.Empty(t, out)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.False(t, exitErr.Silent)
+	require.Contains(t, err.Error(), "command_not_found")
+	require.Contains(t, err.Error(), "codog prompt")
+}
+
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 	for _, tool := range report.Tools {
 		if tool.Name == name {
