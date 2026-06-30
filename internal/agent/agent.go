@@ -267,6 +267,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Plan(append([]string{"exit"}, rest...))
 	case "export":
 		return app.Export(rest)
+	case "share":
+		return app.Share(rest, overrides)
 	case "copy":
 		return app.Copy(ctx, rest, overrides)
 	case "git":
@@ -6167,6 +6169,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/export":
 		a.handleExportSlash(fields[1:], sess)
+	case "/share":
+		if err := a.Share(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/copy":
 		if err := a.Copy(ctx, fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -7502,6 +7508,24 @@ type renameRequest struct {
 	Format    string
 }
 
+type shareRequest struct {
+	SessionID string
+	OutputDir string
+	Format    string
+	JSON      bool
+}
+
+type shareReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	SessionID string `json:"session_id"`
+	File      string `json:"file"`
+	Format    string `json:"format"`
+	Messages  int    `json:"messages"`
+	Bytes     int    `json:"bytes"`
+}
+
 type copyRequest struct {
 	SessionID string
 	Scope     string
@@ -7618,6 +7642,142 @@ func (a *App) Export(args []string) error {
 	encoded, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(a.Out, string(encoded))
 	return nil
+}
+
+func (a *App) Share(args []string, overrides config.FlagOverrides) error {
+	req, err := parseShareArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	data, sess, err := a.Sessions.Export(req.SessionID, req.Format)
+	if err != nil {
+		return err
+	}
+	format, _ := session.NormalizeExportFormat(req.Format)
+	outputDir := req.OutputDir
+	if outputDir == "" {
+		outputDir = filepath.Join(a.Workspace, ".codog", "share")
+	} else {
+		outputDir = a.resolveOutputPath(outputDir)
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(outputDir, shareFileName(sess.ID, format))
+	if err := session.ValidateExportOutputPath(path); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	report := shareReport{
+		Kind:      "share",
+		Action:    "create",
+		Status:    "ok",
+		SessionID: sess.ID,
+		File:      path,
+		Format:    format,
+		Messages:  len(sess.Messages),
+		Bytes:     len(data),
+	}
+	if req.JSON {
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return nil
+	}
+	fmt.Fprintf(a.Out, "Shared session %s to %s (%d bytes).\n", report.SessionID, report.File, report.Bytes)
+	return nil
+}
+
+func parseShareArgs(args []string, overrides config.FlagOverrides) (shareRequest, error) {
+	req := shareRequest{SessionID: "latest", Format: session.ExportMarkdown}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.JSON = true
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("share session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("share format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--format="):
+			req.Format = strings.TrimPrefix(arg, "--format=")
+		case arg == "--output" || arg == "--output-dir":
+			index++
+			if index >= len(args) {
+				return req, errors.New("share output directory is required")
+			}
+			req.OutputDir = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.OutputDir = strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "--output-dir="):
+			req.OutputDir = strings.TrimPrefix(arg, "--output-dir=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown share option %q", arg)
+		default:
+			if req.OutputDir != "" {
+				return req, fmt.Errorf("unexpected share argument %q", arg)
+			}
+			req.OutputDir = arg
+		}
+	}
+	if _, err := session.NormalizeExportFormat(req.Format); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func shareFileName(sessionID string, format string) string {
+	ext := "md"
+	switch format {
+	case session.ExportJSON:
+		ext = "json"
+	case session.ExportJSONL:
+		ext = "jsonl"
+	}
+	return shareSafeSessionID(sessionID) + "." + ext
+}
+
+func shareSafeSessionID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "session"
+	}
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(sessionID) {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.'
+		if ok {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(builder.String(), "-.")
+	if out == "" {
+		return "session"
+	}
+	return out
 }
 
 func (a *App) Copy(ctx context.Context, args []string, overrides config.FlagOverrides) error {
@@ -9323,7 +9483,7 @@ Usage:
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
-  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl] | copy [last|all] [--session ID]
+  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl] | share [DIR] [--session ID] [--format markdown|json|jsonl] | copy [last|all] [--session ID]
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]

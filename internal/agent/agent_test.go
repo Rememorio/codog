@@ -2371,6 +2371,34 @@ func TestExportSlashWritesCurrentSession(t *testing.T) {
 	require.Contains(t, string(data), "slash export")
 }
 
+func TestShareCommandAndSlashWritesLocalArtifact(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "share me")))
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Share([]string{"--session", "source", "--format=json", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "share"`)
+	require.Contains(t, out.String(), `"format": "json"`)
+	sharedJSON := filepath.Join(workspace, ".codog", "share", "source.json")
+	data, err := os.ReadFile(sharedJSON)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"id": "source"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/share shared", sess))
+	require.Empty(t, errOut.String())
+	require.Contains(t, out.String(), "Shared session source")
+	sharedMarkdown := filepath.Join(workspace, "shared", "source.md")
+	data, err = os.ReadFile(sharedMarkdown)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "share me")
+}
+
 func TestCopyCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)

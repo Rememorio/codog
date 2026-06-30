@@ -59,7 +59,7 @@ Claude Code source.
   current model, and recent sessions.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
-  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
+  `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
@@ -68,6 +68,8 @@ Claude Code source.
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
   raw JSONL.
+- `/share` and `codog share` write a local share artifact for the current or
+  selected session under `.codog/share` by default.
 - `/copy` and `codog copy [last|all]` copy the latest assistant response or a
   formatted session transcript to the system clipboard.
 - `/history` and `codog history [--session ID] [--limit N] [--json]` show
