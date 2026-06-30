@@ -124,6 +124,24 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/upgrade")
 	require.Contains(t, out.String(), "/install")
 	require.Contains(t, out.String(), "/debug-tool-call")
+	require.NotContains(t, out.String(), "/ant-trace")
+	require.NotContains(t, out.String(), "/autofix-pr")
+	require.NotContains(t, out.String(), "/break-cache")
+	require.NotContains(t, out.String(), "/good-claude")
+	require.NotContains(t, out.String(), "/mock-limits")
+	require.NotContains(t, out.String(), "/onboarding")
+	require.NotContains(t, out.String(), "/perf-issue")
+}
+
+func TestHiddenDisabledCommandsStayOutOfHelpAndCompletion(t *testing.T) {
+	for _, name := range []string{"/ant-trace", "/autofix-pr", "/break-cache", "/good-claude", "/mock-limits", "/onboarding", "/perf-issue"} {
+		spec, ok := Lookup(name)
+		require.True(t, ok, name)
+		require.True(t, spec.Hidden, name)
+		require.True(t, spec.Disabled, name)
+		require.NotContains(t, AllCandidates(CandidateOptions{}), name)
+		require.NotContains(t, Candidates(name[:4]), name)
+	}
 }
 
 func TestCandidatesFiltersSlashCommands(t *testing.T) {

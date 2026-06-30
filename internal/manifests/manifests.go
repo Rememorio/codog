@@ -30,6 +30,8 @@ type CommandManifest struct {
 	Usage       string `json:"usage"`
 	Description string `json:"description"`
 	Implemented bool   `json:"implemented"`
+	Enabled     bool   `json:"enabled"`
+	Hidden      bool   `json:"hidden"`
 }
 
 type SkillManifest struct {
@@ -85,7 +87,9 @@ func commandManifests() []CommandManifest {
 			Name:        spec.Name,
 			Usage:       spec.Usage,
 			Description: spec.Description,
-			Implemented: true,
+			Implemented: !spec.Disabled,
+			Enabled:     !spec.Disabled,
+			Hidden:      spec.Hidden,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })

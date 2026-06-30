@@ -177,6 +177,10 @@ func TestDumpManifestsCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"kind": "dump-manifests"`)
 	require.Contains(t, out.String(), `"source": "go-resolver"`)
 	require.Contains(t, out.String(), `"name": "review"`)
+	require.Contains(t, out.String(), `"name": "/ant-trace"`)
+	require.Contains(t, out.String(), `"implemented": false`)
+	require.Contains(t, out.String(), `"enabled": false`)
+	require.Contains(t, out.String(), `"hidden": true`)
 	out.Reset()
 
 	require.NoError(t, app.DumpManifests(nil))
