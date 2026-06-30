@@ -1593,6 +1593,48 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestFeedbackCommandAndSlashWritesReport(t *testing.T) {
+	workspace := initGitRepo(t)
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "feedback context")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Feedback([]string{"bug", "report", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "feedback"`)
+	require.Contains(t, out.String(), `"session_id": "source"`)
+	files, err := filepath.Glob(filepath.Join(workspace, ".codog", "feedback", "*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	data, err := os.ReadFile(files[0])
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Codog Feedback")
+	require.Contains(t, string(data), "bug report")
+	require.Contains(t, string(data), "source (1 messages)")
+	out.Reset()
+
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/feedback slash report", sess))
+	require.Contains(t, out.String(), "Feedback")
+	require.Empty(t, errOut.String())
+	files, err = filepath.Glob(filepath.Join(workspace, ".codog", "feedback", "*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+}
+
 func TestProjectCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/project\n"), 0o644))

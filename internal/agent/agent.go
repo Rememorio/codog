@@ -291,6 +291,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ReleaseNotes(rest)
 	case "review":
 		return app.Review(rest)
+	case "feedback":
+		return app.Feedback(rest, overrides)
 	case "run":
 		return app.RunCommand(ctx, rest)
 	case "test":
@@ -4485,6 +4487,231 @@ func parseReviewArgs(args []string) (reviewRequest, error) {
 	}
 }
 
+type feedbackRequest struct {
+	Format    string
+	Output    string
+	Message   string
+	SessionID string
+}
+
+type feedbackReport struct {
+	Kind            string `json:"kind"`
+	Action          string `json:"action"`
+	Status          string `json:"status"`
+	File            string `json:"file"`
+	Bytes           int    `json:"bytes"`
+	Message         string `json:"message,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	SessionMessages int    `json:"session_messages,omitempty"`
+	Model           string `json:"model"`
+	PermissionMode  string `json:"permission_mode"`
+	GitBranch       string `json:"git_branch,omitempty"`
+	GitClean        bool   `json:"git_clean"`
+}
+
+type feedbackBundle struct {
+	CreatedAt time.Time            `json:"created_at"`
+	Message   string               `json:"message"`
+	Version   versioninfo.Report   `json:"version"`
+	Status    localstatus.Snapshot `json:"status"`
+}
+
+func (a *App) Feedback(args []string, overrides config.FlagOverrides) error {
+	req, err := parseFeedbackArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	active, err := a.feedbackSession(req.SessionID)
+	if err != nil {
+		return err
+	}
+	snapshot := a.statusSnapshot(active)
+	bundle := feedbackBundle{
+		CreatedAt: time.Now().UTC(),
+		Message:   strings.TrimSpace(req.Message),
+		Version:   versioninfo.Build(version, a.Workspace),
+		Status:    snapshot,
+	}
+	path := a.feedbackOutputPath(req.Output, bundle.CreatedAt)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := session.ValidateExportOutputPath(path); err != nil {
+		return err
+	}
+	data := []byte(renderFeedbackMarkdown(bundle))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	report := feedbackReport{
+		Kind:            "feedback",
+		Action:          "write",
+		Status:          "ok",
+		File:            path,
+		Bytes:           len(data),
+		Message:         bundle.Message,
+		SessionID:       snapshot.Session.ID,
+		SessionMessages: snapshot.Session.MessageCount,
+		Model:           snapshot.Config.Model,
+		PermissionMode:  snapshot.Config.PermissionMode,
+		GitBranch:       snapshot.Git.Branch,
+		GitClean:        snapshot.Git.Clean,
+	}
+	if req.Format == "json" {
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return nil
+	}
+	renderFeedbackReport(a.Out, report)
+	return nil
+}
+
+func parseFeedbackArgs(args []string, overrides config.FlagOverrides) (feedbackRequest, error) {
+	req := feedbackRequest{Format: "text"}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	var message []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("feedback output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, errors.New("feedback output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("feedback session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("feedback resume session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--message":
+			index++
+			if index >= len(args) {
+				return req, errors.New("feedback message is required")
+			}
+			message = append(message, args[index])
+		case strings.HasPrefix(arg, "--message="):
+			message = append(message, strings.TrimPrefix(arg, "--message="))
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown feedback flag %q", arg)
+		default:
+			message = append(message, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "feedback"); err != nil {
+		return req, err
+	}
+	req.Message = strings.TrimSpace(strings.Join(message, " "))
+	return req, nil
+}
+
+func (a *App) feedbackSession(sessionID string) (*session.Session, error) {
+	if strings.TrimSpace(sessionID) == "" || a.Sessions == nil {
+		return nil, nil
+	}
+	active, err := a.Sessions.Open(sessionID)
+	if errors.Is(err, session.ErrNoSessions) {
+		return nil, nil
+	}
+	return active, err
+}
+
+func (a *App) feedbackOutputPath(output string, createdAt time.Time) string {
+	filename := fmt.Sprintf("feedback-%s-%d.md", createdAt.Format("20060102T150405Z"), createdAt.UnixNano())
+	if strings.TrimSpace(output) == "" {
+		return filepath.Join(a.Workspace, ".codog", "feedback", filename)
+	}
+	path := a.resolveOutputPath(output)
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return path
+	}
+	return filepath.Join(path, filename)
+}
+
+func renderFeedbackReport(out io.Writer, report feedbackReport) {
+	fmt.Fprintln(out, "Feedback")
+	fmt.Fprintf(out, "  File             %s\n", report.File)
+	fmt.Fprintf(out, "  Bytes            %d\n", report.Bytes)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", prompthistory.Preview(report.Message, 80))
+	}
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s (%d messages)\n", report.SessionID, report.SessionMessages)
+	}
+	fmt.Fprintf(out, "  Model            %s\n", report.Model)
+	fmt.Fprintf(out, "  Permission       %s\n", report.PermissionMode)
+	if report.GitBranch != "" {
+		fmt.Fprintf(out, "  Git              branch=%s clean=%t\n", report.GitBranch, report.GitClean)
+	}
+}
+
+func renderFeedbackMarkdown(bundle feedbackBundle) string {
+	var builder strings.Builder
+	builder.WriteString("# Codog Feedback\n\n")
+	builder.WriteString(fmt.Sprintf("- Created: %s\n", bundle.CreatedAt.Format(time.RFC3339)))
+	builder.WriteString(fmt.Sprintf("- Version: %s\n", bundle.Version.Version))
+	builder.WriteString(fmt.Sprintf("- Target: %s\n", bundle.Version.BuildTarget))
+	builder.WriteString(fmt.Sprintf("- Workspace: %s\n", bundle.Status.Workspace.Path))
+	builder.WriteString(fmt.Sprintf("- Model: %s\n", bundle.Status.Config.Model))
+	builder.WriteString(fmt.Sprintf("- Permission mode: %s\n", bundle.Status.Config.PermissionMode))
+	if bundle.Status.Session.Active {
+		builder.WriteString(fmt.Sprintf("- Session: %s (%d messages)\n", bundle.Status.Session.ID, bundle.Status.Session.MessageCount))
+	}
+	if bundle.Status.Git.Available {
+		builder.WriteString(fmt.Sprintf("- Git: branch=%s clean=%t staged=%d unstaged=%d untracked=%d conflicts=%d\n",
+			bundle.Status.Git.Branch,
+			bundle.Status.Git.Clean,
+			bundle.Status.Git.Staged,
+			bundle.Status.Git.Unstaged,
+			bundle.Status.Git.Untracked,
+			bundle.Status.Git.Conflicts,
+		))
+	}
+	builder.WriteString("\n## Message\n\n")
+	if strings.TrimSpace(bundle.Message) == "" {
+		builder.WriteString("No description provided.\n")
+	} else {
+		builder.WriteString(bundle.Message)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n## Diagnostics\n\n```json\n")
+	diagnostics, _ := json.MarshalIndent(map[string]any{
+		"version": bundle.Version,
+		"status":  bundle.Status,
+	}, "", "  ")
+	builder.Write(diagnostics)
+	builder.WriteString("\n```\n")
+	return builder.String()
+}
+
 func renderVersion(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("version", args)
 	if err != nil {
@@ -6681,6 +6908,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/review":
 		if err := a.Review(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/feedback":
+		if err := a.Feedback(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/focus":
@@ -10184,6 +10415,7 @@ Usage:
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
   %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]
   %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
+  %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
@@ -10239,7 +10471,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
