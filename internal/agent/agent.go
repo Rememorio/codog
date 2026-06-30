@@ -307,6 +307,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Brief(rest)
 	case "status":
 		return app.Status(rest, overrides)
+	case "statusline":
+		return app.Statusline(rest, overrides)
 	case "context":
 		return app.Context(rest, overrides)
 	case "files":
@@ -2976,8 +2978,12 @@ func dirExists(path string) bool {
 }
 
 func emptyAsNone(value string) string {
+	return emptyAs(value, "none")
+}
+
+func emptyAs(value string, fallback string) string {
 	if strings.TrimSpace(value) == "" {
-		return "none"
+		return fallback
 	}
 	return value
 }
@@ -3993,6 +3999,102 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	}
 	a.renderStatus(format, active)
 	return nil
+}
+
+type statuslineReport struct {
+	Kind            string `json:"kind"`
+	Line            string `json:"line"`
+	Status          string `json:"status"`
+	Workspace       string `json:"workspace"`
+	Model           string `json:"model"`
+	PermissionMode  string `json:"permission_mode"`
+	SessionActive   bool   `json:"session_active"`
+	SessionID       string `json:"session_id,omitempty"`
+	SessionMessages int    `json:"session_messages,omitempty"`
+	SessionCount    int    `json:"session_count"`
+	GitAvailable    bool   `json:"git_available"`
+	GitBranch       string `json:"git_branch,omitempty"`
+	GitClean        bool   `json:"git_clean"`
+	GitDirty        bool   `json:"git_dirty"`
+	GitConflicts    int    `json:"git_conflicts,omitempty"`
+	PlanActive      bool   `json:"plan_active"`
+}
+
+func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
+	format, err := parseSimpleOutputFormat("statusline", args)
+	if err != nil {
+		return err
+	}
+	active, err := a.contextSession(overrides)
+	if err != nil {
+		return err
+	}
+	report := buildStatuslineReport(a.statusSnapshot(active))
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, report.Line)
+	return nil
+}
+
+func buildStatuslineReport(snapshot localstatus.Snapshot) statuslineReport {
+	workspace := snapshot.Workspace.Name
+	if strings.TrimSpace(workspace) == "" {
+		workspace = filepath.Base(snapshot.Workspace.Path)
+	}
+	if workspace == "." || workspace == string(filepath.Separator) {
+		workspace = "workspace"
+	}
+	gitLabel := "no-git"
+	gitDirty := false
+	if snapshot.Git.Available {
+		gitLabel = emptyAs(snapshot.Git.Branch, "detached")
+		switch {
+		case snapshot.Git.Conflicts > 0:
+			gitLabel += "!"
+			gitDirty = true
+		case !snapshot.Git.Clean:
+			gitLabel += "*"
+			gitDirty = true
+		}
+	}
+	sessionLabel := fmt.Sprintf("sessions=%d", snapshot.Session.SavedCount)
+	if snapshot.Session.Active {
+		sessionLabel = fmt.Sprintf("session=%s(%d)", snapshot.Session.ID, snapshot.Session.MessageCount)
+	}
+	planLabel := "plan=off"
+	if snapshot.Plan.Active {
+		planLabel = "plan=on"
+	}
+	line := strings.Join([]string{
+		"codog",
+		workspace,
+		gitLabel,
+		emptyAs(snapshot.Config.Model, "model=unset"),
+		emptyAs(snapshot.Config.PermissionMode, "permission=unset"),
+		sessionLabel,
+		planLabel,
+	}, " ")
+	return statuslineReport{
+		Kind:            "statusline",
+		Line:            line,
+		Status:          snapshot.Status,
+		Workspace:       workspace,
+		Model:           snapshot.Config.Model,
+		PermissionMode:  snapshot.Config.PermissionMode,
+		SessionActive:   snapshot.Session.Active,
+		SessionID:       snapshot.Session.ID,
+		SessionMessages: snapshot.Session.MessageCount,
+		SessionCount:    snapshot.Session.SavedCount,
+		GitAvailable:    snapshot.Git.Available,
+		GitBranch:       snapshot.Git.Branch,
+		GitClean:        snapshot.Git.Clean,
+		GitDirty:        gitDirty,
+		GitConflicts:    snapshot.Git.Conflicts,
+		PlanActive:      snapshot.Plan.Active,
+	}
 }
 
 func (a *App) Context(args []string, overrides config.FlagOverrides) error {
@@ -5857,6 +5959,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	switch fields[0] {
 	case "/status":
 		a.renderStatus("text", sess)
+	case "/statusline":
+		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/context":
 		if err := a.Context(nil, config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -9107,6 +9213,7 @@ Usage:
   %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
+  %s [flags] statusline [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
@@ -9170,7 +9277,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

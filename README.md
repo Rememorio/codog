@@ -50,7 +50,7 @@ Claude Code source.
 - `codog tui` starts a Bubble Tea prompt composer with Tab completion for
   built-in/custom slash commands, skill shortcuts, common subcommands, the
   current model, and recent sessions.
-- REPL slash commands: `/help`, `/status`, `/config`, `/model`,
+- REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rewind`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
@@ -191,6 +191,9 @@ Claude Code source.
   flows.
 - `codog status [--json]` prints a local workspace/config/session/git/sandbox
   runtime snapshot for humans or scripts.
+- `codog statusline [--json]` and `/statusline` print a compact one-line
+  workspace, git, model, permission, session, and plan summary for shell or IDE
+  integrations.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and
   one-shot prompt runs update for local observability.
 - `codog version [--json]` reports version, Go runtime, target, build metadata,

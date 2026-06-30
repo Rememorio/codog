@@ -24,6 +24,7 @@ func Specs() []Spec {
 	specs := []Spec{
 		{Name: "/help", Usage: "/help", Description: "Show slash command help."},
 		{Name: "/status", Usage: "/status", Description: "Show local workspace, session, config, git, and runtime status."},
+		{Name: "/statusline", Usage: "/statusline", Description: "Print a compact one-line workspace status."},
 		{Name: "/init", Usage: "/init", Description: "Initialize Codog project config and instruction files."},
 		{Name: "/state", Usage: "/state", Description: "Show the current worker state file."},
 		{Name: "/memory", Usage: "/memory [list|show|add]", Description: "List, show, or append project memory."},
@@ -190,6 +191,7 @@ func AllCandidates(options CandidateOptions) []string {
 		"/skills list",
 		"/skills show ",
 		"/skills invoke ",
+		"/statusline --json",
 		"/teleport ",
 		"/templates list",
 		"/templates apply ",

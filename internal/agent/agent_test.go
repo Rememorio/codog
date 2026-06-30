@@ -821,6 +821,18 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}
 	require.True(t, app.handleSlash(context.Background(), "/status", sess))
 	require.Contains(t, out.String(), "Session          source (1 messages)")
+	out.Reset()
+
+	require.NoError(t, app.Statusline([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
+	require.Contains(t, out.String(), `"kind": "statusline"`)
+	require.Contains(t, out.String(), `"session_id": "source"`)
+	require.Contains(t, out.String(), `"model": "claude-test"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/statusline", sess))
+	require.Contains(t, out.String(), "codog")
+	require.Contains(t, out.String(), "claude-test")
+	require.Contains(t, out.String(), "session=source(1)")
 }
 
 func TestHistoryCommandAndSlash(t *testing.T) {
