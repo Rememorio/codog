@@ -680,6 +680,13 @@ func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, readOut, "write tests")
 
+	clearOut, err := TodoWriteTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"todos":[{"content":"write tests","status":"completed","priority":"high"}]}`))
+	require.NoError(t, err)
+	require.Contains(t, clearOut, `"total": 0`)
+	readOut, err = TodoReadTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.NotContains(t, readOut, "write tests")
+
 	registry := NewRegistry(workspace)
 	info, ok := registry.Info("todo_write")
 	require.True(t, ok)

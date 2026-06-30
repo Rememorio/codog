@@ -6014,11 +6014,27 @@ func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	report, err := todos.Replace(t.Workspace, payload.Todos)
+	items := payload.Todos
+	if todoItemsAllCompleted(items) {
+		items = nil
+	}
+	report, err := todos.Replace(t.Workspace, items)
 	if err != nil {
 		return "", err
 	}
 	return pretty(report), nil
+}
+
+func todoItemsAllCompleted(items []todos.Item) bool {
+	if len(items) == 0 {
+		return false
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item.Status) != "completed" {
+			return false
+		}
+	}
+	return true
 }
 
 func safePath(workspace, requested string, allowMissing bool) (string, error) {
