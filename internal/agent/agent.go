@@ -16430,22 +16430,22 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	}
 	args = cleanArgs
 	if len(args) == 0 || args[0] == "list" {
+		if len(args) > 1 {
+			return errors.New("usage: codog mcp list")
+		}
 		if len(a.Config.MCPServers) == 0 {
 			if format == "json" {
-				data, _ := json.MarshalIndent(map[string]any{
-					"kind":         "mcp",
-					"action":       "list",
-					"status":       "ok",
-					"server_count": 0,
-					"servers":      []any{},
-				}, "", "  ")
-				fmt.Fprintln(a.Out, string(data))
+				renderMCPList(a.Out, nil)
 				return nil
 			}
 			fmt.Fprintln(a.Out, "No MCP servers configured.")
 			return nil
 		}
 		statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
+		if format == "json" {
+			renderMCPList(a.Out, statuses)
+			return nil
+		}
 		data, _ := json.MarshalIndent(statuses, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -16509,6 +16509,28 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type mcpListReport struct {
+	Kind        string             `json:"kind"`
+	Action      string             `json:"action"`
+	Status      string             `json:"status"`
+	ServerCount int                `json:"server_count"`
+	Servers     []mcp.ServerStatus `json:"servers"`
+}
+
+func renderMCPList(out io.Writer, statuses []mcp.ServerStatus) {
+	if statuses == nil {
+		statuses = []mcp.ServerStatus{}
+	}
+	data, _ := json.MarshalIndent(mcpListReport{
+		Kind:        "mcp",
+		Action:      "list",
+		Status:      "ok",
+		ServerCount: len(statuses),
+		Servers:     statuses,
+	}, "", "  ")
+	fmt.Fprintln(out, string(data))
 }
 
 const mcpUsage = "usage: codog mcp list | serve | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"

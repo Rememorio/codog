@@ -3631,6 +3631,19 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), `"tools": [`)
 	out.Reset()
 
+	require.NoError(t, app.MCP(context.Background(), []string{"--output-format", "json", "list"}))
+	var listReport mcpListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "mcp", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.Equal(t, "ok", listReport.Status)
+	require.Equal(t, 1, listReport.ServerCount)
+	require.Equal(t, "test", listReport.Servers[0].Name)
+	require.Equal(t, "ok", listReport.Servers[0].Status)
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"list", "extra"}), "usage: codog mcp list")
+
 	require.NoError(t, app.MCP(context.Background(), []string{"tools", "test"}))
 	require.Contains(t, out.String(), `"name": "echo"`)
 	require.Contains(t, out.String(), `"input_schema"`)
