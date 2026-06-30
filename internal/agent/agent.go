@@ -33,6 +33,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
+	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/fileinventory"
@@ -443,6 +444,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BackgroundWithOverrides(rest, overrides)
 	case "tasks", "bashes":
 		return app.BackgroundWithOverrides(rest, overrides)
+	case "cron":
+		return app.Cron(rest)
 	case "agents":
 		return app.AgentsWithOverrides(rest, overrides)
 	case "reload-plugins":
@@ -2261,6 +2264,183 @@ func (a *App) Install(ctx context.Context, args []string) error {
 
 func (a *App) Background(args []string) error {
 	return a.BackgroundWithOverrides(args, config.FlagOverrides{})
+}
+
+type cronRequest struct {
+	Action      string
+	Format      string
+	Schedule    string
+	Prompt      string
+	Description string
+	ID          string
+}
+
+type cronCommandReport struct {
+	Kind    string       `json:"kind"`
+	Action  string       `json:"action"`
+	Status  string       `json:"status"`
+	Count   int          `json:"count,omitempty"`
+	Entries []cron.Entry `json:"entries,omitempty"`
+	Entry   *cron.Entry  `json:"entry,omitempty"`
+	Message string       `json:"message,omitempty"`
+}
+
+func (a *App) Cron(args []string) error {
+	req, err := parseCronArgs(args)
+	if err != nil {
+		return err
+	}
+	store := cron.NewStore(a.Config.ConfigHome)
+	report := cronCommandReport{Kind: "cron", Action: req.Action, Status: "ok"}
+	switch req.Action {
+	case "list":
+		entries, err := store.List()
+		if err != nil {
+			return err
+		}
+		report.Entries = entries
+		report.Count = len(entries)
+	case "create":
+		entry, err := store.Create(req.Schedule, req.Prompt, req.Description)
+		if err != nil {
+			return err
+		}
+		report.Entry = &entry
+		report.Count = 1
+		report.Message = "Cron entry created"
+	case "delete":
+		entry, err := store.Delete(req.ID)
+		if err != nil {
+			return err
+		}
+		report.Entry = &entry
+		report.Count = 1
+		report.Message = "Cron entry deleted"
+	default:
+		return fmt.Errorf("unknown cron command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderCronReport(a.Out, report)
+	return nil
+}
+
+func parseCronArgs(args []string) (cronRequest, error) {
+	req := cronRequest{Action: "list", Format: "text"}
+	actionSet := false
+	positionals := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("cron output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--description" || arg == "-d":
+			i++
+			if i >= len(args) {
+				return req, errors.New("cron description is required")
+			}
+			req.Description = args[i]
+		case strings.HasPrefix(arg, "--description="):
+			req.Description = strings.TrimPrefix(arg, "--description=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown cron flag %q", arg)
+		case !actionSet && isCronAction(arg):
+			req.Action = normalizeCronAction(arg)
+			actionSet = true
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	format, err := normalizeTextOrJSON(req.Format, "cron")
+	if err != nil {
+		return req, err
+	}
+	req.Format = format
+	switch req.Action {
+	case "list":
+		if len(positionals) != 0 {
+			return req, errors.New("usage: codog cron list [--json|--output-format text|json]")
+		}
+	case "create":
+		if len(positionals) < 2 {
+			return req, errors.New("usage: codog cron create SCHEDULE PROMPT [--description TEXT] [--json|--output-format text|json]")
+		}
+		req.Schedule = positionals[0]
+		req.Prompt = strings.Join(positionals[1:], " ")
+	case "delete":
+		if len(positionals) != 1 {
+			return req, errors.New("usage: codog cron delete CRON_ID [--json|--output-format text|json]")
+		}
+		req.ID = positionals[0]
+	default:
+		return req, fmt.Errorf("unknown cron command %q", req.Action)
+	}
+	return req, nil
+}
+
+func isCronAction(value string) bool {
+	switch normalizeCronAction(value) {
+	case "list", "create", "delete":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCronAction(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "list", "ls":
+		return "list"
+	case "create", "add", "new":
+		return "create"
+	case "delete", "remove", "rm":
+		return "delete"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func renderCronReport(out io.Writer, report cronCommandReport) {
+	fmt.Fprintln(out, "Cron")
+	switch report.Action {
+	case "list":
+		fmt.Fprintf(out, "  Entries          %d\n", report.Count)
+		for _, entry := range report.Entries {
+			state := "disabled"
+			if entry.Enabled {
+				state = "enabled"
+			}
+			description := strings.TrimSpace(entry.Description)
+			if description == "" {
+				description = strings.TrimSpace(entry.Prompt)
+			}
+			fmt.Fprintf(out, "  %s  %s  %s  %s\n", entry.ID, entry.Schedule, state, description)
+		}
+	case "create", "delete":
+		if report.Entry == nil {
+			return
+		}
+		fmt.Fprintf(out, "  Action           %s\n", report.Action)
+		fmt.Fprintf(out, "  ID               %s\n", report.Entry.ID)
+		fmt.Fprintf(out, "  Schedule         %s\n", report.Entry.Schedule)
+		if report.Entry.Description != "" {
+			fmt.Fprintf(out, "  Description      %s\n", report.Entry.Description)
+		}
+		if report.Message != "" {
+			fmt.Fprintf(out, "  Message          %s\n", report.Message)
+		}
+	}
 }
 
 func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverrides) error {
@@ -14743,6 +14923,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.BackgroundWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/cron":
+		if err := a.Cron(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/plugin", "/plugins", "/marketplace":
 		if err := a.Marketplace(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -20526,7 +20710,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "capabilities", "changelog", "chrome",
-		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "ctx_viz",
+		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "log", "marketplace",
@@ -20920,6 +21104,7 @@ Usage:
   %s debug-tool-call TOOL JSON [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s tasks|bashes list|status|stop|restart|logs|watch ID
+  %s cron list|create|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set

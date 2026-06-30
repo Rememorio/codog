@@ -6511,6 +6511,55 @@ func TestBackgroundSlashAliases(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestCronCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: t.TempDir(),
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Cron([]string{"create", "0 9 * * 1", "review", "weekly", "--description", "weekly review", "--json"}))
+	var created cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &created))
+	require.Equal(t, "cron", created.Kind)
+	require.Equal(t, "create", created.Action)
+	require.NotNil(t, created.Entry)
+	require.Equal(t, "0 9 * * 1", created.Entry.Schedule)
+	require.Equal(t, "review weekly", created.Entry.Prompt)
+	require.Equal(t, "weekly review", created.Entry.Description)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"list", "--json"}))
+	var listed cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listed))
+	require.Equal(t, 1, listed.Count)
+	require.Len(t, listed.Entries, 1)
+	require.Equal(t, created.Entry.ID, listed.Entries[0].ID)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/cron list --json", &session.Session{ID: "session-1"}))
+	require.Contains(t, out.String(), `"kind": "cron"`)
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"delete", created.Entry.ID, "--json"}))
+	var deleted cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleted))
+	require.Equal(t, "delete", deleted.Action)
+	require.Equal(t, created.Entry.ID, deleted.Entry.ID)
+	out.Reset()
+
+	require.NoError(t, app.Cron([]string{"list", "--json"}))
+	var empty cronCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &empty))
+	require.Zero(t, empty.Count)
+	require.Empty(t, empty.Entries)
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)
