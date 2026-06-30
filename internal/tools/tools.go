@@ -2028,8 +2028,13 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 				"pattern":     map[string]any{"type": "string"},
 				"path":        map[string]any{"type": "string"},
 				"glob":        map[string]any{"type": "string"},
+				"output_mode": map[string]any{"type": "string", "enum": []string{"content", "files_with_matches", "count"}},
+				"-i":          map[string]any{"type": "boolean"},
 				"ignore_case": map[string]any{"type": "boolean"},
+				"type":        map[string]any{"type": "string"},
 				"limit":       map[string]any{"type": "integer", "minimum": 1},
+				"head_limit":  map[string]any{"type": "integer", "minimum": 0},
+				"offset":      map[string]any{"type": "integer", "minimum": 0},
 			},
 			"required":             []string{"pattern"},
 			"additionalProperties": false,
@@ -2041,11 +2046,16 @@ func (GrepTool) Permission() Permission { return PermissionReadOnly }
 
 func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Pattern    string `json:"pattern"`
-		Path       string `json:"path"`
-		Glob       string `json:"glob"`
-		IgnoreCase bool   `json:"ignore_case"`
-		Limit      int    `json:"limit"`
+		Pattern        string `json:"pattern"`
+		Path           string `json:"path"`
+		Glob           string `json:"glob"`
+		OutputMode     string `json:"output_mode"`
+		DashIgnoreCase bool   `json:"-i"`
+		IgnoreCase     bool   `json:"ignore_case"`
+		Type           string `json:"type"`
+		Limit          int    `json:"limit"`
+		HeadLimit      int    `json:"head_limit"`
+		Offset         int    `json:"offset"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -2054,7 +2064,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		return "", errors.New("pattern is required")
 	}
 	pattern := payload.Pattern
-	if payload.IgnoreCase {
+	if payload.IgnoreCase || payload.DashIgnoreCase {
 		pattern = "(?i)" + pattern
 	}
 	re, err := regexp.Compile(pattern)
@@ -2068,16 +2078,37 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			return "", err
 		}
 	}
-	limit := payload.Limit
+	mode := strings.TrimSpace(payload.OutputMode)
+	if mode == "" {
+		mode = "content"
+	}
+	if mode != "content" && mode != "files_with_matches" && mode != "count" {
+		return "", fmt.Errorf("unsupported grep output_mode %q", payload.OutputMode)
+	}
+	limit := payload.HeadLimit
+	if limit <= 0 {
+		limit = payload.Limit
+	}
 	if limit <= 0 {
 		limit = 100
 	}
+	offset := max(payload.Offset, 0)
+	seenFiles := map[string]bool{}
+	counts := map[string]int{}
+	var files []string
 	var matches []map[string]any
+	seen := 0
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if len(matches) >= limit {
+		if mode == "content" && len(matches) >= limit {
+			return filepath.SkipAll
+		}
+		if mode == "files_with_matches" && len(files) >= limit {
+			return filepath.SkipAll
+		}
+		if mode == "count" && len(counts) >= offset+limit && limit > 0 {
 			return filepath.SkipAll
 		}
 		if entry.IsDir() {
@@ -2092,6 +2123,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 				return nil
 			}
 		}
+		if payload.Type != "" && !matchesGrepType(path, payload.Type) {
+			return nil
+		}
 		data, err := os.ReadFile(path)
 		if err != nil || bytes.Contains(data[:min(len(data), 4096)], []byte{0}) {
 			return nil
@@ -2099,9 +2133,27 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		lines := strings.Split(string(data), "\n")
 		for i, line := range lines {
 			if re.MatchString(line) {
-				matches = append(matches, map[string]any{"path": displayPath(t.Workspace, path), "line": i + 1, "text": line})
-				if len(matches) >= limit {
-					return filepath.SkipAll
+				display := displayPath(t.Workspace, path)
+				switch mode {
+				case "files_with_matches":
+					if !seenFiles[display] {
+						seenFiles[display] = true
+						if seen >= offset {
+							files = append(files, display)
+						}
+						seen++
+					}
+					return nil
+				case "count":
+					counts[display]++
+				default:
+					if seen >= offset {
+						matches = append(matches, map[string]any{"path": display, "line": i + 1, "text": line})
+					}
+					seen++
+					if len(matches) >= limit {
+						return filepath.SkipAll
+					}
 				}
 			}
 		}
@@ -2110,7 +2162,87 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{"matches": matches, "truncated": len(matches) >= limit}), nil
+	switch mode {
+	case "files_with_matches":
+		sort.Strings(files)
+		return pretty(map[string]any{
+			"output_mode": mode,
+			"files":       files,
+			"filenames":   files,
+			"num_files":   len(files),
+			"truncated":   len(files) >= limit,
+			"offset":      offset,
+		}), nil
+	case "count":
+		entries := grepCountEntries(counts, offset, limit)
+		return pretty(map[string]any{
+			"output_mode": mode,
+			"counts":      entries,
+			"truncated":   len(counts) >= offset+limit,
+			"offset":      offset,
+		}), nil
+	default:
+		return pretty(map[string]any{"output_mode": mode, "matches": matches, "truncated": len(matches) >= limit, "offset": offset}), nil
+	}
+}
+
+func matchesGrepType(path string, fileType string) bool {
+	typ := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fileType)), ".")
+	if typ == "" {
+		return true
+	}
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+	aliases := map[string][]string{
+		"c":          {"c", "h"},
+		"cpp":        {"cc", "cpp", "cxx", "hpp", "hh", "hxx"},
+		"go":         {"go"},
+		"java":       {"java"},
+		"js":         {"js", "mjs", "cjs"},
+		"json":       {"json"},
+		"jsx":        {"jsx"},
+		"markdown":   {"md", "markdown"},
+		"md":         {"md", "markdown"},
+		"py":         {"py"},
+		"python":     {"py"},
+		"rs":         {"rs"},
+		"rust":       {"rs"},
+		"sh":         {"sh", "bash", "zsh"},
+		"shell":      {"sh", "bash", "zsh"},
+		"swift":      {"swift"},
+		"toml":       {"toml"},
+		"ts":         {"ts", "mts", "cts"},
+		"tsx":        {"tsx"},
+		"typescript": {"ts", "tsx", "mts", "cts"},
+		"yaml":       {"yaml", "yml"},
+		"yml":        {"yaml", "yml"},
+	}
+	if values := aliases[typ]; len(values) != 0 {
+		for _, value := range values {
+			if ext == value {
+				return true
+			}
+		}
+		return false
+	}
+	return ext == typ
+}
+
+func grepCountEntries(counts map[string]int, offset int, limit int) []map[string]any {
+	paths := make([]string, 0, len(counts))
+	for path := range counts {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	start := min(max(offset, 0), len(paths))
+	end := len(paths)
+	if limit > 0 {
+		end = min(start+limit, len(paths))
+	}
+	entries := make([]map[string]any, 0, end-start)
+	for _, path := range paths[start:end] {
+		entries = append(entries, map[string]any{"path": path, "count": counts[path]})
+	}
+	return entries
 }
 
 type GlobTool struct {

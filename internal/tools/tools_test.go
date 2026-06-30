@@ -164,6 +164,34 @@ func TestLSToolListsScopedDirectory(t *testing.T) {
 	require.Contains(t, out, `"truncated": true`)
 }
 
+func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "a.go"), []byte("Needle\nneedle\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "b.py"), []byte("needle\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "c.go"), []byte("nothing\n"), 0o644))
+
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "files_with_matches"`)
+	require.Contains(t, out, "a.go")
+	require.NotContains(t, out, "b.py")
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"count","-i":true}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "count"`)
+	require.Contains(t, out, "a.go")
+	require.Contains(t, out, `"count": 2`)
+	require.Contains(t, out, "b.py")
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"content","offset":1,"head_limit":1}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "content"`)
+	require.Contains(t, out, `"line": 1`)
+	require.Contains(t, out, "b.py")
+	require.NotContains(t, out, "a.go")
+}
+
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "a.txt")
