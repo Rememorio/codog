@@ -169,13 +169,6 @@ func Specs() []Spec {
 		{Name: "/login", Usage: "/login [browser|device] PROFILE", Description: "Start OAuth login through a configured provider profile."},
 		{Name: "/oauth-refresh", Usage: "/oauth-refresh [PROFILE]", Description: "Refresh the saved OAuth access token."},
 		{Name: "/logout", Usage: "/logout [PROFILE]", Description: "Revoke and delete local OAuth credentials."},
-		{Name: "/ant-trace", Usage: "/ant-trace", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
-		{Name: "/autofix-pr", Usage: "/autofix-pr", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
-		{Name: "/break-cache", Usage: "/break-cache", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
-		{Name: "/good-claude", Usage: "/good-claude", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
-		{Name: "/mock-limits", Usage: "/mock-limits", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
-		{Name: "/onboarding", Usage: "/onboarding", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
-		{Name: "/perf-issue", Usage: "/perf-issue", Description: "Hidden upstream stub.", Hidden: true, Disabled: true},
 	}
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	return specs
