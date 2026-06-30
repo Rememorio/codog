@@ -1633,6 +1633,60 @@ func TestRemoteEnvCommandPersistsSettings(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestDesktopAndMobileHandoffCommands(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("handoff-session", anthropic.TextMessage("user", "hello handoff")))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Future: config.FutureConfig{
+				RemoteEnabled:      true,
+				RemoteAuthToken:    "secret-token",
+				RemoteLeaseSeconds: 90,
+				EditorBridgeSocket: "codog.sock",
+				EditorBridgeToken:  "bridge-secret",
+			},
+		},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Desktop([]string{"--session", "handoff-session", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "desktop_handoff"`)
+	require.Contains(t, out.String(), `"session_id": "handoff-session"`)
+	require.Contains(t, out.String(), `"command": "codog bridge serve"`)
+	require.Contains(t, out.String(), `"token_configured": true`)
+	out.Reset()
+
+	require.NoError(t, app.Mobile([]string{"ios", "--addr", ":8799", "--resume", "latest", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "mobile_handoff"`)
+	require.Contains(t, out.String(), `"platform": "ios"`)
+	require.Contains(t, out.String(), `"session_id": "handoff-session"`)
+	require.Contains(t, out.String(), `"remote_url": "http://127.0.0.1:8799"`)
+	require.Contains(t, out.String(), `"auth_token_configured": true`)
+	require.NotContains(t, out.String(), "secret-token")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/mobile android --addr 127.0.0.1:9999", &session.Session{ID: "active-session"}))
+	require.Contains(t, out.String(), "Mobile Handoff")
+	require.Contains(t, out.String(), "android")
+	require.Contains(t, out.String(), "active-session")
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/desktop", &session.Session{ID: "active-session"}))
+	require.Contains(t, out.String(), "Desktop Handoff")
+	require.Contains(t, out.String(), "codog bridge serve")
+	require.Empty(t, errOut.String())
+}
+
 func TestPromptHistoryPreferenceSkipsInputRecords(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
 	defer server.Close()

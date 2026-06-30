@@ -63,7 +63,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -226,6 +226,9 @@ Claude Code source.
 - `codog remote-env show|set|clear` and `/remote-env` manage default remote
   session enablement, auth-token presence, and lease duration without printing
   token values.
+- `codog desktop`, `codog mobile`, `/desktop`, and `/mobile` report local
+  bridge or remote-control handoff instructions for the current or selected
+  session, with text and JSON output.
 - `codog voice set-command COMMAND` stores an external speech-to-text command;
   `codog voice on` enables voice mode only when that command is executable.
 - `codog state [--json]` reads `.codog/worker-state.json`, which REPL and

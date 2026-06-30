@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -403,6 +404,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RemoteEnv(rest)
 	case "bridge":
 		return app.Bridge(rest)
+	case "desktop", "app":
+		return app.Desktop(rest, overrides)
+	case "mobile":
+		return app.Mobile(rest, overrides)
+	case "ios", "android":
+		return app.Mobile(append([]string{command}, rest...), overrides)
 	case "ide":
 		return app.IDE(rest)
 	case "updater":
@@ -855,6 +862,367 @@ func renderIDEReport(out io.Writer, report ideReport) {
 		}
 		fmt.Fprintln(out)
 	}
+}
+
+type desktopHandoffRequest struct {
+	Action    string
+	Format    string
+	SessionID string
+}
+
+type desktopHandoffReport struct {
+	Kind      string             `json:"kind"`
+	Action    string             `json:"action"`
+	Surface   string             `json:"surface"`
+	Workspace string             `json:"workspace"`
+	SessionID string             `json:"session_id,omitempty"`
+	Supported bool               `json:"supported"`
+	Platform  string             `json:"platform"`
+	Bridge    ideBridgeReport    `json:"bridge"`
+	StatePath string             `json:"state_path,omitempty"`
+	State     bridge.EditorState `json:"state"`
+	Messages  []string           `json:"messages,omitempty"`
+}
+
+type mobileHandoffRequest struct {
+	Platform  string
+	Format    string
+	Addr      string
+	SessionID string
+}
+
+type mobileHandoffReport struct {
+	Kind                string   `json:"kind"`
+	Action              string   `json:"action"`
+	Surface             string   `json:"surface"`
+	Workspace           string   `json:"workspace"`
+	SessionID           string   `json:"session_id,omitempty"`
+	Platform            string   `json:"platform"`
+	RemoteCommand       string   `json:"remote_command"`
+	RemoteAddr          string   `json:"remote_addr"`
+	RemoteURL           string   `json:"remote_url"`
+	RemoteEnabled       bool     `json:"remote_enabled"`
+	AuthTokenConfigured bool     `json:"auth_token_configured"`
+	LeaseSeconds        int      `json:"lease_seconds"`
+	Messages            []string `json:"messages,omitempty"`
+}
+
+func (a *App) Desktop(args []string, overrides config.FlagOverrides) error {
+	req, err := parseDesktopHandoffArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	sessionID, err := resolveHandoffSessionID(a.Sessions, req.SessionID)
+	if err != nil {
+		return err
+	}
+	server := bridge.Server{
+		Sessions:   a.Sessions,
+		Version:    version,
+		Workspace:  a.Workspace,
+		ConfigHome: a.Config.ConfigHome,
+		TrustToken: a.Config.Future.EditorBridgeToken,
+	}
+	state, err := server.EditorState()
+	if err != nil {
+		return err
+	}
+	statePath, err := server.EditorStatePath()
+	if err != nil {
+		return err
+	}
+	report := desktopHandoffReport{
+		Kind:      "desktop_handoff",
+		Action:    req.Action,
+		Surface:   "desktop",
+		Workspace: a.Workspace,
+		SessionID: sessionID,
+		Supported: desktopHandoffSupported(),
+		Platform:  runtime.GOOS + "/" + runtime.GOARCH,
+		Bridge: ideBridgeReport{
+			Command:         "codog bridge serve",
+			Socket:          a.Config.Future.EditorBridgeSocket,
+			TokenConfigured: a.Config.Future.EditorBridgeToken != "",
+		},
+		StatePath: statePath,
+		State:     state,
+		Messages: []string{
+			"Start the bridge command, then connect a trusted desktop or editor client to the stdio bridge.",
+			"Use `codog ide status` to inspect the currently trusted client.",
+		},
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderDesktopHandoffReport(a.Out, report)
+	return nil
+}
+
+func parseDesktopHandoffArgs(args []string, overrides config.FlagOverrides) (desktopHandoffRequest, error) {
+	req := desktopHandoffRequest{Action: "handoff", Format: "text"}
+	req.SessionID = firstNonEmpty(overrides.Resume, overrides.SessionID)
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("desktop output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("desktop session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("desktop resume session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown desktop flag %q", arg)
+		default:
+			if actionSet {
+				return req, fmt.Errorf("unexpected desktop argument %q", arg)
+			}
+			switch strings.ToLower(arg) {
+			case "handoff", "show", "status":
+				req.Action = "handoff"
+			default:
+				return req, fmt.Errorf("unknown desktop action %q", arg)
+			}
+			actionSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "desktop"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderDesktopHandoffReport(out io.Writer, report desktopHandoffReport) {
+	fmt.Fprintln(out, "Desktop Handoff")
+	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
+	fmt.Fprintf(out, "  Platform         %s\n", report.Platform)
+	fmt.Fprintf(out, "  Supported        %t\n", report.Supported)
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	fmt.Fprintf(out, "  Bridge command   %s\n", report.Bridge.Command)
+	fmt.Fprintf(out, "  Socket           %s\n", emptyAsNone(report.Bridge.Socket))
+	fmt.Fprintf(out, "  Token configured %t\n", report.Bridge.TokenConfigured)
+	if report.State.Identity == nil {
+		fmt.Fprintln(out, "  Trusted client   none")
+	} else {
+		identity := report.State.Identity.Editor
+		if report.State.Identity.Version != "" {
+			identity += " " + report.State.Identity.Version
+		}
+		fmt.Fprintf(out, "  Trusted client   %s\n", identity)
+	}
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Note             %s\n", message)
+	}
+}
+
+func (a *App) Mobile(args []string, overrides config.FlagOverrides) error {
+	req, err := parseMobileHandoffArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	sessionID, err := resolveHandoffSessionID(a.Sessions, req.SessionID)
+	if err != nil {
+		return err
+	}
+	addr, remoteURL, err := normalizeRemoteHandoffAddr(req.Addr)
+	if err != nil {
+		return err
+	}
+	report := mobileHandoffReport{
+		Kind:                "mobile_handoff",
+		Action:              "handoff",
+		Surface:             "mobile",
+		Workspace:           a.Workspace,
+		SessionID:           sessionID,
+		Platform:            req.Platform,
+		RemoteCommand:       "codog remote serve " + addr,
+		RemoteAddr:          addr,
+		RemoteURL:           remoteURL,
+		RemoteEnabled:       a.Config.Future.RemoteEnabled,
+		AuthTokenConfigured: strings.TrimSpace(a.Config.Future.RemoteAuthToken) != "",
+		LeaseSeconds:        a.Config.Future.RemoteLeaseSeconds,
+		Messages: []string{
+			"Start the remote command, then connect a mobile or remote client to the local control API.",
+			"Use `codog remote-env set --auth-token TOKEN` when the endpoint is reachable outside localhost.",
+		},
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderMobileHandoffReport(a.Out, report)
+	return nil
+}
+
+func parseMobileHandoffArgs(args []string, overrides config.FlagOverrides) (mobileHandoffRequest, error) {
+	req := mobileHandoffRequest{Platform: "all", Format: "text", Addr: "127.0.0.1:8791"}
+	req.SessionID = firstNonEmpty(overrides.Resume, overrides.SessionID)
+	platformSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mobile output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--addr":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mobile remote address is required")
+			}
+			req.Addr = args[index]
+		case strings.HasPrefix(arg, "--addr="):
+			req.Addr = strings.TrimPrefix(arg, "--addr=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mobile session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mobile resume session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown mobile flag %q", arg)
+		default:
+			if platformSet {
+				return req, fmt.Errorf("unexpected mobile argument %q", arg)
+			}
+			switch strings.ToLower(arg) {
+			case "show", "status", "all":
+				req.Platform = "all"
+			case "ios":
+				req.Platform = "ios"
+			case "android":
+				req.Platform = "android"
+			default:
+				return req, fmt.Errorf("unknown mobile platform %q", arg)
+			}
+			platformSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "mobile"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderMobileHandoffReport(out io.Writer, report mobileHandoffReport) {
+	fmt.Fprintln(out, "Mobile Handoff")
+	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
+	fmt.Fprintf(out, "  Platform         %s\n", report.Platform)
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
+	fmt.Fprintf(out, "  Remote URL       %s\n", report.RemoteURL)
+	fmt.Fprintf(out, "  Remote enabled   %t\n", report.RemoteEnabled)
+	fmt.Fprintf(out, "  Token configured %t\n", report.AuthTokenConfigured)
+	if report.LeaseSeconds > 0 {
+		fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
+	}
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Note             %s\n", message)
+	}
+}
+
+func desktopHandoffSupported() bool {
+	switch runtime.GOOS {
+	case "darwin", "windows":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveHandoffSessionID(store *session.Store, id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", nil
+	}
+	if id != "latest" {
+		return id, nil
+	}
+	if store == nil {
+		return "", errors.New("session store is unavailable")
+	}
+	return store.LatestID()
+}
+
+func normalizeRemoteHandoffAddr(value string) (string, string, error) {
+	addr := strings.TrimSpace(value)
+	if addr == "" {
+		addr = "127.0.0.1:8791"
+	}
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		parsed, err := url.Parse(addr)
+		if err != nil || parsed.Host == "" {
+			return "", "", fmt.Errorf("invalid mobile remote URL %q", value)
+		}
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		return parsed.Host, parsed.String(), nil
+	}
+	if strings.Contains(addr, "://") {
+		return "", "", fmt.Errorf("mobile remote address must use http or https: %q", value)
+	}
+	displayHost := addr
+	switch {
+	case strings.HasPrefix(addr, ":"):
+		displayHost = "127.0.0.1" + addr
+	case strings.HasPrefix(addr, "0.0.0.0:"):
+		displayHost = "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	case strings.HasPrefix(addr, "[::]:"):
+		displayHost = "127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
+	}
+	return addr, "http://" + displayHost, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 type briefRequest struct {
@@ -8235,6 +8603,20 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RemoteEnv(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/desktop", "/app":
+		if err := a.Desktop(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/mobile":
+		if err := a.Mobile(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/ios", "/android":
+		platform := strings.TrimPrefix(fields[0], "/")
+		args := append([]string{platform}, fields[1:]...)
+		if err := a.Mobile(args, config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/context":
 		if err := a.Context(nil, config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -11981,6 +12363,8 @@ Usage:
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
+  %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]
+  %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
 
@@ -12002,7 +12386,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
