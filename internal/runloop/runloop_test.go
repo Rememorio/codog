@@ -39,12 +39,14 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 					Name:  "glob",
 					Input: []byte(`{"pattern":"*.txt"}`),
 				}},
+				Usage: anthropic.Usage{InputTokens: 12, OutputTokens: 3},
 			},
 			{
 				Blocks: []anthropic.ContentBlock{{
 					Type: "text",
 					Text: "done",
 				}},
+				Usage: anthropic.Usage{InputTokens: 15, OutputTokens: 2},
 			},
 		},
 	}
@@ -67,6 +69,10 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	require.Equal(t, "glob", result.ToolCalls[0].Name)
 	require.Contains(t, out.String(), "done")
 	require.Len(t, client.requests, 2)
+	require.Equal(t, []MessageUsage{
+		{MessageIndex: 1, Usage: anthropic.Usage{InputTokens: 12, OutputTokens: 3}},
+		{MessageIndex: 3, Usage: anthropic.Usage{InputTokens: 15, OutputTokens: 2}},
+	}, result.MessageUsages)
 }
 
 func TestCompactMessagesKeepsRecentContext(t *testing.T) {

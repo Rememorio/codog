@@ -28,9 +28,15 @@ type ToolCall struct {
 }
 
 type TurnResult struct {
-	Messages   []anthropic.Message `json:"messages"`
-	ToolCalls  []ToolCall          `json:"tool_calls,omitempty"`
-	Iterations int                 `json:"iterations"`
+	Messages      []anthropic.Message `json:"messages"`
+	MessageUsages []MessageUsage      `json:"message_usages,omitempty"`
+	ToolCalls     []ToolCall          `json:"tool_calls,omitempty"`
+	Iterations    int                 `json:"iterations"`
+}
+
+type MessageUsage struct {
+	MessageIndex int             `json:"message_index"`
+	Usage        anthropic.Usage `json:"usage"`
 }
 
 type Runner struct {
@@ -68,6 +74,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		hookRunner.Workspace = r.Workspace
 	}
 	var toolCalls []ToolCall
+	var messageUsages []MessageUsage
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
 		requestMessages := CompactMessages(messages, r.Config.AutoCompactMessages)
 		req := anthropic.Request{
@@ -86,14 +93,17 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			return TurnResult{}, err
 		}
 		assistantMsg := anthropic.Message{Role: "assistant", Content: assistant.Blocks}
+		assistantIndex := len(messages)
 		messages = append(messages, assistantMsg)
+		messageUsages = appendMessageUsage(messageUsages, assistantIndex, assistant.Usage)
 
 		blocks := toolUseBlocks(assistant.Blocks)
 		if len(blocks) == 0 {
 			return TurnResult{
-				Messages:   messages,
-				ToolCalls:  toolCalls,
-				Iterations: turn + 1,
+				Messages:      messages,
+				MessageUsages: messageUsages,
+				ToolCalls:     toolCalls,
+				Iterations:    turn + 1,
 			}, nil
 		}
 
@@ -130,9 +140,10 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		}
 	}
 	return TurnResult{
-		Messages:   messages,
-		ToolCalls:  toolCalls,
-		Iterations: r.Config.MaxTurns,
+		Messages:      messages,
+		MessageUsages: messageUsages,
+		ToolCalls:     toolCalls,
+		Iterations:    r.Config.MaxTurns,
 	}, errors.New("conversation exceeded max turns")
 }
 
@@ -159,6 +170,16 @@ func MarshalToolInput(raw json.RawMessage) string {
 		return "{}"
 	}
 	return string(raw)
+}
+
+func appendMessageUsage(usages []MessageUsage, index int, usage anthropic.Usage) []MessageUsage {
+	if usage.InputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.CacheCreationInputTokens == 0 &&
+		usage.CacheReadInputTokens == 0 {
+		return usages
+	}
+	return append(usages, MessageUsage{MessageIndex: index, Usage: usage})
 }
 
 func toolUseBlocks(blocks []anthropic.ContentBlock) []anthropic.ContentBlock {

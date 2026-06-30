@@ -4850,7 +4850,15 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 		a.writeWorkerState(mode, "error", sess, err.Error())
 		return err
 	}
-	for _, msg := range result.Messages[len(sess.Messages):] {
+	messageUsages := usageByMessageIndex(result.MessageUsages)
+	for index, msg := range result.Messages[len(sess.Messages):] {
+		messageIndex := len(sess.Messages) + index
+		if providerUsage, ok := messageUsages[messageIndex]; ok {
+			if err := a.Sessions.AppendWithUsage(sess.ID, msg, &providerUsage); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := a.Sessions.Append(sess.ID, msg); err != nil {
 			return err
 		}
@@ -4858,6 +4866,14 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 	sess.Messages = result.Messages
 	a.writeWorkerState(mode, successStatus, sess, "")
 	return nil
+}
+
+func usageByMessageIndex(usages []runloop.MessageUsage) map[int]anthropic.Usage {
+	out := make(map[int]anthropic.Usage, len(usages))
+	for _, usage := range usages {
+		out[usage.MessageIndex] = usage.Usage
+	}
+	return out
 }
 
 func (a *App) expandPromptReferences(input string) string {
@@ -7573,6 +7589,11 @@ func (a *App) ShowCost(overrides config.FlagOverrides) error {
 		return err
 	}
 	summary := usage.Estimate(sess.Messages, a.Config.Model)
+	if actual, err := a.sessionUsageValues(sess.ID); err == nil {
+		if actualSummary, ok := usage.ActualSummary(actual, a.Config.Model); ok {
+			summary = actualSummary
+		}
+	}
 	data, _ := json.MarshalIndent(summary, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
@@ -7587,7 +7608,8 @@ func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
-	report := usage.BuildReport(sess.ID, a.Config.Model, sess.Messages)
+	actual, _ := a.sessionUsageValues(sess.ID)
+	report := usage.BuildReportWithUsage(sess.ID, a.Config.Model, sess.Messages, actual)
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -7595,6 +7617,18 @@ func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
 	}
 	usage.RenderText(a.Out, report)
 	return nil
+}
+
+func (a *App) sessionUsageValues(sessionID string) ([]anthropic.Usage, error) {
+	entries, err := a.Sessions.Usage(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]anthropic.Usage, 0, len(entries))
+	for _, entry := range entries {
+		values = append(values, entry.Usage)
+	}
+	return values, nil
 }
 
 type compactRequest struct {

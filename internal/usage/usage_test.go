@@ -42,6 +42,28 @@ func TestBuildReportGroupsRolesBlocksAndToolUse(t *testing.T) {
 	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=1")
 }
 
+func TestBuildReportWithUsagePrefersProviderTokens(t *testing.T) {
+	report := BuildReportWithUsage("session-1", "claude-sonnet", []anthropic.Message{
+		anthropic.TextMessage("user", "tiny"),
+		anthropic.TextMessage("assistant", "tiny"),
+	}, []anthropic.Usage{
+		{InputTokens: 100, OutputTokens: 20, CacheCreationInputTokens: 5, CacheReadInputTokens: 7},
+		{InputTokens: 10, OutputTokens: 3},
+	})
+
+	require.Equal(t, "actual", report.Summary.Source)
+	require.Equal(t, 110, report.Summary.InputTokens)
+	require.Equal(t, 23, report.Summary.OutputTokens)
+	require.Equal(t, 5, report.Summary.CacheCreationInputTokens)
+	require.Equal(t, 7, report.Summary.CacheReadInputTokens)
+	require.Equal(t, 145, report.Summary.TotalTokens)
+
+	var out bytes.Buffer
+	RenderText(&out, report)
+	require.Contains(t, out.String(), "Token source     actual")
+	require.Contains(t, out.String(), "Cache tokens     create=5 read=7")
+}
+
 func requireBlock(t *testing.T, blocks []BlockUsage, blockType string, count int) {
 	t.Helper()
 	for _, block := range blocks {

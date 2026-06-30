@@ -18,6 +18,7 @@ type Record struct {
 	Type            string             `json:"type"`
 	Time            time.Time          `json:"time"`
 	Message         *anthropic.Message `json:"message,omitempty"`
+	Usage           *anthropic.Usage   `json:"usage,omitempty"`
 	Input           string             `json:"input,omitempty"`
 	SessionID       string             `json:"session_id,omitempty"`
 	ParentSessionID string             `json:"parent_session_id,omitempty"`
@@ -35,6 +36,13 @@ type PromptEntry struct {
 	Time      time.Time `json:"time"`
 	Text      string    `json:"text"`
 	SessionID string    `json:"session_id"`
+}
+
+type UsageEntry struct {
+	MessageIndex int             `json:"message_index"`
+	Time         time.Time       `json:"time"`
+	SessionID    string          `json:"session_id"`
+	Usage        anthropic.Usage `json:"usage"`
 }
 
 type RewindResult struct {
@@ -98,6 +106,10 @@ func (s *Store) Open(id string) (*Session, error) {
 }
 
 func (s *Store) Append(id string, msg anthropic.Message) error {
+	return s.AppendWithUsage(id, msg, nil)
+}
+
+func (s *Store) AppendWithUsage(id string, msg anthropic.Message, usage *anthropic.Usage) error {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
@@ -111,6 +123,7 @@ func (s *Store) Append(id string, msg anthropic.Message) error {
 		Type:      "message",
 		Time:      time.Now().UTC(),
 		Message:   &msg,
+		Usage:     usage,
 		SessionID: id,
 	}
 	return writeRecord(file, record)
@@ -323,6 +336,41 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 	return entries, nil
 }
 
+func (s *Store) Usage(id string) ([]UsageEntry, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("session id is required")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return nil, err
+		}
+		id = latest
+	}
+	records, err := s.readRecords(s.pathFor(id))
+	if err != nil {
+		return nil, err
+	}
+	entries := []UsageEntry{}
+	messageIndex := -1
+	for _, record := range records {
+		if record.Message == nil {
+			continue
+		}
+		messageIndex++
+		if record.Usage == nil || usageEmpty(*record.Usage) {
+			continue
+		}
+		entries = append(entries, UsageEntry{
+			MessageIndex: messageIndex,
+			Time:         record.Time,
+			SessionID:    id,
+			Usage:        *record.Usage,
+		})
+	}
+	return entries, nil
+}
+
 func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 	if strings.TrimSpace(id) == "" {
 		return RewindResult{}, errors.New("session id is required")
@@ -376,6 +424,13 @@ func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 		RemainingMessages: remainingMessages,
 		RemovedMessages:   totalMessages - remainingMessages,
 	}, nil
+}
+
+func usageEmpty(usage anthropic.Usage) bool {
+	return usage.InputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.CacheCreationInputTokens == 0 &&
+		usage.CacheReadInputTokens == 0
 }
 
 func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (ReplaceResult, error) {

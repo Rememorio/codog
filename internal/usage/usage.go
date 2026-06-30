@@ -24,10 +24,13 @@ type Report struct {
 }
 
 type Summary struct {
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	TotalTokens  int     `json:"total_tokens"`
-	EstimatedUSD float64 `json:"estimated_usd"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	TotalTokens              int     `json:"total_tokens"`
+	EstimatedUSD             float64 `json:"estimated_usd"`
+	Source                   string  `json:"source"`
 }
 
 type RoleUsage struct {
@@ -64,10 +67,15 @@ func Estimate(messages []anthropic.Message, model string) Summary {
 		OutputTokens: output,
 		TotalTokens:  total,
 		EstimatedUSD: math.Round(float64(total)*pricePerToken(model)*100000) / 100000,
+		Source:       "estimated",
 	}
 }
 
 func BuildReport(sessionID string, model string, messages []anthropic.Message) Report {
+	return BuildReportWithUsage(sessionID, model, messages, nil)
+}
+
+func BuildReportWithUsage(sessionID string, model string, messages []anthropic.Message, actual []anthropic.Usage) Report {
 	roleIndex := map[string]*RoleUsage{}
 	blockIndex := map[string]*BlockUsage{}
 	toolUse := ToolUseSummary{}
@@ -102,6 +110,10 @@ func BuildReport(sessionID string, model string, messages []anthropic.Message) R
 			}
 		}
 	}
+	summary := Estimate(messages, model)
+	if actualSummary, ok := ActualSummary(actual, model); ok {
+		summary = actualSummary
+	}
 	return Report{
 		Kind:         "usage",
 		Action:       "show",
@@ -109,11 +121,34 @@ func BuildReport(sessionID string, model string, messages []anthropic.Message) R
 		SessionID:    sessionID,
 		Model:        model,
 		MessageCount: len(messages),
-		Summary:      Estimate(messages, model),
+		Summary:      summary,
 		Roles:        sortedRoles(roleIndex),
 		Blocks:       sortedBlocks(blockIndex),
 		ToolUse:      toolUse,
 	}
+}
+
+func ActualSummary(usages []anthropic.Usage, model string) (Summary, bool) {
+	var input, output, cacheCreate, cacheRead int
+	for _, usage := range usages {
+		input += usage.InputTokens
+		output += usage.OutputTokens
+		cacheCreate += usage.CacheCreationInputTokens
+		cacheRead += usage.CacheReadInputTokens
+	}
+	total := input + output + cacheCreate + cacheRead
+	if total == 0 {
+		return Summary{}, false
+	}
+	return Summary{
+		InputTokens:              input,
+		OutputTokens:             output,
+		CacheCreationInputTokens: cacheCreate,
+		CacheReadInputTokens:     cacheRead,
+		TotalTokens:              total,
+		EstimatedUSD:             math.Round(float64(total)*pricePerToken(model)*100000) / 100000,
+		Source:                   "actual",
+	}, true
 }
 
 func RenderText(w io.Writer, report Report) {
@@ -125,7 +160,11 @@ func RenderText(w io.Writer, report Report) {
 	fmt.Fprintf(w, "  Messages         %d\n", report.MessageCount)
 	fmt.Fprintf(w, "  Input tokens     %d\n", report.Summary.InputTokens)
 	fmt.Fprintf(w, "  Output tokens    %d\n", report.Summary.OutputTokens)
+	if report.Summary.CacheCreationInputTokens != 0 || report.Summary.CacheReadInputTokens != 0 {
+		fmt.Fprintf(w, "  Cache tokens     create=%d read=%d\n", report.Summary.CacheCreationInputTokens, report.Summary.CacheReadInputTokens)
+	}
 	fmt.Fprintf(w, "  Total tokens     %d\n", report.Summary.TotalTokens)
+	fmt.Fprintf(w, "  Token source     %s\n", valueOrNone(report.Summary.Source))
 	fmt.Fprintf(w, "  Estimated USD    %.5f\n", report.Summary.EstimatedUSD)
 	fmt.Fprintf(w, "  Tool use         calls=%d results=%d errors=%d\n", report.ToolUse.ToolUses, report.ToolUse.ToolResults, report.ToolUse.Errors)
 	if len(report.Roles) != 0 {

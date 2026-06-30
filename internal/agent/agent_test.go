@@ -1206,14 +1206,15 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("usage-session", anthropic.TextMessage("user", "hello usage")))
-	require.NoError(t, store.Append("usage-session", anthropic.Message{
+	providerUsage := anthropic.Usage{InputTokens: 50, OutputTokens: 11, CacheReadInputTokens: 4}
+	require.NoError(t, store.AppendWithUsage("usage-session", anthropic.Message{
 		Role: "assistant",
 		Content: []anthropic.ContentBlock{{
 			Type:  "tool_use",
 			Name:  "read_file",
 			Input: json.RawMessage(`{"path":"README.md"}`),
 		}},
-	}))
+	}, &providerUsage))
 	require.NoError(t, store.Append("usage-session", anthropic.ToolResultMessage("tool-1", "ok", false)))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -1230,6 +1231,9 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"session_id": "usage-session"`)
 	require.Contains(t, out.String(), `"tool_uses": 1`)
 	require.Contains(t, out.String(), `"tool_results": 1`)
+	require.Contains(t, out.String(), `"source": "actual"`)
+	require.Contains(t, out.String(), `"input_tokens": 50`)
+	require.Contains(t, out.String(), `"cache_read_input_tokens": 4`)
 	out.Reset()
 
 	require.NoError(t, app.Summary([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
@@ -1246,6 +1250,7 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Usage")
 	require.Contains(t, out.String(), "Session          usage-session")
 	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=0")
+	require.Contains(t, out.String(), "Token source     actual")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/stats", sess))

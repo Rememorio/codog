@@ -134,6 +134,8 @@ Claude Code source.
   filtering.
 - `codog cost --resume latest` estimates session token usage and rough cost;
   `codog usage --resume latest` adds role, block, and tool-use breakdowns.
+  Both commands use recorded provider token usage when available, including
+  cache token fields, and fall back to local estimates for older sessions.
 - `codog compact --resume latest --keep N` persists a compacted session context
   using the same message compaction logic as long prompt turns.
 - `codog rate-limit-options` reports provider retry/backoff settings; Anthropic

@@ -131,6 +131,30 @@ func TestPromptHistoryFallsBackToUserMessages(t *testing.T) {
 	require.Equal(t, "legacy prompt", entries[0].Text)
 }
 
+func TestAppendWithUsageStoresProviderTokenUsage(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello")))
+	usage := anthropic.Usage{InputTokens: 10, OutputTokens: 4, CacheReadInputTokens: 2}
+	require.NoError(t, store.AppendWithUsage("source", anthropic.TextMessage("assistant", "answer"), &usage))
+
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 2)
+	require.Equal(t, "answer", opened.Messages[1].Content[0].Text)
+
+	entries, err := store.Usage("source")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, 1, entries[0].MessageIndex)
+	require.Equal(t, 10, entries[0].Usage.InputTokens)
+	require.Equal(t, 4, entries[0].Usage.OutputTokens)
+	require.Equal(t, 2, entries[0].Usage.CacheReadInputTokens)
+
+	data, err := os.ReadFile(filepath.Join(store.Dir, "source.jsonl"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2}`)
+}
+
 func TestRewindTruncatesMessagesAndTrailingInputs(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.AppendInput("source", "first prompt"))
