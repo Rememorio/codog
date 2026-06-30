@@ -48,6 +48,7 @@ type Runner struct {
 	Hooks            hooks.Runner
 	HookPromptRunner hooks.PromptRunner
 	Workspace        string
+	SessionID        string
 	Out              io.Writer
 	System           string
 	OnToolUse        func(ToolCall)
@@ -75,9 +76,16 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	if hookRunner.Workspace == "" {
 		hookRunner.Workspace = r.Workspace
 	}
+	if hookRunner.ConfigHome == "" {
+		hookRunner.ConfigHome = r.Config.ConfigHome
+	}
+	if hookRunner.SessionID == "" {
+		hookRunner.SessionID = r.SessionID
+	}
 	if hookRunner.PromptRunner == nil {
 		hookRunner.PromptRunner = r.HookPromptRunner
 	}
+	toolCtx := tools.ContextWithSessionID(ctx, r.SessionID)
 	if err := hookRunner.UserPromptSubmit(ctx, input); err != nil {
 		return TurnResult{}, err
 	}
@@ -151,7 +159,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 				continue
 			}
 
-			output, err := r.Tools.Execute(ctx, block.Name, block.Input, r.Prompter)
+			output, err := r.Tools.Execute(toolCtx, block.Name, block.Input, r.Prompter)
 			if err != nil {
 				call.Output = err.Error()
 				call.IsError = true

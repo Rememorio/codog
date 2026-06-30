@@ -62,6 +62,7 @@ type RunOptions struct {
 	RestartedFrom string
 	RestartPolicy *RestartPolicy
 	RestartCount  int
+	Env           []string
 }
 
 type RestartPolicy struct {
@@ -291,6 +292,9 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 
 	cmd := exec.Command("sh", "-lc", command)
 	cmd.Dir = cwd
+	if len(options.Env) > 0 {
+		cmd.Env = append([]string(nil), options.Env...)
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	configureBackgroundCommand(cmd)

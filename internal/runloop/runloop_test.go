@@ -248,6 +248,59 @@ func TestRunnerExecutesFileChangedHookAfterWrite(t *testing.T) {
 	require.Contains(t, hookPayload.Input, `"path":"notes.txt"`)
 }
 
+func TestRunnerAppliesHookEnvironmentToLaterBashTool(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "tool-1",
+						Name:  "write_file",
+						Input: []byte(`{"path":"notes.txt","content":"hello"}`),
+					},
+					{
+						Type:  "tool_use",
+						ID:    "tool-2",
+						Name:  "bash",
+						Input: []byte(`{"command":"printf %s \"$CODOG_TEST_HOOK_ENV\""}`),
+					},
+				},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Model:      "mock",
+			MaxTokens:  128,
+			MaxTurns:   2,
+			Hooks: config.HookConfig{
+				FileChangedCommands: []config.HookCommand{{Matcher: "write_file", Command: "printf 'export CODOG_TEST_HOOK_ENV=from-hook\\n' > \"$CLAUDE_ENV_FILE\""}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome}),
+		Workspace: workspace,
+		SessionID: "session-1",
+	}.Run(context.Background(), nil, "write then inspect env")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 2)
+	require.False(t, result.ToolCalls[1].IsError)
+	require.Contains(t, result.ToolCalls[1].Output, `"stdout": "from-hook"`)
+}
+
 func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

@@ -218,6 +218,10 @@ Claude Code source.
   `CODOG_HOOK_TRIGGER_FILE_PATH`, and `CODOG_HOOK_PARENT_FILE_PATH`, plus
   file-change-specific
   `CODOG_HOOK_FILE_PATH` and `CODOG_HOOK_OPERATION`;
+  `setup`, `session_start`, and `file_changed` command hooks also receive
+  `CLAUDE_ENV_FILE` and `CODOG_HOOK_ENV_FILE`, where simple `export KEY=value`
+  lines are loaded into the current session environment for later shell and
+  background task tools;
   run reports include stdout,
   stderr, HTTP status, duration, success, and exit code.
 - `codog brief MESSAGE [--status normal|proactive] [--attach PATH]` and

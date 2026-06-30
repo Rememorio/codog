@@ -17,11 +17,14 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/hookenv"
 )
 
 type Runner struct {
 	Config       config.HookConfig
 	Workspace    string
+	ConfigHome   string
+	SessionID    string
 	Timeout      time.Duration
 	PromptRunner PromptRunner
 }
@@ -440,8 +443,8 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 	if err != nil {
 		return report, err
 	}
-	for _, hook := range hookList {
-		result, err := r.runOneHook(ctx, hook, payload, data, timeout)
+	for index, hook := range hookList {
+		result, err := r.runOneHook(ctx, hook, index, payload, data, timeout)
 		report.Results = append(report.Results, result)
 		if err != nil {
 			return report, err
@@ -450,10 +453,10 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 	return report, nil
 }
 
-func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, hookIndex int, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
 	switch hookType(hook) {
 	case "command":
-		return r.runCommandHook(ctx, hook, payload, data, defaultTimeout)
+		return r.runCommandHook(ctx, hook, hookIndex, payload, data, defaultTimeout)
 	case "http":
 		return r.runHTTPHook(ctx, hook, data, defaultTimeout)
 	case "prompt", "agent":
@@ -511,13 +514,18 @@ func (r Runner) runPromptHook(ctx context.Context, hook config.HookCommand, payl
 	return result, nil
 }
 
-func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hookIndex int, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
 	command := strings.TrimSpace(hook.Command)
 	hookCtx, cancel := context.WithTimeout(ctx, hookTimeout(hook, defaultTimeout))
 	defer cancel()
 	name, args := hookShell(hook, command)
 	cmd := exec.CommandContext(hookCtx, name, args...)
 	cmd.Dir = r.Workspace
+	envFile, err := hookenv.Path(r.ConfigHome, r.SessionID, payload.Event, hookIndex)
+	if err != nil {
+		result := CommandResult{Command: command, Type: "command", ExitCode: -1, Success: false, Error: err.Error()}
+		return result, err
+	}
 	cmd.Env = append(os.Environ(),
 		"CODOG_HOOK_EVENT="+payload.Event,
 		"CODOG_HOOK_TOOL="+payload.Tool,
@@ -548,6 +556,8 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 		"CODOG_HOOK_GLOBS="+strings.Join(payload.Globs, ","),
 		"CODOG_HOOK_TRIGGER_FILE_PATH="+payload.TriggerFilePath,
 		"CODOG_HOOK_PARENT_FILE_PATH="+payload.ParentFilePath,
+		"CODOG_HOOK_ENV_FILE="+envFile,
+		"CLAUDE_ENV_FILE="+envFile,
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -555,7 +565,7 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	started := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(started).Milliseconds()
 	result := CommandResult{
 		Command:    command,

@@ -19,6 +19,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/stretchr/testify/require"
 )
@@ -98,14 +99,33 @@ func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
 	require.NotContains(t, out, `"sandbox":`)
 }
 
+func TestBashToolLoadsHookEnvironment(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	sessionID := "session-1"
+	dir := hookenv.Dir(configHome, sessionID)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sessionstart-hook-1.sh"), []byte("export CODOG_TEST_HOOK_ENV=ready\n"), 0o600))
+
+	ctx := ContextWithSessionID(context.Background(), sessionID)
+	out, err := BashTool{Workspace: workspace, ConfigHome: configHome}.Execute(ctx, []byte(`{"command":"printf %s \"$CODOG_TEST_HOOK_ENV\""}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ready"`)
+}
+
 func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")
 	}
 	workspace := t.TempDir()
 	configHome := t.TempDir()
+	sessionID := "session-1"
+	dir := hookenv.Dir(configHome, sessionID)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sessionstart-hook-0.sh"), []byte("CODOG_BG_HOOK_ENV=hook-bg\n"), 0o600))
 	registry := NewRegistryWithOptions(workspace, RegistryOptions{ConfigHome: configHome})
-	out, err := registry.Execute(context.Background(), "Bash", []byte(`{"command":"printf bash-ready; sleep 5","run_in_background":true}`), nil)
+	ctx := ContextWithSessionID(context.Background(), sessionID)
+	out, err := registry.Execute(ctx, "Bash", []byte(`{"command":"printf \"bash-ready:%s\" \"$CODOG_BG_HOOK_ENV\"; sleep 5","run_in_background":true}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"background": true`)
 	require.Contains(t, out, `"kind": "bash"`)
@@ -115,11 +135,11 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &payload))
 	require.NotEmpty(t, payload.Task.ID)
 	require.Eventually(t, func() bool {
-		output, err := registry.Execute(context.Background(), "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
-		return err == nil && strings.Contains(output, "bash-ready")
+		output, err := registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+		return err == nil && strings.Contains(output, "bash-ready:hook-bg")
 	}, 5*time.Second, 50*time.Millisecond)
 
-	out, err = registry.Execute(context.Background(), "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+	out, err = registry.Execute(ctx, "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"status": "stopped"`)
 }

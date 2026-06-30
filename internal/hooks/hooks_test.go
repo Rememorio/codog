@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,6 +57,21 @@ func TestRunPayloadReturnsPartialFailureReport(t *testing.T) {
 	data, readErr := os.ReadFile(path)
 	require.NoError(t, readErr)
 	require.Equal(t, "ok\n", string(data))
+}
+
+func TestRunPayloadProvidesClaudeEnvFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	configHome := t.TempDir()
+	report, err := Runner{Workspace: t.TempDir(), ConfigHome: configHome, SessionID: "session-1"}.RunPayload(context.Background(), []string{"printf 'export CODOG_HOOK_ENV_READY=yes\\n' > \"$CLAUDE_ENV_FILE\""}, Payload{Event: "session_start"})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.True(t, report.Results[0].Success)
+
+	env, err := hookenv.Load(configHome, "session-1")
+	require.NoError(t, err)
+	require.Contains(t, env, "CODOG_HOOK_ENV_READY=yes")
 }
 
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {

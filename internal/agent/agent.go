@@ -188,7 +188,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			if err != nil {
 				return nil
 			}
-			return runSetupHookPayload(ctx, hooks.Runner{Config: cfg.Hooks, Workspace: workspace}, workspace, "init", report.Status)
+			return runSetupHookPayload(ctx, hooks.Runner{Config: cfg.Hooks, Workspace: workspace, ConfigHome: cfg.ConfigHome}, workspace, "init", report.Status)
 		})
 	}
 	if command == "state" {
@@ -4829,6 +4829,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		runner := hooks.Runner{
 			Config:       a.Config.Hooks,
 			Workspace:    a.Workspace,
+			ConfigHome:   a.Config.ConfigHome,
 			Timeout:      timeout,
 			PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
 		}
@@ -12140,7 +12141,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 	}
 	modelInput = a.expandPromptReferences(modelInput)
 	a.writeWorkerState(mode, "running", sess, "")
-	if err := a.runInstructionsLoadedHooks(ctx, "session_start"); err != nil {
+	if err := a.runInstructionsLoadedHooks(ctx, sess.ID, "session_start"); err != nil {
 		a.writeWorkerState(mode, "error", sess, err.Error())
 		return err
 	}
@@ -12152,6 +12153,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		Prompter:         a.prompterWithAllowedTools(sess.ID, allowedTools),
 		HookPromptRunner: a.hookPromptRunner(effectiveConfig),
 		Workspace:        a.Workspace,
+		SessionID:        sess.ID,
 		Out:              a.Out,
 		System:           a.systemPromptForInput(input),
 		OnToolUse:        a.auditToolUse(sess.ID),
@@ -13440,7 +13442,7 @@ func (a *App) DebugToolCall(ctx context.Context, args []string, overrides config
 		return fmt.Errorf("unknown tool %q", req.Tool)
 	}
 	start := time.Now()
-	output, execErr := a.Tools.Execute(ctx, req.Tool, req.Input, a.prompter(req.SessionID))
+	output, execErr := a.Tools.Execute(tools.ContextWithSessionID(ctx, req.SessionID), req.Tool, req.Input, a.prompter(req.SessionID))
 	report := debugToolCallReport{
 		Kind:       "debug_tool_call",
 		Tool:       info.Name,
@@ -16680,6 +16682,7 @@ func (a *App) lifecycleHookRunner() hooks.Runner {
 	return hooks.Runner{
 		Config:       cfg.Hooks,
 		Workspace:    a.Workspace,
+		ConfigHome:   cfg.ConfigHome,
 		PromptRunner: a.hookPromptRunner(cfg),
 	}
 }
@@ -16830,7 +16833,9 @@ func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, so
 	if err != nil {
 		return err
 	}
-	return a.lifecycleHookRunner().SessionStart(ctx, string(data))
+	runner := a.lifecycleHookRunner()
+	runner.SessionID = sess.ID
+	return runner.SessionStart(ctx, string(data))
 }
 
 func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reason string) error {
@@ -16848,11 +16853,14 @@ func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reas
 	if err != nil {
 		return err
 	}
-	return a.lifecycleHookRunner().SessionEnd(ctx, string(data), reason)
+	runner := a.lifecycleHookRunner()
+	runner.SessionID = sess.ID
+	return runner.SessionEnd(ctx, string(data), reason)
 }
 
-func (a *App) runInstructionsLoadedHooks(ctx context.Context, loadReason string) error {
+func (a *App) runInstructionsLoadedHooks(ctx context.Context, sessionID string, loadReason string) error {
 	runner := a.lifecycleHookRunner()
+	runner.SessionID = strings.TrimSpace(sessionID)
 	if len(runner.Config.InstructionsLoaded) == 0 && len(runner.Config.InstructionsLoadedCommands) == 0 {
 		return nil
 	}

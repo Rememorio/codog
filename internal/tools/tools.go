@@ -33,6 +33,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -1447,6 +1448,15 @@ func (BashTool) Definition() anthropic.ToolDefinition {
 
 func (BashTool) Permission() Permission { return PermissionDanger }
 
+func toolEnvironment(ctx context.Context, configHome string) ([]string, error) {
+	env := os.Environ()
+	hookEnv, err := hookenv.Load(configHome, SessionIDFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return hookenv.Merge(env, hookEnv), nil
+}
+
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Command                   string `json:"command"`
@@ -1470,7 +1480,11 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		return "", err
 	}
 	if payload.RunInBackground {
-		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), t.Workspace, background.RunOptions{Kind: "bash"})
+		env, err := toolEnvironment(ctx, t.ConfigHome)
+		if err != nil {
+			return "", err
+		}
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), t.Workspace, background.RunOptions{Kind: "bash", Env: env})
 		if err != nil {
 			return "", err
 		}
@@ -1493,6 +1507,11 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = t.Workspace
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -1712,7 +1731,11 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	}
 	if payload.RunInBackground {
 		command := strings.Join([]string{shellQuoteToolArg(executable), "-NoProfile", "-Command", shellQuoteToolArg(payload.Command)}, " ")
-		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{Kind: "powershell"})
+		env, err := toolEnvironment(ctx, t.ConfigHome)
+		if err != nil {
+			return "", err
+		}
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{Kind: "powershell", Env: env})
 		if err != nil {
 			return "", err
 		}
@@ -1730,6 +1753,11 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-Command", payload.Command)
 	cmd.Dir = t.Workspace
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -3492,7 +3520,7 @@ func (AgentTool) Permission() Permission {
 	return PermissionDanger
 }
 
-func (t AgentTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (t AgentTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Description  string `json:"description"`
 		Prompt       string `json:"prompt"`
@@ -3537,10 +3565,15 @@ func (t AgentTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		}
 	}
 	command := buildAgentToolCommand(executable, def, payload.Description, payload.Prompt, payload.Model)
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
 	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, t.Workspace, background.RunOptions{
 		Kind:      "agent",
 		AgentType: agentName,
 		SessionID: payload.SessionID,
+		Env:       env,
 	})
 	if err != nil {
 		return "", err
@@ -3742,7 +3775,7 @@ func (TeamCreateTool) Definition() anthropic.ToolDefinition {
 
 func (TeamCreateTool) Permission() Permission { return PermissionDanger }
 
-func (t TeamCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (t TeamCreateTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Name      string          `json:"name"`
 		Tasks     []team.TaskSpec `json:"tasks"`
@@ -3766,6 +3799,10 @@ func (t TeamCreateTool) Execute(_ context.Context, input json.RawMessage) (strin
 		}
 	}
 	store := taskStore(t.ConfigHome, t.Workspace)
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
 	taskIDs := make([]string, 0, len(payload.Tasks))
 	for _, task := range payload.Tasks {
 		prompt := strings.TrimSpace(task.Prompt)
@@ -3779,6 +3816,7 @@ func (t TeamCreateTool) Execute(_ context.Context, input json.RawMessage) (strin
 		started, err := store.RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{
 			Kind:      "team",
 			SessionID: payload.SessionID,
+			Env:       env,
 		})
 		if err != nil {
 			return "", err
@@ -4236,7 +4274,7 @@ func (WorkerSendPromptTool) Definition() anthropic.ToolDefinition {
 
 func (WorkerSendPromptTool) Permission() Permission { return PermissionDanger }
 
-func (t WorkerSendPromptTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (t WorkerSendPromptTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		WorkerID    string               `json:"worker_id"`
 		Prompt      string               `json:"prompt"`
@@ -4270,7 +4308,11 @@ func (t WorkerSendPromptTool) Execute(_ context.Context, input json.RawMessage) 
 			return "", err
 		}
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{Kind: "worker"})
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{Kind: "worker", Env: env})
 	if err != nil {
 		return "", err
 	}
@@ -4498,7 +4540,7 @@ func (TaskCreateTool) Definition() anthropic.ToolDefinition {
 
 func (TaskCreateTool) Permission() Permission { return PermissionDanger }
 
-func (t TaskCreateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Command   string                    `json:"command"`
 		Kind      string                    `json:"kind"`
@@ -4508,10 +4550,15 @@ func (t TaskCreateTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
 	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(payload.Command, t.Workspace, background.RunOptions{
 		Kind:          payload.Kind,
 		SessionID:     payload.SessionID,
 		RestartPolicy: payload.Restart,
+		Env:           env,
 	})
 	if err != nil {
 		return "", err
@@ -4569,7 +4616,7 @@ func (RunTaskPacketTool) Definition() anthropic.ToolDefinition {
 
 func (RunTaskPacketTool) Permission() Permission { return PermissionDanger }
 
-func (t RunTaskPacketTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var packet taskPacketInput
 	if err := json.Unmarshal(input, &packet); err != nil {
 		return "", err
@@ -4586,8 +4633,13 @@ func (t RunTaskPacketTool) Execute(_ context.Context, input json.RawMessage) (st
 		}
 	}
 	prompt := renderTaskPacketPrompt(packet)
+	env, err := toolEnvironment(ctx, t.ConfigHome)
+	if err != nil {
+		return "", err
+	}
 	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), t.Workspace, background.RunOptions{
 		Kind: "task_packet",
+		Env:  env,
 	})
 	if err != nil {
 		return "", err
