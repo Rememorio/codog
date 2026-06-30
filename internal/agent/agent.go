@@ -2649,13 +2649,85 @@ func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {
 }
 
 func (a *App) ListAgents() error {
+	return a.listAgents("text", "")
+}
+
+type agentsListReport struct {
+	Kind   string                 `json:"kind"`
+	Action string                 `json:"action"`
+	Status string                 `json:"status"`
+	Count  int                    `json:"count"`
+	Agents []agentdefs.Definition `json:"agents"`
+}
+
+type agentShowReport struct {
+	Kind   string               `json:"kind"`
+	Action string               `json:"action"`
+	Status string               `json:"status"`
+	Agent  agentdefs.Definition `json:"agent"`
+}
+
+func (a *App) listAgents(format string, filter string) error {
 	defs, err := agentdefs.Load(a.Workspace)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(filter) != "" {
+		defs = filterAgentDefinitions(defs, filter)
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(agentsListReport{
+			Kind:   "agents",
+			Action: "list",
+			Status: "ok",
+			Count:  len(defs),
+			Agents: defs,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	data, _ := json.MarshalIndent(defs, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) showAgent(name string, format string) error {
+	defs, err := agentdefs.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	for _, def := range defs {
+		if strings.EqualFold(def.Name, name) {
+			if format == "json" {
+				data, _ := json.MarshalIndent(agentShowReport{
+					Kind:   "agents",
+					Action: "show",
+					Status: "ok",
+					Agent:  def,
+				}, "", "  ")
+				fmt.Fprintln(a.Out, string(data))
+				return nil
+			}
+			data, _ := json.MarshalIndent(def, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown agent %q", name)
+}
+
+func filterAgentDefinitions(defs []agentdefs.Definition, filter string) []agentdefs.Definition {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return defs
+	}
+	out := make([]agentdefs.Definition, 0, len(defs))
+	for _, def := range defs {
+		if strings.Contains(strings.ToLower(def.Name), filter) || strings.Contains(strings.ToLower(def.Description), filter) {
+			out = append(out, def)
+		}
+	}
+	return out
 }
 
 func (a *App) Agents(args []string) error {
@@ -2664,12 +2736,22 @@ func (a *App) Agents(args []string) error {
 
 func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides) error {
 	var err error
-	args, _, err = stripJSONOnlyOutputFormat("agents", args)
+	var format string
+	args, format, err = stripJSONOnlyOutputFormat("agents", args)
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 || args[0] == "list" {
-		return a.ListAgents()
+	if len(args) == 0 {
+		return a.listAgents(format, "")
+	}
+	if args[0] == "list" {
+		return a.listAgents(format, strings.Join(args[1:], " "))
+	}
+	if args[0] == "show" {
+		if len(args) != 2 {
+			return errors.New("usage: codog agents show NAME")
+		}
+		return a.showAgent(args[1], format)
 	}
 	if args[0] == "worktrees" {
 		allocations, err := worktree.List(a.Workspace)
@@ -17900,7 +17982,7 @@ Usage:
   %s debug-tool-call TOOL JSON [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s tasks|bashes list|status|stop|restart|logs|watch ID
-  %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
+  %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]

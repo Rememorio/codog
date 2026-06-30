@@ -4850,16 +4850,29 @@ func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","prompt":"review"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "planner.json"), []byte(`{"name":"planner","description":"plans work","prompt":"plan"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","description":"reviews code","prompt":"review"}`), 0o644))
 	var out bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
 
-	require.NoError(t, app.AgentsWithOverrides([]string{"--output-format", "json", "list"}, config.FlagOverrides{}))
-	require.Contains(t, out.String(), `"name": "reviewer"`)
+	require.NoError(t, app.AgentsWithOverrides(nil, config.FlagOverrides{}))
+	require.True(t, strings.HasPrefix(strings.TrimSpace(out.String()), "["))
 	out.Reset()
 
-	require.NoError(t, app.AgentsWithOverrides([]string{"list", "--json"}, config.FlagOverrides{}))
-	require.Contains(t, out.String(), `"name": "reviewer"`)
+	require.NoError(t, app.AgentsWithOverrides([]string{"--output-format", "json", "list", "review"}, config.FlagOverrides{}))
+	var listReport agentsListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "agents", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.Equal(t, 1, listReport.Count)
+	require.Equal(t, "reviewer", listReport.Agents[0].Name)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"show", "planner", "--json"}, config.FlagOverrides{}))
+	var showReport agentShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "planner", showReport.Agent.Name)
 }
 
 func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
