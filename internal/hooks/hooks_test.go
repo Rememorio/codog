@@ -182,6 +182,9 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		TaskCompletedCommands: []config.HookCommand{
 			{Matcher: "agent", Type: "command", Command: "task-completed"},
 		},
+		InstructionsLoadedCommands: []config.HookCommand{
+			{Matcher: "session_start", Type: "command", Command: "instructions-loaded"},
+		},
 		FileChangedCommands: []config.HookCommand{
 			{Matcher: "Write", Type: "command", Command: "file-changed"},
 		},
@@ -209,8 +212,45 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"worktree-remove"}, CommandsForEvent(cfg, "worktree-remove", "agent-1"))
 	require.Equal(t, []string{"task-created"}, CommandsForEvent(cfg, "task-created", "agent"))
 	require.Equal(t, []string{"task-completed"}, CommandsForEvent(cfg, "task-completed", "agent"))
+	require.Equal(t, []string{"instructions-loaded"}, CommandsForEvent(cfg, "instructions-loaded", "session_start"))
 	require.Equal(t, []string{"file-changed"}, CommandsForEvent(cfg, "file-changed", "write_file"))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
+}
+
+func TestHooksForPayloadFiltersInstructionsLoadedMatchersAndConditions(t *testing.T) {
+	cfg := config.HookConfig{InstructionsLoadedCommands: []config.HookCommand{
+		{Matcher: "session_start", Type: "command", If: "session_start(AGENTS.md)", Command: "agents"},
+		{Matcher: "compact", Type: "command", Command: "compact"},
+	}}
+
+	matched := HooksForPayload(cfg, Payload{
+		Event:      "instructions_loaded",
+		Tool:       "session_start",
+		FilePath:   "/repo/AGENTS.md",
+		MemoryType: "Project",
+		LoadReason: "session_start",
+	})
+	require.Len(t, matched, 1)
+	require.Equal(t, "agents", matched[0].Command)
+
+	matched = HooksForPayload(cfg, Payload{
+		Event:      "instructions_loaded",
+		Tool:       "session_start",
+		FilePath:   "/repo/README.md",
+		MemoryType: "Project",
+		LoadReason: "session_start",
+	})
+	require.Empty(t, matched)
+
+	matched = HooksForPayload(cfg, Payload{
+		Event:      "instructions_loaded",
+		Tool:       "compact",
+		FilePath:   "/repo/CLAUDE.md",
+		MemoryType: "Project",
+		LoadReason: "compact",
+	})
+	require.Len(t, matched, 1)
+	require.Equal(t, "compact", matched[0].Command)
 }
 
 func TestHooksForPayloadFiltersFileChangedMatchersAndConditions(t *testing.T) {

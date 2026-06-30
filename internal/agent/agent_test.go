@@ -2250,6 +2250,62 @@ func TestPromptHistoryPreferenceSkipsInputRecords(t *testing.T) {
 	require.Contains(t, out.String(), "done")
 }
 
+func TestInstructionsLoadedHookRunsBeforePrompt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	instructionsPath := filepath.Join(workspace, "AGENTS.md")
+	hookPath := filepath.Join(workspace, "instructions-loaded.json")
+	require.NoError(t, os.WriteFile(instructionsPath, []byte("Project instructions.\n"), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+			Hooks: config.HookConfig{
+				InstructionsLoadedCommands: []config.HookCommand{{Matcher: "session_start", Command: "cat > " + shellQuote(hookPath)}},
+			},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Prompt(context.Background(), "hello", config.FlagOverrides{SessionID: "instructions-session"}))
+	data, err := os.ReadFile(hookPath)
+	require.NoError(t, err)
+	var payload struct {
+		Event      string `json:"event"`
+		Tool       string `json:"tool"`
+		FilePath   string `json:"file_path"`
+		MemoryType string `json:"memory_type"`
+		LoadReason string `json:"load_reason"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "instructions_loaded", payload.Event)
+	require.Equal(t, "session_start", payload.Tool)
+	expectedPath, err := filepath.EvalSymlinks(instructionsPath)
+	require.NoError(t, err)
+	require.Equal(t, expectedPath, payload.FilePath)
+	require.Equal(t, "Project", payload.MemoryType)
+	require.Equal(t, "session_start", payload.LoadReason)
+	require.Contains(t, out.String(), "done")
+}
+
 func TestTodosCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer
@@ -2867,6 +2923,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	worktreeRemovePath := filepath.Join(workspace, "worktree-remove.json")
 	taskCreatedPath := filepath.Join(workspace, "task-created.json")
 	taskCompletedPath := filepath.Join(workspace, "task-completed.json")
+	instructionsLoadedPath := filepath.Join(workspace, "instructions-loaded.json")
 	fileChangedPath := filepath.Join(workspace, "file-changed.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -2893,6 +2950,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				WorktreeRemove:     []string{"cat > " + shellQuote(worktreeRemovePath)},
 				TaskCreated:        []string{"cat > " + shellQuote(taskCreatedPath)},
 				TaskCompleted:      []string{"cat > " + shellQuote(taskCompletedPath)},
+				InstructionsLoaded: []string{"cat > " + shellQuote(instructionsLoadedPath)},
 				FileChanged:        []string{"cat > " + shellQuote(fileChangedPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
@@ -2954,6 +3012,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				TaskCompletedCommands: []config.HookCommand{
 					{Matcher: "agent", Command: "cat > " + shellQuote(taskCompletedPath)},
 				},
+				InstructionsLoadedCommands: []config.HookCommand{
+					{Matcher: "session_start", Command: "cat > " + shellQuote(instructionsLoadedPath)},
+				},
 				FileChangedCommands: []config.HookCommand{
 					{Matcher: "write_file", Command: "cat > " + shellQuote(fileChangedPath)},
 				},
@@ -2986,6 +3047,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"worktree_remove"`)
 	require.Contains(t, out.String(), `"task_created"`)
 	require.Contains(t, out.String(), `"task_completed"`)
+	require.Contains(t, out.String(), `"instructions_loaded"`)
 	require.Contains(t, out.String(), `"file_changed"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
@@ -3009,6 +3071,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "agent-*", hooksList.WorktreeRemoveCommands[0].Matcher)
 	require.Equal(t, "agent", hooksList.TaskCreatedCommands[0].Matcher)
 	require.Equal(t, "agent", hooksList.TaskCompletedCommands[0].Matcher)
+	require.Equal(t, "session_start", hooksList.InstructionsLoadedCommands[0].Matcher)
 	require.Equal(t, "write_file", hooksList.FileChangedCommands[0].Matcher)
 	out.Reset()
 
@@ -3263,6 +3326,29 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "task-1", taskCompletedHook.TaskID)
 	require.Equal(t, "agent", taskCompletedHook.TaskKind)
 	require.Equal(t, "stopped", taskCompletedHook.TaskStatus)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "instructions-loaded", "--path", filepath.Join(workspace, "AGENTS.md"), "--memory-type", "Project", "--load-reason", "session_start", "--glob", "*.md", "--trigger-file-path", filepath.Join(workspace, "main.go")}))
+	data, err = os.ReadFile(instructionsLoadedPath)
+	require.NoError(t, err)
+	var instructionsLoadedHook struct {
+		Event           string   `json:"event"`
+		Tool            string   `json:"tool"`
+		Input           string   `json:"input"`
+		FilePath        string   `json:"file_path"`
+		MemoryType      string   `json:"memory_type"`
+		LoadReason      string   `json:"load_reason"`
+		Globs           []string `json:"globs"`
+		TriggerFilePath string   `json:"trigger_file_path"`
+	}
+	require.NoError(t, json.Unmarshal(data, &instructionsLoadedHook))
+	require.Equal(t, "instructions_loaded", instructionsLoadedHook.Event)
+	require.Equal(t, "session_start", instructionsLoadedHook.Tool)
+	require.Equal(t, filepath.Join(workspace, "AGENTS.md"), instructionsLoadedHook.FilePath)
+	require.Equal(t, "Project", instructionsLoadedHook.MemoryType)
+	require.Equal(t, "session_start", instructionsLoadedHook.LoadReason)
+	require.Equal(t, []string{"*.md"}, instructionsLoadedHook.Globs)
+	require.Equal(t, filepath.Join(workspace, "main.go"), instructionsLoadedHook.TriggerFilePath)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "file-changed", "--path", "docs/notes.md", "--operation", "write_file", "--input", `{"path":"docs/notes.md"}`}))

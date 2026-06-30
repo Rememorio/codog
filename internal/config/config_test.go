@@ -284,6 +284,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 			"WorktreeRemove": [{"matcher": "agent-*", "command": "echo worktree-remove"}],
 			"TaskCreated": [{"matcher": "agent", "command": "echo task-created"}],
 			"TaskCompleted": [{"matcher": "agent", "command": "echo task-completed"}],
+			"InstructionsLoaded": [{"matcher": "session_start", "command": "echo instructions-loaded"}],
 			"FileChanged": [{"matcher": "Write", "command": "echo file-changed"}]
 		}
 	}`), 0o644))
@@ -310,6 +311,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []string{"echo worktree-remove"}, cfg.Hooks.WorktreeRemove)
 	require.Equal(t, []string{"echo task-created"}, cfg.Hooks.TaskCreated)
 	require.Equal(t, []string{"echo task-completed"}, cfg.Hooks.TaskCompleted)
+	require.Equal(t, []string{"echo instructions-loaded"}, cfg.Hooks.InstructionsLoaded)
 	require.Equal(t, []string{"echo file-changed"}, cfg.Hooks.FileChanged)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo prompt-submit"}}, cfg.Hooks.UserPromptSubmitCommands)
 	require.Equal(t, []HookCommand{{Type: "command", Command: "echo session-start"}}, cfg.Hooks.SessionStartCommands)
@@ -335,6 +337,7 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Matcher: "agent-*", Type: "command", Command: "echo worktree-remove"}}, cfg.Hooks.WorktreeRemoveCommands)
 	require.Equal(t, []HookCommand{{Matcher: "agent", Type: "command", Command: "echo task-created"}}, cfg.Hooks.TaskCreatedCommands)
 	require.Equal(t, []HookCommand{{Matcher: "agent", Type: "command", Command: "echo task-completed"}}, cfg.Hooks.TaskCompletedCommands)
+	require.Equal(t, []HookCommand{{Matcher: "session_start", Type: "command", Command: "echo instructions-loaded"}}, cfg.Hooks.InstructionsLoadedCommands)
 	require.Equal(t, []HookCommand{{Matcher: "Write", Type: "command", Command: "echo file-changed"}}, cfg.Hooks.FileChangedCommands)
 }
 
@@ -369,6 +372,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"worktree_remove": ["echo user-worktree-remove"],
 			"task_created": ["echo user-task-created"],
 			"task_completed": ["echo user-task-completed"],
+			"instructions_loaded": ["echo user-instructions-loaded"],
 			"file_changed": ["echo user-file-changed"]
 		}
 	}`), 0o644))
@@ -395,6 +399,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"WorktreeRemove": [{"matcher": "agent-*", "command": "echo project-worktree-remove"}],
 			"TaskCreated": [{"matcher": "agent", "command": "echo project-task-created"}],
 			"TaskCompleted": [{"matcher": "agent", "command": "echo project-task-completed"}],
+			"InstructionsLoaded": [{"matcher": "session_start", "command": "echo project-instructions-loaded"}],
 			"FileChanged": [{"matcher": "Write", "command": "echo project-file-changed"}]
 		}
 	}`), 0o644))
@@ -419,6 +424,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 			"worktree_remove": ["echo user-worktree-remove", "echo local-worktree-remove"],
 			"task_created": ["echo user-task-created", "echo local-task-created"],
 			"task_completed": ["echo user-task-completed", "echo local-task-completed"],
+			"instructions_loaded": ["echo user-instructions-loaded", "echo local-instructions-loaded"],
 			"file_changed": ["echo user-file-changed", "echo local-file-changed"]
 		}
 	}`), 0o644))
@@ -445,6 +451,7 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	require.Equal(t, []string{"echo user-worktree-remove", "echo project-worktree-remove", "echo local-worktree-remove"}, cfg.Hooks.WorktreeRemove)
 	require.Equal(t, []string{"echo user-task-created", "echo project-task-created", "echo local-task-created"}, cfg.Hooks.TaskCreated)
 	require.Equal(t, []string{"echo user-task-completed", "echo project-task-completed", "echo local-task-completed"}, cfg.Hooks.TaskCompleted)
+	require.Equal(t, []string{"echo user-instructions-loaded", "echo project-instructions-loaded", "echo local-instructions-loaded"}, cfg.Hooks.InstructionsLoaded)
 	require.Equal(t, []string{"echo user-file-changed", "echo project-file-changed", "echo local-file-changed"}, cfg.Hooks.FileChanged)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-prompt"},
@@ -541,6 +548,11 @@ func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 		{Matcher: "agent", Type: "command", Command: "echo project-task-completed"},
 		{Type: "command", Command: "echo local-task-completed"},
 	}, cfg.Hooks.TaskCompletedCommands)
+	require.Equal(t, []HookCommand{
+		{Type: "command", Command: "echo user-instructions-loaded"},
+		{Matcher: "session_start", Type: "command", Command: "echo project-instructions-loaded"},
+		{Type: "command", Command: "echo local-instructions-loaded"},
+	}, cfg.Hooks.InstructionsLoadedCommands)
 	require.Equal(t, []HookCommand{
 		{Type: "command", Command: "echo user-file-changed"},
 		{Matcher: "Write", Type: "command", Command: "echo project-file-changed"},

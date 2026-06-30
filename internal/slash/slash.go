@@ -265,6 +265,7 @@ func AllCandidates(options CandidateOptions) []string {
 		"/hooks run worktree-remove",
 		"/hooks run task-created",
 		"/hooks run task-completed",
+		"/hooks run instructions-loaded",
 		"/hooks run file-changed",
 		"/heapdump",
 		"/insights",

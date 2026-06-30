@@ -51,6 +51,7 @@ type Options struct {
 	WorktreeRemove     []string
 	TaskCreated        []string
 	TaskCompleted      []string
+	InstructionsLoaded []string
 	FileChanged        []string
 	SandboxDefault     string
 	SandboxOK          bool
@@ -273,8 +274,9 @@ func checkHooks(opts Options) Check {
 	worktreeRemove := compactHookCommands(opts.WorktreeRemove)
 	taskCreated := compactHookCommands(opts.TaskCreated)
 	taskCompleted := compactHookCommands(opts.TaskCompleted)
+	instructionsLoaded := compactHookCommands(opts.InstructionsLoaded)
 	fileChanged := compactHookCommands(opts.FileChanged)
-	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop) + len(worktreeCreate) + len(worktreeRemove) + len(taskCreated) + len(taskCompleted) + len(fileChanged)
+	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop) + len(worktreeCreate) + len(worktreeRemove) + len(taskCreated) + len(taskCompleted) + len(instructionsLoaded) + len(fileChanged)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
@@ -296,6 +298,7 @@ func checkHooks(opts Options) Check {
 		fmt.Sprintf("WorktreeRemove hooks: %d", len(worktreeRemove)),
 		fmt.Sprintf("TaskCreated hooks: %d", len(taskCreated)),
 		fmt.Sprintf("TaskCompleted hooks: %d", len(taskCompleted)),
+		fmt.Sprintf("InstructionsLoaded hooks: %d", len(instructionsLoaded)),
 		fmt.Sprintf("FileChanged hooks: %d", len(fileChanged)),
 	}
 	if total == 0 {
@@ -324,6 +327,7 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "WorktreeRemove", worktreeRemove)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "TaskCreated", taskCreated)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "TaskCompleted", taskCompleted)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "InstructionsLoaded", instructionsLoaded)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "FileChanged", fileChanged)...)
 	if len(issues) != 0 {
 		details = append(details, issues...)

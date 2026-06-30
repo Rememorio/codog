@@ -4487,6 +4487,11 @@ type hooksRequest struct {
 	TaskStatus       string
 	FilePath         string
 	Operation        string
+	MemoryType       string
+	LoadReason       string
+	Globs            []string
+	TriggerFilePath  string
+	ParentFilePath   string
 	StopHookActive   bool
 	Reason           string
 }
@@ -4515,6 +4520,7 @@ type hooksListReport struct {
 	WorktreeRemove             []string             `json:"worktree_remove"`
 	TaskCreated                []string             `json:"task_created"`
 	TaskCompleted              []string             `json:"task_completed"`
+	InstructionsLoaded         []string             `json:"instructions_loaded"`
 	FileChanged                []string             `json:"file_changed"`
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
@@ -4536,6 +4542,7 @@ type hooksListReport struct {
 	WorktreeRemoveCommands     []hookCommandSummary `json:"worktree_remove_commands,omitempty"`
 	TaskCreatedCommands        []hookCommandSummary `json:"task_created_commands,omitempty"`
 	TaskCompletedCommands      []hookCommandSummary `json:"task_completed_commands,omitempty"`
+	InstructionsLoadedCommands []hookCommandSummary `json:"instructions_loaded_commands,omitempty"`
 	FileChangedCommands        []hookCommandSummary `json:"file_changed_commands,omitempty"`
 }
 
@@ -4577,6 +4584,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
 			TaskCreated:                append([]string(nil), a.Config.Hooks.TaskCreated...),
 			TaskCompleted:              append([]string(nil), a.Config.Hooks.TaskCompleted...),
+			InstructionsLoaded:         append([]string(nil), a.Config.Hooks.InstructionsLoaded...),
 			FileChanged:                append([]string(nil), a.Config.Hooks.FileChanged...),
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
@@ -4598,6 +4606,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
 			TaskCreatedCommands:        hookCommandsForList(a.Config.Hooks.TaskCreatedCommands, a.Config.Hooks.TaskCreated),
 			TaskCompletedCommands:      hookCommandsForList(a.Config.Hooks.TaskCompletedCommands, a.Config.Hooks.TaskCompleted),
+			InstructionsLoadedCommands: hookCommandsForList(a.Config.Hooks.InstructionsLoadedCommands, a.Config.Hooks.InstructionsLoaded),
 			FileChangedCommands:        hookCommandsForList(a.Config.Hooks.FileChangedCommands, a.Config.Hooks.FileChanged),
 		}
 		if req.Format == "json" {
@@ -4632,6 +4641,11 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			TaskStatus:       req.TaskStatus,
 			FilePath:         req.FilePath,
 			Operation:        req.Operation,
+			MemoryType:       req.MemoryType,
+			LoadReason:       req.LoadReason,
+			Globs:            append([]string(nil), req.Globs...),
+			TriggerFilePath:  req.TriggerFilePath,
+			ParentFilePath:   req.ParentFilePath,
 			StopHookActive:   req.StopHookActive,
 		}
 		if req.Event == "notification" {
@@ -4742,6 +4756,25 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.LastAssistant = ""
 			payload.StopHookActive = false
 			payload.Reason = ""
+		} else if req.Event == "instructions_loaded" {
+			payload.LoadReason = firstNonEmpty(req.LoadReason, req.Tool, "session_start")
+			payload.Tool = payload.LoadReason
+			payload.FilePath = req.FilePath
+			payload.MemoryType = firstNonEmpty(req.MemoryType, "Project")
+			payload.Globs = append([]string(nil), req.Globs...)
+			payload.TriggerFilePath = req.TriggerFilePath
+			payload.ParentFilePath = req.ParentFilePath
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.Reason = ""
+			payload.ToolName = ""
+			payload.ToolInput = nil
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4762,6 +4795,11 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TaskStatus = ""
 			payload.FilePath = ""
 			payload.Operation = ""
+			payload.MemoryType = ""
+			payload.LoadReason = ""
+			payload.Globs = nil
+			payload.TriggerFilePath = ""
+			payload.ParentFilePath = ""
 		}
 		if req.Event != "worktree_create" && req.Event != "worktree_remove" {
 			payload.WorktreeID = ""
@@ -4773,9 +4811,18 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TaskKind = ""
 			payload.TaskStatus = ""
 		}
-		if req.Event != "file_changed" {
+		if req.Event != "file_changed" && req.Event != "instructions_loaded" {
 			payload.FilePath = ""
+		}
+		if req.Event != "file_changed" {
 			payload.Operation = ""
+		}
+		if req.Event != "instructions_loaded" {
+			payload.MemoryType = ""
+			payload.LoadReason = ""
+			payload.Globs = nil
+			payload.TriggerFilePath = ""
+			payload.ParentFilePath = ""
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4931,6 +4978,46 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Operation = args[i]
 		case strings.HasPrefix(arg, "--operation="):
 			req.Operation = strings.TrimPrefix(arg, "--operation=")
+		case arg == "--memory-type":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks memory type is required")
+			}
+			req.MemoryType = args[i]
+		case strings.HasPrefix(arg, "--memory-type="):
+			req.MemoryType = strings.TrimPrefix(arg, "--memory-type=")
+		case arg == "--load-reason":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks load reason is required")
+			}
+			req.LoadReason = args[i]
+		case strings.HasPrefix(arg, "--load-reason="):
+			req.LoadReason = strings.TrimPrefix(arg, "--load-reason=")
+		case arg == "--glob":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks glob is required")
+			}
+			req.Globs = append(req.Globs, args[i])
+		case strings.HasPrefix(arg, "--glob="):
+			req.Globs = append(req.Globs, strings.TrimPrefix(arg, "--glob="))
+		case arg == "--trigger-file-path":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks trigger file path is required")
+			}
+			req.TriggerFilePath = args[i]
+		case strings.HasPrefix(arg, "--trigger-file-path="):
+			req.TriggerFilePath = strings.TrimPrefix(arg, "--trigger-file-path=")
+		case arg == "--parent-file-path":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks parent file path is required")
+			}
+			req.ParentFilePath = args[i]
+		case strings.HasPrefix(arg, "--parent-file-path="):
+			req.ParentFilePath = strings.TrimPrefix(arg, "--parent-file-path=")
 		case arg == "--task-id":
 			i++
 			if i >= len(args) {
@@ -5011,7 +5098,7 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop" || req.Event == "file_changed") {
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop" || req.Event == "file_changed" || req.Event == "instructions_loaded") {
 		req.Tool = ""
 	}
 	if req.Event == "notification" && strings.TrimSpace(req.NotificationType) == "" && strings.TrimSpace(req.Tool) != "" {
@@ -5022,6 +5109,9 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	}
 	if req.Event == "file_changed" && strings.TrimSpace(req.Operation) == "" && strings.TrimSpace(req.Tool) != "" {
 		req.Operation = req.Tool
+	}
+	if req.Event == "instructions_loaded" && strings.TrimSpace(req.LoadReason) == "" && strings.TrimSpace(req.Tool) != "" {
+		req.LoadReason = req.Tool
 	}
 	return req, nil
 }
@@ -5068,6 +5158,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "task_created", nil
 	case "task-completed", "taskcompleted", "task_completed":
 		return "task_completed", nil
+	case "instructions-loaded", "instructionsloaded", "instructions_loaded":
+		return "instructions_loaded", nil
 	case "file-changed", "filechanged", "file_changed":
 		return "file_changed", nil
 	default:
@@ -5187,6 +5279,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Task completed   %d\n", len(report.TaskCompleted))
 	for _, command := range report.TaskCompletedCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Instructions loaded %d\n", len(report.InstructionsLoaded))
+	for _, command := range report.InstructionsLoadedCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  File changed     %d\n", len(report.FileChanged))
@@ -10471,56 +10567,57 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	}
 	planState, _ := planmode.Load(a.Workspace)
 	return localstatus.Build(localstatus.Options{
-		Version:                    version,
-		Workspace:                  a.Workspace,
-		ConfigHome:                 a.Config.ConfigHome,
-		Model:                      a.Config.Model,
-		FastMode:                   fastModeEnabled(a.Config.FastMode),
-		BaseURL:                    a.Config.BaseURL,
-		PermissionMode:             a.Config.PermissionMode,
-		MaxTokens:                  a.Config.MaxTokens,
-		MaxTurns:                   a.Config.MaxTurns,
-		AutoCompactMessages:        a.Config.AutoCompactMessages,
-		AuthConfigured:             a.Config.APIKey != "" || a.Config.AuthToken != "",
-		MCPServerCount:             len(a.Config.MCPServers),
-		UserPromptSubmitHookCount:  len(a.Config.Hooks.UserPromptSubmit),
-		SessionStartHookCount:      len(a.Config.Hooks.SessionStart),
-		SessionEndHookCount:        len(a.Config.Hooks.SessionEnd),
-		SetupHookCount:             len(a.Config.Hooks.Setup),
-		PreHookCount:               len(a.Config.Hooks.PreToolUse),
-		PostHookCount:              len(a.Config.Hooks.PostToolUse),
-		PostFailureHookCount:       len(a.Config.Hooks.PostToolUseFailure),
-		PermissionRequestHookCount: len(a.Config.Hooks.PermissionRequest),
-		PermissionDeniedHookCount:  len(a.Config.Hooks.PermissionDenied),
-		StopHookCount:              len(a.Config.Hooks.Stop),
-		StopFailureHookCount:       len(a.Config.Hooks.StopFailure),
-		PreCompactHookCount:        len(a.Config.Hooks.PreCompact),
-		PostCompactHookCount:       len(a.Config.Hooks.PostCompact),
-		NotificationHookCount:      len(a.Config.Hooks.Notification),
-		SubagentStartHookCount:     len(a.Config.Hooks.SubagentStart),
-		SubagentStopHookCount:      len(a.Config.Hooks.SubagentStop),
-		WorktreeCreateHookCount:    len(a.Config.Hooks.WorktreeCreate),
-		WorktreeRemoveHookCount:    len(a.Config.Hooks.WorktreeRemove),
-		TaskCreatedHookCount:       len(a.Config.Hooks.TaskCreated),
-		TaskCompletedHookCount:     len(a.Config.Hooks.TaskCompleted),
-		FileChangedHookCount:       len(a.Config.Hooks.FileChanged),
-		EnabledSkillCount:          len(a.Config.EnabledSkills),
-		PlanActive:                 planState.Active,
-		PlanText:                   planState.Plan,
-		PlanUpdatedAt:              planState.UpdatedAt,
-		MemoryFiles:                memoryStatuses,
-		ToolNames:                  toolNames,
-		SessionID:                  sessionID,
-		SessionPath:                sessionPath,
-		SessionMessages:            sessionMessages,
-		SessionCount:               sessionCount,
-		GitStatus:                  gitRaw,
-		GitError:                   gitError,
-		SandboxOS:                  sandboxStatus.OS,
-		SandboxDefault:             sandboxStatus.Default,
-		SandboxStrategies:          sandboxStatus.Strategies,
-		SandboxAvailable:           sandboxStatus.Available,
-		Executable:                 executable,
+		Version:                     version,
+		Workspace:                   a.Workspace,
+		ConfigHome:                  a.Config.ConfigHome,
+		Model:                       a.Config.Model,
+		FastMode:                    fastModeEnabled(a.Config.FastMode),
+		BaseURL:                     a.Config.BaseURL,
+		PermissionMode:              a.Config.PermissionMode,
+		MaxTokens:                   a.Config.MaxTokens,
+		MaxTurns:                    a.Config.MaxTurns,
+		AutoCompactMessages:         a.Config.AutoCompactMessages,
+		AuthConfigured:              a.Config.APIKey != "" || a.Config.AuthToken != "",
+		MCPServerCount:              len(a.Config.MCPServers),
+		UserPromptSubmitHookCount:   len(a.Config.Hooks.UserPromptSubmit),
+		SessionStartHookCount:       len(a.Config.Hooks.SessionStart),
+		SessionEndHookCount:         len(a.Config.Hooks.SessionEnd),
+		SetupHookCount:              len(a.Config.Hooks.Setup),
+		PreHookCount:                len(a.Config.Hooks.PreToolUse),
+		PostHookCount:               len(a.Config.Hooks.PostToolUse),
+		PostFailureHookCount:        len(a.Config.Hooks.PostToolUseFailure),
+		PermissionRequestHookCount:  len(a.Config.Hooks.PermissionRequest),
+		PermissionDeniedHookCount:   len(a.Config.Hooks.PermissionDenied),
+		StopHookCount:               len(a.Config.Hooks.Stop),
+		StopFailureHookCount:        len(a.Config.Hooks.StopFailure),
+		PreCompactHookCount:         len(a.Config.Hooks.PreCompact),
+		PostCompactHookCount:        len(a.Config.Hooks.PostCompact),
+		NotificationHookCount:       len(a.Config.Hooks.Notification),
+		SubagentStartHookCount:      len(a.Config.Hooks.SubagentStart),
+		SubagentStopHookCount:       len(a.Config.Hooks.SubagentStop),
+		WorktreeCreateHookCount:     len(a.Config.Hooks.WorktreeCreate),
+		WorktreeRemoveHookCount:     len(a.Config.Hooks.WorktreeRemove),
+		TaskCreatedHookCount:        len(a.Config.Hooks.TaskCreated),
+		TaskCompletedHookCount:      len(a.Config.Hooks.TaskCompleted),
+		InstructionsLoadedHookCount: len(a.Config.Hooks.InstructionsLoaded),
+		FileChangedHookCount:        len(a.Config.Hooks.FileChanged),
+		EnabledSkillCount:           len(a.Config.EnabledSkills),
+		PlanActive:                  planState.Active,
+		PlanText:                    planState.Plan,
+		PlanUpdatedAt:               planState.UpdatedAt,
+		MemoryFiles:                 memoryStatuses,
+		ToolNames:                   toolNames,
+		SessionID:                   sessionID,
+		SessionPath:                 sessionPath,
+		SessionMessages:             sessionMessages,
+		SessionCount:                sessionCount,
+		GitStatus:                   gitRaw,
+		GitError:                    gitError,
+		SandboxOS:                   sandboxStatus.OS,
+		SandboxDefault:              sandboxStatus.Default,
+		SandboxStrategies:           sandboxStatus.Strategies,
+		SandboxAvailable:            sandboxStatus.Available,
+		Executable:                  executable,
 	})
 }
 
@@ -11070,6 +11167,7 @@ func (a *App) Doctor(args []string) error {
 		WorktreeRemove:     a.Config.Hooks.WorktreeRemove,
 		TaskCreated:        a.Config.Hooks.TaskCreated,
 		TaskCompleted:      a.Config.Hooks.TaskCompleted,
+		InstructionsLoaded: a.Config.Hooks.InstructionsLoaded,
 		FileChanged:        a.Config.Hooks.FileChanged,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
@@ -12042,6 +12140,10 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 	}
 	modelInput = a.expandPromptReferences(modelInput)
 	a.writeWorkerState(mode, "running", sess, "")
+	if err := a.runInstructionsLoadedHooks(ctx, "session_start"); err != nil {
+		a.writeWorkerState(mode, "error", sess, err.Error())
+		return err
+	}
 	effectiveConfig := a.effectiveConfig()
 	runner := runloop.Runner{
 		Config:           effectiveConfig,
@@ -16749,6 +16851,28 @@ func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reas
 	return a.lifecycleHookRunner().SessionEnd(ctx, string(data), reason)
 }
 
+func (a *App) runInstructionsLoadedHooks(ctx context.Context, loadReason string) error {
+	runner := a.lifecycleHookRunner()
+	if len(runner.Config.InstructionsLoaded) == 0 && len(runner.Config.InstructionsLoadedCommands) == 0 {
+		return nil
+	}
+	files, err := memory.Discover(a.Workspace)
+	if err != nil {
+		return err
+	}
+	loadReason = firstNonEmpty(loadReason, "session_start")
+	for _, file := range files {
+		if err := runner.InstructionsLoaded(ctx, file.Path, instructionsMemoryType(file), loadReason, nil, "", ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func instructionsMemoryType(file memory.File) string {
+	return "Project"
+}
+
 func (a *App) runSetupHook(ctx context.Context, source string, status string) error {
 	return runSetupHookPayload(ctx, a.lifecycleHookRunner(), a.Workspace, source, status)
 }
@@ -17182,7 +17306,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|task-created|task-completed|file-changed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|task-created|task-completed|instructions-loaded|file-changed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

@@ -37,6 +37,7 @@ type HookConfig struct {
 	WorktreeRemove             []string      `json:"worktree_remove,omitempty"`
 	TaskCreated                []string      `json:"task_created,omitempty"`
 	TaskCompleted              []string      `json:"task_completed,omitempty"`
+	InstructionsLoaded         []string      `json:"instructions_loaded,omitempty"`
 	FileChanged                []string      `json:"file_changed,omitempty"`
 	PreToolUseCommands         []HookCommand `json:"-"`
 	PostToolUseCommands        []HookCommand `json:"-"`
@@ -58,6 +59,7 @@ type HookConfig struct {
 	WorktreeRemoveCommands     []HookCommand `json:"-"`
 	TaskCreatedCommands        []HookCommand `json:"-"`
 	TaskCompletedCommands      []HookCommand `json:"-"`
+	InstructionsLoadedCommands []HookCommand `json:"-"`
 	FileChangedCommands        []HookCommand `json:"-"`
 }
 
@@ -164,6 +166,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	instructionsLoaded, err := hookCommands(raw, "instructions_loaded", "InstructionsLoaded")
+	if err != nil {
+		return err
+	}
 	fileChanged, err := hookCommands(raw, "file_changed", "FileChanged")
 	if err != nil {
 		return err
@@ -188,6 +194,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.WorktreeRemoveCommands = worktreeRemove
 	h.TaskCreatedCommands = taskCreated
 	h.TaskCompletedCommands = taskCompleted
+	h.InstructionsLoadedCommands = instructionsLoaded
 	h.FileChangedCommands = fileChanged
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
@@ -209,6 +216,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.WorktreeRemove = hookCommandStrings(worktreeRemove)
 	h.TaskCreated = hookCommandStrings(taskCreated)
 	h.TaskCompleted = hookCommandStrings(taskCompleted)
+	h.InstructionsLoaded = hookCommandStrings(instructionsLoaded)
 	h.FileChanged = hookCommandStrings(fileChanged)
 	return nil
 }
@@ -1083,6 +1091,11 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.TaskCompleted) != 0 {
 		dst.TaskCompletedCommands = mergeHookCommands(dst.TaskCompletedCommands, hookCommandsFromStrings(src.TaskCompleted))
 	}
+	if len(src.InstructionsLoadedCommands) != 0 {
+		dst.InstructionsLoadedCommands = mergeHookCommands(dst.InstructionsLoadedCommands, src.InstructionsLoadedCommands)
+	} else if len(src.InstructionsLoaded) != 0 {
+		dst.InstructionsLoadedCommands = mergeHookCommands(dst.InstructionsLoadedCommands, hookCommandsFromStrings(src.InstructionsLoaded))
+	}
 	if len(src.FileChangedCommands) != 0 {
 		dst.FileChangedCommands = mergeHookCommands(dst.FileChangedCommands, src.FileChangedCommands)
 	} else if len(src.FileChanged) != 0 {
@@ -1108,6 +1121,7 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.WorktreeRemove = hookCommandStrings(dst.WorktreeRemoveCommands)
 	dst.TaskCreated = hookCommandStrings(dst.TaskCreatedCommands)
 	dst.TaskCompleted = hookCommandStrings(dst.TaskCompletedCommands)
+	dst.InstructionsLoaded = hookCommandStrings(dst.InstructionsLoadedCommands)
 	dst.FileChanged = hookCommandStrings(dst.FileChangedCommands)
 }
 

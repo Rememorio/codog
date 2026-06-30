@@ -9,56 +9,57 @@ import (
 )
 
 type Options struct {
-	Version                    string
-	Workspace                  string
-	ConfigHome                 string
-	Model                      string
-	FastMode                   bool
-	BaseURL                    string
-	PermissionMode             string
-	MaxTokens                  int
-	MaxTurns                   int
-	AutoCompactMessages        int
-	AuthConfigured             bool
-	MCPServerCount             int
-	UserPromptSubmitHookCount  int
-	SessionStartHookCount      int
-	SessionEndHookCount        int
-	SetupHookCount             int
-	PreHookCount               int
-	PostHookCount              int
-	PostFailureHookCount       int
-	PermissionRequestHookCount int
-	PermissionDeniedHookCount  int
-	StopHookCount              int
-	StopFailureHookCount       int
-	PreCompactHookCount        int
-	PostCompactHookCount       int
-	NotificationHookCount      int
-	SubagentStartHookCount     int
-	SubagentStopHookCount      int
-	WorktreeCreateHookCount    int
-	WorktreeRemoveHookCount    int
-	TaskCreatedHookCount       int
-	TaskCompletedHookCount     int
-	FileChangedHookCount       int
-	EnabledSkillCount          int
-	PlanActive                 bool
-	PlanText                   string
-	PlanUpdatedAt              string
-	MemoryFiles                []MemoryFileStatus
-	ToolNames                  []string
-	SessionID                  string
-	SessionPath                string
-	SessionMessages            int
-	SessionCount               int
-	GitStatus                  string
-	GitError                   string
-	SandboxOS                  string
-	SandboxDefault             string
-	SandboxStrategies          []string
-	SandboxAvailable           bool
-	Executable                 string
+	Version                     string
+	Workspace                   string
+	ConfigHome                  string
+	Model                       string
+	FastMode                    bool
+	BaseURL                     string
+	PermissionMode              string
+	MaxTokens                   int
+	MaxTurns                    int
+	AutoCompactMessages         int
+	AuthConfigured              bool
+	MCPServerCount              int
+	UserPromptSubmitHookCount   int
+	SessionStartHookCount       int
+	SessionEndHookCount         int
+	SetupHookCount              int
+	PreHookCount                int
+	PostHookCount               int
+	PostFailureHookCount        int
+	PermissionRequestHookCount  int
+	PermissionDeniedHookCount   int
+	StopHookCount               int
+	StopFailureHookCount        int
+	PreCompactHookCount         int
+	PostCompactHookCount        int
+	NotificationHookCount       int
+	SubagentStartHookCount      int
+	SubagentStopHookCount       int
+	WorktreeCreateHookCount     int
+	WorktreeRemoveHookCount     int
+	TaskCreatedHookCount        int
+	TaskCompletedHookCount      int
+	InstructionsLoadedHookCount int
+	FileChangedHookCount        int
+	EnabledSkillCount           int
+	PlanActive                  bool
+	PlanText                    string
+	PlanUpdatedAt               string
+	MemoryFiles                 []MemoryFileStatus
+	ToolNames                   []string
+	SessionID                   string
+	SessionPath                 string
+	SessionMessages             int
+	SessionCount                int
+	GitStatus                   string
+	GitError                    string
+	SandboxOS                   string
+	SandboxDefault              string
+	SandboxStrategies           []string
+	SandboxAvailable            bool
+	Executable                  string
 }
 
 type Snapshot struct {
@@ -92,38 +93,39 @@ type MemoryFileStatus struct {
 }
 
 type ConfigStatus struct {
-	ConfigHome                 string `json:"config_home"`
-	Model                      string `json:"model"`
-	FastMode                   bool   `json:"fast_mode"`
-	BaseURL                    string `json:"base_url"`
-	PermissionMode             string `json:"permission_mode"`
-	MaxTokens                  int    `json:"max_tokens"`
-	MaxTurns                   int    `json:"max_turns"`
-	AutoCompactMessages        int    `json:"auto_compact_messages"`
-	AuthConfigured             bool   `json:"auth_configured"`
-	MCPServerCount             int    `json:"mcp_server_count"`
-	UserPromptSubmitHookCount  int    `json:"user_prompt_submit_hook_count"`
-	SessionStartHookCount      int    `json:"session_start_hook_count"`
-	SessionEndHookCount        int    `json:"session_end_hook_count"`
-	SetupHookCount             int    `json:"setup_hook_count"`
-	PreHookCount               int    `json:"pre_hook_count"`
-	PostHookCount              int    `json:"post_hook_count"`
-	PostFailureHookCount       int    `json:"post_tool_use_failure_hook_count"`
-	PermissionRequestHookCount int    `json:"permission_request_hook_count"`
-	PermissionDeniedHookCount  int    `json:"permission_denied_hook_count"`
-	StopHookCount              int    `json:"stop_hook_count"`
-	StopFailureHookCount       int    `json:"stop_failure_hook_count"`
-	PreCompactHookCount        int    `json:"pre_compact_hook_count"`
-	PostCompactHookCount       int    `json:"post_compact_hook_count"`
-	NotificationHookCount      int    `json:"notification_hook_count"`
-	SubagentStartHookCount     int    `json:"subagent_start_hook_count"`
-	SubagentStopHookCount      int    `json:"subagent_stop_hook_count"`
-	WorktreeCreateHookCount    int    `json:"worktree_create_hook_count"`
-	WorktreeRemoveHookCount    int    `json:"worktree_remove_hook_count"`
-	TaskCreatedHookCount       int    `json:"task_created_hook_count"`
-	TaskCompletedHookCount     int    `json:"task_completed_hook_count"`
-	FileChangedHookCount       int    `json:"file_changed_hook_count"`
-	EnabledSkillCount          int    `json:"enabled_skill_count"`
+	ConfigHome                  string `json:"config_home"`
+	Model                       string `json:"model"`
+	FastMode                    bool   `json:"fast_mode"`
+	BaseURL                     string `json:"base_url"`
+	PermissionMode              string `json:"permission_mode"`
+	MaxTokens                   int    `json:"max_tokens"`
+	MaxTurns                    int    `json:"max_turns"`
+	AutoCompactMessages         int    `json:"auto_compact_messages"`
+	AuthConfigured              bool   `json:"auth_configured"`
+	MCPServerCount              int    `json:"mcp_server_count"`
+	UserPromptSubmitHookCount   int    `json:"user_prompt_submit_hook_count"`
+	SessionStartHookCount       int    `json:"session_start_hook_count"`
+	SessionEndHookCount         int    `json:"session_end_hook_count"`
+	SetupHookCount              int    `json:"setup_hook_count"`
+	PreHookCount                int    `json:"pre_hook_count"`
+	PostHookCount               int    `json:"post_hook_count"`
+	PostFailureHookCount        int    `json:"post_tool_use_failure_hook_count"`
+	PermissionRequestHookCount  int    `json:"permission_request_hook_count"`
+	PermissionDeniedHookCount   int    `json:"permission_denied_hook_count"`
+	StopHookCount               int    `json:"stop_hook_count"`
+	StopFailureHookCount        int    `json:"stop_failure_hook_count"`
+	PreCompactHookCount         int    `json:"pre_compact_hook_count"`
+	PostCompactHookCount        int    `json:"post_compact_hook_count"`
+	NotificationHookCount       int    `json:"notification_hook_count"`
+	SubagentStartHookCount      int    `json:"subagent_start_hook_count"`
+	SubagentStopHookCount       int    `json:"subagent_stop_hook_count"`
+	WorktreeCreateHookCount     int    `json:"worktree_create_hook_count"`
+	WorktreeRemoveHookCount     int    `json:"worktree_remove_hook_count"`
+	TaskCreatedHookCount        int    `json:"task_created_hook_count"`
+	TaskCompletedHookCount      int    `json:"task_completed_hook_count"`
+	InstructionsLoadedHookCount int    `json:"instructions_loaded_hook_count"`
+	FileChangedHookCount        int    `json:"file_changed_hook_count"`
+	EnabledSkillCount           int    `json:"enabled_skill_count"`
 }
 
 type SessionStatus struct {
@@ -189,38 +191,39 @@ func Build(opts Options) Snapshot {
 			MemoryFiles:     append([]MemoryFileStatus(nil), opts.MemoryFiles...),
 		},
 		Config: ConfigStatus{
-			ConfigHome:                 opts.ConfigHome,
-			Model:                      opts.Model,
-			FastMode:                   opts.FastMode,
-			BaseURL:                    opts.BaseURL,
-			PermissionMode:             opts.PermissionMode,
-			MaxTokens:                  opts.MaxTokens,
-			MaxTurns:                   opts.MaxTurns,
-			AutoCompactMessages:        opts.AutoCompactMessages,
-			AuthConfigured:             opts.AuthConfigured,
-			MCPServerCount:             opts.MCPServerCount,
-			UserPromptSubmitHookCount:  opts.UserPromptSubmitHookCount,
-			SessionStartHookCount:      opts.SessionStartHookCount,
-			SessionEndHookCount:        opts.SessionEndHookCount,
-			SetupHookCount:             opts.SetupHookCount,
-			PreHookCount:               opts.PreHookCount,
-			PostHookCount:              opts.PostHookCount,
-			PostFailureHookCount:       opts.PostFailureHookCount,
-			PermissionRequestHookCount: opts.PermissionRequestHookCount,
-			PermissionDeniedHookCount:  opts.PermissionDeniedHookCount,
-			StopHookCount:              opts.StopHookCount,
-			StopFailureHookCount:       opts.StopFailureHookCount,
-			PreCompactHookCount:        opts.PreCompactHookCount,
-			PostCompactHookCount:       opts.PostCompactHookCount,
-			NotificationHookCount:      opts.NotificationHookCount,
-			SubagentStartHookCount:     opts.SubagentStartHookCount,
-			SubagentStopHookCount:      opts.SubagentStopHookCount,
-			WorktreeCreateHookCount:    opts.WorktreeCreateHookCount,
-			WorktreeRemoveHookCount:    opts.WorktreeRemoveHookCount,
-			TaskCreatedHookCount:       opts.TaskCreatedHookCount,
-			TaskCompletedHookCount:     opts.TaskCompletedHookCount,
-			FileChangedHookCount:       opts.FileChangedHookCount,
-			EnabledSkillCount:          opts.EnabledSkillCount,
+			ConfigHome:                  opts.ConfigHome,
+			Model:                       opts.Model,
+			FastMode:                    opts.FastMode,
+			BaseURL:                     opts.BaseURL,
+			PermissionMode:              opts.PermissionMode,
+			MaxTokens:                   opts.MaxTokens,
+			MaxTurns:                    opts.MaxTurns,
+			AutoCompactMessages:         opts.AutoCompactMessages,
+			AuthConfigured:              opts.AuthConfigured,
+			MCPServerCount:              opts.MCPServerCount,
+			UserPromptSubmitHookCount:   opts.UserPromptSubmitHookCount,
+			SessionStartHookCount:       opts.SessionStartHookCount,
+			SessionEndHookCount:         opts.SessionEndHookCount,
+			SetupHookCount:              opts.SetupHookCount,
+			PreHookCount:                opts.PreHookCount,
+			PostHookCount:               opts.PostHookCount,
+			PostFailureHookCount:        opts.PostFailureHookCount,
+			PermissionRequestHookCount:  opts.PermissionRequestHookCount,
+			PermissionDeniedHookCount:   opts.PermissionDeniedHookCount,
+			StopHookCount:               opts.StopHookCount,
+			StopFailureHookCount:        opts.StopFailureHookCount,
+			PreCompactHookCount:         opts.PreCompactHookCount,
+			PostCompactHookCount:        opts.PostCompactHookCount,
+			NotificationHookCount:       opts.NotificationHookCount,
+			SubagentStartHookCount:      opts.SubagentStartHookCount,
+			SubagentStopHookCount:       opts.SubagentStopHookCount,
+			WorktreeCreateHookCount:     opts.WorktreeCreateHookCount,
+			WorktreeRemoveHookCount:     opts.WorktreeRemoveHookCount,
+			TaskCreatedHookCount:        opts.TaskCreatedHookCount,
+			TaskCompletedHookCount:      opts.TaskCompletedHookCount,
+			InstructionsLoadedHookCount: opts.InstructionsLoadedHookCount,
+			FileChangedHookCount:        opts.FileChangedHookCount,
+			EnabledSkillCount:           opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{
 			Active:       opts.SessionID != "",

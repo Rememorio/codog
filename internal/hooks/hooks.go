@@ -61,6 +61,11 @@ type Payload struct {
 	TaskStatus       string          `json:"task_status,omitempty"`
 	FilePath         string          `json:"file_path,omitempty"`
 	Operation        string          `json:"operation,omitempty"`
+	MemoryType       string          `json:"memory_type,omitempty"`
+	LoadReason       string          `json:"load_reason,omitempty"`
+	Globs            []string        `json:"globs,omitempty"`
+	TriggerFilePath  string          `json:"trigger_file_path,omitempty"`
+	ParentFilePath   string          `json:"parent_file_path,omitempty"`
 }
 
 type CommandResult struct {
@@ -308,6 +313,32 @@ func (r Runner) FileChanged(ctx context.Context, filePath string, operation stri
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) InstructionsLoaded(ctx context.Context, filePath string, memoryType string, loadReason string, globs []string, triggerFilePath string, parentFilePath string) error {
+	payload := Payload{
+		Event:           "instructions_loaded",
+		Tool:            loadReason,
+		FilePath:        filePath,
+		MemoryType:      memoryType,
+		LoadReason:      loadReason,
+		Globs:           append([]string(nil), globs...),
+		TriggerFilePath: triggerFilePath,
+		ParentFilePath:  parentFilePath,
+	}
+	data, err := json.Marshal(map[string]any{
+		"file_path":         payload.FilePath,
+		"memory_type":       payload.MemoryType,
+		"load_reason":       payload.LoadReason,
+		"globs":             payload.Globs,
+		"trigger_file_path": payload.TriggerFilePath,
+		"parent_file_path":  payload.ParentFilePath,
+	})
+	if err != nil {
+		return err
+	}
+	payload.Input = string(data)
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
 	payload := Payload{Event: event, Tool: tool}
 	hooks := HooksForPayload(cfg, payload)
@@ -365,6 +396,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.TaskCreatedCommands, cfg.TaskCreated, payload)
 	case "task_completed":
 		return matchingHooks(cfg.TaskCompletedCommands, cfg.TaskCompleted, payload)
+	case "instructions_loaded":
+		return matchingHooks(cfg.InstructionsLoadedCommands, cfg.InstructionsLoaded, payload)
 	case "file_changed":
 		return matchingHooks(cfg.FileChangedCommands, cfg.FileChanged, payload)
 	default:
@@ -510,6 +543,11 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 		"CODOG_HOOK_TASK_STATUS="+payload.TaskStatus,
 		"CODOG_HOOK_FILE_PATH="+payload.FilePath,
 		"CODOG_HOOK_OPERATION="+payload.Operation,
+		"CODOG_HOOK_MEMORY_TYPE="+payload.MemoryType,
+		"CODOG_HOOK_LOAD_REASON="+payload.LoadReason,
+		"CODOG_HOOK_GLOBS="+strings.Join(payload.Globs, ","),
+		"CODOG_HOOK_TRIGGER_FILE_PATH="+payload.TriggerFilePath,
+		"CODOG_HOOK_PARENT_FILE_PATH="+payload.ParentFilePath,
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -759,7 +797,8 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref, payload.TaskID, payload.TaskKind, payload.TaskStatus, payload.FilePath, payload.Operation}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref, payload.TaskID, payload.TaskKind, payload.TaskStatus, payload.FilePath, payload.Operation, payload.MemoryType, payload.LoadReason, payload.TriggerFilePath, payload.ParentFilePath}
+	values = append(values, payload.Globs...)
 	if len(payload.ToolInput) != 0 {
 		values = append(values, string(payload.ToolInput))
 	}
@@ -918,6 +957,8 @@ func normalizeEvent(event string) string {
 		return "task_created"
 	case "taskcompleted", "task_completed", "task-completed":
 		return "task_completed"
+	case "instructionsloaded", "instructions_loaded", "instructions-loaded":
+		return "instructions_loaded"
 	case "filechanged", "file_changed", "file-changed":
 		return "file_changed"
 	default:

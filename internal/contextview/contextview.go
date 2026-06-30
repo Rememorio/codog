@@ -43,35 +43,36 @@ type WorkspaceSummary struct {
 }
 
 type ConfigSummary struct {
-	Model                      string `json:"model"`
-	PermissionMode             string `json:"permission_mode"`
-	MaxTokens                  int    `json:"max_tokens"`
-	MaxTurns                   int    `json:"max_turns"`
-	AutoCompactMessages        int    `json:"auto_compact_messages"`
-	AuthConfigured             bool   `json:"auth_configured"`
-	MCPServerCount             int    `json:"mcp_server_count"`
-	EnabledSkillCount          int    `json:"enabled_skill_count"`
-	UserPromptSubmitHookCount  int    `json:"user_prompt_submit_hook_count"`
-	SessionStartHookCount      int    `json:"session_start_hook_count"`
-	SessionEndHookCount        int    `json:"session_end_hook_count"`
-	SetupHookCount             int    `json:"setup_hook_count"`
-	PreHookCount               int    `json:"pre_hook_count"`
-	PostHookCount              int    `json:"post_hook_count"`
-	PostFailureHookCount       int    `json:"post_tool_use_failure_hook_count"`
-	PermissionRequestHookCount int    `json:"permission_request_hook_count"`
-	PermissionDeniedHookCount  int    `json:"permission_denied_hook_count"`
-	StopHookCount              int    `json:"stop_hook_count"`
-	StopFailureHookCount       int    `json:"stop_failure_hook_count"`
-	PreCompactHookCount        int    `json:"pre_compact_hook_count"`
-	PostCompactHookCount       int    `json:"post_compact_hook_count"`
-	NotificationHookCount      int    `json:"notification_hook_count"`
-	SubagentStartHookCount     int    `json:"subagent_start_hook_count"`
-	SubagentStopHookCount      int    `json:"subagent_stop_hook_count"`
-	WorktreeCreateHookCount    int    `json:"worktree_create_hook_count"`
-	WorktreeRemoveHookCount    int    `json:"worktree_remove_hook_count"`
-	TaskCreatedHookCount       int    `json:"task_created_hook_count"`
-	TaskCompletedHookCount     int    `json:"task_completed_hook_count"`
-	FileChangedHookCount       int    `json:"file_changed_hook_count"`
+	Model                       string `json:"model"`
+	PermissionMode              string `json:"permission_mode"`
+	MaxTokens                   int    `json:"max_tokens"`
+	MaxTurns                    int    `json:"max_turns"`
+	AutoCompactMessages         int    `json:"auto_compact_messages"`
+	AuthConfigured              bool   `json:"auth_configured"`
+	MCPServerCount              int    `json:"mcp_server_count"`
+	EnabledSkillCount           int    `json:"enabled_skill_count"`
+	UserPromptSubmitHookCount   int    `json:"user_prompt_submit_hook_count"`
+	SessionStartHookCount       int    `json:"session_start_hook_count"`
+	SessionEndHookCount         int    `json:"session_end_hook_count"`
+	SetupHookCount              int    `json:"setup_hook_count"`
+	PreHookCount                int    `json:"pre_hook_count"`
+	PostHookCount               int    `json:"post_hook_count"`
+	PostFailureHookCount        int    `json:"post_tool_use_failure_hook_count"`
+	PermissionRequestHookCount  int    `json:"permission_request_hook_count"`
+	PermissionDeniedHookCount   int    `json:"permission_denied_hook_count"`
+	StopHookCount               int    `json:"stop_hook_count"`
+	StopFailureHookCount        int    `json:"stop_failure_hook_count"`
+	PreCompactHookCount         int    `json:"pre_compact_hook_count"`
+	PostCompactHookCount        int    `json:"post_compact_hook_count"`
+	NotificationHookCount       int    `json:"notification_hook_count"`
+	SubagentStartHookCount      int    `json:"subagent_start_hook_count"`
+	SubagentStopHookCount       int    `json:"subagent_stop_hook_count"`
+	WorktreeCreateHookCount     int    `json:"worktree_create_hook_count"`
+	WorktreeRemoveHookCount     int    `json:"worktree_remove_hook_count"`
+	TaskCreatedHookCount        int    `json:"task_created_hook_count"`
+	TaskCompletedHookCount      int    `json:"task_completed_hook_count"`
+	InstructionsLoadedHookCount int    `json:"instructions_loaded_hook_count"`
+	FileChangedHookCount        int    `json:"file_changed_hook_count"`
 }
 
 type SessionSummary struct {
@@ -151,35 +152,36 @@ func Build(options Options) Report {
 			Name: options.Status.Workspace.Name,
 		},
 		Config: ConfigSummary{
-			Model:                      options.Status.Config.Model,
-			PermissionMode:             options.Status.Config.PermissionMode,
-			MaxTokens:                  options.Status.Config.MaxTokens,
-			MaxTurns:                   options.Status.Config.MaxTurns,
-			AutoCompactMessages:        options.Status.Config.AutoCompactMessages,
-			AuthConfigured:             options.Status.Config.AuthConfigured,
-			MCPServerCount:             options.Status.Config.MCPServerCount,
-			EnabledSkillCount:          options.Status.Config.EnabledSkillCount,
-			UserPromptSubmitHookCount:  options.Status.Config.UserPromptSubmitHookCount,
-			SessionStartHookCount:      options.Status.Config.SessionStartHookCount,
-			SessionEndHookCount:        options.Status.Config.SessionEndHookCount,
-			SetupHookCount:             options.Status.Config.SetupHookCount,
-			PreHookCount:               options.Status.Config.PreHookCount,
-			PostHookCount:              options.Status.Config.PostHookCount,
-			PostFailureHookCount:       options.Status.Config.PostFailureHookCount,
-			PermissionRequestHookCount: options.Status.Config.PermissionRequestHookCount,
-			PermissionDeniedHookCount:  options.Status.Config.PermissionDeniedHookCount,
-			StopHookCount:              options.Status.Config.StopHookCount,
-			StopFailureHookCount:       options.Status.Config.StopFailureHookCount,
-			PreCompactHookCount:        options.Status.Config.PreCompactHookCount,
-			PostCompactHookCount:       options.Status.Config.PostCompactHookCount,
-			NotificationHookCount:      options.Status.Config.NotificationHookCount,
-			SubagentStartHookCount:     options.Status.Config.SubagentStartHookCount,
-			SubagentStopHookCount:      options.Status.Config.SubagentStopHookCount,
-			WorktreeCreateHookCount:    options.Status.Config.WorktreeCreateHookCount,
-			WorktreeRemoveHookCount:    options.Status.Config.WorktreeRemoveHookCount,
-			TaskCreatedHookCount:       options.Status.Config.TaskCreatedHookCount,
-			TaskCompletedHookCount:     options.Status.Config.TaskCompletedHookCount,
-			FileChangedHookCount:       options.Status.Config.FileChangedHookCount,
+			Model:                       options.Status.Config.Model,
+			PermissionMode:              options.Status.Config.PermissionMode,
+			MaxTokens:                   options.Status.Config.MaxTokens,
+			MaxTurns:                    options.Status.Config.MaxTurns,
+			AutoCompactMessages:         options.Status.Config.AutoCompactMessages,
+			AuthConfigured:              options.Status.Config.AuthConfigured,
+			MCPServerCount:              options.Status.Config.MCPServerCount,
+			EnabledSkillCount:           options.Status.Config.EnabledSkillCount,
+			UserPromptSubmitHookCount:   options.Status.Config.UserPromptSubmitHookCount,
+			SessionStartHookCount:       options.Status.Config.SessionStartHookCount,
+			SessionEndHookCount:         options.Status.Config.SessionEndHookCount,
+			SetupHookCount:              options.Status.Config.SetupHookCount,
+			PreHookCount:                options.Status.Config.PreHookCount,
+			PostHookCount:               options.Status.Config.PostHookCount,
+			PostFailureHookCount:        options.Status.Config.PostFailureHookCount,
+			PermissionRequestHookCount:  options.Status.Config.PermissionRequestHookCount,
+			PermissionDeniedHookCount:   options.Status.Config.PermissionDeniedHookCount,
+			StopHookCount:               options.Status.Config.StopHookCount,
+			StopFailureHookCount:        options.Status.Config.StopFailureHookCount,
+			PreCompactHookCount:         options.Status.Config.PreCompactHookCount,
+			PostCompactHookCount:        options.Status.Config.PostCompactHookCount,
+			NotificationHookCount:       options.Status.Config.NotificationHookCount,
+			SubagentStartHookCount:      options.Status.Config.SubagentStartHookCount,
+			SubagentStopHookCount:       options.Status.Config.SubagentStopHookCount,
+			WorktreeCreateHookCount:     options.Status.Config.WorktreeCreateHookCount,
+			WorktreeRemoveHookCount:     options.Status.Config.WorktreeRemoveHookCount,
+			TaskCreatedHookCount:        options.Status.Config.TaskCreatedHookCount,
+			TaskCompletedHookCount:      options.Status.Config.TaskCompletedHookCount,
+			InstructionsLoadedHookCount: options.Status.Config.InstructionsLoadedHookCount,
+			FileChangedHookCount:        options.Status.Config.FileChangedHookCount,
 		},
 		Git: options.Status.Git,
 		Session: SessionSummary{

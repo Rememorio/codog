@@ -216,6 +216,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.WorktreeRemove) != 0 ||
 		len(cfg.TaskCreated) != 0 ||
 		len(cfg.TaskCompleted) != 0 ||
+		len(cfg.InstructionsLoaded) != 0 ||
 		len(cfg.FileChanged) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
@@ -237,6 +238,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.WorktreeRemoveCommands) != 0 ||
 		len(cfg.TaskCreatedCommands) != 0 ||
 		len(cfg.TaskCompletedCommands) != 0 ||
+		len(cfg.InstructionsLoadedCommands) != 0 ||
 		len(cfg.FileChangedCommands) != 0
 }
 
