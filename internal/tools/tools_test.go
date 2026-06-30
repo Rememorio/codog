@@ -409,6 +409,10 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 
 func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/large" {
+			fmt.Fprint(w, "abcdef")
+			return
+		}
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "token", r.Header.Get("x-test"))
 		data, err := io.ReadAll(r.Body)
@@ -424,6 +428,17 @@ func TestRemoteTriggerToolCallsWebhook(t *testing.T) {
 	require.Contains(t, out, `"status_code": 200`)
 	require.Contains(t, out, `"body": "{\"ok\":true}"`)
 	require.Contains(t, out, `"X-Result": [`)
+	require.Contains(t, out, `"truncated": false`)
+
+	out, err = RemoteTriggerTool{}.Execute(context.Background(), []byte(`{"url":"`+server.URL+`/large","max_bytes":3}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"body": "abc"`)
+	require.Contains(t, out, `"bytes": 3`)
+	require.Contains(t, out, `"truncated": true`)
+
+	_, err = RemoteTriggerTool{}.Execute(context.Background(), []byte(`{"url":"file:///etc/passwd"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "http or https")
 }
 
 func TestTestingPermissionToolReturnsReceipt(t *testing.T) {

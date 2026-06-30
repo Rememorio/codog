@@ -37,6 +37,8 @@ Claude Code source.
   without executing that tool.
 - Bash execution includes preflight validation for read-only commands,
   destructive patterns, sed in-place edits, and suspicious path targets
+- `remote_trigger` validates HTTP/HTTPS URLs, supports request timeouts, and
+  returns bounded webhook responses with truncation metadata.
 - JSONL session persistence and resume
 - Workspace-scoped session storage with legacy flat-session compatibility
 - Basic config from `~/.codog/config.json`, `.codog.json`, environment, and flags

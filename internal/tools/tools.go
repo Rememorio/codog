@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,7 @@ const (
 	PermissionPrompt    Permission = "prompt"
 	PermissionAllow     Permission = "allow"
 	maxFileToolBytes    int64      = 2_000_000
+	maxRemoteBodyBytes  int64      = 2_000_000
 )
 
 type Tool interface {
@@ -1945,6 +1947,16 @@ func (RemoteTriggerTool) Definition() anthropic.ToolDefinition {
 				"method":  map[string]any{"type": "string", "enum": []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"}},
 				"headers": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
 				"body":    map[string]any{"type": "string"},
+				"timeout_ms": map[string]any{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Optional request timeout in milliseconds. Defaults to 30000.",
+				},
+				"max_bytes": map[string]any{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Maximum response body bytes to return, capped at 2000000.",
+				},
 			},
 			"required":             []string{"url"},
 			"additionalProperties": false,
@@ -1956,17 +1968,19 @@ func (RemoteTriggerTool) Permission() Permission { return PermissionDanger }
 
 func (RemoteTriggerTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		URL     string            `json:"url"`
-		Method  string            `json:"method"`
-		Headers map[string]string `json:"headers"`
-		Body    string            `json:"body"`
+		URL       string            `json:"url"`
+		Method    string            `json:"method"`
+		Headers   map[string]string `json:"headers"`
+		Body      string            `json:"body"`
+		TimeoutMS int               `json:"timeout_ms"`
+		MaxBytes  int64             `json:"max_bytes"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	payload.URL = strings.TrimSpace(payload.URL)
-	if payload.URL == "" {
-		return "", errors.New("url is required")
+	requestURL, err := validateRemoteTriggerURL(payload.URL)
+	if err != nil {
+		return "", err
 	}
 	method := strings.ToUpper(strings.TrimSpace(payload.Method))
 	if method == "" {
@@ -1977,9 +1991,21 @@ func (RemoteTriggerTool) Execute(ctx context.Context, input json.RawMessage) (st
 	default:
 		return "", fmt.Errorf("unsupported HTTP method: %s", method)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeout := 30 * time.Second
+	if payload.TimeoutMS > 0 {
+		timeout = time.Duration(payload.TimeoutMS) * time.Millisecond
+	}
+	limit := payload.MaxBytes
+	if limit <= 0 {
+		limit = 1024 * 1024
+	}
+	if limit > maxRemoteBodyBytes {
+		limit = maxRemoteBodyBytes
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, payload.URL, strings.NewReader(payload.Body))
+	started := time.Now()
+	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), strings.NewReader(payload.Body))
 	if err != nil {
 		return "", err
 	}
@@ -1997,18 +2023,40 @@ func (RemoteTriggerTool) Execute(ctx context.Context, input json.RawMessage) (st
 		return "", err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return "", err
 	}
+	truncated := int64(len(data)) > limit
+	if truncated {
+		data = data[:limit]
+	}
 	return pretty(map[string]any{
-		"url":         payload.URL,
+		"url":         requestURL.String(),
+		"final_url":   resp.Request.URL.String(),
 		"method":      method,
 		"status_code": resp.StatusCode,
 		"status":      resp.Status,
 		"headers":     resp.Header,
+		"bytes":       len(data),
+		"truncated":   truncated,
 		"body":        string(data),
+		"duration_ms": time.Since(started).Milliseconds(),
 	}), nil
+}
+
+func validateRemoteTriggerURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, errors.New("url must use http or https")
+	}
+	if parsed.Host == "" {
+		return nil, errors.New("url host is required")
+	}
+	return parsed, nil
 }
 
 type TestingPermissionTool struct{}
