@@ -91,6 +91,32 @@ func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
 	require.Contains(t, out, `"error": "exit status 7"`)
 }
 
+func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	registry := NewRegistryWithOptions(workspace, RegistryOptions{ConfigHome: configHome})
+	out, err := registry.Execute(context.Background(), "Bash", []byte(`{"command":"printf bash-ready; sleep 5","run_in_background":true}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"background": true`)
+	require.Contains(t, out, `"kind": "bash"`)
+	var payload struct {
+		Task background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.NotEmpty(t, payload.Task.ID)
+	require.Eventually(t, func() bool {
+		output, err := registry.Execute(context.Background(), "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+		return err == nil && strings.Contains(output, "bash-ready")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	out, err = registry.Execute(context.Background(), "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"status": "stopped"`)
+}
+
 func TestFileToolsAllowAdditionalDirs(t *testing.T) {
 	workspace := t.TempDir()
 	extra := filepath.Join(t.TempDir(), "extra")
@@ -247,13 +273,21 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 69)
+	require.Len(t, infos, 71)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("powershell")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("BashOutput")
+	require.True(t, ok)
+	require.Equal(t, "bash_output", info.Name)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("KillBash")
+	require.True(t, ok)
+	require.Equal(t, "kill_bash", info.Name)
+	require.Equal(t, PermissionWorkspace, info.Permission)
 	info, ok = registry.Info("Read")
 	require.True(t, ok)
 	require.Equal(t, "read_file", info.Name)

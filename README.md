@@ -11,7 +11,7 @@ Claude Code source.
 - Interactive REPL with Tab completion for built-in and custom slash commands,
   skill shortcuts, model switches, and recent sessions on real terminals
 - Anthropic-compatible streaming through `/v1/messages`
-- Built-in tools: `bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
+- Built-in tools: `bash`, `bash_output`, `kill_bash`, `powershell`, `read_file`, `write_file`, `edit_file`,
   `multi_edit`, `grep`, `glob`, `ls`, `web_fetch`, `web_search`, `remote_trigger`,
   `notebook_edit`,
   `lsp`, `agent`, `cron_create`, `cron_delete`, `cron_list`,
@@ -30,7 +30,7 @@ Claude Code source.
   `todo_read`, `todo_write`, `testing_permission`, `git_status`, `git_diff`, `git_log`,
   `git_show`, `git_blame`
 - Claude Code-style model tool names such as `Bash`, `Read`, `Write`, `Edit`,
-  `MultiEdit`, `LS`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
+  `BashOutput`, `KillBash`, `MultiEdit`, `LS`, `Task`, `TodoWrite`, `WebFetch`, and `ExitPlanMode` are accepted
   as execution aliases while Codog keeps one canonical tool definition per
   capability.
 - Permission confirmation with `read-only`, `workspace-write`,
@@ -43,6 +43,9 @@ Claude Code source.
   destructive patterns, sed in-place edits, and suspicious path targets
 - Shell tools return stdout, stderr, exit code, timeout/interruption status, and
   execution duration.
+- `bash` can run in the background with `run_in_background`; `bash_output` and
+  `kill_bash` read or stop those background bash tasks through Claude-compatible
+  `BashOutput` and `KillBash` aliases.
 - `remote_trigger` validates HTTP/HTTPS URLs, supports request timeouts, and
   returns bounded webhook responses with truncation metadata.
 - JSONL session persistence and resume

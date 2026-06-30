@@ -100,6 +100,7 @@ type RegistryOptions struct {
 var claudeToolAliases = map[string]string{
 	"askuserquestion":          "ask_user_question",
 	"bash":                     "bash",
+	"bashoutput":               "bash_output",
 	"brief":                    "brief",
 	"config":                   "config",
 	"edit":                     "edit_file",
@@ -117,6 +118,7 @@ var claudeToolAliases = map[string]string{
 	"listmcpprompts":           "list_mcp_prompts",
 	"listmcpresources":         "list_mcp_resources",
 	"listmcpresourcetemplates": "list_mcp_resource_templates",
+	"killbash":                 "kill_bash",
 	"ls":                       "ls",
 	"mcp":                      "mcp",
 	"mcpauth":                  "mcp_auth",
@@ -172,8 +174,10 @@ func NewRegistry(workspace string) *Registry {
 
 func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg := &Registry{tools: map[string]Tool{}}
-	reg.Register(BashTool{Workspace: workspace, SandboxStrategy: opts.SandboxStrategy})
+	reg.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, SandboxStrategy: opts.SandboxStrategy})
 	reg.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, Executable: opts.PowerShell})
+	reg.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	reg.Register(KillBashTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	reg.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	reg.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -249,7 +253,9 @@ func (r *Registry) Register(tool Tool) {
 }
 
 func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
-	r.Register(BashTool{Workspace: workspace, SandboxStrategy: opts.SandboxStrategy})
+	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, SandboxStrategy: opts.SandboxStrategy})
+	r.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(KillBashTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -1333,6 +1339,7 @@ func gitPathArg(workspace, requested string, allowMissing bool) (string, error) 
 
 type BashTool struct {
 	Workspace       string
+	ConfigHome      string
 	SandboxStrategy string
 }
 
@@ -1343,9 +1350,10 @@ func (BashTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"command":     map[string]any{"type": "string"},
-				"timeout_ms":  map[string]any{"type": "integer", "minimum": 1},
-				"description": map[string]any{"type": "string"},
+				"command":           map[string]any{"type": "string"},
+				"timeout_ms":        map[string]any{"type": "integer", "minimum": 1},
+				"description":       map[string]any{"type": "string"},
+				"run_in_background": map[string]any{"type": "boolean"},
 			},
 			"required":             []string{"command"},
 			"additionalProperties": false,
@@ -1357,8 +1365,9 @@ func (BashTool) Permission() Permission { return PermissionDanger }
 
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Command   string `json:"command"`
-		TimeoutMS int    `json:"timeout_ms"`
+		Command         string `json:"command"`
+		TimeoutMS       int    `json:"timeout_ms"`
+		RunInBackground bool   `json:"run_in_background"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -1366,16 +1375,27 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	if strings.TrimSpace(payload.Command) == "" {
 		return "", errors.New("command is required")
 	}
+	command, args, effectiveSandbox, err := sandbox.ShellCommand(t.SandboxStrategy, t.Workspace, payload.Command)
+	if err != nil {
+		return "", err
+	}
+	if payload.RunInBackground {
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(shellCommandLine(command, args), t.Workspace, background.RunOptions{Kind: "bash"})
+		if err != nil {
+			return "", err
+		}
+		result := map[string]any{"background": true, "task": task}
+		if effectiveSandbox != "" {
+			result["sandbox"] = effectiveSandbox
+		}
+		return pretty(result), nil
+	}
 	timeout := time.Duration(payload.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	command, args, effectiveSandbox, err := sandbox.ShellCommand(t.SandboxStrategy, t.Workspace, payload.Command)
-	if err != nil {
-		return "", err
-	}
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = t.Workspace
@@ -1402,6 +1422,156 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		result["error"] = err.Error()
 	}
 	return pretty(result), nil
+}
+
+type BashOutputTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (BashOutputTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "bash_output",
+		Description: "Read recent output from a background bash task started by the bash tool.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"bash_id":     map[string]any{"type": "string"},
+				"task_id":     map[string]any{"type": "string"},
+				"id":          map[string]any{"type": "string"},
+				"limit_bytes": map[string]any{"type": "integer", "minimum": 1},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (BashOutputTool) Permission() Permission { return PermissionReadOnly }
+
+func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		BashID     string `json:"bash_id"`
+		TaskID     string `json:"task_id"`
+		ID         string `json:"id"`
+		LimitBytes int64  `json:"limit_bytes"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	id, err := bashTaskID(payload.BashID, payload.TaskID, payload.ID)
+	if err != nil {
+		return "", err
+	}
+	if payload.LimitBytes <= 0 {
+		payload.LimitBytes = 64 * 1024
+	}
+	store := taskStore(t.ConfigHome, t.Workspace)
+	task, err := store.Status(id)
+	if err != nil {
+		return "", err
+	}
+	if err := requireBashTask(task); err != nil {
+		return "", err
+	}
+	output, err := store.Logs(id, payload.LimitBytes)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"bash_id": id,
+		"id":      id,
+		"status":  task.Status,
+		"output":  output,
+		"task":    task,
+	}), nil
+}
+
+type KillBashTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (KillBashTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "kill_bash",
+		Description: "Stop a running background bash task by id.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"bash_id": map[string]any{"type": "string"},
+				"task_id": map[string]any{"type": "string"},
+				"id":      map[string]any{"type": "string"},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (KillBashTool) Permission() Permission { return PermissionWorkspace }
+
+func (t KillBashTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		BashID string `json:"bash_id"`
+		TaskID string `json:"task_id"`
+		ID     string `json:"id"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	id, err := bashTaskID(payload.BashID, payload.TaskID, payload.ID)
+	if err != nil {
+		return "", err
+	}
+	store := taskStore(t.ConfigHome, t.Workspace)
+	task, err := store.Status(id)
+	if err != nil {
+		return "", err
+	}
+	if err := requireBashTask(task); err != nil {
+		return "", err
+	}
+	task, err = store.Stop(id)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{
+		"bash_id": id,
+		"id":      id,
+		"status":  task.Status,
+		"task":    task,
+	}), nil
+}
+
+func bashTaskID(values ...string) (string, error) {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value, nil
+		}
+	}
+	return "", errors.New("bash_id is required")
+}
+
+func requireBashTask(task background.Task) error {
+	if task.Kind != "bash" {
+		return fmt.Errorf("task %s is not a bash task", task.ID)
+	}
+	return nil
+}
+
+func shellCommandLine(command string, args []string) string {
+	parts := []string{shellQuote(command)}
+	for _, arg := range args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 type PowerShellTool struct {
