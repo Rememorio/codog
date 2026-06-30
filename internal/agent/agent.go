@@ -33,6 +33,7 @@ import (
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/fileinventory"
 	"github.com/Rememorio/codog/internal/focus"
+	"github.com/Rememorio/codog/internal/githubcomments"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
@@ -304,6 +305,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Feedback(rest, overrides)
 	case "pr":
 		return app.PullRequestDraft(rest, overrides)
+	case "pr-comments", "pr_comments":
+		return app.PRComments(ctx, rest)
 	case "issue":
 		return app.IssueDraft(rest, overrides)
 	case "run":
@@ -5195,6 +5198,75 @@ func (a *App) PullRequestDraft(args []string, overrides config.FlagOverrides) er
 	return a.writeDraft("pr", args, overrides)
 }
 
+type prCommentsRequest struct {
+	PR     string
+	Repo   string
+	Format string
+}
+
+func (a *App) PRComments(ctx context.Context, args []string) error {
+	req, err := parsePRCommentsArgs(args)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	report, err := githubcomments.Fetch(ctx, githubcomments.Options{
+		PR:   req.PR,
+		Repo: req.Repo,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	githubcomments.RenderText(a.Out, report)
+	return nil
+}
+
+func parsePRCommentsArgs(args []string) (prCommentsRequest, error) {
+	req := prCommentsRequest{Format: "text"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("pr-comments output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--repo":
+			index++
+			if index >= len(args) {
+				return req, errors.New("pr-comments repository is required")
+			}
+			req.Repo = args[index]
+		case strings.HasPrefix(arg, "--repo="):
+			req.Repo = strings.TrimPrefix(arg, "--repo=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "pr-comments"); err != nil {
+		return req, err
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected pr-comments argument %q", rest[1])
+	}
+	if len(rest) == 1 {
+		req.PR = rest[0]
+	}
+	return req, nil
+}
+
 func (a *App) IssueDraft(args []string, overrides config.FlagOverrides) error {
 	return a.writeDraft("issue", args, overrides)
 }
@@ -7757,6 +7829,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/pr":
 		if err := a.PullRequestDraft(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/pr-comments", "/pr_comments":
+		if err := a.PRComments(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/issue":
@@ -11291,6 +11367,7 @@ Usage:
   %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
+  %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
@@ -11351,7 +11428,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
