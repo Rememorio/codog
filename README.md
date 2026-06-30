@@ -218,6 +218,10 @@ Claude Code source.
 - `codog updater check|download|install|rollback` checks releases, downloads
   verified artifacts, verifies signed manifests, and installs with a backup
   rollback path.
+- `codog providers status|list|show|set` inspects the active
+  Anthropic-compatible provider, reports auth readiness without printing
+  secrets, lists presets/OAuth profiles, and persists provider base URL/model
+  changes.
 - `codog enterprise audit [limit]` prints recent local permission and tool-use
   audit events, and `enterprise verify POLICY PUBLIC_KEY` verifies signed
   managed policy files.
@@ -245,6 +249,8 @@ Inspect effective config with `codog config`, `codog config get SECTION`, or
 `codog config paths`. Persist settings with `codog config set KEY VALUE` and
 remove them with `codog config unset KEY`; use `--target project` or
 `--target local` to write `.codog.json` or `.codog.local.json`.
+Use `codog providers set anthropic` or `codog providers set custom --base-url
+URL --model MODEL` as a focused provider configuration shortcut.
 
 `~/.codog/config.json`, `.codog.json`, or `.codog.local.json`:
 

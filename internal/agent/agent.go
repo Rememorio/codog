@@ -122,6 +122,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		cfg = redactedConfig(cfg)
 		return renderConfigInspection(os.Stdout, cfg, paths, rest)
 	}
+	if command == "providers" {
+		cfg, paths, err := config.LoadForInspection(overrides)
+		if err != nil {
+			return err
+		}
+		applyStoredOAuthToken(&cfg, time.Now().UTC())
+		return renderProvidersCommand(os.Stdout, cfg, paths, rest)
+	}
 	if command == "mock-server" {
 		addr := ":8089"
 		if len(rest) > 0 {
@@ -289,6 +297,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Logout(rest)
 	case "oauth":
 		return app.OAuth(rest)
+	case "providers":
+		return app.Providers(rest)
 	case "status":
 		return app.Status(rest, overrides)
 	case "context":
@@ -1549,6 +1559,461 @@ func (a *App) oauthProvider(args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type providerPreset struct {
+	Name         string   `json:"name"`
+	Protocol     string   `json:"protocol"`
+	BaseURL      string   `json:"base_url,omitempty"`
+	DefaultModel string   `json:"default_model,omitempty"`
+	AuthEnv      []string `json:"auth_env,omitempty"`
+	Description  string   `json:"description,omitempty"`
+}
+
+type providerAuthReport struct {
+	Configured     bool     `json:"configured"`
+	Sources        []string `json:"sources"`
+	APIKey         bool     `json:"api_key"`
+	AuthToken      bool     `json:"auth_token"`
+	StoredOAuth    bool     `json:"stored_oauth"`
+	PreferredToken string   `json:"preferred_token,omitempty"`
+}
+
+type activeProviderReport struct {
+	Name      string             `json:"name"`
+	Protocol  string             `json:"protocol"`
+	BaseURL   string             `json:"base_url"`
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	MaxTurns  int                `json:"max_turns"`
+	Auth      providerAuthReport `json:"auth"`
+}
+
+type oauthProviderSummary struct {
+	Name     string   `json:"name"`
+	Issuer   string   `json:"issuer"`
+	ClientID string   `json:"client_id"`
+	Scopes   []string `json:"scopes,omitempty"`
+}
+
+type providersReport struct {
+	Kind          string                 `json:"kind"`
+	Action        string                 `json:"action"`
+	Active        activeProviderReport   `json:"active"`
+	Presets       []providerPreset       `json:"presets,omitempty"`
+	OAuthProfiles []oauthProviderSummary `json:"oauth_profiles,omitempty"`
+}
+
+type providerSetReport struct {
+	Kind     string                  `json:"kind"`
+	Action   string                  `json:"action"`
+	Status   string                  `json:"status"`
+	Provider string                  `json:"provider"`
+	BaseURL  string                  `json:"base_url,omitempty"`
+	Model    string                  `json:"model,omitempty"`
+	Target   string                  `json:"target,omitempty"`
+	Path     string                  `json:"path,omitempty"`
+	Changes  []config.MutationReport `json:"changes"`
+}
+
+type providerCommandRequest struct {
+	Action  string
+	Format  string
+	Name    string
+	BaseURL string
+	Model   string
+	Path    string
+	Target  string
+}
+
+func (a *App) Providers(args []string) error {
+	paths := []string{
+		filepath.Join(a.Config.ConfigHome, "config.json"),
+		".codog.json",
+		".codog.local.json",
+	}
+	return renderProvidersCommand(a.Out, a.Config, paths, args)
+}
+
+func renderProvidersCommand(out io.Writer, cfg config.Config, paths []string, args []string) error {
+	req, err := parseProviderCommandArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action == "set" {
+		report, err := setProviderConfig(paths, req)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		renderProviderSetText(out, report)
+		return nil
+	}
+	report, err := buildProvidersReport(cfg, req.Action)
+	if err != nil {
+		return err
+	}
+	if req.Action == "show" {
+		payload, err := providerShowPayload(report, req.Name)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		renderProviderShowText(out, payload)
+		return nil
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	renderProvidersText(out, report)
+	return nil
+}
+
+func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
+	req := providerCommandRequest{Action: "status", Format: "text"}
+	positionals := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("providers output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--base-url":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return req, errors.New("provider base URL is required")
+			}
+			req.BaseURL = args[i]
+		case strings.HasPrefix(arg, "--base-url="):
+			req.BaseURL = strings.TrimPrefix(arg, "--base-url=")
+		case arg == "--model":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return req, errors.New("provider model is required")
+			}
+			req.Model = args[i]
+		case strings.HasPrefix(arg, "--model="):
+			req.Model = strings.TrimPrefix(arg, "--model=")
+		case arg == "--target":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return req, errors.New("provider config target is required")
+			}
+			req.Target = args[i]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return req, errors.New("provider config path is required")
+			}
+			req.Path = args[i]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) > 0 {
+		switch strings.ToLower(positionals[0]) {
+		case "status", "list", "show", "set":
+			req.Action = strings.ToLower(positionals[0])
+			positionals = positionals[1:]
+		default:
+			req.Name = positionals[0]
+			req.Action = "show"
+			positionals = positionals[1:]
+		}
+	}
+	switch req.Action {
+	case "status", "list":
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected providers argument %q", positionals[0])
+		}
+	case "show":
+		if req.Name == "" {
+			if len(positionals) == 0 {
+				return req, errors.New("usage: codog providers show NAME")
+			}
+			req.Name = positionals[0]
+			positionals = positionals[1:]
+		}
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected providers argument %q", positionals[0])
+		}
+	case "set":
+		if len(positionals) == 0 {
+			return req, errors.New("usage: codog providers set anthropic|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
+		}
+		req.Name = positionals[0]
+		if len(positionals) > 1 && req.BaseURL == "" {
+			req.BaseURL = positionals[1]
+		}
+		if len(positionals) > 2 && req.Model == "" {
+			req.Model = positionals[2]
+		}
+		if len(positionals) > 3 {
+			return req, fmt.Errorf("unexpected providers argument %q", positionals[3])
+		}
+	default:
+		return req, fmt.Errorf("unknown providers command %q", req.Action)
+	}
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return req, fmt.Errorf("unknown providers output format %q", req.Format)
+	}
+}
+
+func buildProvidersReport(cfg config.Config, action string) (providersReport, error) {
+	profiles, err := oauth.ListProviderProfiles(cfg.ConfigHome)
+	if err != nil {
+		return providersReport{}, err
+	}
+	oauthProfiles := make([]oauthProviderSummary, 0, len(profiles))
+	for _, profile := range profiles {
+		oauthProfiles = append(oauthProfiles, oauthProviderSummary{
+			Name:     profile.Name,
+			Issuer:   profile.Issuer,
+			ClientID: profile.ClientID,
+			Scopes:   append([]string(nil), profile.Scopes...),
+		})
+	}
+	return providersReport{
+		Kind:          "providers",
+		Action:        action,
+		Active:        activeProvider(cfg),
+		Presets:       providerPresets(),
+		OAuthProfiles: oauthProfiles,
+	}, nil
+}
+
+func activeProvider(cfg config.Config) activeProviderReport {
+	name := "custom"
+	if sameProviderURL(cfg.BaseURL, config.DefaultBaseURL) {
+		name = "anthropic"
+	}
+	return activeProviderReport{
+		Name:      name,
+		Protocol:  "anthropic-compatible",
+		BaseURL:   cfg.BaseURL,
+		Model:     cfg.Model,
+		MaxTokens: cfg.MaxTokens,
+		MaxTurns:  cfg.MaxTurns,
+		Auth:      providerAuthStatus(cfg),
+	}
+}
+
+func providerAuthStatus(cfg config.Config) providerAuthReport {
+	storedOAuth := false
+	if token, err := oauth.LoadToken(cfg.ConfigHome); err == nil && token.AccessToken != "" && token.AccessToken == cfg.AuthToken {
+		storedOAuth = true
+	}
+	sources := []string{}
+	if cfg.APIKey != "" {
+		sources = append(sources, "api_key")
+	}
+	if cfg.AuthToken != "" {
+		if storedOAuth {
+			sources = append(sources, "stored_oauth")
+		} else {
+			sources = append(sources, "auth_token")
+		}
+	}
+	preferred := ""
+	if cfg.AuthToken != "" {
+		preferred = "auth_token"
+		if storedOAuth {
+			preferred = "stored_oauth"
+		}
+	} else if cfg.APIKey != "" {
+		preferred = "api_key"
+	}
+	return providerAuthReport{
+		Configured:     len(sources) != 0,
+		Sources:        sources,
+		APIKey:         cfg.APIKey != "",
+		AuthToken:      cfg.AuthToken != "",
+		StoredOAuth:    storedOAuth,
+		PreferredToken: preferred,
+	}
+}
+
+func providerPresets() []providerPreset {
+	return []providerPreset{
+		{
+			Name:         "anthropic",
+			Protocol:     "anthropic-compatible",
+			BaseURL:      config.DefaultBaseURL,
+			DefaultModel: config.DefaultModel,
+			AuthEnv:      []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+			Description:  "Anthropic Messages API.",
+		},
+		{
+			Name:        "custom",
+			Protocol:    "anthropic-compatible",
+			AuthEnv:     []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+			Description: "Any endpoint that implements the Anthropic Messages API.",
+		},
+	}
+}
+
+func providerShowPayload(report providersReport, name string) (any, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "current", "active", "":
+		return report.Active, nil
+	case "oauth":
+		return report.OAuthProfiles, nil
+	}
+	for _, preset := range report.Presets {
+		if strings.EqualFold(preset.Name, name) {
+			return preset, nil
+		}
+	}
+	for _, profile := range report.OAuthProfiles {
+		if strings.EqualFold(profile.Name, name) {
+			return profile, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown provider %q", name)
+}
+
+func setProviderConfig(paths []string, req providerCommandRequest) (providerSetReport, error) {
+	name := strings.ToLower(strings.TrimSpace(req.Name))
+	if name == "" {
+		return providerSetReport{}, errors.New("provider name is required")
+	}
+	baseURL := strings.TrimSpace(req.BaseURL)
+	model := strings.TrimSpace(req.Model)
+	switch name {
+	case "anthropic", "default":
+		name = "anthropic"
+		if baseURL == "" {
+			baseURL = config.DefaultBaseURL
+		}
+		if model == "" {
+			model = config.DefaultModel
+		}
+	case "custom", "compatible", "anthropic-compatible":
+		name = "custom"
+		if baseURL == "" {
+			return providerSetReport{}, errors.New("custom provider requires --base-url or a BASE_URL positional argument")
+		}
+	default:
+		if baseURL == "" {
+			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic or custom --base-url URL", req.Name)
+		}
+	}
+	if err := validateProviderBaseURL(baseURL); err != nil {
+		return providerSetReport{}, err
+	}
+	mutationReq := configMutationRequest{Target: req.Target, Path: req.Path}
+	path, err := configMutationPath(mutationReq, paths)
+	if err != nil {
+		return providerSetReport{}, err
+	}
+	changes := []config.MutationReport{}
+	baseReport, err := config.SetFileValue(path, "base_url", baseURL)
+	if err != nil {
+		return providerSetReport{}, err
+	}
+	changes = append(changes, baseReport)
+	if model != "" {
+		modelReport, err := config.SetFileValue(path, "model", model)
+		if err != nil {
+			return providerSetReport{}, err
+		}
+		changes = append(changes, modelReport)
+	}
+	return providerSetReport{
+		Kind:     "provider",
+		Action:   "set",
+		Status:   "ok",
+		Provider: name,
+		BaseURL:  baseURL,
+		Model:    model,
+		Target:   req.Target,
+		Path:     path,
+		Changes:  changes,
+	}, nil
+}
+
+func validateProviderBaseURL(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New("provider base URL is required")
+	}
+	if strings.Contains(value, "://") {
+		if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+			return nil
+		}
+		return errors.New("provider base URL must use http or https")
+	}
+	return errors.New("provider base URL must include a scheme")
+}
+
+func sameProviderURL(left, right string) bool {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(left)), "/") == strings.TrimRight(strings.ToLower(strings.TrimSpace(right)), "/")
+}
+
+func renderProvidersText(out io.Writer, report providersReport) {
+	active := report.Active
+	fmt.Fprintf(out, "Provider: %s (%s)\n", active.Name, active.Protocol)
+	fmt.Fprintf(out, "Model: %s\n", active.Model)
+	fmt.Fprintf(out, "Base URL: %s\n", active.BaseURL)
+	auth := "not configured"
+	if active.Auth.Configured {
+		auth = strings.Join(active.Auth.Sources, ", ")
+	}
+	fmt.Fprintf(out, "Auth: %s\n", auth)
+	if len(report.Presets) != 0 {
+		fmt.Fprintln(out, "\nPresets:")
+		for _, preset := range report.Presets {
+			baseURL := preset.BaseURL
+			if baseURL == "" {
+				baseURL = "<custom>"
+			}
+			fmt.Fprintf(out, "  %s: %s (%s)\n", preset.Name, baseURL, preset.Protocol)
+		}
+	}
+	if len(report.OAuthProfiles) != 0 {
+		fmt.Fprintln(out, "\nOAuth profiles:")
+		for _, profile := range report.OAuthProfiles {
+			fmt.Fprintf(out, "  %s: %s\n", profile.Name, profile.Issuer)
+		}
+	}
+}
+
+func renderProviderShowText(out io.Writer, payload any) {
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	fmt.Fprintln(out, string(data))
+}
+
+func renderProviderSetText(out io.Writer, report providerSetReport) {
+	fmt.Fprintf(out, "Provider set: %s\n", report.Provider)
+	fmt.Fprintf(out, "Base URL: %s\n", report.BaseURL)
+	if report.Model != "" {
+		fmt.Fprintf(out, "Model: %s\n", report.Model)
+	}
+	fmt.Fprintf(out, "Config: %s\n", report.Path)
 }
 
 func (a *App) oauthBrowser(args []string) error {
@@ -5315,9 +5780,9 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/providers":
 		args := fields[1:]
 		if len(args) == 0 {
-			args = []string{"list"}
+			args = []string{"status"}
 		}
-		if err := a.OAuth(append([]string{"provider"}, args...)); err != nil {
+		if err := a.Providers(args); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/session":
@@ -8117,7 +8582,7 @@ Usage:
   %s system-prompt [--json|--output-format text|json]
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
-  %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove
+  %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
@@ -8143,7 +8608,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
 `, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 

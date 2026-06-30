@@ -2496,6 +2496,72 @@ func TestOAuthProviderCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
+func TestProvidersStatusRedactsAuth(t *testing.T) {
+	configHome := t.TempDir()
+	_, err := oauth.SaveToken(configHome, oauth.Token{AccessToken: "stored-access-token"})
+	require.NoError(t, err)
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			BaseURL:    config.DefaultBaseURL,
+			Model:      "claude-sonnet-4-5",
+			MaxTokens:  4096,
+			MaxTurns:   8,
+			APIKey:     "api-key-secret",
+			AuthToken:  "stored-access-token",
+		},
+		Out: &out,
+	}
+
+	require.NoError(t, app.Providers([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"name": "anthropic"`)
+	require.Contains(t, out.String(), `"stored_oauth"`)
+	require.Contains(t, out.String(), `"api_key": true`)
+	require.NotContains(t, out.String(), "api-key-secret")
+	require.NotContains(t, out.String(), "stored-access-token")
+}
+
+func TestProvidersSetWritesConfig(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "provider.json")
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			BaseURL:    config.DefaultBaseURL,
+			Model:      config.DefaultModel,
+		},
+		Out: &out,
+	}
+
+	require.NoError(t, app.Providers([]string{"set", "custom", "--base-url", "http://127.0.0.1:8080", "--model", "claude-local", "--path", configPath, "--json"}))
+	require.Contains(t, out.String(), `"provider": "custom"`)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"base_url": "http://127.0.0.1:8080"`)
+	require.Contains(t, string(data), `"model": "claude-local"`)
+}
+
+func TestProvidersShowCurrent(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: t.TempDir(),
+			BaseURL:    "https://provider.example",
+			Model:      "claude-compatible",
+			MaxTokens:  2048,
+			MaxTurns:   4,
+		},
+		Out: &out,
+	}
+
+	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
+	require.Contains(t, out.String(), `"name": "custom"`)
+	require.Contains(t, out.String(), `"base_url": "https://provider.example"`)
+	require.Contains(t, out.String(), `"model": "claude-compatible"`)
+}
+
 func TestOAuthBrowserCommands(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
