@@ -98,6 +98,37 @@ func TestForkExistsAndDeleteSession(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestRenameSessionMovesJSONLAndUpdatesRecords(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.AppendInput("source", "rename prompt"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "before rename")))
+
+	result, err := store.Rename("source", "renamed")
+	require.NoError(t, err)
+	require.Equal(t, "source", result.OldID)
+	require.Equal(t, "renamed", result.NewID)
+	require.Equal(t, 1, result.MessageCount)
+	require.NoFileExists(t, filepath.Join(store.Dir, "source.jsonl"))
+	require.FileExists(t, filepath.Join(store.Dir, "renamed.jsonl"))
+
+	opened, err := store.Open("renamed")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "before rename", opened.Messages[0].Content[0].Text)
+	history, err := store.PromptHistory("renamed")
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	require.Equal(t, "renamed", history[0].SessionID)
+	data, err := os.ReadFile(result.NewPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"session_id":"renamed"`)
+
+	_, err = store.Rename("renamed", "../bad")
+	require.Error(t, err)
+	_, err = store.Rename("renamed", "renamed")
+	require.Error(t, err)
+}
+
 func TestPromptHistoryUsesInputRecords(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.AppendInput("source", "first prompt"))

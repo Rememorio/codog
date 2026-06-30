@@ -62,6 +62,14 @@ type ReplaceResult struct {
 	RemovedMessages   int    `json:"removed_messages"`
 }
 
+type RenameResult struct {
+	OldID        string `json:"old_id"`
+	NewID        string `json:"new_id"`
+	OldPath      string `json:"old_path"`
+	NewPath      string `json:"new_path"`
+	MessageCount int    `json:"message_count"`
+}
+
 type messageRecordInfo struct {
 	Time  time.Time
 	Usage *anthropic.Usage
@@ -194,6 +202,76 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) Rename(oldID string, newID string) (RenameResult, error) {
+	oldID = strings.TrimSpace(oldID)
+	newID = strings.TrimSpace(newID)
+	if oldID == "" {
+		return RenameResult{}, errors.New("session id is required")
+	}
+	if newID == "" {
+		return RenameResult{}, errors.New("new session id is required")
+	}
+	if oldID == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return RenameResult{}, err
+		}
+		oldID = latest
+	}
+	if err := validateSessionID(oldID); err != nil {
+		return RenameResult{}, err
+	}
+	if newID == "latest" {
+		return RenameResult{}, errors.New(`new session id cannot be "latest"`)
+	}
+	if err := validateSessionID(newID); err != nil {
+		return RenameResult{}, err
+	}
+	if oldID == newID {
+		return RenameResult{}, errors.New("new session id must differ from current id")
+	}
+	exists, err := s.Exists(oldID)
+	if err != nil {
+		return RenameResult{}, err
+	}
+	if !exists {
+		return RenameResult{}, os.ErrNotExist
+	}
+	if exists, err := s.Exists(newID); err != nil {
+		return RenameResult{}, err
+	} else if exists {
+		return RenameResult{}, fmt.Errorf("session %q already exists", newID)
+	}
+	oldPath := s.pathFor(oldID)
+	newPath := filepath.Join(s.Dir, newID+".jsonl")
+	records, err := s.readRecords(oldPath)
+	if err != nil {
+		return RenameResult{}, err
+	}
+	messageCount := 0
+	for index := range records {
+		if records[index].SessionID == "" || records[index].SessionID == oldID {
+			records[index].SessionID = newID
+		}
+		if records[index].Message != nil {
+			messageCount++
+		}
+	}
+	if err := s.writeRecords(newPath, records); err != nil {
+		return RenameResult{}, err
+	}
+	if err := os.Remove(oldPath); err != nil {
+		return RenameResult{}, err
+	}
+	return RenameResult{
+		OldID:        oldID,
+		NewID:        newID,
+		OldPath:      oldPath,
+		NewPath:      newPath,
+		MessageCount: messageCount,
+	}, nil
 }
 
 func (s *Store) Fork(id string, branchName string) (*Session, error) {
@@ -536,6 +614,16 @@ func (s *Store) pathFor(id string) string {
 		return legacy
 	}
 	return path
+}
+
+func validateSessionID(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("session id is required")
+	}
+	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") || filepath.Base(id) != id {
+		return fmt.Errorf("invalid session id %q", id)
+	}
+	return nil
 }
 
 func (s *Store) readMessages(path string) ([]anthropic.Message, error) {

@@ -303,6 +303,41 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	require.Contains(t, errOut.String(), "session deleted: "+forkedID)
 }
 
+func TestRenameSessionCommandAndSlash(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "rename me")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Rename([]string{"cli-renamed", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"old_id": "source"`)
+	require.Contains(t, out.String(), `"new_id": "cli-renamed"`)
+	ok, err := store.Exists("source")
+	require.NoError(t, err)
+	require.False(t, ok)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"rename", "cli-renamed", "sessions-renamed"}))
+	require.Contains(t, out.String(), `"new_id": "sessions-renamed"`)
+	out.Reset()
+
+	sess, err := store.Open("sessions-renamed")
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/rename slash-renamed", sess))
+	require.Equal(t, "slash-renamed", sess.ID)
+	require.Contains(t, errOut.String(), "session renamed: sessions-renamed -> slash-renamed")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/session rename final-renamed", sess))
+	require.Equal(t, "final-renamed", sess.ID)
+	require.Contains(t, errOut.String(), "session renamed: slash-renamed -> final-renamed")
+	opened, err := store.Open("final-renamed")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "rename me", opened.Messages[0].Content[0].Text)
+}
+
 func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)

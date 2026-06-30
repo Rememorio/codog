@@ -225,6 +225,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Prompt(ctx, input, overrides)
 	case "sessions":
 		return app.SessionsCommand(rest)
+	case "rename":
+		return app.Rename(rest, overrides)
 	case "history", "prompt-history":
 		return app.History(rest, overrides)
 	case "summary":
@@ -6175,6 +6177,23 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Summary(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/rename":
+		if len(fields) < 2 {
+			fmt.Fprintln(a.Err, "usage: /rename NEW_ID")
+			return true
+		}
+		result, err := a.Sessions.Rename(sess.ID, fields[1])
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return true
+		}
+		next, err := a.Sessions.Open(result.NewID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return true
+		}
+		*sess = *next
+		fmt.Fprintf(a.Err, "session renamed: %s -> %s\n", result.OldID, result.NewID)
 	case "/todos":
 		if err := a.Todos(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -7477,6 +7496,12 @@ type exportRequest struct {
 	Format    string
 }
 
+type renameRequest struct {
+	SessionID string
+	NewID     string
+	Format    string
+}
+
 type copyRequest struct {
 	SessionID string
 	Scope     string
@@ -7496,6 +7521,72 @@ type copyReport struct {
 }
 
 var writeClipboard = writeSystemClipboard
+
+func (a *App) Rename(args []string, overrides config.FlagOverrides) error {
+	req, err := parseRenameArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	result, err := a.Sessions.Rename(req.SessionID, req.NewID)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintf(a.Out, "Renamed session %s to %s (%d messages).\n", result.OldID, result.NewID, result.MessageCount)
+	return nil
+}
+
+func parseRenameArgs(args []string, overrides config.FlagOverrides) (renameRequest, error) {
+	req := renameRequest{SessionID: "latest", Format: "text"}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rename output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rename session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown rename flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog rename NEW_ID [--session ID] [--json]")
+	}
+	req.NewID = positionals[0]
+	switch req.Format {
+	case "text", "json":
+		return req, nil
+	default:
+		return req, fmt.Errorf("unknown rename output format %q", req.Format)
+	}
+}
 
 func (a *App) Export(args []string) error {
 	req, err := parseExportArgs(args, "latest")
@@ -7847,6 +7938,23 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 		}
 		*sess = *next
 		fmt.Fprintf(a.Err, "session forked: %s\n", sess.ID)
+	case "rename":
+		if len(args) < 2 {
+			fmt.Fprintln(a.Err, "usage: /session rename NEW_ID")
+			return
+		}
+		result, err := a.Sessions.Rename(sess.ID, args[1])
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		next, err := a.Sessions.Open(result.NewID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		*sess = *next
+		fmt.Fprintf(a.Err, "session renamed: %s -> %s\n", result.OldID, result.NewID)
 	case "delete":
 		if len(args) < 2 {
 			fmt.Fprintln(a.Err, "usage: /session delete ID")
@@ -7900,6 +8008,16 @@ func (a *App) SessionsCommand(args []string) error {
 			return err
 		}
 		data, _ := json.MarshalIndent(forked, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	case "rename":
+		if len(args) < 3 {
+			return errors.New("usage: codog sessions rename OLD_ID NEW_ID")
+		}
+		result, err := a.Sessions.Rename(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 	case "delete":
 		if len(args) < 2 {
@@ -9199,7 +9317,8 @@ Usage:
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
   %s [flags] repl
   %s [flags] tui
-  %s [flags] sessions [list|show|exists|fork|delete]
+  %s [flags] sessions [list|show|exists|fork|rename|delete]
+  %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
@@ -9277,7 +9396,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
