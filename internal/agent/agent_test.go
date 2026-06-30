@@ -531,6 +531,46 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Contains(t, out.String(), "agent stash")
 }
 
+func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
+	workspace := initGitRepo(t)
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello cli\n"), 0o644))
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "commit", "--all", "cli", "alias", "commit"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"commit":`)
+	require.Contains(t, out, "cli alias commit")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "log", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "cli alias commit")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "blame", "notes.txt", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "hello cli")
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello cli\nagain\n"), 0o644))
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "diff"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "+again")
+}
+
 func TestGitSlashDiffAndCommit(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\n"), 0o644))
@@ -3385,6 +3425,21 @@ func runGit(t *testing.T, workspace string, args ...string) {
 	cmd.Dir = workspace
 	data, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(data))
+}
+
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = writer
+	runErr := fn()
+	os.Stdout = original
+	require.NoError(t, writer.Close())
+	data, readErr := io.ReadAll(reader)
+	require.NoError(t, readErr)
+	require.NoError(t, reader.Close())
+	return string(data), runErr
 }
 
 func TestParseAgentRunArgs(t *testing.T) {

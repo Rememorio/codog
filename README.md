@@ -118,9 +118,9 @@ Claude Code source.
   workspace-local extra directories that `read_file`, `write_file`,
   `edit_file`, `grep`, and `glob` can access after path-scope validation.
 - `/diff`, `/commit`, `/branch`, `/tag`, `/log`, `/changelog`,
-  `/release-notes`, `/blame`, `/stash`, `/git`, and `codog git` provide local
-  git status, diff, branch, tag, log, changelog, blame, stash, and commit
-  workflows.
+  `/release-notes`, `/blame`, `/stash`, `/git`, `codog diff`, `codog commit`,
+  `codog log`, `codog blame`, and `codog git` provide local git status, diff,
+  branch, tag, log, changelog, blame, stash, and commit workflows.
 - `codog release-notes [FROM [TO]] [--format markdown|json]` generates grouped
   release notes from git commits, defaulting to the latest tag through `HEAD`
   when a tag exists.

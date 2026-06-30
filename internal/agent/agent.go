@@ -315,6 +315,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Copy(ctx, rest, overrides)
 	case "git":
 		return app.Git(rest)
+	case "diff", "log", "blame", "commit":
+		return app.Git(append([]string{command}, rest...))
 	case "branch":
 		return app.Branch(rest)
 	case "tag":
@@ -14961,7 +14963,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 
 func printHelp(out io.Writer) {
 	exe := filepath.Base(os.Args[0])
-	fmt.Fprintf(out, `%s is a Go-native coding agent CLI.
+	help := `%s is a Go-native coding agent CLI.
 
 Usage:
   %s [flags] prompt "explain this repo" | -p "explain this repo"
@@ -15035,6 +15037,7 @@ Usage:
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
+  %s [flags] diff [--staged] | log [count] | blame FILE [line] | commit [--all] MESSAGE
   %s [flags] git status | git diff [--staged] | git branch [ARGS...] | git tag [ARGS...] | git log|changelog [count] | git blame FILE [line] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE
   %s [flags] stash [list|push|apply|pop] [ARGS...]
   %s [flags] changelog [count]
@@ -15087,7 +15090,8 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`
+	fmt.Fprint(out, strings.ReplaceAll(help, "%s", exe))
 }
 
 func redact(value string) string {
