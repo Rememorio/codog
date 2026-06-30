@@ -704,6 +704,12 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.Equal(t, "notes.txt", statusJSON.Entries[0].Path)
 	out.Reset()
 
+	require.NoError(t, app.Git([]string{"--output-format", "JSON", "status"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusJSON))
+	require.Equal(t, "git_status", statusJSON.Kind)
+	require.False(t, statusJSON.Clean)
+	out.Reset()
+
 	require.NoError(t, app.Git([]string{"commit", "--all", "add", "notes"}))
 	require.Contains(t, out.String(), `"commit":`)
 	require.Contains(t, out.String(), "add notes")
@@ -844,6 +850,15 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.Equal(t, "cli alias commit", logJSON.Entries[0].Subject)
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "git", "--json", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var statusJSON gitStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &statusJSON))
+	require.Equal(t, "git_status", statusJSON.Kind)
+	require.True(t, statusJSON.Clean)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "changelog", "1"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
@@ -961,6 +976,12 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.Equal(t, "ok", statusJSON.Status)
 	require.True(t, statusJSON.Clean)
 	require.Empty(t, statusJSON.Entries)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/git --json status", sess))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusJSON))
+	require.Equal(t, "git_status", statusJSON.Kind)
+	require.True(t, statusJSON.Clean)
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\nchanged\n"), 0o644))

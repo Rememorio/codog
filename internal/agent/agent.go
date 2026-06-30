@@ -14329,6 +14329,11 @@ func validPermissionMode(mode string) bool {
 }
 
 func (a *App) Git(args []string) error {
+	var err error
+	args, err = rewriteLeadingGitOutputFormat(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
 	}
@@ -14361,6 +14366,59 @@ func (a *App) Git(args []string) error {
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
 	return nil
+}
+
+func rewriteLeadingGitOutputFormat(args []string) ([]string, error) {
+	format := ""
+	rest := args
+	for len(rest) > 0 {
+		arg := rest[0]
+		switch {
+		case arg == "--json":
+			format = "json"
+			rest = rest[1:]
+		case arg == "--output-format" || arg == "-o":
+			if len(rest) < 2 {
+				return nil, errors.New("git output format is required")
+			}
+			format = rest[1]
+			rest = rest[2:]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+			rest = rest[1:]
+		default:
+			if format == "" {
+				return args, nil
+			}
+			normalized, err := normalizeTextOrJSON(format, "git")
+			if err != nil {
+				return nil, err
+			}
+			out := append([]string(nil), rest...)
+			if gitSubcommandAcceptsOutputFormat(out[0]) && !argsHaveOutputFormat(out[1:]) {
+				out = append(out, "--output-format", normalized)
+			}
+			return out, nil
+		}
+	}
+	return rest, nil
+}
+
+func gitSubcommandAcceptsOutputFormat(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "status", "diff", "log", "changelog", "blame", "branch", "tag":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTextOrJSON(format, command string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	if err := validateTextOrJSON(normalized, command); err != nil {
+		return "", err
+	}
+	return normalized, nil
 }
 
 type gitStatusRequest struct {
@@ -14426,9 +14484,11 @@ func parseGitStatusArgs(args []string) (gitStatusRequest, error) {
 			return req, fmt.Errorf("unknown git status flag %q", arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "git status"); err != nil {
+	normalized, err := normalizeTextOrJSON(req.Format, "git status")
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalized
 	return req, nil
 }
 
@@ -14569,9 +14629,11 @@ func parseDiffArgs(args []string) (diffRequest, error) {
 			req.Paths = append(req.Paths, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "diff"); err != nil {
+	normalized, err := normalizeTextOrJSON(req.Format, "diff")
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalized
 	return req, nil
 }
 
@@ -14642,9 +14704,11 @@ func parseGitLogArgs(args []string) (gitLogRequest, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "git log"); err != nil {
+	normalized, err := normalizeTextOrJSON(req.Format, "git log")
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalized
 	if len(positionals) == 0 {
 		return req, nil
 	}
@@ -15150,9 +15214,11 @@ func parseChangelogArgs(args []string) (changelogRequest, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "changelog"); err != nil {
+	normalized, err := normalizeTextOrJSON(req.Format, "changelog")
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalized
 	if len(positionals) == 0 {
 		return req, nil
 	}
@@ -15417,9 +15483,11 @@ func parseGitBlameArgs(args []string) (gitBlameRequest, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "git blame"); err != nil {
+	normalized, err := normalizeTextOrJSON(req.Format, "git blame")
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalized
 	if len(positionals) == 0 || len(positionals) > 2 {
 		return req, errors.New("usage: codog git blame FILE [line] [--json|--output-format text|json]")
 	}
