@@ -181,7 +181,6 @@ func TestDumpManifestsCommand(t *testing.T) {
 
 	require.NoError(t, app.DumpManifests(nil))
 	require.Contains(t, out.String(), "Manifest Dump")
-	require.Contains(t, out.String(), "Bootstrap phases")
 	out.Reset()
 
 	otherWorkspace := t.TempDir()
@@ -190,20 +189,6 @@ func TestDumpManifestsCommand(t *testing.T) {
 
 	err := app.DumpManifests([]string{"--manifests-dir", filepath.Join(t.TempDir(), "missing")})
 	require.ErrorContains(t, err, "missing_manifests")
-}
-
-func TestBootstrapPlanCommand(t *testing.T) {
-	var out bytes.Buffer
-	app := &App{Out: &out}
-
-	require.NoError(t, app.BootstrapPlan([]string{"--json"}))
-	require.Contains(t, out.String(), `"kind": "bootstrap-plan"`)
-	require.Contains(t, out.String(), `"name": "load_config"`)
-	out.Reset()
-
-	require.NoError(t, app.BootstrapPlan(nil))
-	require.Contains(t, out.String(), "Bootstrap Plan")
-	require.Contains(t, out.String(), "load_config")
 }
 
 func TestSystemPromptCommand(t *testing.T) {

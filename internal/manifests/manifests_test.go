@@ -26,7 +26,6 @@ func TestBuildResolverManifest(t *testing.T) {
 	require.Greater(t, report.Tools, 0)
 	require.Equal(t, 1, report.Agents)
 	require.Equal(t, 1, report.Skills)
-	require.Greater(t, report.BootstrapPhases, 0)
 	require.Contains(t, manifestCommandNames(report.CommandManifests), "/help")
 	require.Contains(t, manifestToolNames(report.ToolManifests), "bash")
 	require.Equal(t, "helper", report.AgentManifests[0].Name)

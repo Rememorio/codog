@@ -207,8 +207,7 @@ Claude Code source.
   streaming server for harness tests.
 - `codog self-test` runs the prompt loop against an in-process mock provider.
 - `codog dump-manifests [--json]` emits the Go resolver inventory for slash
-  commands, tools, agents, skills, and bootstrap phases.
-- `codog bootstrap-plan [--json]` prints the local startup phase plan.
+  commands, tools, agents, and skills.
 - `codog system-prompt [--json]` renders the final local system prompt without
   making a provider request.
 - `enabled_skills` injects selected Markdown skills into the system prompt.
