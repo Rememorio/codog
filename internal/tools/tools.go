@@ -1996,7 +1996,7 @@ func (ReadFileTool) Definition() anthropic.ToolDefinition {
 				"offset": map[string]any{"type": "integer", "minimum": 0},
 				"limit":  map[string]any{"type": "integer", "minimum": 1},
 			},
-			"required":             []string{"path"},
+			"anyOf":                pathOrFilePathRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -2066,7 +2066,8 @@ func (WriteFileTool) Definition() anthropic.ToolDefinition {
 				},
 				"content": map[string]any{"type": "string"},
 			},
-			"required":             []string{"path", "content"},
+			"required":             []string{"content"},
+			"anyOf":                pathOrFilePathRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -2124,7 +2125,8 @@ func (EditFileTool) Definition() anthropic.ToolDefinition {
 				"new_string":  map[string]any{"type": "string"},
 				"replace_all": map[string]any{"type": "boolean"},
 			},
-			"required":             []string{"path", "old_string", "new_string"},
+			"required":             []string{"old_string", "new_string"},
+			"anyOf":                pathOrFilePathRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -2210,7 +2212,8 @@ func (MultiEditTool) Definition() anthropic.ToolDefinition {
 					},
 				},
 			},
-			"required":             []string{"path", "edits"},
+			"required":             []string{"edits"},
+			"anyOf":                pathOrFilePathRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -2271,6 +2274,13 @@ func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string
 		return "", err
 	}
 	return pretty(map[string]any{"path": path, "edits": len(payload.Edits), "replacements": total}), nil
+}
+
+func pathOrFilePathRequirement() []map[string]any {
+	return []map[string]any{
+		{"required": []string{"path"}},
+		{"required": []string{"file_path"}},
+	}
 }
 
 type GrepTool struct {

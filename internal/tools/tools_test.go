@@ -586,6 +586,54 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
+func TestFileToolSchemasAllowClaudeFilePathAlias(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	tests := []struct {
+		name     string
+		required []string
+	}{
+		{name: "Read"},
+		{name: "Write", required: []string{"content"}},
+		{name: "Edit", required: []string{"old_string", "new_string"}},
+		{name: "MultiEdit", required: []string{"edits"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, ok := registry.Info(tt.name)
+			require.True(t, ok)
+			requirePathAliasRequirement(t, info.InputSchema)
+
+			required, ok := info.InputSchema["required"].([]string)
+			if len(tt.required) == 0 {
+				require.False(t, ok)
+				return
+			}
+			require.True(t, ok)
+			require.ElementsMatch(t, tt.required, required)
+			require.NotContains(t, required, "path")
+			require.NotContains(t, required, "file_path")
+		})
+	}
+}
+
+func requirePathAliasRequirement(t *testing.T, schema map[string]any) {
+	t.Helper()
+	options, ok := schema["anyOf"].([]map[string]any)
+	require.True(t, ok)
+
+	seen := map[string]bool{}
+	for _, option := range options {
+		required, ok := option["required"].([]string)
+		require.True(t, ok)
+		if len(required) == 1 {
+			seen[required[0]] = true
+		}
+	}
+	require.True(t, seen["path"])
+	require.True(t, seen["file_path"])
+}
+
 func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\n"), 0o644))
