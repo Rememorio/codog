@@ -8,13 +8,30 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Skill struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Body   string `json:"body,omitempty"`
-	Source string `json:"source"`
+	Name                   string   `json:"name"`
+	DisplayName            string   `json:"display_name,omitempty"`
+	Path                   string   `json:"path"`
+	Description            string   `json:"description,omitempty"`
+	WhenToUse              string   `json:"when_to_use,omitempty"`
+	Version                string   `json:"version,omitempty"`
+	AllowedTools           []string `json:"allowed_tools,omitempty"`
+	ArgumentHint           string   `json:"argument_hint,omitempty"`
+	Arguments              []string `json:"arguments,omitempty"`
+	Paths                  []string `json:"paths,omitempty"`
+	Model                  string   `json:"model,omitempty"`
+	ExecutionContext       string   `json:"execution_context,omitempty"`
+	Agent                  string   `json:"agent,omitempty"`
+	Effort                 string   `json:"effort,omitempty"`
+	UserInvocable          bool     `json:"user_invocable"`
+	DisableModelInvocation bool     `json:"disable_model_invocation,omitempty"`
+	FrontmatterError       string   `json:"frontmatter_error,omitempty"`
+	Body                   string   `json:"body,omitempty"`
+	Source                 string   `json:"source"`
 }
 
 type InstallReport struct {
@@ -76,12 +93,7 @@ func Load(configHome, workspace string) ([]Skill, error) {
 			if err != nil {
 				return err
 			}
-			out = append(out, Skill{
-				Name:   name,
-				Path:   path,
-				Body:   string(data),
-				Source: root.source,
-			})
+			out = append(out, ParseDocument(name, path, root.source, string(data)))
 			return nil
 		})
 		if err != nil {
@@ -214,15 +226,8 @@ func RenderInvocation(skill Skill, args string) string {
 	args = strings.TrimSpace(args)
 	var builder strings.Builder
 	builder.WriteString("Use the following Codog skill for this request.\n\n")
-	builder.WriteString("<skill name=\"")
-	builder.WriteString(escapeAttr(skill.Name))
-	builder.WriteString("\" source=\"")
-	builder.WriteString(escapeAttr(skill.Source))
-	builder.WriteString("\" path=\"")
-	builder.WriteString(escapeAttr(skill.Path))
-	builder.WriteString("\">\n")
-	builder.WriteString(strings.TrimSpace(skill.Body))
-	builder.WriteString("\n</skill>\n\n")
+	builder.WriteString(RenderPromptBlock(skill))
+	builder.WriteString("\n\n")
 	if args == "" {
 		builder.WriteString("User request: apply this skill.")
 	} else {
@@ -230,6 +235,264 @@ func RenderInvocation(skill Skill, args string) string {
 		builder.WriteString(args)
 	}
 	return builder.String()
+}
+
+func RenderPromptBlock(skill Skill) string {
+	var builder strings.Builder
+	builder.WriteString("<skill name=\"")
+	builder.WriteString(escapeAttr(skill.Name))
+	builder.WriteString("\" source=\"")
+	builder.WriteString(escapeAttr(skill.Source))
+	builder.WriteString("\" path=\"")
+	builder.WriteString(escapeAttr(skill.Path))
+	if skill.DisplayName != "" {
+		builder.WriteString("\" display_name=\"")
+		builder.WriteString(escapeAttr(skill.DisplayName))
+	}
+	builder.WriteString("\">\n")
+	if metadata := renderMetadata(skill); metadata != "" {
+		builder.WriteString("<metadata>\n")
+		builder.WriteString(metadata)
+		builder.WriteString("</metadata>\n\n")
+	}
+	builder.WriteString(strings.TrimSpace(skill.Body))
+	builder.WriteString("\n</skill>")
+	return builder.String()
+}
+
+func ParseDocument(name string, path string, source string, text string) Skill {
+	body, frontmatter, parseErr := splitFrontmatter(text)
+	skill := Skill{
+		Name:          name,
+		Path:          path,
+		Body:          body,
+		Source:        source,
+		UserInvocable: true,
+	}
+	if parseErr != nil {
+		skill.FrontmatterError = parseErr.Error()
+	}
+	applyFrontmatter(&skill, frontmatter)
+	if skill.Description == "" {
+		skill.Description = descriptionFromMarkdown(skill.Body)
+	}
+	return skill
+}
+
+func splitFrontmatter(text string) (string, map[string]any, error) {
+	text = strings.TrimPrefix(text, "\ufeff")
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 || strings.TrimSpace(strings.TrimSuffix(lines[0], "\r")) != "---" {
+		return text, nil, nil
+	}
+	for index := 1; index < len(lines); index++ {
+		if strings.TrimSpace(strings.TrimSuffix(lines[index], "\r")) != "---" {
+			continue
+		}
+		source := strings.Join(lines[1:index], "\n")
+		body := strings.Join(lines[index+1:], "\n")
+		frontmatter := map[string]any{}
+		if err := yaml.Unmarshal([]byte(source), &frontmatter); err != nil {
+			return body, nil, err
+		}
+		return body, frontmatter, nil
+	}
+	return text, nil, nil
+}
+
+func applyFrontmatter(skill *Skill, frontmatter map[string]any) {
+	if len(frontmatter) == 0 {
+		return
+	}
+	skill.DisplayName = stringField(frontmatter, "name")
+	skill.Description = stringField(frontmatter, "description")
+	skill.WhenToUse = firstStringField(frontmatter, "when_to_use", "when-to-use")
+	skill.Version = stringField(frontmatter, "version")
+	skill.AllowedTools = stringListField(frontmatter["allowed-tools"])
+	skill.ArgumentHint = stringField(frontmatter, "argument-hint")
+	skill.Arguments = argumentListField(frontmatter["arguments"])
+	skill.Paths = normalizeSkillPaths(stringListField(frontmatter["paths"]))
+	skill.Model = stringField(frontmatter, "model")
+	skill.Agent = stringField(frontmatter, "agent")
+	skill.Effort = stringField(frontmatter, "effort")
+	if context := stringField(frontmatter, "context"); context == "fork" {
+		skill.ExecutionContext = context
+	}
+	if value, ok := boolField(frontmatter["user-invocable"]); ok {
+		skill.UserInvocable = value
+	}
+	if value, ok := boolField(frontmatter["disable-model-invocation"]); ok {
+		skill.DisableModelInvocation = value
+	}
+}
+
+func renderMetadata(skill Skill) string {
+	lines := []string{}
+	appendLine := func(label string, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			lines = append(lines, label+": "+value)
+		}
+	}
+	appendLine("Description", skill.Description)
+	appendLine("When to use", skill.WhenToUse)
+	appendLine("Version", skill.Version)
+	if len(skill.AllowedTools) > 0 {
+		appendLine("Allowed tools", strings.Join(skill.AllowedTools, ", "))
+	}
+	appendLine("Argument hint", skill.ArgumentHint)
+	if len(skill.Arguments) > 0 {
+		appendLine("Arguments", strings.Join(skill.Arguments, ", "))
+	}
+	if len(skill.Paths) > 0 {
+		appendLine("Paths", strings.Join(skill.Paths, ", "))
+	}
+	appendLine("Model", skill.Model)
+	appendLine("Execution context", skill.ExecutionContext)
+	appendLine("Agent", skill.Agent)
+	appendLine("Effort", skill.Effort)
+	if !skill.UserInvocable {
+		appendLine("User invocable", "false")
+	}
+	if skill.DisableModelInvocation {
+		appendLine("Disable model invocation", "true")
+	}
+	appendLine("Frontmatter error", skill.FrontmatterError)
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func stringField(frontmatter map[string]any, key string) string {
+	return strings.TrimSpace(scalarString(frontmatter[key]))
+}
+
+func firstStringField(frontmatter map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value := stringField(frontmatter, key)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func scalarString(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func stringListField(value any) []string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case []any:
+		out := []string{}
+		for _, item := range typed {
+			out = append(out, splitCommaOrNewline(scalarString(item))...)
+		}
+		return compactStrings(out)
+	case []string:
+		out := []string{}
+		for _, item := range typed {
+			out = append(out, splitCommaOrNewline(item)...)
+		}
+		return compactStrings(out)
+	case string:
+		return compactStrings(splitCommaOrNewline(typed))
+	default:
+		return compactStrings(splitCommaOrNewline(scalarString(typed)))
+	}
+}
+
+func argumentListField(value any) []string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case []any, []string:
+		return stringListField(value)
+	case string:
+		return compactStrings(strings.Fields(strings.NewReplacer(",", " ", "\n", " ").Replace(typed)))
+	default:
+		return compactStrings(strings.Fields(scalarString(typed)))
+	}
+}
+
+func splitCommaOrNewline(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r'
+	})
+}
+
+func compactStrings(values []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeSkillPaths(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+		value = strings.TrimSuffix(value, "/**")
+		if value == "" || value == "**" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return compactStrings(out)
+}
+
+func boolField(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return false, false
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "yes", "y", "1", "on":
+			return true, true
+		case "false", "no", "n", "0", "off":
+			return false, true
+		default:
+			return false, false
+		}
+	default:
+		return false, false
+	}
+}
+
+func descriptionFromMarkdown(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = strings.TrimLeft(line, "#")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func defaultInstallName(source string, info os.FileInfo) string {

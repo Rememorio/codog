@@ -15891,11 +15891,8 @@ func (a *App) systemPrompt() string {
 		if err != nil {
 			continue
 		}
-		builder.WriteString("\n\n<skill name=\"")
-		builder.WriteString(skill.Name)
-		builder.WriteString("\">\n")
-		builder.WriteString(skill.Body)
-		builder.WriteString("\n</skill>")
+		builder.WriteString("\n\n")
+		builder.WriteString(skills.RenderPromptBlock(skill))
 	}
 	if rendered := outputstyle.RenderPrompt(a.Config.ConfigHome, a.Workspace); rendered != "" {
 		builder.WriteString("\n\n")

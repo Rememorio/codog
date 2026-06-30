@@ -36,6 +36,61 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.True(t, errors.Is(err, ErrNotFound))
 }
 
+func TestParseSkillFrontmatterMetadata(t *testing.T) {
+	doc := `---
+name: Review helper
+description: Review Go changes.
+allowed-tools:
+  - Read
+  - Bash(go test:*)
+argument-hint: FILE
+arguments: [file, focus]
+paths:
+  - internal/**
+  - "**"
+when_to_use: When Go files change.
+version: 1.2.3
+model: sonnet
+context: fork
+agent: reviewer
+effort: high
+user-invocable: false
+disable-model-invocation: true
+---
+# Review body
+
+Use the checklist.
+`
+	skill := ParseDocument("review", filepath.Join("review", "SKILL.md"), "workspace", doc)
+
+	require.Equal(t, "review", skill.Name)
+	require.Equal(t, "Review helper", skill.DisplayName)
+	require.Equal(t, "Review Go changes.", skill.Description)
+	require.Equal(t, []string{"Read", "Bash(go test:*)"}, skill.AllowedTools)
+	require.Equal(t, "FILE", skill.ArgumentHint)
+	require.Equal(t, []string{"file", "focus"}, skill.Arguments)
+	require.Equal(t, []string{"internal"}, skill.Paths)
+	require.Equal(t, "When Go files change.", skill.WhenToUse)
+	require.Equal(t, "1.2.3", skill.Version)
+	require.Equal(t, "sonnet", skill.Model)
+	require.Equal(t, "fork", skill.ExecutionContext)
+	require.Equal(t, "reviewer", skill.Agent)
+	require.Equal(t, "high", skill.Effort)
+	require.False(t, skill.UserInvocable)
+	require.True(t, skill.DisableModelInvocation)
+	require.NotContains(t, skill.Body, "allowed-tools")
+
+	rendered := RenderPromptBlock(skill)
+	require.Contains(t, rendered, `<skill name="review"`)
+	require.Contains(t, rendered, `display_name="Review helper"`)
+	require.Contains(t, rendered, "Description: Review Go changes.")
+	require.Contains(t, rendered, "Allowed tools: Read, Bash(go test:*)")
+	require.Contains(t, rendered, "Paths: internal")
+	require.Contains(t, rendered, "User invocable: false")
+	require.Contains(t, rendered, "# Review body")
+	require.NotContains(t, rendered, "---")
+}
+
 func TestInstallAndUninstallSkills(t *testing.T) {
 	root := t.TempDir()
 	sourceFile := filepath.Join(root, "review.md")

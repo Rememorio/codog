@@ -140,8 +140,10 @@ Claude Code source.
   commands with captured stdout/stderr and text or JSON reports.
 - `codog skills list|show|invoke|install|uninstall` discovers and manages Markdown skills from
   `~/.codog/skills`, `.codog/skills`, and `.claude/skills`, including
-  directory skills with `SKILL.md`; prompt turns can also invoke a discovered
-  skill by starting input with the skill name.
+  directory skills with `SKILL.md`; skill frontmatter such as `description`,
+  `allowed-tools`, `argument-hint`, `arguments`, `paths`, `when_to_use`,
+  `model`, `context`, `agent`, and `effort` is parsed into prompt metadata.
+  Prompt turns can also invoke a discovered skill by starting input with the skill name.
 - `codog templates list|show|apply` finds Markdown prompt templates from
   `~/.codog/templates` and `.codog/templates`, then renders `{{name}}`
   variables for reusable prompts.

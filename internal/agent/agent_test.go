@@ -3319,6 +3319,37 @@ func TestSystemPromptSupportsOverrideAndAppend(t *testing.T) {
 	require.NotContains(t, prompt, "You are Codog")
 }
 
+func TestSystemPromptIncludesSkillFrontmatterMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	skillDir := filepath.Join(workspace, ".codog", "skills", "review")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+description: Reviews changed Go files.
+allowed-tools: Read, Bash(go test:*)
+argument-hint: FILE
+paths:
+  - internal/**
+---
+Review body.
+`), 0o644))
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome, EnabledSkills: []string{"review"}},
+		Workspace: workspace,
+	}
+
+	prompt := app.systemPrompt()
+
+	require.Contains(t, prompt, `<skill name="review"`)
+	require.Contains(t, prompt, "Description: Reviews changed Go files.")
+	require.Contains(t, prompt, "Allowed tools: Read, Bash(go test:*)")
+	require.Contains(t, prompt, "Argument hint: FILE")
+	require.Contains(t, prompt, "Paths: internal")
+	require.Contains(t, prompt, "Review body.")
+	require.NotContains(t, prompt, "allowed-tools:")
+	require.NotContains(t, prompt, "---")
+}
+
 func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "skill done"}.Handler())
 	defer server.Close()
