@@ -300,6 +300,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "commit", command)
 	require.Equal(t, []string{"--all", "message", "--output-format", "text"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "config", "get", "auth"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "config", command)
+	require.Equal(t, []string{"get", "auth", "--output-format", "json"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -1348,12 +1353,22 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.NotContains(t, out.String(), "secret")
 	out.Reset()
 
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json", "project.json"}, []string{"--output-format", "json", "get", "auth"}))
+	require.Contains(t, out.String(), `"base_url": "https://api.example.test"`)
+	require.NotContains(t, out.String(), "secret")
+	out.Reset()
+
 	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json", "project.json"}, []string{"paths"}))
 	require.Contains(t, out.String(), "project.json")
 	out.Reset()
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model"}))
 	require.Contains(t, out.String(), `"model": "model-a"`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Config")
+	require.Contains(t, out.String(), "model-a")
 }
 
 func TestRenderConfigInspectionMutatesConfigFile(t *testing.T) {

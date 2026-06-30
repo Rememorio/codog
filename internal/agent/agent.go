@@ -14157,24 +14157,23 @@ func (a *App) runtimeConfigPayload(args []string) (any, error) {
 }
 
 func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, args []string) error {
+	req, err := parseConfigInspectionArgs(args)
+	if err != nil {
+		return err
+	}
+	args = req.Args
 	if len(args) == 0 {
-		data, _ := json.MarshalIndent(map[string]any{"config": cfg, "paths": paths}, "", "  ")
-		fmt.Fprintln(out, string(data))
-		return nil
+		return renderConfigInspectionPayload(out, req.Format, map[string]any{"config": cfg, "paths": paths})
 	}
 	if strings.EqualFold(args[0], "set") || strings.EqualFold(args[0], "unset") {
 		report, err := mutateConfigFile(args, paths)
 		if err != nil {
 			return err
 		}
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(out, string(data))
-		return nil
+		return renderConfigInspectionPayload(out, req.Format, report)
 	}
 	if strings.EqualFold(args[0], "paths") {
-		data, _ := json.MarshalIndent(map[string]any{"paths": paths}, "", "  ")
-		fmt.Fprintln(out, string(data))
-		return nil
+		return renderConfigInspectionPayload(out, req.Format, map[string]any{"paths": paths})
 	}
 	if strings.EqualFold(args[0], "get") {
 		if len(args) < 2 {
@@ -14186,9 +14185,84 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	if err != nil {
 		return err
 	}
+	return renderConfigInspectionPayload(out, req.Format, payload)
+}
+
+type configInspectionRequest struct {
+	Format string
+	Args   []string
+}
+
+func parseConfigInspectionArgs(args []string) (configInspectionRequest, error) {
+	req := configInspectionRequest{Format: "json"}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("config output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			req.Args = append(req.Args, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "config")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	return req, nil
+}
+
+func renderConfigInspectionPayload(out io.Writer, format string, payload any) error {
+	if format == "text" {
+		renderConfigInspectionText(out, payload)
+		return nil
+	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(out, string(data))
 	return nil
+}
+
+func renderConfigInspectionText(out io.Writer, payload any) {
+	fmt.Fprintln(out, "Config")
+	switch value := payload.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(out, "  %-16s %s\n", key, configTextValue(value[key]))
+		}
+	case config.MutationReport:
+		fmt.Fprintf(out, "  Status           %s\n", value.Status)
+		fmt.Fprintf(out, "  Action           %s\n", value.Action)
+		fmt.Fprintf(out, "  Path             %s\n", value.Path)
+		fmt.Fprintf(out, "  Key              %s\n", value.Key)
+	default:
+		data, _ := json.MarshalIndent(value, "", "  ")
+		fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(string(data), "\n", "\n  "))
+	}
+}
+
+func configTextValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []string:
+		return strings.Join(typed, ", ")
+	default:
+		data, _ := json.Marshal(typed)
+		return string(data)
+	}
 }
 
 type configMutationRequest struct {
@@ -18562,7 +18636,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "changelog", "chrome",
-		"color", "commands", "commit", "commit-push-pr", "compact", "context", "ctx_viz",
+		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "log", "marketplace",
@@ -18662,7 +18736,7 @@ Usage:
   %s [flags] prompt "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
-  %s config [get SECTION|paths|set KEY VALUE|unset KEY]
+  %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|rename|delete]
@@ -18772,7 +18846,7 @@ Usage:
   %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
   %s --acp|-acp [serve] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
-  %s config [get SECTION|paths|set KEY VALUE|unset KEY]
+  %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
 
 Flags:
   --model NAME
