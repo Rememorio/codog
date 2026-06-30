@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/gitops"
 )
 
 type Options struct {
@@ -56,6 +58,7 @@ type Options struct {
 	SessionCount                int
 	GitStatus                   string
 	GitError                    string
+	GitFreshness                *gitops.BranchFreshness
 	SandboxOS                   string
 	SandboxDefault              string
 	SandboxStrategies           []string
@@ -150,15 +153,16 @@ type ToolsStatus struct {
 }
 
 type GitStatus struct {
-	Available bool   `json:"available"`
-	Error     string `json:"error,omitempty"`
-	Branch    string `json:"branch,omitempty"`
-	Clean     bool   `json:"clean"`
-	Staged    int    `json:"staged"`
-	Unstaged  int    `json:"unstaged"`
-	Untracked int    `json:"untracked"`
-	Conflicts int    `json:"conflicts"`
-	Raw       string `json:"raw,omitempty"`
+	Available bool                    `json:"available"`
+	Error     string                  `json:"error,omitempty"`
+	Branch    string                  `json:"branch,omitempty"`
+	Clean     bool                    `json:"clean"`
+	Staged    int                     `json:"staged"`
+	Unstaged  int                     `json:"unstaged"`
+	Untracked int                     `json:"untracked"`
+	Conflicts int                     `json:"conflicts"`
+	Freshness *gitops.BranchFreshness `json:"freshness,omitempty"`
+	Raw       string                  `json:"raw,omitempty"`
 }
 
 type SandboxStatus struct {
@@ -180,6 +184,12 @@ func Build(opts Options) Snapshot {
 	status := "ok"
 	if !git.Available {
 		status = "degraded"
+	} else if opts.GitFreshness != nil {
+		freshness := *opts.GitFreshness
+		git.Freshness = &freshness
+		if !freshness.Fresh {
+			status = "warn"
+		}
 	}
 	return Snapshot{
 		Kind:    "status",
@@ -289,6 +299,15 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 			snapshot.Git.Untracked,
 			snapshot.Git.Conflicts,
 		)
+		if snapshot.Git.Freshness != nil {
+			freshness := snapshot.Git.Freshness
+			fmt.Fprintf(w, "  Git freshness    status=%s base=%s ahead=%d behind=%d\n",
+				freshness.Status,
+				freshness.Base,
+				freshness.Ahead,
+				freshness.Behind,
+			)
+		}
 	} else {
 		fmt.Fprintf(w, "  Git              unavailable: %s\n", snapshot.Git.Error)
 	}

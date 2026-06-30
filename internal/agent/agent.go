@@ -10636,6 +10636,12 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	if gitErr != nil {
 		gitError = gitErr.Error()
 	}
+	var gitFreshness *gitops.BranchFreshness
+	if gitErr == nil {
+		if freshness, err := gitops.CheckBranchFreshness(a.Workspace, "", "main"); err == nil {
+			gitFreshness = &freshness
+		}
+	}
 	sandboxStatus := sandbox.Detect()
 	executable := ""
 	if path, err := os.Executable(); err == nil {
@@ -10690,6 +10696,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		SessionCount:                sessionCount,
 		GitStatus:                   gitRaw,
 		GitError:                    gitError,
+		GitFreshness:                gitFreshness,
 		SandboxOS:                   sandboxStatus.OS,
 		SandboxDefault:              sandboxStatus.Default,
 		SandboxStrategies:           sandboxStatus.Strategies,

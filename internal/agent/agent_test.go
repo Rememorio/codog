@@ -1195,6 +1195,39 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "session=source(1)")
 }
 
+func TestStatusIncludesBranchFreshness(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	runGit(t, workspace, "switch", "-c", "topic")
+	runGit(t, workspace, "switch", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "fix: main update")
+	runGit(t, workspace, "switch", "topic")
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{Model: "claude-test", BaseURL: "https://api.example.test"},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"status": "warn"`)
+	require.Contains(t, out.String(), `"freshness": {`)
+	require.Contains(t, out.String(), `"status": "stale"`)
+	require.Contains(t, out.String(), `"behind": 1`)
+	require.Contains(t, out.String(), `"fix: main update"`)
+}
+
 func TestHistoryCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

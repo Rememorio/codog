@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,31 @@ func TestBuildMarksGitErrorDegraded(t *testing.T) {
 	require.Equal(t, "degraded", snapshot.Status)
 	require.False(t, snapshot.Git.Available)
 	require.Contains(t, snapshot.Git.Error, "not a git repository")
+}
+
+func TestBuildWarnsOnStaleBranchFreshness(t *testing.T) {
+	snapshot := Build(Options{
+		Version:   "test-version",
+		GitStatus: "## topic",
+		GitFreshness: &gitops.BranchFreshness{
+			Branch:       "topic",
+			Base:         "main",
+			Status:       "stale",
+			Fresh:        false,
+			Ahead:        0,
+			Behind:       2,
+			MissingFixes: []string{"fix: resolve timeout"},
+		},
+	})
+
+	require.Equal(t, "warn", snapshot.Status)
+	require.NotNil(t, snapshot.Git.Freshness)
+	require.Equal(t, "stale", snapshot.Git.Freshness.Status)
+	require.Equal(t, 2, snapshot.Git.Freshness.Behind)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Git freshness    status=stale base=main ahead=0 behind=2")
 }
 
 func TestBuildParsesInitialBranch(t *testing.T) {
