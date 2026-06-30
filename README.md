@@ -65,7 +65,7 @@ Claude Code source.
   `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/pr_comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/thinkback`, `/thinkback-play`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/ultraplan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/node`, `/python`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/terminalSetup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/bridge`, `/bridge-kick`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/terminalSetup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/bridge`, `/bridge-kick`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/oauth-refresh`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON,
@@ -250,9 +250,9 @@ Claude Code source.
   browser authorization; `oauth status` inspects local auth readiness; `oauth
   logout` revokes and deletes local auth; `oauth token save|show|refresh|revoke|delete`
   manages and refreshes a keychain-backed auth token store with a local file fallback.
-- `codog login [browser|device] PROFILE` and `codog logout [PROFILE]` are
-  top-level aliases for the configured OAuth browser/device login and logout
-  flows.
+- `codog login [browser|device] PROFILE`, `codog oauth-refresh [PROFILE]`, and
+  `codog logout [PROFILE]` are top-level aliases for the configured OAuth
+  browser/device login, token refresh, and logout flows.
 - `codog status [--json]` prints a local workspace/config/session/git/sandbox
   runtime snapshot for humans or scripts.
 - `codog statusline [--json]` and `/statusline` print a compact one-line

@@ -4025,6 +4025,26 @@ func TestOAuthTokenRefreshCommand(t *testing.T) {
 	loaded, err := oauth.LoadToken(configHome)
 	require.NoError(t, err)
 	require.Equal(t, "refreshed-access", loaded.AccessToken)
+	out.Reset()
+
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "old-access",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+	require.NoError(t, app.OAuthRefresh([]string{"--json"}))
+	require.Contains(t, out.String(), `"access_token": "refr...cess"`)
+	out.Reset()
+
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "old-access",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().UTC().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/oauth-refresh", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"access_token": "refr...cess"`)
 }
 
 func TestOAuthStatusCommand(t *testing.T) {

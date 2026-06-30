@@ -382,6 +382,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Logout(rest)
 	case "oauth":
 		return app.OAuth(rest)
+	case "oauth-refresh":
+		return app.OAuthRefresh(rest)
 	case "providers":
 		return app.Providers(rest)
 	case "brief":
@@ -2907,6 +2909,51 @@ func (a *App) Login(args []string) error {
 
 func (a *App) Logout(args []string) error {
 	return a.OAuth(append([]string{"logout"}, args...))
+}
+
+func (a *App) OAuthRefresh(args []string) error {
+	profile, err := parseOAuthRefreshArgs(args)
+	if err != nil {
+		return err
+	}
+	token, err := oauth.RefreshStoredToken(context.Background(), a.Config.ConfigHome, profile)
+	if err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func parseOAuthRefreshArgs(args []string) (string, error) {
+	profile := ""
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return "", errors.New("oauth-refresh output format is required")
+			}
+			if args[index] != "json" {
+				return "", fmt.Errorf("unknown oauth-refresh output format %q", args[index])
+			}
+		case strings.HasPrefix(arg, "--output-format="):
+			format := strings.TrimPrefix(arg, "--output-format=")
+			if format != "json" {
+				return "", fmt.Errorf("unknown oauth-refresh output format %q", format)
+			}
+		case strings.HasPrefix(arg, "-"):
+			return "", fmt.Errorf("unknown oauth-refresh flag %q", arg)
+		default:
+			if profile != "" {
+				return "", fmt.Errorf("unexpected oauth-refresh argument %q", arg)
+			}
+			profile = arg
+		}
+	}
+	return profile, nil
 }
 
 func (a *App) OAuth(args []string) error {
@@ -11711,6 +11758,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Login(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/oauth-refresh":
+		if err := a.OAuthRefresh(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/logout":
 		if err := a.Logout(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -15653,7 +15704,7 @@ Usage:
   %s agents list | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID
   %s reload-plugins [--json|--output-format text|json]
   %s marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
-  %s login [browser|device] PROFILE [ARGS...] | logout [PROFILE]
+  %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
