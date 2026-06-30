@@ -65,6 +65,8 @@ func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":5}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ps:-NoProfile -Command Write-Output ok`)
+	require.Contains(t, out, `"exit_code": 0`)
+	require.Contains(t, out, `"duration_ms":`)
 
 	out, err = tool.Execute(context.Background(), []byte(`{"command":"Write-Output bg","run_in_background":true}`))
 	require.NoError(t, err)
@@ -78,6 +80,15 @@ func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 		logs, err := background.NewStore(configHome).Logs(payload.Task.ID, 4096)
 		return err == nil && strings.Contains(logs, `ps:-NoProfile -Command Write-Output bg`)
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
+	out, err := BashTool{Workspace: t.TempDir()}.Execute(context.Background(), []byte(`{"command":"printf ok; exit 7"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ok"`)
+	require.Contains(t, out, `"exit_code": 7`)
+	require.Contains(t, out, `"duration_ms":`)
+	require.Contains(t, out, `"error": "exit status 7"`)
 }
 
 func TestFileToolsAllowAdditionalDirs(t *testing.T) {

@@ -1298,6 +1298,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	if err != nil {
 		return "", err
 	}
+	started := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = t.Workspace
 	var stdout, stderr bytes.Buffer
@@ -1305,8 +1306,10 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 	result := map[string]any{
-		"stdout": stdout.String(),
-		"stderr": stderr.String(),
+		"stdout":      stdout.String(),
+		"stderr":      stderr.String(),
+		"exit_code":   exitCode(err),
+		"duration_ms": time.Since(started).Milliseconds(),
 	}
 	if effectiveSandbox != "" {
 		result["sandbox"] = effectiveSandbox
@@ -1314,6 +1317,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	if ctx.Err() == context.DeadlineExceeded {
 		result["interrupted"] = true
 		result["error"] = "timeout"
+		result["exit_code"] = -1
 		return pretty(result), nil
 	}
 	if err != nil {
@@ -1381,6 +1385,7 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	started := time.Now()
 	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-Command", payload.Command)
 	cmd.Dir = t.Workspace
 	var stdout, stderr bytes.Buffer
@@ -1388,18 +1393,32 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	cmd.Stderr = &stderr
 	err = cmd.Run()
 	result := map[string]any{
-		"stdout": stdout.String(),
-		"stderr": stderr.String(),
+		"stdout":      stdout.String(),
+		"stderr":      stderr.String(),
+		"exit_code":   exitCode(err),
+		"duration_ms": time.Since(started).Milliseconds(),
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		result["interrupted"] = true
 		result["error"] = "timeout"
+		result["exit_code"] = -1
 		return pretty(result), nil
 	}
 	if err != nil {
 		result["error"] = err.Error()
 	}
 	return pretty(result), nil
+}
+
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 func (t PowerShellTool) powerShellExecutable() (string, error) {
