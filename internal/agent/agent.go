@@ -11271,7 +11271,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/remote-control":
+	case "/bridge", "/remote-control":
 		if err := a.Bridge(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
