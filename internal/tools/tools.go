@@ -223,6 +223,7 @@ type Prompter struct {
 	Workspace   string
 	In          io.Reader
 	Err         io.Writer
+	OnRequest   func(PermissionDecision)
 	OnDecision  func(PermissionDecision)
 }
 
@@ -453,6 +454,7 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 	if decision.Message != "" {
 		fmt.Fprintf(p.Err, "\nBash validation warning: %s\n", decision.Message)
 	}
+	p.emitRequest(decision)
 	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N] ", name, required, string(input))
 	reader := bufio.NewReader(p.In)
 	answer, _ := reader.ReadString('\n')
@@ -537,6 +539,12 @@ func permissionDecisionError(decision PermissionDecision) error {
 func (p *Prompter) emitDecision(decision PermissionDecision) {
 	if p.OnDecision != nil {
 		p.OnDecision(decision)
+	}
+}
+
+func (p *Prompter) emitRequest(decision PermissionDecision) {
+	if p.OnRequest != nil {
+		p.OnRequest(decision)
 	}
 }
 

@@ -36,6 +36,8 @@ type Options struct {
 	PreToolUse         []string
 	PostToolUse        []string
 	PostToolUseFailure []string
+	PermissionRequest  []string
+	PermissionDenied   []string
 	Stop               []string
 	PreCompact         []string
 	PostCompact        []string
@@ -248,19 +250,23 @@ func checkHooks(opts Options) Check {
 	pre := compactHookCommands(opts.PreToolUse)
 	post := compactHookCommands(opts.PostToolUse)
 	postFailure := compactHookCommands(opts.PostToolUseFailure)
+	permissionRequest := compactHookCommands(opts.PermissionRequest)
+	permissionDenied := compactHookCommands(opts.PermissionDenied)
 	stop := compactHookCommands(opts.Stop)
 	preCompact := compactHookCommands(opts.PreCompact)
 	postCompact := compactHookCommands(opts.PostCompact)
 	notification := compactHookCommands(opts.Notification)
 	subagentStart := compactHookCommands(opts.SubagentStart)
 	subagentStop := compactHookCommands(opts.SubagentStop)
-	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(stop) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
+	total := len(userPromptSubmit) + len(sessionStart) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
 		fmt.Sprintf("PreToolUse hooks: %d", len(pre)),
 		fmt.Sprintf("PostToolUse hooks: %d", len(post)),
 		fmt.Sprintf("PostToolUseFailure hooks: %d", len(postFailure)),
+		fmt.Sprintf("PermissionRequest hooks: %d", len(permissionRequest)),
+		fmt.Sprintf("PermissionDenied hooks: %d", len(permissionDenied)),
 		fmt.Sprintf("Stop hooks: %d", len(stop)),
 		fmt.Sprintf("PreCompact hooks: %d", len(preCompact)),
 		fmt.Sprintf("PostCompact hooks: %d", len(postCompact)),
@@ -279,6 +285,8 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreToolUse", pre)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUse", post)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostToolUseFailure", postFailure)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "PermissionRequest", permissionRequest)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "PermissionDenied", permissionDenied)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "Stop", stop)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PreCompact", preCompact)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "PostCompact", postCompact)...)

@@ -131,6 +131,12 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		PostToolUseFailureCommands: []config.HookCommand{
 			{Matcher: "Bash", Type: "command", Command: "failed-bash"},
 		},
+		PermissionRequestCommands: []config.HookCommand{
+			{Matcher: "Bash", Type: "command", Command: "permission-request"},
+		},
+		PermissionDeniedCommands: []config.HookCommand{
+			{Matcher: "Bash", Type: "command", Command: "permission-denied"},
+		},
 		UserPromptSubmitCommands: []config.HookCommand{
 			{Type: "command", Command: "prompt"},
 		},
@@ -162,6 +168,8 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"regex", "all"}, CommandsForEvent(cfg, "pre_tool_use", "bash"))
 	require.Equal(t, []string{"edits"}, CommandsForEvent(cfg, "post", "multi_edit"))
 	require.Equal(t, []string{"failed-bash"}, CommandsForEvent(cfg, "post-failure", "bash"))
+	require.Equal(t, []string{"permission-request"}, CommandsForEvent(cfg, "permission-request", "bash"))
+	require.Equal(t, []string{"permission-denied"}, CommandsForEvent(cfg, "permission-denied", "bash"))
 	require.Equal(t, []string{"prompt"}, CommandsForEvent(cfg, "user-prompt-submit", ""))
 	require.Equal(t, []string{"session"}, CommandsForEvent(cfg, "session-start", ""))
 	require.Equal(t, []string{"stop"}, CommandsForEvent(cfg, "stop", ""))

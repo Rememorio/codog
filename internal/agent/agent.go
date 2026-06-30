@@ -4456,6 +4456,7 @@ type hooksRequest struct {
 	TranscriptPath   string
 	LastAssistant    string
 	StopHookActive   bool
+	Reason           string
 }
 
 type hooksListReport struct {
@@ -4465,6 +4466,8 @@ type hooksListReport struct {
 	PreToolUse                 []string             `json:"pre_tool_use"`
 	PostToolUse                []string             `json:"post_tool_use"`
 	PostToolUseFailure         []string             `json:"post_tool_use_failure"`
+	PermissionRequest          []string             `json:"permission_request"`
+	PermissionDenied           []string             `json:"permission_denied"`
 	UserPromptSubmit           []string             `json:"user_prompt_submit"`
 	SessionStart               []string             `json:"session_start"`
 	Stop                       []string             `json:"stop"`
@@ -4476,6 +4479,8 @@ type hooksListReport struct {
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
+	PermissionRequestCommands  []hookCommandSummary `json:"permission_request_commands,omitempty"`
+	PermissionDeniedCommands   []hookCommandSummary `json:"permission_denied_commands,omitempty"`
 	UserPromptSubmitCommands   []hookCommandSummary `json:"user_prompt_submit_commands,omitempty"`
 	SessionStartCommands       []hookCommandSummary `json:"session_start_commands,omitempty"`
 	StopCommands               []hookCommandSummary `json:"stop_commands,omitempty"`
@@ -4507,6 +4512,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			PreToolUse:                 append([]string(nil), a.Config.Hooks.PreToolUse...),
 			PostToolUse:                append([]string(nil), a.Config.Hooks.PostToolUse...),
 			PostToolUseFailure:         append([]string(nil), a.Config.Hooks.PostToolUseFailure...),
+			PermissionRequest:          append([]string(nil), a.Config.Hooks.PermissionRequest...),
+			PermissionDenied:           append([]string(nil), a.Config.Hooks.PermissionDenied...),
 			UserPromptSubmit:           append([]string(nil), a.Config.Hooks.UserPromptSubmit...),
 			SessionStart:               append([]string(nil), a.Config.Hooks.SessionStart...),
 			Stop:                       append([]string(nil), a.Config.Hooks.Stop...),
@@ -4518,6 +4525,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
+			PermissionRequestCommands:  hookCommandsForList(a.Config.Hooks.PermissionRequestCommands, a.Config.Hooks.PermissionRequest),
+			PermissionDeniedCommands:   hookCommandsForList(a.Config.Hooks.PermissionDeniedCommands, a.Config.Hooks.PermissionDenied),
 			UserPromptSubmitCommands:   hookCommandsForList(a.Config.Hooks.UserPromptSubmitCommands, a.Config.Hooks.UserPromptSubmit),
 			SessionStartCommands:       hookCommandsForList(a.Config.Hooks.SessionStartCommands, a.Config.Hooks.SessionStart),
 			StopCommands:               hookCommandsForList(a.Config.Hooks.StopCommands, a.Config.Hooks.Stop),
@@ -4538,9 +4547,12 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		payload := hooks.Payload{
 			Event:            req.Event,
 			Tool:             req.Tool,
+			ToolName:         req.Tool,
+			ToolInput:        json.RawMessage(req.Input),
 			Input:            req.Input,
 			Output:           req.Output,
 			IsError:          req.IsError,
+			Reason:           req.Reason,
 			Message:          req.Input,
 			Title:            req.Title,
 			NotificationType: req.NotificationType,
@@ -4559,6 +4571,9 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TranscriptPath = ""
 			payload.LastAssistant = ""
 			payload.StopHookActive = false
+			payload.Reason = ""
+			payload.ToolName = ""
+			payload.ToolInput = nil
 		} else if req.Event == "subagent_start" || req.Event == "subagent_stop" {
 			payload.AgentType = firstNonEmpty(req.AgentType, req.Tool, "general")
 			payload.Tool = payload.AgentType
@@ -4566,6 +4581,20 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.Message = ""
 			payload.Title = ""
 			payload.NotificationType = ""
+			payload.Reason = ""
+			payload.ToolName = ""
+			payload.ToolInput = nil
+		} else if req.Event == "permission_request" || req.Event == "permission_denied" {
+			payload.ToolName = req.Tool
+			payload.Tool = req.Tool
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4575,6 +4604,9 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TranscriptPath = ""
 			payload.LastAssistant = ""
 			payload.StopHookActive = false
+			payload.Reason = ""
+			payload.ToolName = ""
+			payload.ToolInput = nil
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4690,6 +4722,14 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.LastAssistant = strings.TrimPrefix(arg, "--last-assistant-message=")
 		case arg == "--stop-hook-active":
 			req.StopHookActive = true
+		case arg == "--reason":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks reason is required")
+			}
+			req.Reason = args[i]
+		case strings.HasPrefix(arg, "--reason="):
+			req.Reason = strings.TrimPrefix(arg, "--reason=")
 		case arg == "--error":
 			req.IsError = true
 		case arg == "--timeout-ms":
@@ -4756,6 +4796,10 @@ func normalizeHookEvent(value string) (string, error) {
 		return "post_tool_use", nil
 	case "post-failure", "postfailure", "post_tool_use_failure", "post-tool-use-failure":
 		return "post_tool_use_failure", nil
+	case "permission-request", "permissionrequest", "permission_request":
+		return "permission_request", nil
+	case "permission-denied", "permissiondenied", "permission_denied":
+		return "permission_denied", nil
 	case "prompt", "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
 		return "user_prompt_submit", nil
 	case "session", "sessionstart", "session_start", "session-start":
@@ -4821,6 +4865,14 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Post tool failure %d\n", len(report.PostToolUseFailure))
 	for _, command := range report.PostToolUseFailureCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Permission request %d\n", len(report.PermissionRequest))
+	for _, command := range report.PermissionRequestCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Permission denied %d\n", len(report.PermissionDenied))
+	for _, command := range report.PermissionDeniedCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  User prompt submit %d\n", len(report.UserPromptSubmit))
@@ -10128,46 +10180,48 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	}
 	planState, _ := planmode.Load(a.Workspace)
 	return localstatus.Build(localstatus.Options{
-		Version:                   version,
-		Workspace:                 a.Workspace,
-		ConfigHome:                a.Config.ConfigHome,
-		Model:                     a.Config.Model,
-		FastMode:                  fastModeEnabled(a.Config.FastMode),
-		BaseURL:                   a.Config.BaseURL,
-		PermissionMode:            a.Config.PermissionMode,
-		MaxTokens:                 a.Config.MaxTokens,
-		MaxTurns:                  a.Config.MaxTurns,
-		AutoCompactMessages:       a.Config.AutoCompactMessages,
-		AuthConfigured:            a.Config.APIKey != "" || a.Config.AuthToken != "",
-		MCPServerCount:            len(a.Config.MCPServers),
-		UserPromptSubmitHookCount: len(a.Config.Hooks.UserPromptSubmit),
-		SessionStartHookCount:     len(a.Config.Hooks.SessionStart),
-		PreHookCount:              len(a.Config.Hooks.PreToolUse),
-		PostHookCount:             len(a.Config.Hooks.PostToolUse),
-		PostFailureHookCount:      len(a.Config.Hooks.PostToolUseFailure),
-		StopHookCount:             len(a.Config.Hooks.Stop),
-		PreCompactHookCount:       len(a.Config.Hooks.PreCompact),
-		PostCompactHookCount:      len(a.Config.Hooks.PostCompact),
-		NotificationHookCount:     len(a.Config.Hooks.Notification),
-		SubagentStartHookCount:    len(a.Config.Hooks.SubagentStart),
-		SubagentStopHookCount:     len(a.Config.Hooks.SubagentStop),
-		EnabledSkillCount:         len(a.Config.EnabledSkills),
-		PlanActive:                planState.Active,
-		PlanText:                  planState.Plan,
-		PlanUpdatedAt:             planState.UpdatedAt,
-		MemoryFiles:               memoryStatuses,
-		ToolNames:                 toolNames,
-		SessionID:                 sessionID,
-		SessionPath:               sessionPath,
-		SessionMessages:           sessionMessages,
-		SessionCount:              sessionCount,
-		GitStatus:                 gitRaw,
-		GitError:                  gitError,
-		SandboxOS:                 sandboxStatus.OS,
-		SandboxDefault:            sandboxStatus.Default,
-		SandboxStrategies:         sandboxStatus.Strategies,
-		SandboxAvailable:          sandboxStatus.Available,
-		Executable:                executable,
+		Version:                    version,
+		Workspace:                  a.Workspace,
+		ConfigHome:                 a.Config.ConfigHome,
+		Model:                      a.Config.Model,
+		FastMode:                   fastModeEnabled(a.Config.FastMode),
+		BaseURL:                    a.Config.BaseURL,
+		PermissionMode:             a.Config.PermissionMode,
+		MaxTokens:                  a.Config.MaxTokens,
+		MaxTurns:                   a.Config.MaxTurns,
+		AutoCompactMessages:        a.Config.AutoCompactMessages,
+		AuthConfigured:             a.Config.APIKey != "" || a.Config.AuthToken != "",
+		MCPServerCount:             len(a.Config.MCPServers),
+		UserPromptSubmitHookCount:  len(a.Config.Hooks.UserPromptSubmit),
+		SessionStartHookCount:      len(a.Config.Hooks.SessionStart),
+		PreHookCount:               len(a.Config.Hooks.PreToolUse),
+		PostHookCount:              len(a.Config.Hooks.PostToolUse),
+		PostFailureHookCount:       len(a.Config.Hooks.PostToolUseFailure),
+		PermissionRequestHookCount: len(a.Config.Hooks.PermissionRequest),
+		PermissionDeniedHookCount:  len(a.Config.Hooks.PermissionDenied),
+		StopHookCount:              len(a.Config.Hooks.Stop),
+		PreCompactHookCount:        len(a.Config.Hooks.PreCompact),
+		PostCompactHookCount:       len(a.Config.Hooks.PostCompact),
+		NotificationHookCount:      len(a.Config.Hooks.Notification),
+		SubagentStartHookCount:     len(a.Config.Hooks.SubagentStart),
+		SubagentStopHookCount:      len(a.Config.Hooks.SubagentStop),
+		EnabledSkillCount:          len(a.Config.EnabledSkills),
+		PlanActive:                 planState.Active,
+		PlanText:                   planState.Plan,
+		PlanUpdatedAt:              planState.UpdatedAt,
+		MemoryFiles:                memoryStatuses,
+		ToolNames:                  toolNames,
+		SessionID:                  sessionID,
+		SessionPath:                sessionPath,
+		SessionMessages:            sessionMessages,
+		SessionCount:               sessionCount,
+		GitStatus:                  gitRaw,
+		GitError:                   gitError,
+		SandboxOS:                  sandboxStatus.OS,
+		SandboxDefault:             sandboxStatus.Default,
+		SandboxStrategies:          sandboxStatus.Strategies,
+		SandboxAvailable:           sandboxStatus.Available,
+		Executable:                 executable,
 	})
 }
 
@@ -10702,6 +10756,8 @@ func (a *App) Doctor(args []string) error {
 		PreToolUse:         a.Config.Hooks.PreToolUse,
 		PostToolUse:        a.Config.Hooks.PostToolUse,
 		PostToolUseFailure: a.Config.Hooks.PostToolUseFailure,
+		PermissionRequest:  a.Config.Hooks.PermissionRequest,
+		PermissionDenied:   a.Config.Hooks.PermissionDenied,
 		Stop:               a.Config.Hooks.Stop,
 		PreCompact:         a.Config.Hooks.PreCompact,
 		PostCompact:        a.Config.Hooks.PostCompact,
@@ -16300,7 +16356,31 @@ func (a *App) prompterWithAllowedTools(sessionID string, allowedTools []string) 
 		Workspace:   a.Workspace,
 		In:          a.In,
 		Err:         a.Err,
-		OnDecision:  a.auditPermissionDecision(sessionID),
+		OnRequest:   a.permissionRequestHook(sessionID),
+		OnDecision:  a.permissionDecisionHandler(sessionID),
+	}
+}
+
+func (a *App) permissionRequestHook(sessionID string) func(tools.PermissionDecision) {
+	return func(decision tools.PermissionDecision) {
+		if err := a.lifecycleHookRunner().PermissionRequest(context.Background(), decision.ToolName, []byte(decision.Input)); err != nil && a.Err != nil {
+			fmt.Fprintf(a.Err, "permission request hook error: %v\n", err)
+		}
+	}
+}
+
+func (a *App) permissionDecisionHandler(sessionID string) func(tools.PermissionDecision) {
+	audit := a.auditPermissionDecision(sessionID)
+	return func(decision tools.PermissionDecision) {
+		if audit != nil {
+			audit(decision)
+		}
+		if decision.Allowed {
+			return
+		}
+		if err := a.lifecycleHookRunner().PermissionDenied(context.Background(), decision.ToolName, []byte(decision.Input), decision.Reason); err != nil && a.Err != nil {
+			fmt.Fprintf(a.Err, "permission denied hook error: %v\n", err)
+		}
 	}
 }
 
@@ -16621,7 +16701,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|user-prompt-submit|session-start|stop|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|stop|pre-compact|post-compact|notification|subagent-start|subagent-stop] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

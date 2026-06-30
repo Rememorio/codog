@@ -252,6 +252,8 @@ func AllCandidates(options CandidateOptions) []string {
 		"/hooks list",
 		"/hooks run pre",
 		"/hooks run post",
+		"/hooks run permission-request",
+		"/hooks run permission-denied",
 		"/hooks run notification",
 		"/hooks run post-compact",
 		"/hooks run subagent-start",

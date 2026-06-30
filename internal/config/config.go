@@ -20,6 +20,8 @@ type HookConfig struct {
 	PreToolUse                 []string      `json:"pre_tool_use,omitempty"`
 	PostToolUse                []string      `json:"post_tool_use,omitempty"`
 	PostToolUseFailure         []string      `json:"post_tool_use_failure,omitempty"`
+	PermissionRequest          []string      `json:"permission_request,omitempty"`
+	PermissionDenied           []string      `json:"permission_denied,omitempty"`
 	UserPromptSubmit           []string      `json:"user_prompt_submit,omitempty"`
 	SessionStart               []string      `json:"session_start,omitempty"`
 	Stop                       []string      `json:"stop,omitempty"`
@@ -31,6 +33,8 @@ type HookConfig struct {
 	PreToolUseCommands         []HookCommand `json:"-"`
 	PostToolUseCommands        []HookCommand `json:"-"`
 	PostToolUseFailureCommands []HookCommand `json:"-"`
+	PermissionRequestCommands  []HookCommand `json:"-"`
+	PermissionDeniedCommands   []HookCommand `json:"-"`
 	UserPromptSubmitCommands   []HookCommand `json:"-"`
 	SessionStartCommands       []HookCommand `json:"-"`
 	StopCommands               []HookCommand `json:"-"`
@@ -76,6 +80,14 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	permissionRequest, err := hookCommands(raw, "permission_request", "PermissionRequest")
+	if err != nil {
+		return err
+	}
+	permissionDenied, err := hookCommands(raw, "permission_denied", "PermissionDenied")
+	if err != nil {
+		return err
+	}
 	userPromptSubmit, err := hookCommands(raw, "user_prompt_submit", "UserPromptSubmit")
 	if err != nil {
 		return err
@@ -111,6 +123,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
 	h.PostToolUseFailureCommands = postFailure
+	h.PermissionRequestCommands = permissionRequest
+	h.PermissionDeniedCommands = permissionDenied
 	h.UserPromptSubmitCommands = userPromptSubmit
 	h.SessionStartCommands = sessionStart
 	h.StopCommands = stop
@@ -122,6 +136,8 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
 	h.PostToolUseFailure = hookCommandStrings(postFailure)
+	h.PermissionRequest = hookCommandStrings(permissionRequest)
+	h.PermissionDenied = hookCommandStrings(permissionDenied)
 	h.UserPromptSubmit = hookCommandStrings(userPromptSubmit)
 	h.SessionStart = hookCommandStrings(sessionStart)
 	h.Stop = hookCommandStrings(stop)
@@ -918,6 +934,16 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.PostToolUseFailure) != 0 {
 		dst.PostToolUseFailureCommands = mergeHookCommands(dst.PostToolUseFailureCommands, hookCommandsFromStrings(src.PostToolUseFailure))
 	}
+	if len(src.PermissionRequestCommands) != 0 {
+		dst.PermissionRequestCommands = mergeHookCommands(dst.PermissionRequestCommands, src.PermissionRequestCommands)
+	} else if len(src.PermissionRequest) != 0 {
+		dst.PermissionRequestCommands = mergeHookCommands(dst.PermissionRequestCommands, hookCommandsFromStrings(src.PermissionRequest))
+	}
+	if len(src.PermissionDeniedCommands) != 0 {
+		dst.PermissionDeniedCommands = mergeHookCommands(dst.PermissionDeniedCommands, src.PermissionDeniedCommands)
+	} else if len(src.PermissionDenied) != 0 {
+		dst.PermissionDeniedCommands = mergeHookCommands(dst.PermissionDeniedCommands, hookCommandsFromStrings(src.PermissionDenied))
+	}
 	if len(src.UserPromptSubmitCommands) != 0 {
 		dst.UserPromptSubmitCommands = mergeHookCommands(dst.UserPromptSubmitCommands, src.UserPromptSubmitCommands)
 	} else if len(src.UserPromptSubmit) != 0 {
@@ -961,6 +987,8 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
 	dst.PostToolUseFailure = hookCommandStrings(dst.PostToolUseFailureCommands)
+	dst.PermissionRequest = hookCommandStrings(dst.PermissionRequestCommands)
+	dst.PermissionDenied = hookCommandStrings(dst.PermissionDeniedCommands)
 	dst.UserPromptSubmit = hookCommandStrings(dst.UserPromptSubmitCommands)
 	dst.SessionStart = hookCommandStrings(dst.SessionStartCommands)
 	dst.Stop = hookCommandStrings(dst.StopCommands)

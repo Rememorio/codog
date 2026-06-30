@@ -2828,6 +2828,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	prePath := filepath.Join(workspace, "pre.json")
 	postPath := filepath.Join(workspace, "post.json")
 	postFailurePath := filepath.Join(workspace, "post-failure.json")
+	permissionRequestPath := filepath.Join(workspace, "permission-request.json")
+	permissionDeniedPath := filepath.Join(workspace, "permission-denied.json")
 	stopPath := filepath.Join(workspace, "stop.json")
 	compactPath := filepath.Join(workspace, "compact.json")
 	postCompactPath := filepath.Join(workspace, "post-compact.json")
@@ -2844,6 +2846,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				PreToolUse:         []string{"cat > " + shellQuote(prePath)},
 				PostToolUse:        []string{"cat > " + shellQuote(postPath)},
 				PostToolUseFailure: []string{"cat > " + shellQuote(postFailurePath)},
+				PermissionRequest:  []string{"cat > " + shellQuote(permissionRequestPath)},
+				PermissionDenied:   []string{"cat > " + shellQuote(permissionDeniedPath)},
 				Stop:               []string{"cat > " + shellQuote(stopPath)},
 				PreCompact:         []string{"cat > " + shellQuote(compactPath)},
 				PostCompact:        []string{"cat > " + shellQuote(postCompactPath)},
@@ -2864,6 +2868,12 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				},
 				PostToolUseFailureCommands: []config.HookCommand{
 					{Matcher: "bash", Command: "cat > " + shellQuote(postFailurePath)},
+				},
+				PermissionRequestCommands: []config.HookCommand{
+					{Matcher: "bash", Command: "cat > " + shellQuote(permissionRequestPath)},
+				},
+				PermissionDeniedCommands: []config.HookCommand{
+					{Matcher: "bash", Command: "cat > " + shellQuote(permissionDeniedPath)},
 				},
 				StopCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(stopPath)},
@@ -2897,6 +2907,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"pre_tool_use"`)
 	require.Contains(t, out.String(), `"post_tool_use"`)
 	require.Contains(t, out.String(), `"post_tool_use_failure"`)
+	require.Contains(t, out.String(), `"permission_request"`)
+	require.Contains(t, out.String(), `"permission_denied"`)
 	require.Contains(t, out.String(), `"stop"`)
 	require.Contains(t, out.String(), `"pre_compact"`)
 	require.Contains(t, out.String(), `"post_compact"`)
@@ -2910,6 +2922,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "read_*", hooksList.PreToolUseCommands[0].Matcher)
 	require.Contains(t, hooksList.PreToolUseCommands[0].Command, "cat >")
 	require.Equal(t, "bash", hooksList.PostToolUseFailureCommands[0].Matcher)
+	require.Equal(t, "bash", hooksList.PermissionRequestCommands[0].Matcher)
+	require.Equal(t, "bash", hooksList.PermissionDeniedCommands[0].Matcher)
 	require.Contains(t, hooksList.StopCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PreCompactCommands[0].Command, "cat >")
 	require.Contains(t, hooksList.PostCompactCommands[0].Command, "cat >")
@@ -2957,6 +2971,21 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"event":"post_tool_use_failure"`)
 	require.Contains(t, string(data), `"is_error":true`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run permission-request --tool=bash --input={\"command\":\"git_status\"}", sess))
+	data, err = os.ReadFile(permissionRequestPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"permission_request"`)
+	require.Contains(t, string(data), `"tool_name":"bash"`)
+	require.Contains(t, string(data), `"tool_input":{"command":"git_status"}`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/hooks run permission-denied --tool=bash --input={\"command\":\"blocked\"} --reason=deny_rule", sess))
+	data, err = os.ReadFile(permissionDeniedPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"event":"permission_denied"`)
+	require.Contains(t, string(data), `"reason":"deny_rule"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/hooks run stop --output=done", sess))
@@ -3043,6 +3072,46 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "done", subagentStopHook.LastAssistant)
 	require.True(t, subagentStopHook.StopHookActive)
 	require.Empty(t, errOut.String())
+}
+
+func TestPermissionHooksFromPrompter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	requestPath := filepath.Join(workspace, "permission-request.json")
+	deniedPath := filepath.Join(workspace, "permission-denied.json")
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:      configHome,
+			PermissionMode:  "prompt",
+			PermissionRules: config.PermissionRules{},
+			Hooks: config.HookConfig{
+				PermissionRequestCommands: []config.HookCommand{{Matcher: "bash", Command: "cat > " + shellQuote(requestPath)}},
+				PermissionDeniedCommands:  []config.HookCommand{{Matcher: "bash", Command: "cat > " + shellQuote(deniedPath)}},
+			},
+		},
+		Workspace: workspace,
+		In:        strings.NewReader("n\n"),
+		Err:       &errOut,
+	}
+	prompter := app.prompterWithAllowedTools("session-1", nil)
+
+	err := prompter.Authorize("bash", tools.PermissionDanger, []byte(`{"command":"echo ok"}`))
+	require.Error(t, err)
+
+	requestPayload, err := os.ReadFile(requestPath)
+	require.NoError(t, err)
+	require.Contains(t, string(requestPayload), `"event":"permission_request"`)
+	require.Contains(t, string(requestPayload), `"tool_name":"bash"`)
+	require.Contains(t, string(requestPayload), `"tool_input":{"command":"echo ok"}`)
+	deniedPayload, err := os.ReadFile(deniedPath)
+	require.NoError(t, err)
+	require.Contains(t, string(deniedPayload), `"event":"permission_denied"`)
+	require.Contains(t, string(deniedPayload), `"reason":"user_denied"`)
+	require.Contains(t, errOut.String(), "Allow? [y/N]")
 }
 
 func TestMCPCommandToolsCallAndResources(t *testing.T) {

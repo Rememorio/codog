@@ -189,9 +189,9 @@ Claude Code source.
   integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
 - Hook commands can run on `session_start`, `user_prompt_submit`,
-  `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`, `stop`,
-  `pre_compact`, `post_compact`, `notification`, `subagent_start`, and
-  `subagent_stop`; `codog hooks
+  `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`,
+  `permission_request`, `permission_denied`, `stop`, `pre_compact`,
+  `post_compact`, `notification`, `subagent_start`, and `subagent_stop`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -205,7 +205,9 @@ Claude Code source.
   `CODOG_HOOK_TITLE`, `CODOG_HOOK_NOTIFICATION_TYPE`,
   `CODOG_HOOK_AGENT_ID`, `CODOG_HOOK_AGENT_TYPE`,
   `CODOG_HOOK_AGENT_TRANSCRIPT_PATH`, `CODOG_HOOK_STOP_HOOK_ACTIVE`, and
-  `CODOG_HOOK_LAST_ASSISTANT_MESSAGE`; run reports include stdout,
+  `CODOG_HOOK_LAST_ASSISTANT_MESSAGE`, plus permission-specific
+  `CODOG_HOOK_TOOL_NAME`, `CODOG_HOOK_TOOL_USE_ID`, and `CODOG_HOOK_REASON`;
+  run reports include stdout,
   stderr, HTTP status, duration, success, and exit code.
 - `codog brief MESSAGE [--status normal|proactive] [--attach PATH]` and
   `/brief` expose the built-in `brief` tool as a human command with optional
@@ -418,6 +420,8 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "pre_tool_use": ["echo pre >&2"],
     "post_tool_use": ["echo post >&2"],
     "post_tool_use_failure": ["echo post-failure >&2"],
+    "permission_request": ["echo permission-request >&2"],
+    "permission_denied": ["echo permission-denied >&2"],
     "stop": ["echo stop >&2"],
     "pre_compact": ["echo compact >&2"],
     "post_compact": ["echo compacted >&2"],

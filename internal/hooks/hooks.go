@@ -36,19 +36,23 @@ type PromptRequest struct {
 }
 
 type Payload struct {
-	Event            string `json:"event"`
-	Tool             string `json:"tool,omitempty"`
-	Input            string `json:"input,omitempty"`
-	Output           string `json:"output,omitempty"`
-	IsError          bool   `json:"is_error,omitempty"`
-	Message          string `json:"message,omitempty"`
-	Title            string `json:"title,omitempty"`
-	NotificationType string `json:"notification_type,omitempty"`
-	AgentID          string `json:"agent_id,omitempty"`
-	AgentType        string `json:"agent_type,omitempty"`
-	TranscriptPath   string `json:"agent_transcript_path,omitempty"`
-	StopHookActive   bool   `json:"stop_hook_active,omitempty"`
-	LastAssistant    string `json:"last_assistant_message,omitempty"`
+	Event            string          `json:"event"`
+	Tool             string          `json:"tool,omitempty"`
+	ToolName         string          `json:"tool_name,omitempty"`
+	ToolInput        json.RawMessage `json:"tool_input,omitempty"`
+	ToolUseID        string          `json:"tool_use_id,omitempty"`
+	Input            string          `json:"input,omitempty"`
+	Output           string          `json:"output,omitempty"`
+	IsError          bool            `json:"is_error,omitempty"`
+	Reason           string          `json:"reason,omitempty"`
+	Message          string          `json:"message,omitempty"`
+	Title            string          `json:"title,omitempty"`
+	NotificationType string          `json:"notification_type,omitempty"`
+	AgentID          string          `json:"agent_id,omitempty"`
+	AgentType        string          `json:"agent_type,omitempty"`
+	TranscriptPath   string          `json:"agent_transcript_path,omitempty"`
+	StopHookActive   bool            `json:"stop_hook_active,omitempty"`
+	LastAssistant    string          `json:"last_assistant_message,omitempty"`
 }
 
 type CommandResult struct {
@@ -99,6 +103,29 @@ func (r Runner) PostToolUseFailure(ctx context.Context, tool string, input []byt
 		Input:   string(input),
 		Output:  output,
 		IsError: true,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) PermissionRequest(ctx context.Context, tool string, input []byte) error {
+	payload := Payload{
+		Event:     "permission_request",
+		Tool:      tool,
+		ToolName:  tool,
+		ToolInput: json.RawMessage(input),
+		Input:     string(input),
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
+func (r Runner) PermissionDenied(ctx context.Context, tool string, input []byte, reason string) error {
+	payload := Payload{
+		Event:     "permission_denied",
+		Tool:      tool,
+		ToolName:  tool,
+		ToolInput: json.RawMessage(input),
+		Input:     string(input),
+		Reason:    reason,
 	}
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
@@ -206,6 +233,10 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.PostToolUseCommands, cfg.PostToolUse, payload)
 	case "post_tool_use_failure":
 		return matchingHooks(cfg.PostToolUseFailureCommands, cfg.PostToolUseFailure, payload)
+	case "permission_request":
+		return matchingHooks(cfg.PermissionRequestCommands, cfg.PermissionRequest, payload)
+	case "permission_denied":
+		return matchingHooks(cfg.PermissionDeniedCommands, cfg.PermissionDenied, payload)
 	case "user_prompt_submit":
 		return matchingHooks(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit, payload)
 	case "session_start":
@@ -343,9 +374,12 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 	cmd.Env = append(os.Environ(),
 		"CODOG_HOOK_EVENT="+payload.Event,
 		"CODOG_HOOK_TOOL="+payload.Tool,
+		"CODOG_HOOK_TOOL_NAME="+payload.ToolName,
+		"CODOG_HOOK_TOOL_USE_ID="+payload.ToolUseID,
 		"CODOG_HOOK_INPUT="+payload.Input,
 		"CODOG_HOOK_OUTPUT="+payload.Output,
 		"CODOG_HOOK_IS_ERROR="+strconv.FormatBool(payload.IsError),
+		"CODOG_HOOK_REASON="+payload.Reason,
 		"CODOG_HOOK_MESSAGE="+payload.Message,
 		"CODOG_HOOK_TITLE="+payload.Title,
 		"CODOG_HOOK_NOTIFICATION_TYPE="+payload.NotificationType,
@@ -603,7 +637,10 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason}
+	if len(payload.ToolInput) != 0 {
+		values = append(values, string(payload.ToolInput))
+	}
 	var decoded any
 	if err := json.Unmarshal([]byte(payload.Input), &decoded); err == nil {
 		collectJSONStrings(decoded, &values)
@@ -721,6 +758,10 @@ func normalizeEvent(event string) string {
 		return "post_tool_use"
 	case "postfailure", "post-failure", "posttoolusefailure", "post_tool_use_failure", "post-tool-use-failure":
 		return "post_tool_use_failure"
+	case "permissionrequest", "permission_request", "permission-request":
+		return "permission_request"
+	case "permissiondenied", "permission_denied", "permission-denied":
+		return "permission_denied"
 	case "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
 		return "user_prompt_submit"
 	case "sessionstart", "session_start", "session-start":
