@@ -105,8 +105,10 @@ type RegistryOptions struct {
 
 var claudeToolAliases = map[string]string{
 	"askuserquestion":              "ask_user_question",
+	"agentoutputtool":              "task_output",
 	"bash":                         "bash",
 	"bashoutput":                   "bash_output",
+	"bashoutputtool":               "task_output",
 	"brief":                        "brief",
 	"config":                       "config",
 	"croncreate":                   "cron_create",
@@ -135,6 +137,7 @@ var claudeToolAliases = map[string]string{
 	"listmcpresourcetemplates":     "list_mcp_resource_templates",
 	"listmcpresourcetemplatestool": "list_mcp_resource_templates",
 	"killbash":                     "kill_bash",
+	"killshell":                    "task_stop",
 	"ls":                           "ls",
 	"mcp":                          "mcp",
 	"mcpauth":                      "mcp_auth",
