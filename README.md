@@ -163,7 +163,8 @@ Claude Code source.
   `/brief` expose the built-in `brief` tool as a human command with optional
   workspace-scoped attachment metadata.
 - `codog cost --resume latest` estimates session token usage and rough cost;
-  `codog usage --resume latest` adds role, block, and tool-use breakdowns.
+  `codog usage --resume latest` and `codog stats --resume latest` add role,
+  block, and tool-use breakdowns.
   Both commands use recorded provider token usage when available, including
   cache token fields, and fall back to local estimates for older sessions.
 - `codog compact --resume latest --keep N` persists a compacted session context
