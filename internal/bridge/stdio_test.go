@@ -32,6 +32,9 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"file/diff"`)
 	require.Contains(t, out.String(), `"editor/identify"`)
 	require.Contains(t, out.String(), `"editor/selection"`)
+	require.Contains(t, out.String(), `"bridge/faults/list"`)
+	require.Contains(t, out.String(), `"bridge/faults/record"`)
+	require.Contains(t, out.String(), `"bridge/faults/clear"`)
 	require.Contains(t, out.String(), `"diagnostics/go"`)
 	require.Contains(t, out.String(), `"code/symbols"`)
 	require.Contains(t, out.String(), `"code/references"`)
@@ -215,6 +218,48 @@ func TestBridgeEditorTrustRejectsInvalidTokenAndWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"error"`)
 	require.Contains(t, out.String(), "workspace is not trusted")
+}
+
+func TestBridgeFaultsRecordListAndClear(t *testing.T) {
+	configHome := t.TempDir()
+	server := Server{ConfigHome: configHome}
+
+	event, err := server.RecordBridgeFault("poll", []string{"404"})
+	require.NoError(t, err)
+	require.NotEmpty(t, event.ID)
+	require.Equal(t, "poll", event.Action)
+	require.Equal(t, []string{"404"}, event.Args)
+	require.Contains(t, event.Message, "404")
+
+	events, err := server.BridgeFaults()
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	require.FileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+
+	require.NoError(t, server.ClearBridgeFaults())
+	events, err = server.BridgeFaults()
+	require.NoError(t, err)
+	require.Empty(t, events)
+	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+}
+
+func TestBridgeFaultsJSONRPC(t *testing.T) {
+	configHome := t.TempDir()
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"bridge/faults/record","params":{"action":"latency","args":["250ms"]}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"bridge/faults/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"bridge/faults/clear"}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"bridge_faults"`)
+	require.Contains(t, out.String(), `"action":"latency"`)
+	require.Contains(t, out.String(), `"250ms"`)
+	require.Contains(t, out.String(), `"cleared":true`)
+	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
 }
 
 func TestBridgeBackgroundWatchStreamsNotifications(t *testing.T) {

@@ -1157,12 +1157,15 @@ type bridgeKickRequest struct {
 }
 
 type bridgeKickReport struct {
-	Kind    string             `json:"kind"`
-	Action  string             `json:"action"`
-	Status  string             `json:"status"`
-	Message string             `json:"message,omitempty"`
-	Bridge  ideBridgeReport    `json:"bridge"`
-	State   bridge.EditorState `json:"state"`
+	Kind     string              `json:"kind"`
+	Action   string              `json:"action"`
+	Status   string              `json:"status"`
+	Message  string              `json:"message,omitempty"`
+	Bridge   ideBridgeReport     `json:"bridge"`
+	State    bridge.EditorState  `json:"state"`
+	Faults   []bridge.FaultEvent `json:"faults,omitempty"`
+	Recorded *bridge.FaultEvent  `json:"recorded,omitempty"`
+	Cleared  bool                `json:"cleared,omitempty"`
 }
 
 func (a *App) BridgeKick(args []string) error {
@@ -1188,17 +1191,27 @@ func (a *App) BridgeKick(args []string) error {
 	switch req.Action {
 	case "status":
 		report.State, _ = server.EditorState()
-		report.Message = "Local bridge diagnostics are available. Remote web bridge fault injection is not available in Codog."
+		report.Faults, _ = server.BridgeFaults()
+		report.Message = "Local bridge diagnostics are available."
 	case "clear":
 		if err := server.ClearEditorState(); err != nil {
 			return err
 		}
+		if err := server.ClearBridgeFaults(); err != nil {
+			return err
+		}
 		report.State, _ = server.EditorState()
-		report.Message = "Cleared local trusted editor bridge state."
+		report.Cleared = true
+		report.Message = "Cleared local trusted editor bridge state and bridge fault events."
 	default:
-		report.Status = "unsupported"
+		event, err := server.RecordBridgeFault(req.Action, req.Args)
+		if err != nil {
+			return err
+		}
+		report.Recorded = &event
+		report.Faults, _ = server.BridgeFaults()
 		report.State, _ = server.EditorState()
-		report.Message = fmt.Sprintf("bridge-kick %s is a Claude web bridge fault-injection command; Codog supports local status and clear only.", strings.Join(append([]string{req.Action}, req.Args...), " "))
+		report.Message = fmt.Sprintf("Recorded local bridge fault event for bridge-kick %s.", strings.Join(append([]string{req.Action}, req.Args...), " "))
 	}
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -1326,6 +1339,18 @@ func renderBridgeKickReport(out io.Writer, report bridgeKickReport) {
 	fmt.Fprintf(out, "  Bridge command   %s\n", report.Bridge.Command)
 	fmt.Fprintf(out, "  Socket           %s\n", emptyAsNone(report.Bridge.Socket))
 	fmt.Fprintf(out, "  Token configured %t\n", report.Bridge.TokenConfigured)
+	fmt.Fprintf(out, "  Fault events     %d\n", len(report.Faults))
+	if report.Cleared {
+		fmt.Fprintln(out, "  Cleared          true")
+	}
+	if report.Recorded != nil {
+		fmt.Fprintf(out, "  Recorded         %s %s\n", report.Recorded.Action, strings.Join(report.Recorded.Args, " "))
+		fmt.Fprintf(out, "  Fault message    %s\n", report.Recorded.Message)
+	} else if len(report.Faults) > 0 {
+		last := report.Faults[len(report.Faults)-1]
+		fmt.Fprintf(out, "  Last fault       %s %s\n", last.Action, strings.Join(last.Args, " "))
+		fmt.Fprintf(out, "  Fault message    %s\n", last.Message)
+	}
 	if report.State.Identity == nil {
 		fmt.Fprintln(out, "  Trusted editor   none")
 	} else {

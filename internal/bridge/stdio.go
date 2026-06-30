@@ -101,6 +101,9 @@ func (s Server) handle(req Request) (any, *Error) {
 				"editor/state",
 				"editor/open",
 				"editor/selection",
+				"bridge/faults/list",
+				"bridge/faults/record",
+				"bridge/faults/clear",
 				"diagnostics/go",
 				"code/symbols",
 				"code/references",
@@ -221,6 +224,24 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "editor/selection":
 		result, err := s.editorSelection(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "bridge/faults/list":
+		result, err := s.bridgeFaultsList()
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "bridge/faults/record":
+		result, err := s.bridgeFaultsRecord(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "bridge/faults/clear":
+		result, err := s.bridgeFaultsClear()
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}

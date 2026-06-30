@@ -2895,7 +2895,18 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/bridge-kick poll 404", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Bridge Kick")
-	require.Contains(t, out.String(), "Status           unsupported")
+	require.Contains(t, out.String(), "Status           ok")
+	require.Contains(t, out.String(), "Recorded         poll 404")
+	out.Reset()
+
+	require.NoError(t, app.BridgeKick([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"action": "poll"`)
+	require.Contains(t, out.String(), `"404"`)
+	out.Reset()
+
+	require.NoError(t, app.BridgeKick([]string{"clear", "--json"}))
+	require.Contains(t, out.String(), `"cleared": true`)
+	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
 }
 
 func TestBriefCommandUsesToolPayloadAndSlash(t *testing.T) {

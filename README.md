@@ -322,9 +322,8 @@ Claude Code source.
   prompt turns, workspace info, file listing/search/diff, diagnostics,
   code-intelligence queries, background task control/watch events, and bounded
   file read/write/edit operations.
-- `codog bridge-kick [status|clear]` and `/bridge-kick` inspect or clear local
-  bridge diagnostics; Claude web bridge fault injection subcommands are
-  reported as unsupported in Codog.
+- `codog bridge-kick [status|clear|poll|error|drop|latency]` and
+  `/bridge-kick` inspect, record, or clear local bridge diagnostic events.
 - `codog ide [status|clear]` and `/ide` inspect or clear the trusted editor
   bridge state recorded by `codog bridge serve`, including the connected
   editor, active file, and selection.
