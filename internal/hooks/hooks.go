@@ -59,6 +59,8 @@ type Payload struct {
 	TaskID           string          `json:"task_id,omitempty"`
 	TaskKind         string          `json:"task_kind,omitempty"`
 	TaskStatus       string          `json:"task_status,omitempty"`
+	FilePath         string          `json:"file_path,omitempty"`
+	Operation        string          `json:"operation,omitempty"`
 }
 
 type CommandResult struct {
@@ -293,6 +295,19 @@ func (r Runner) TaskCompleted(ctx context.Context, id string, kind string, statu
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
+func (r Runner) FileChanged(ctx context.Context, filePath string, operation string, input []byte) error {
+	payload := Payload{
+		Event:     "file_changed",
+		Tool:      operation,
+		ToolName:  operation,
+		ToolInput: json.RawMessage(input),
+		Input:     string(input),
+		FilePath:  filePath,
+		Operation: operation,
+	}
+	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+}
+
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {
 	payload := Payload{Event: event, Tool: tool}
 	hooks := HooksForPayload(cfg, payload)
@@ -350,6 +365,8 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 		return matchingHooks(cfg.TaskCreatedCommands, cfg.TaskCreated, payload)
 	case "task_completed":
 		return matchingHooks(cfg.TaskCompletedCommands, cfg.TaskCompleted, payload)
+	case "file_changed":
+		return matchingHooks(cfg.FileChangedCommands, cfg.FileChanged, payload)
 	default:
 		return nil
 	}
@@ -491,6 +508,8 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, pay
 		"CODOG_HOOK_TASK_ID="+payload.TaskID,
 		"CODOG_HOOK_TASK_KIND="+payload.TaskKind,
 		"CODOG_HOOK_TASK_STATUS="+payload.TaskStatus,
+		"CODOG_HOOK_FILE_PATH="+payload.FilePath,
+		"CODOG_HOOK_OPERATION="+payload.Operation,
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -740,7 +759,7 @@ func conditionMatches(condition string, payload Payload) bool {
 }
 
 func payloadMatchValues(payload Payload) []string {
-	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref, payload.TaskID, payload.TaskKind, payload.TaskStatus}
+	values := []string{payload.Input, payload.Output, payload.Message, payload.Title, payload.NotificationType, payload.AgentID, payload.AgentType, payload.TranscriptPath, payload.LastAssistant, payload.ToolName, payload.ToolUseID, payload.Reason, payload.WorktreeID, payload.WorktreePath, payload.Ref, payload.TaskID, payload.TaskKind, payload.TaskStatus, payload.FilePath, payload.Operation}
 	if len(payload.ToolInput) != 0 {
 		values = append(values, string(payload.ToolInput))
 	}
@@ -822,6 +841,8 @@ func normalizeTool(tool string) string {
 		return "edit_file"
 	case "multiedit", "multi_edit":
 		return "multi_edit"
+	case "notebookedit", "notebook_edit":
+		return "notebook_edit"
 	case "grep":
 		return "grep"
 	case "glob":
@@ -843,6 +864,8 @@ func claudeToolName(tool string) string {
 		return "Edit"
 	case "multi_edit":
 		return "MultiEdit"
+	case "notebook_edit":
+		return "NotebookEdit"
 	case "grep":
 		return "Grep"
 	case "glob":
@@ -895,6 +918,8 @@ func normalizeEvent(event string) string {
 		return "task_created"
 	case "taskcompleted", "task_completed", "task-completed":
 		return "task_completed"
+	case "filechanged", "file_changed", "file-changed":
+		return "file_changed"
 	default:
 		return event
 	}

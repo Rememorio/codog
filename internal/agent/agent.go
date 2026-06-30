@@ -4485,6 +4485,8 @@ type hooksRequest struct {
 	TaskID           string
 	TaskKind         string
 	TaskStatus       string
+	FilePath         string
+	Operation        string
 	StopHookActive   bool
 	Reason           string
 }
@@ -4513,6 +4515,7 @@ type hooksListReport struct {
 	WorktreeRemove             []string             `json:"worktree_remove"`
 	TaskCreated                []string             `json:"task_created"`
 	TaskCompleted              []string             `json:"task_completed"`
+	FileChanged                []string             `json:"file_changed"`
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
@@ -4533,6 +4536,7 @@ type hooksListReport struct {
 	WorktreeRemoveCommands     []hookCommandSummary `json:"worktree_remove_commands,omitempty"`
 	TaskCreatedCommands        []hookCommandSummary `json:"task_created_commands,omitempty"`
 	TaskCompletedCommands      []hookCommandSummary `json:"task_completed_commands,omitempty"`
+	FileChangedCommands        []hookCommandSummary `json:"file_changed_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4573,6 +4577,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
 			TaskCreated:                append([]string(nil), a.Config.Hooks.TaskCreated...),
 			TaskCompleted:              append([]string(nil), a.Config.Hooks.TaskCompleted...),
+			FileChanged:                append([]string(nil), a.Config.Hooks.FileChanged...),
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
@@ -4593,6 +4598,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
 			TaskCreatedCommands:        hookCommandsForList(a.Config.Hooks.TaskCreatedCommands, a.Config.Hooks.TaskCreated),
 			TaskCompletedCommands:      hookCommandsForList(a.Config.Hooks.TaskCompletedCommands, a.Config.Hooks.TaskCompleted),
+			FileChangedCommands:        hookCommandsForList(a.Config.Hooks.FileChangedCommands, a.Config.Hooks.FileChanged),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4624,6 +4630,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			TaskID:           req.TaskID,
 			TaskKind:         req.TaskKind,
 			TaskStatus:       req.TaskStatus,
+			FilePath:         req.FilePath,
+			Operation:        req.Operation,
 			StopHookActive:   req.StopHookActive,
 		}
 		if req.Event == "notification" {
@@ -4720,6 +4728,20 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			if req.Event == "task_created" {
 				payload.Reason = ""
 			}
+		} else if req.Event == "file_changed" {
+			payload.Operation = firstNonEmpty(req.Operation, req.Tool, "write_file")
+			payload.Tool = payload.Operation
+			payload.ToolName = payload.Operation
+			payload.FilePath = req.FilePath
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.Reason = ""
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4738,6 +4760,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TaskID = ""
 			payload.TaskKind = ""
 			payload.TaskStatus = ""
+			payload.FilePath = ""
+			payload.Operation = ""
 		}
 		if req.Event != "worktree_create" && req.Event != "worktree_remove" {
 			payload.WorktreeID = ""
@@ -4748,6 +4772,10 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.TaskID = ""
 			payload.TaskKind = ""
 			payload.TaskStatus = ""
+		}
+		if req.Event != "file_changed" {
+			payload.FilePath = ""
+			payload.Operation = ""
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4885,6 +4913,24 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Ref = args[i]
 		case strings.HasPrefix(arg, "--ref="):
 			req.Ref = strings.TrimPrefix(arg, "--ref=")
+		case arg == "--path" || arg == "--file-path":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks file path is required")
+			}
+			req.FilePath = args[i]
+		case strings.HasPrefix(arg, "--path="):
+			req.FilePath = strings.TrimPrefix(arg, "--path=")
+		case strings.HasPrefix(arg, "--file-path="):
+			req.FilePath = strings.TrimPrefix(arg, "--file-path=")
+		case arg == "--operation":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks operation is required")
+			}
+			req.Operation = args[i]
+		case strings.HasPrefix(arg, "--operation="):
+			req.Operation = strings.TrimPrefix(arg, "--operation=")
 		case arg == "--task-id":
 			i++
 			if i >= len(args) {
@@ -4965,7 +5011,7 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
-	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop") {
+	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop" || req.Event == "file_changed") {
 		req.Tool = ""
 	}
 	if req.Event == "notification" && strings.TrimSpace(req.NotificationType) == "" && strings.TrimSpace(req.Tool) != "" {
@@ -4973,6 +5019,9 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 	}
 	if (req.Event == "subagent_start" || req.Event == "subagent_stop") && strings.TrimSpace(req.AgentType) == "" && strings.TrimSpace(req.Tool) != "" {
 		req.AgentType = req.Tool
+	}
+	if req.Event == "file_changed" && strings.TrimSpace(req.Operation) == "" && strings.TrimSpace(req.Tool) != "" {
+		req.Operation = req.Tool
 	}
 	return req, nil
 }
@@ -5019,6 +5068,8 @@ func normalizeHookEvent(value string) (string, error) {
 		return "task_created", nil
 	case "task-completed", "taskcompleted", "task_completed":
 		return "task_completed", nil
+	case "file-changed", "filechanged", "file_changed":
+		return "file_changed", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -5136,6 +5187,10 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Task completed   %d\n", len(report.TaskCompleted))
 	for _, command := range report.TaskCompletedCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  File changed     %d\n", len(report.FileChanged))
+	for _, command := range report.FileChangedCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -10448,6 +10503,7 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		WorktreeRemoveHookCount:    len(a.Config.Hooks.WorktreeRemove),
 		TaskCreatedHookCount:       len(a.Config.Hooks.TaskCreated),
 		TaskCompletedHookCount:     len(a.Config.Hooks.TaskCompleted),
+		FileChangedHookCount:       len(a.Config.Hooks.FileChanged),
 		EnabledSkillCount:          len(a.Config.EnabledSkills),
 		PlanActive:                 planState.Active,
 		PlanText:                   planState.Plan,
@@ -11014,6 +11070,7 @@ func (a *App) Doctor(args []string) error {
 		WorktreeRemove:     a.Config.Hooks.WorktreeRemove,
 		TaskCreated:        a.Config.Hooks.TaskCreated,
 		TaskCompleted:      a.Config.Hooks.TaskCompleted,
+		FileChanged:        a.Config.Hooks.FileChanged,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
 	})
@@ -17125,7 +17182,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|task-created|task-completed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|task-created|task-completed|file-changed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

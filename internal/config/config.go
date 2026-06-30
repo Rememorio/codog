@@ -37,6 +37,7 @@ type HookConfig struct {
 	WorktreeRemove             []string      `json:"worktree_remove,omitempty"`
 	TaskCreated                []string      `json:"task_created,omitempty"`
 	TaskCompleted              []string      `json:"task_completed,omitempty"`
+	FileChanged                []string      `json:"file_changed,omitempty"`
 	PreToolUseCommands         []HookCommand `json:"-"`
 	PostToolUseCommands        []HookCommand `json:"-"`
 	PostToolUseFailureCommands []HookCommand `json:"-"`
@@ -57,6 +58,7 @@ type HookConfig struct {
 	WorktreeRemoveCommands     []HookCommand `json:"-"`
 	TaskCreatedCommands        []HookCommand `json:"-"`
 	TaskCompletedCommands      []HookCommand `json:"-"`
+	FileChangedCommands        []HookCommand `json:"-"`
 }
 
 type HookCommand struct {
@@ -162,6 +164,10 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	fileChanged, err := hookCommands(raw, "file_changed", "FileChanged")
+	if err != nil {
+		return err
+	}
 	h.PreToolUseCommands = pre
 	h.PostToolUseCommands = post
 	h.PostToolUseFailureCommands = postFailure
@@ -182,6 +188,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.WorktreeRemoveCommands = worktreeRemove
 	h.TaskCreatedCommands = taskCreated
 	h.TaskCompletedCommands = taskCompleted
+	h.FileChangedCommands = fileChanged
 	h.PreToolUse = hookCommandStrings(pre)
 	h.PostToolUse = hookCommandStrings(post)
 	h.PostToolUseFailure = hookCommandStrings(postFailure)
@@ -202,6 +209,7 @@ func (h *HookConfig) UnmarshalJSON(data []byte) error {
 	h.WorktreeRemove = hookCommandStrings(worktreeRemove)
 	h.TaskCreated = hookCommandStrings(taskCreated)
 	h.TaskCompleted = hookCommandStrings(taskCompleted)
+	h.FileChanged = hookCommandStrings(fileChanged)
 	return nil
 }
 
@@ -1075,6 +1083,11 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	} else if len(src.TaskCompleted) != 0 {
 		dst.TaskCompletedCommands = mergeHookCommands(dst.TaskCompletedCommands, hookCommandsFromStrings(src.TaskCompleted))
 	}
+	if len(src.FileChangedCommands) != 0 {
+		dst.FileChangedCommands = mergeHookCommands(dst.FileChangedCommands, src.FileChangedCommands)
+	} else if len(src.FileChanged) != 0 {
+		dst.FileChangedCommands = mergeHookCommands(dst.FileChangedCommands, hookCommandsFromStrings(src.FileChanged))
+	}
 	dst.PreToolUse = hookCommandStrings(dst.PreToolUseCommands)
 	dst.PostToolUse = hookCommandStrings(dst.PostToolUseCommands)
 	dst.PostToolUseFailure = hookCommandStrings(dst.PostToolUseFailureCommands)
@@ -1095,6 +1108,7 @@ func mergeHookConfig(dst *HookConfig, src HookConfig) {
 	dst.WorktreeRemove = hookCommandStrings(dst.WorktreeRemoveCommands)
 	dst.TaskCreated = hookCommandStrings(dst.TaskCreatedCommands)
 	dst.TaskCompleted = hookCommandStrings(dst.TaskCompletedCommands)
+	dst.FileChanged = hookCommandStrings(dst.FileChangedCommands)
 }
 
 func hookCommandsFromStrings(values []string) []HookCommand {

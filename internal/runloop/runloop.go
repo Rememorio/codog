@@ -162,6 +162,15 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 				call.Output = hookErr.Error()
 				call.IsError = true
 			}
+			if !call.IsError {
+				for _, change := range fileChangesForTool(block.Name, block.Input) {
+					if hookErr := hookRunner.FileChanged(ctx, change.Path, change.Operation, block.Input); hookErr != nil {
+						call.Output = hookErr.Error()
+						call.IsError = true
+						break
+					}
+				}
+			}
 			if call.IsError {
 				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
@@ -207,6 +216,7 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.WorktreeRemove) != 0 ||
 		len(cfg.TaskCreated) != 0 ||
 		len(cfg.TaskCompleted) != 0 ||
+		len(cfg.FileChanged) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
 		len(cfg.PostToolUseFailureCommands) != 0 ||
@@ -226,7 +236,56 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.WorktreeCreateCommands) != 0 ||
 		len(cfg.WorktreeRemoveCommands) != 0 ||
 		len(cfg.TaskCreatedCommands) != 0 ||
-		len(cfg.TaskCompletedCommands) != 0
+		len(cfg.TaskCompletedCommands) != 0 ||
+		len(cfg.FileChangedCommands) != 0
+}
+
+type fileChange struct {
+	Path      string
+	Operation string
+}
+
+func fileChangesForTool(name string, input json.RawMessage) []fileChange {
+	operation := tools.CanonicalToolName(name)
+	switch operation {
+	case "write_file", "edit_file", "multi_edit":
+		var payload struct {
+			Path     string `json:"path"`
+			FilePath string `json:"file_path"`
+		}
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return nil
+		}
+		path := firstNonEmptyString(payload.Path, payload.FilePath)
+		if path == "" {
+			return nil
+		}
+		return []fileChange{{Path: path, Operation: operation}}
+	case "notebook_edit":
+		var payload struct {
+			NotebookPath string `json:"notebook_path"`
+		}
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return nil
+		}
+		path := strings.TrimSpace(payload.NotebookPath)
+		if path == "" {
+			return nil
+		}
+		return []fileChange{{Path: path, Operation: operation}}
+	default:
+		return nil
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (r Runner) emitToolUse(call ToolCall) {

@@ -2867,6 +2867,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	worktreeRemovePath := filepath.Join(workspace, "worktree-remove.json")
 	taskCreatedPath := filepath.Join(workspace, "task-created.json")
 	taskCompletedPath := filepath.Join(workspace, "task-completed.json")
+	fileChangedPath := filepath.Join(workspace, "file-changed.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -2892,6 +2893,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				WorktreeRemove:     []string{"cat > " + shellQuote(worktreeRemovePath)},
 				TaskCreated:        []string{"cat > " + shellQuote(taskCreatedPath)},
 				TaskCompleted:      []string{"cat > " + shellQuote(taskCompletedPath)},
+				FileChanged:        []string{"cat > " + shellQuote(fileChangedPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
 				},
@@ -2952,6 +2954,9 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				TaskCompletedCommands: []config.HookCommand{
 					{Matcher: "agent", Command: "cat > " + shellQuote(taskCompletedPath)},
 				},
+				FileChangedCommands: []config.HookCommand{
+					{Matcher: "write_file", Command: "cat > " + shellQuote(fileChangedPath)},
+				},
 			},
 		},
 		Workspace: workspace,
@@ -2981,6 +2986,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"worktree_remove"`)
 	require.Contains(t, out.String(), `"task_created"`)
 	require.Contains(t, out.String(), `"task_completed"`)
+	require.Contains(t, out.String(), `"file_changed"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
 	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
@@ -3003,6 +3009,7 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "agent-*", hooksList.WorktreeRemoveCommands[0].Matcher)
 	require.Equal(t, "agent", hooksList.TaskCreatedCommands[0].Matcher)
 	require.Equal(t, "agent", hooksList.TaskCompletedCommands[0].Matcher)
+	require.Equal(t, "write_file", hooksList.FileChangedCommands[0].Matcher)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
@@ -3256,6 +3263,26 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "task-1", taskCompletedHook.TaskID)
 	require.Equal(t, "agent", taskCompletedHook.TaskKind)
 	require.Equal(t, "stopped", taskCompletedHook.TaskStatus)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "file-changed", "--path", "docs/notes.md", "--operation", "write_file", "--input", `{"path":"docs/notes.md"}`}))
+	data, err = os.ReadFile(fileChangedPath)
+	require.NoError(t, err)
+	var fileChangedHook struct {
+		Event     string `json:"event"`
+		Tool      string `json:"tool"`
+		ToolName  string `json:"tool_name"`
+		Input     string `json:"input"`
+		FilePath  string `json:"file_path"`
+		Operation string `json:"operation"`
+	}
+	require.NoError(t, json.Unmarshal(data, &fileChangedHook))
+	require.Equal(t, "file_changed", fileChangedHook.Event)
+	require.Equal(t, "write_file", fileChangedHook.Tool)
+	require.Equal(t, "write_file", fileChangedHook.ToolName)
+	require.Contains(t, fileChangedHook.Input, `"docs/notes.md"`)
+	require.Equal(t, "docs/notes.md", fileChangedHook.FilePath)
+	require.Equal(t, "write_file", fileChangedHook.Operation)
 	require.Empty(t, errOut.String())
 }
 

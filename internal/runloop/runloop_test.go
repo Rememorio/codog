@@ -188,6 +188,66 @@ func TestRunnerExecutesPreCompactHook(t *testing.T) {
 	require.Contains(t, postHookPayload.Input, `"keep":1`)
 }
 
+func TestRunnerExecutesFileChangedHookAfterWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type:  "tool_use",
+					ID:    "tool-1",
+					Name:  "write_file",
+					Input: []byte(`{"path":"notes.txt","content":"hello"}`),
+				}},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			Hooks: config.HookConfig{
+				FileChangedCommands: []config.HookCommand{{Matcher: "write_file", Command: "cat > file-changed.json"}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "write notes")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 1)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.FileExists(t, workspace+"/notes.txt")
+
+	payload, err := os.ReadFile(workspace + "/file-changed.json")
+	require.NoError(t, err)
+	var hookPayload struct {
+		Event     string `json:"event"`
+		Tool      string `json:"tool"`
+		ToolName  string `json:"tool_name"`
+		Input     string `json:"input"`
+		FilePath  string `json:"file_path"`
+		Operation string `json:"operation"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &hookPayload))
+	require.Equal(t, "file_changed", hookPayload.Event)
+	require.Equal(t, "write_file", hookPayload.Tool)
+	require.Equal(t, "write_file", hookPayload.ToolName)
+	require.Equal(t, "notes.txt", hookPayload.FilePath)
+	require.Equal(t, "write_file", hookPayload.Operation)
+	require.Contains(t, hookPayload.Input, `"path":"notes.txt"`)
+}
+
 func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

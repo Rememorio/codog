@@ -41,6 +41,7 @@ type Options struct {
 	WorktreeRemoveHookCount    int
 	TaskCreatedHookCount       int
 	TaskCompletedHookCount     int
+	FileChangedHookCount       int
 	EnabledSkillCount          int
 	PlanActive                 bool
 	PlanText                   string
@@ -121,6 +122,7 @@ type ConfigStatus struct {
 	WorktreeRemoveHookCount    int    `json:"worktree_remove_hook_count"`
 	TaskCreatedHookCount       int    `json:"task_created_hook_count"`
 	TaskCompletedHookCount     int    `json:"task_completed_hook_count"`
+	FileChangedHookCount       int    `json:"file_changed_hook_count"`
 	EnabledSkillCount          int    `json:"enabled_skill_count"`
 }
 
@@ -217,6 +219,7 @@ func Build(opts Options) Snapshot {
 			WorktreeRemoveHookCount:    opts.WorktreeRemoveHookCount,
 			TaskCreatedHookCount:       opts.TaskCreatedHookCount,
 			TaskCompletedHookCount:     opts.TaskCompletedHookCount,
+			FileChangedHookCount:       opts.FileChangedHookCount,
 			EnabledSkillCount:          opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{

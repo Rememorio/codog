@@ -182,6 +182,9 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		TaskCompletedCommands: []config.HookCommand{
 			{Matcher: "agent", Type: "command", Command: "task-completed"},
 		},
+		FileChangedCommands: []config.HookCommand{
+			{Matcher: "Write", Type: "command", Command: "file-changed"},
+		},
 	}
 
 	require.Equal(t, []string{"write-only", "all"}, CommandsForEvent(cfg, "pre_tool_use", "write_file"))
@@ -206,7 +209,41 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"worktree-remove"}, CommandsForEvent(cfg, "worktree-remove", "agent-1"))
 	require.Equal(t, []string{"task-created"}, CommandsForEvent(cfg, "task-created", "agent"))
 	require.Equal(t, []string{"task-completed"}, CommandsForEvent(cfg, "task-completed", "agent"))
+	require.Equal(t, []string{"file-changed"}, CommandsForEvent(cfg, "file-changed", "write_file"))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
+}
+
+func TestHooksForPayloadFiltersFileChangedMatchersAndConditions(t *testing.T) {
+	cfg := config.HookConfig{FileChangedCommands: []config.HookCommand{
+		{Matcher: "Write", Type: "command", If: "Write(docs/notes.md)", Command: "write-notes"},
+		{Matcher: "NotebookEdit", Type: "command", Command: "notebook"},
+	}}
+
+	matched := HooksForPayload(cfg, Payload{
+		Event:     "file_changed",
+		Tool:      "write_file",
+		Operation: "write_file",
+		FilePath:  "docs/notes.md",
+	})
+	require.Len(t, matched, 1)
+	require.Equal(t, "write-notes", matched[0].Command)
+
+	matched = HooksForPayload(cfg, Payload{
+		Event:     "file_changed",
+		Tool:      "write_file",
+		Operation: "write_file",
+		FilePath:  "docs/README.md",
+	})
+	require.Empty(t, matched)
+
+	matched = HooksForPayload(cfg, Payload{
+		Event:     "file_changed",
+		Tool:      "notebook_edit",
+		Operation: "notebook_edit",
+		FilePath:  "analysis.ipynb",
+	})
+	require.Len(t, matched, 1)
+	require.Equal(t, "notebook", matched[0].Command)
 }
 
 func TestHooksForPayloadFiltersIfConditions(t *testing.T) {

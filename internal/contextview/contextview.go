@@ -71,6 +71,7 @@ type ConfigSummary struct {
 	WorktreeRemoveHookCount    int    `json:"worktree_remove_hook_count"`
 	TaskCreatedHookCount       int    `json:"task_created_hook_count"`
 	TaskCompletedHookCount     int    `json:"task_completed_hook_count"`
+	FileChangedHookCount       int    `json:"file_changed_hook_count"`
 }
 
 type SessionSummary struct {
@@ -178,6 +179,7 @@ func Build(options Options) Report {
 			WorktreeRemoveHookCount:    options.Status.Config.WorktreeRemoveHookCount,
 			TaskCreatedHookCount:       options.Status.Config.TaskCreatedHookCount,
 			TaskCompletedHookCount:     options.Status.Config.TaskCompletedHookCount,
+			FileChangedHookCount:       options.Status.Config.FileChangedHookCount,
 		},
 		Git: options.Status.Git,
 		Session: SessionSummary{
