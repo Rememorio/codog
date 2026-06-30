@@ -327,6 +327,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Hooks(ctx, rest)
 	case "mcp":
 		return app.MCP(ctx, rest)
+	case "capabilities":
+		return app.Capabilities(rest)
 	case "cost":
 		return app.ShowCost(overrides)
 	case "usage":
@@ -11010,6 +11012,370 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	})
 }
 
+type capabilitiesReport struct {
+	Kind              string            `json:"kind"`
+	Action            string            `json:"action"`
+	Status            string            `json:"status"`
+	Version           string            `json:"version"`
+	Workspace         string            `json:"workspace"`
+	Model             string            `json:"model"`
+	PermissionMode    string            `json:"permission_mode"`
+	CommandCount      int               `json:"command_count"`
+	Commands          []string          `json:"commands"`
+	SlashCommandCount int               `json:"slash_command_count"`
+	SlashCommands     []capabilitySlash `json:"slash_commands"`
+	ToolCount         int               `json:"tool_count"`
+	Tools             []capabilityTool  `json:"tools"`
+	MCP               capabilityMCP     `json:"mcp"`
+	Features          []string          `json:"features"`
+	Protocols         []string          `json:"protocols"`
+	OutputFormats     []string          `json:"output_formats"`
+}
+
+type capabilitySlash struct {
+	Name        string `json:"name"`
+	Usage       string `json:"usage"`
+	Description string `json:"description"`
+	Hidden      bool   `json:"hidden,omitempty"`
+	Disabled    bool   `json:"disabled,omitempty"`
+}
+
+type capabilityTool struct {
+	Name           string         `json:"name"`
+	Description    string         `json:"description"`
+	Permission     string         `json:"permission"`
+	ExposedOverMCP bool           `json:"exposed_over_mcp"`
+	InputSchema    map[string]any `json:"input_schema,omitempty"`
+}
+
+type capabilityMCP struct {
+	ConfiguredServerCount  int              `json:"configured_server_count"`
+	ConfiguredServers      []string         `json:"configured_servers"`
+	LocalResourceCount     int              `json:"local_resource_count"`
+	LocalResources         []map[string]any `json:"local_resources"`
+	LocalTemplateCount     int              `json:"local_resource_template_count"`
+	LocalResourceTemplates []map[string]any `json:"local_resource_templates"`
+	LocalPromptCount       int              `json:"local_prompt_count"`
+	LocalPrompts           []map[string]any `json:"local_prompts"`
+	ExposedToolCount       int              `json:"exposed_tool_count"`
+}
+
+func (a *App) Capabilities(args []string) error {
+	format, err := parseSimpleOutputFormat("capabilities", args)
+	if err != nil {
+		return err
+	}
+	report := a.capabilitiesReport()
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderCapabilitiesText(a.Out, report)
+	return nil
+}
+
+func (a *App) capabilitiesReport() capabilitiesReport {
+	commands := builtInCommandNames()
+	slashCommands := slashCapabilities()
+	toolInfos := []tools.ToolInfo{}
+	if a.Tools != nil {
+		toolInfos = a.Tools.Infos()
+	}
+	exposed := mcpserver.ExposedTools(a.Tools)
+	exposedNames := map[string]bool{}
+	for _, tool := range exposed {
+		if name, ok := tool["name"].(string); ok && name != "" {
+			exposedNames[name] = true
+		}
+	}
+	capTools := make([]capabilityTool, 0, len(toolInfos))
+	for _, info := range toolInfos {
+		capTools = append(capTools, capabilityTool{
+			Name:           info.Name,
+			Description:    info.Description,
+			Permission:     string(info.Permission),
+			ExposedOverMCP: exposedNames[info.Name],
+			InputSchema:    info.InputSchema,
+		})
+	}
+	localResources := mcpserver.LocalResources(a.mcpServerOptions())
+	localTemplates := mcpserver.LocalResourceTemplates()
+	localPrompts := mcpserver.LocalPrompts()
+	return capabilitiesReport{
+		Kind:              "capabilities",
+		Action:            "show",
+		Status:            "ok",
+		Version:           version,
+		Workspace:         a.Workspace,
+		Model:             a.Config.Model,
+		PermissionMode:    a.Config.PermissionMode,
+		CommandCount:      len(commands),
+		Commands:          commands,
+		SlashCommandCount: len(slashCommands),
+		SlashCommands:     slashCommands,
+		ToolCount:         len(capTools),
+		Tools:             capTools,
+		MCP: capabilityMCP{
+			ConfiguredServerCount:  len(a.Config.MCPServers),
+			ConfiguredServers:      sortedMCPServerNames(a.Config.MCPServers),
+			LocalResourceCount:     len(localResources),
+			LocalResources:         localResources,
+			LocalTemplateCount:     len(localTemplates),
+			LocalResourceTemplates: localTemplates,
+			LocalPromptCount:       len(localPrompts),
+			LocalPrompts:           localPrompts,
+			ExposedToolCount:       len(exposed),
+		},
+		Features:      codogCapabilityFeatures(),
+		Protocols:     codogCapabilityProtocols(),
+		OutputFormats: []string{"text", "json", "stream-json"},
+	}
+}
+
+func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
+	fmt.Fprintln(out, "Codog Capabilities")
+	fmt.Fprintf(out, "  Version           %s\n", report.Version)
+	fmt.Fprintf(out, "  Commands          %d\n", report.CommandCount)
+	fmt.Fprintf(out, "  Slash commands    %d\n", report.SlashCommandCount)
+	fmt.Fprintf(out, "  Tools             %d\n", report.ToolCount)
+	fmt.Fprintf(out, "  MCP servers       %d configured\n", report.MCP.ConfiguredServerCount)
+	fmt.Fprintf(out, "  MCP local data    %d resources, %d templates, %d prompts\n", report.MCP.LocalResourceCount, report.MCP.LocalTemplateCount, report.MCP.LocalPromptCount)
+	fmt.Fprintln(out, "  Features")
+	for _, feature := range report.Features {
+		fmt.Fprintf(out, "    - %s\n", feature)
+	}
+}
+
+func slashCapabilities() []capabilitySlash {
+	specs := slash.Specs()
+	out := make([]capabilitySlash, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, capabilitySlash{
+			Name:        spec.Name,
+			Usage:       spec.Usage,
+			Description: spec.Description,
+			Hidden:      spec.Hidden,
+			Disabled:    spec.Disabled,
+		})
+	}
+	return out
+}
+
+func codogCapabilityFeatures() []string {
+	return sortedUniqueStrings([]string{
+		"acp_bridge",
+		"anthropic_streaming",
+		"auto_compaction",
+		"background_tasks",
+		"bubble_tea_tui",
+		"config_layers",
+		"cost_token_tracking",
+		"editor_bridge",
+		"git_workflows",
+		"hooks",
+		"ide_bridge",
+		"jsonl_sessions",
+		"lsp",
+		"mcp_client",
+		"mcp_server",
+		"mock_parity_harness",
+		"multi_agent",
+		"notebooks",
+		"oauth",
+		"one_shot_prompt",
+		"openai_compatible_streaming",
+		"permission_confirmation",
+		"plugin_marketplace",
+		"project_memory",
+		"remote_control",
+		"repl",
+		"sandbox",
+		"session_resume",
+		"skills",
+		"slash_commands",
+		"updater",
+		"workspace_tools",
+	})
+}
+
+func codogCapabilityProtocols() []string {
+	return sortedUniqueStrings([]string{
+		"acp_json_rpc_stdio",
+		"anthropic_messages",
+		"editor_bridge_http",
+		"mcp_stdio_client",
+		"mcp_stdio_server",
+		"openai_chat_completions",
+		"remote_control_http",
+	})
+}
+
+func builtInCommandNames() []string {
+	return sortedUniqueStrings([]string{
+		"acp",
+		"add-dir",
+		"advisor",
+		"agents",
+		"allowed-tools",
+		"app",
+		"backfill-sessions",
+		"background",
+		"bashes",
+		"blame",
+		"branch",
+		"brief",
+		"btw",
+		"bughunter",
+		"build",
+		"capabilities",
+		"changelog",
+		"chrome",
+		"code-intel",
+		"color",
+		"commands",
+		"commit",
+		"commit-push-pr",
+		"compact",
+		"completion",
+		"config",
+		"context",
+		"copy",
+		"cost",
+		"ctx_viz",
+		"debug-tool-call",
+		"definition",
+		"desktop",
+		"diagnostics",
+		"diff",
+		"doctor",
+		"dump-manifests",
+		"effort",
+		"enterprise",
+		"env",
+		"exit-plan",
+		"export",
+		"extra-usage",
+		"fast",
+		"feedback",
+		"files",
+		"focus",
+		"format",
+		"git",
+		"heapdump",
+		"help",
+		"history",
+		"hooks",
+		"hover",
+		"ide",
+		"init",
+		"init-verifiers",
+		"insights",
+		"install",
+		"install-github-app",
+		"install-slack-app",
+		"issue",
+		"keybindings",
+		"lint",
+		"log",
+		"login",
+		"logout",
+		"map",
+		"marketplace",
+		"max-tokens",
+		"max-turns",
+		"mcp",
+		"memory",
+		"mobile",
+		"mock-server",
+		"model",
+		"node",
+		"oauth",
+		"oauth-refresh",
+		"output-style",
+		"passes",
+		"plugin",
+		"plugins",
+		"pr",
+		"pr-comments",
+		"privacy-settings",
+		"project",
+		"prompt",
+		"prompt-history",
+		"providers",
+		"python",
+		"rate-limit-options",
+		"references",
+		"release-notes",
+		"reload-plugins",
+		"remote",
+		"remote-control",
+		"remote-env",
+		"remote-setup",
+		"rename",
+		"repl",
+		"reset-limits",
+		"review",
+		"rewind",
+		"run",
+		"sandbox",
+		"sandbox-toggle",
+		"search",
+		"security-review",
+		"self-test",
+		"sessions",
+		"share",
+		"skills",
+		"stash",
+		"state",
+		"stats",
+		"status",
+		"statusline",
+		"stickers",
+		"summary",
+		"symbols",
+		"system-prompt",
+		"tag",
+		"tasks",
+		"templates",
+		"terminal-setup",
+		"terminalSetup",
+		"test",
+		"theme",
+		"think-back",
+		"thinkback",
+		"thinkback-play",
+		"todos",
+		"tui",
+		"ultraplan",
+		"ultrareview",
+		"undo",
+		"unfocus",
+		"updater",
+		"upgrade",
+		"usage",
+		"version",
+		"vim",
+		"voice",
+		"web-setup",
+	})
+}
+
+func sortedUniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func parseSimpleOutputFormat(command string, args []string) (string, error) {
 	format := "text"
 	for i := 0; i < len(args); i++ {
@@ -13444,6 +13810,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/mcp":
 		if err := a.MCP(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/capabilities":
+		if err := a.Capabilities(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/acp":
@@ -18869,7 +19239,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "capabilities", "changelog", "chrome",
 		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
@@ -18994,6 +19364,7 @@ Usage:
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
   %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
+  %s [flags] capabilities [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]

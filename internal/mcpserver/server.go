@@ -96,17 +96,17 @@ func handle(ctx context.Context, out io.Writer, registry *tools.Registry, opts O
 			"serverInfo": map[string]any{"name": "codog", "version": version},
 		})
 	case "tools/list":
-		return writeResult(out, req.ID, map[string]any{"tools": exposedToolInfos(registry)})
+		return writeResult(out, req.ID, map[string]any{"tools": ExposedTools(registry)})
 	case "tools/call":
 		return handleToolCall(ctx, out, registry, opts, req)
 	case "resources/list":
-		return writeResult(out, req.ID, map[string]any{"resources": localResources(opts)})
+		return writeResult(out, req.ID, map[string]any{"resources": LocalResources(opts)})
 	case "resources/read":
 		return handleResourceRead(out, registry, opts, req)
 	case "resources/templates/list":
-		return writeResult(out, req.ID, map[string]any{"resourceTemplates": localResourceTemplates()})
+		return writeResult(out, req.ID, map[string]any{"resourceTemplates": LocalResourceTemplates()})
 	case "prompts/list":
-		return writeResult(out, req.ID, map[string]any{"prompts": localPrompts()})
+		return writeResult(out, req.ID, map[string]any{"prompts": LocalPrompts()})
 	case "prompts/get":
 		return handlePromptGet(out, req)
 	default:
@@ -166,7 +166,7 @@ func handleResourceRead(out io.Writer, registry *tools.Registry, opts Options, r
 	return writeResult(out, req.ID, map[string]any{"contents": []map[string]string{content}})
 }
 
-func localResources(opts Options) []map[string]any {
+func LocalResources(opts Options) []map[string]any {
 	return []map[string]any{
 		{
 			"uri":         "codog://workspace",
@@ -189,7 +189,7 @@ func localResources(opts Options) []map[string]any {
 	}
 }
 
-func localResourceTemplates() []map[string]any {
+func LocalResourceTemplates() []map[string]any {
 	return []map[string]any{
 		{
 			"uriTemplate": "codog://file/{path}",
@@ -216,12 +216,12 @@ func readLocalResource(uri string, registry *tools.Registry, opts Options) (map[
 			"status":          "ok",
 			"workspace":       opts.Workspace,
 			"permission_mode": opts.PermissionMode,
-			"tool_count":      len(exposedToolInfos(registry)),
+			"tool_count":      len(ExposedTools(registry)),
 		})
 	case "codog://tools":
 		return jsonResource(uri, map[string]any{
 			"kind":  "mcp_tools",
-			"tools": exposedToolInfos(registry),
+			"tools": ExposedTools(registry),
 		})
 	default:
 		if strings.HasPrefix(uri, "codog://file/") {
@@ -286,7 +286,10 @@ func resolveWorkspaceResourcePath(workspace, relPath string) (string, error) {
 	return path, nil
 }
 
-func exposedToolInfos(registry *tools.Registry) []map[string]any {
+func ExposedTools(registry *tools.Registry) []map[string]any {
+	if registry == nil {
+		return []map[string]any{}
+	}
 	infos := registry.Infos()
 	list := make([]map[string]any, 0, len(infos))
 	for _, info := range infos {
@@ -302,7 +305,7 @@ func exposedToolInfos(registry *tools.Registry) []map[string]any {
 	return list
 }
 
-func localPrompts() []map[string]any {
+func LocalPrompts() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "review_changes",

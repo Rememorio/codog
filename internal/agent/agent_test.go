@@ -121,6 +121,92 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Help, "Usage:")
 }
 
+func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "claude-test",
+			PermissionMode:      "read-only",
+			AutoCompactMessages: 12,
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Capabilities(nil))
+	require.Contains(t, out.String(), "Codog Capabilities")
+	require.Contains(t, out.String(), "MCP local data")
+	out.Reset()
+
+	require.NoError(t, app.Capabilities([]string{"--json"}))
+	var report capabilitiesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "capabilities", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "claude-test", report.Model)
+	require.Equal(t, "read-only", report.PermissionMode)
+	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Features, "mcp_server")
+	require.Contains(t, report.Protocols, "mcp_stdio_server")
+	require.Contains(t, report.OutputFormats, "stream-json")
+	require.Greater(t, report.CommandCount, 20)
+	require.Greater(t, report.SlashCommandCount, 20)
+	require.Greater(t, report.ToolCount, 10)
+	require.Equal(t, 3, report.MCP.LocalResourceCount)
+	require.Equal(t, 1, report.MCP.LocalTemplateCount)
+	require.Equal(t, 3, report.MCP.LocalPromptCount)
+	require.Greater(t, report.MCP.ExposedToolCount, 10)
+	require.True(t, capabilityReportHasTool(report, "read_file"))
+	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
+	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
+	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
+	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
+}
+
+func capabilityReportHasTool(report capabilitiesReport, name string) bool {
+	for _, tool := range report.Tools {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilityReportHasSlash(report capabilitiesReport, name string) bool {
+	for _, command := range report.SlashCommands {
+		if command.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilityReportHasMCPResource(report capabilitiesReport, uri string) bool {
+	for _, resource := range report.MCP.LocalResources {
+		if resource["uri"] == uri {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilityReportHasMCPPrompt(report capabilitiesReport, name string) bool {
+	for _, prompt := range report.MCP.LocalPrompts {
+		if prompt["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
 func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	var out bytes.Buffer
 

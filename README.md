@@ -193,6 +193,9 @@ Claude Code source.
   inspected through `mcp_auth`. Configured MCP resources can be discovered and
   read by the model through `list_mcp_resources` and `read_mcp_resource`; `mcp serve`
   exposes Codog's local tools over stdio MCP.
+- `codog capabilities [--json]` reports built-in commands, slash commands,
+  model tools, local MCP resources/prompts, protocol support, and feature flags
+  for IDE bridges, parity harnesses, and scripts.
 - `codog acp`, `codog acp serve`, `codog --acp`, and `/acp` expose ACP/Zed
   integration status. `codog acp serve` starts a stdio JSON-RPC bridge with
   `initialize`, `status`, `session/new`, `prompt`, and `shutdown` methods.
