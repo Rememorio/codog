@@ -85,6 +85,7 @@ import (
 )
 
 const version = "0.1.0"
+const maxSystemGitStatusChars = 2000
 
 type App struct {
 	Config    config.Config
@@ -20142,6 +20143,14 @@ func (a *App) systemPromptForInput(input string) string {
 		builder.WriteString("\n\n")
 		builder.WriteString(strings.TrimSpace(a.Config.AppendSystemPrompt))
 	}
+	if rendered := currentDatePrompt(time.Now()); rendered != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(rendered)
+	}
+	if rendered := a.gitContextPrompt(); rendered != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(rendered)
+	}
 	if effort := strings.TrimSpace(a.Config.ReasoningEffort); effort != "" {
 		builder.WriteString("\n\n<codog_reasoning_effort>")
 		builder.WriteString(effectiveEffort(effort))
@@ -20196,6 +20205,54 @@ func (a *App) systemPromptForInput(input string) string {
 		builder.WriteString("\n\n")
 		builder.WriteString(rendered)
 	}
+	return builder.String()
+}
+
+func currentDatePrompt(now time.Time) string {
+	return "Today's date is " + now.Format("2006-01-02") + "."
+}
+
+func (a *App) gitContextPrompt() string {
+	if strings.TrimSpace(a.Workspace) == "" {
+		return ""
+	}
+	inside, err := gitops.Run(a.Workspace, "rev-parse", "--is-inside-work-tree")
+	if err != nil || strings.TrimSpace(inside) != "true" {
+		return ""
+	}
+	status, err := gitops.Status(a.Workspace)
+	if err != nil {
+		return ""
+	}
+	if len(status) > maxSystemGitStatusChars {
+		status = status[:maxSystemGitStatusChars] + "\n... (truncated because git status exceeds 2000 characters)"
+	}
+	branch, _ := gitops.Run(a.Workspace, "branch", "--show-current")
+	if strings.TrimSpace(branch) == "" {
+		branch, _ = gitops.Run(a.Workspace, "rev-parse", "--abbrev-ref", "HEAD")
+	}
+	log, _ := gitops.Log(a.Workspace, 5)
+	var builder strings.Builder
+	builder.WriteString("<git_context>\n")
+	builder.WriteString("This is the git status at the start of the conversation. It is a snapshot and will not update automatically.\n")
+	if branch = strings.TrimSpace(branch); branch != "" {
+		builder.WriteString("\nCurrent branch: ")
+		builder.WriteString(branch)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\nStatus:\n")
+	if strings.TrimSpace(status) == "" {
+		builder.WriteString("(clean)\n")
+	} else {
+		builder.WriteString(status)
+		builder.WriteString("\n")
+	}
+	if log = strings.TrimSpace(log); log != "" {
+		builder.WriteString("\nRecent commits:\n")
+		builder.WriteString(log)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("</git_context>")
 	return builder.String()
 }
 

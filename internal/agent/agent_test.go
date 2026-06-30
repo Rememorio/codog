@@ -5531,6 +5531,33 @@ func TestSystemPromptIncludesProjectMemory(t *testing.T) {
 	require.Contains(t, prompt, "Prefer Claude-compatible workflows.")
 }
 
+func TestSystemPromptIncludesDateAndGitSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("changed\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("untracked\n"), 0o644))
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+	}
+
+	prompt := app.systemPrompt()
+
+	require.Contains(t, prompt, "Today's date is ")
+	require.Contains(t, prompt, "<git_context>")
+	require.Contains(t, prompt, "Current branch: main")
+	require.Contains(t, prompt, "Status:")
+	require.Contains(t, prompt, "README.md")
+	require.Contains(t, prompt, "notes.txt")
+	require.Contains(t, prompt, "Recent commits:")
+	require.Contains(t, prompt, "chore: base")
+}
+
 func TestSystemPromptSupportsOverrideAndAppend(t *testing.T) {
 	app := &App{
 		Config: config.Config{
