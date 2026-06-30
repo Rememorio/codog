@@ -4492,6 +4492,8 @@ func (a *App) Doctor(args []string) error {
 		ToolCount:      toolCount,
 		SessionCount:   sessionCount,
 		MemoryFiles:    memoryPaths,
+		PreToolUse:     a.Config.Hooks.PreToolUse,
+		PostToolUse:    a.Config.Hooks.PostToolUse,
 		SandboxDefault: sandboxStatus.Default,
 		SandboxOK:      sandboxStatus.Available,
 	})

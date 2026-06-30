@@ -2,6 +2,9 @@ package doctor
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,6 +65,52 @@ func TestRenderText(t *testing.T) {
 	require.Contains(t, out.String(), "Git")
 	require.Contains(t, out.String(), "Inside worktree: false")
 	require.Contains(t, out.String(), "Run from a worktree.")
+}
+
+func TestRunWarnsForMissingHookPath(t *testing.T) {
+	workspace := t.TempDir()
+	report := Run(Options{
+		Workspace:      workspace,
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		PreToolUse:     []string{"./hooks/missing.sh"},
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	hooks := findCheck(t, report, "Hooks")
+	require.Equal(t, StatusWarn, hooks.Status)
+	require.Contains(t, hooks.Summary, "could not be found")
+	require.Contains(t, strings.Join(hooks.Details, "\n"), filepath.Join(workspace, "hooks", "missing.sh"))
+}
+
+func TestRunAcceptsExistingHookPath(t *testing.T) {
+	workspace := t.TempDir()
+	hooksDir := filepath.Join(workspace, "hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "pre.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	report := Run(Options{
+		Workspace:      workspace,
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		PreToolUse:     []string{"./hooks/pre.sh"},
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	hooks := findCheck(t, report, "Hooks")
+	require.Equal(t, StatusOK, hooks.Status)
+	require.Contains(t, hooks.Summary, "runnable")
 }
 
 func findCheck(t *testing.T, report Report, name string) Check {

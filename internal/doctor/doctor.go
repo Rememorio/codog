@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -30,6 +31,8 @@ type Options struct {
 	ToolCount      int
 	SessionCount   int
 	MemoryFiles    []string
+	PreToolUse     []string
+	PostToolUse    []string
 	SandboxDefault string
 	SandboxOK      bool
 }
@@ -69,6 +72,7 @@ func Run(opts Options) Report {
 		checkPermissions(opts.PermissionMode),
 		checkTools(opts.ToolCount),
 		checkSessions(opts.SessionCount),
+		checkHooks(opts),
 		checkGit(opts.Workspace),
 		checkSandbox(opts),
 		checkDeveloperToolchain(),
@@ -227,6 +231,73 @@ func checkSessions(count int) Check {
 		return Check{Name: "Sessions", Status: StatusWarn, Summary: "Session store could not be listed."}
 	}
 	return Check{Name: "Sessions", Status: StatusOK, Summary: "Session store is readable.", Details: []string{fmt.Sprintf("Saved sessions: %d", count)}}
+}
+
+func checkHooks(opts Options) Check {
+	pre := compactHookCommands(opts.PreToolUse)
+	post := compactHookCommands(opts.PostToolUse)
+	total := len(pre) + len(post)
+	details := []string{
+		fmt.Sprintf("PreToolUse hooks: %d", len(pre)),
+		fmt.Sprintf("PostToolUse hooks: %d", len(post)),
+	}
+	if total == 0 {
+		return Check{Name: "Hooks", Status: StatusOK, Summary: "No hooks are configured.", Details: details}
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Hooks are configured but sh is not available on PATH.", Details: details, Hint: "Install a POSIX-compatible shell or remove configured hooks."}
+	}
+	issues := append(hookPathIssues(opts.Workspace, "PreToolUse", pre), hookPathIssues(opts.Workspace, "PostToolUse", post)...)
+	if len(issues) != 0 {
+		details = append(details, issues...)
+		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Some hook command paths could not be found.", Details: details, Hint: "Fix missing hook script paths or use a command available on PATH."}
+	}
+	return Check{Name: "Hooks", Status: StatusOK, Summary: "Hook configuration is runnable.", Details: details}
+}
+
+func hookPathIssues(workspace string, event string, commands []string) []string {
+	issues := []string{}
+	for _, command := range commands {
+		path, ok := hookCommandPath(workspace, command)
+		if !ok {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				issues = append(issues, fmt.Sprintf("%s missing path: %s", event, path))
+				continue
+			}
+			issues = append(issues, fmt.Sprintf("%s cannot inspect path %s: %s", event, path, err))
+		}
+	}
+	return issues
+}
+
+func hookCommandPath(workspace string, command string) (string, bool) {
+	command = strings.TrimSpace(command)
+	if command == "" || strings.ContainsAny(command, "|&;<>()$`*?[]{}!\"'\\\n\r") {
+		return "", false
+	}
+	fields := strings.Fields(command)
+	if len(fields) == 0 || !strings.Contains(fields[0], "/") {
+		return "", false
+	}
+	path := fields[0]
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workspace, path)
+	}
+	return filepath.Clean(path), true
+}
+
+func compactHookCommands(commands []string) []string {
+	out := make([]string, 0, len(commands))
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			out = append(out, command)
+		}
+	}
+	return out
 }
 
 func checkGit(workspace string) Check {
