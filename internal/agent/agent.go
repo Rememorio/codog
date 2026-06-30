@@ -40,6 +40,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
+	"github.com/Rememorio/codog/internal/insights"
 	"github.com/Rememorio/codog/internal/manifests"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/mcpserver"
@@ -297,6 +298,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "stats":
 		return app.Usage(rest, overrides)
+	case "insights":
+		return app.Insights(rest)
 	case "compact":
 		return app.Compact(rest, overrides)
 	case "extra-usage":
@@ -11113,6 +11116,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/insights":
+		if err := a.Insights(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/extra-usage":
 		if err := a.ExtraUsage(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -14580,6 +14587,71 @@ func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type insightsRequest struct {
+	Format string
+	Limit  int
+}
+
+func (a *App) Insights(args []string) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parseInsightsArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := insights.Build(a.Sessions, insights.Options{Limit: req.Limit})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return insights.RenderJSON(a.Out, report)
+	}
+	insights.RenderText(a.Out, report)
+	return nil
+}
+
+func parseInsightsArgs(args []string) (insightsRequest, error) {
+	req := insightsRequest{Format: "text", Limit: 5}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("insights output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("insights limit is required")
+			}
+			limit, err := parsePositiveInt(args[index], "insights limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "insights limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		default:
+			return req, fmt.Errorf("unknown insights argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "insights"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
 func (a *App) sessionUsageValues(sessionID string) ([]anthropic.Usage, error) {
 	entries, err := a.Sessions.Usage(sessionID)
 	if err != nil {
@@ -15096,6 +15168,7 @@ Usage:
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] insights [--limit N] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]

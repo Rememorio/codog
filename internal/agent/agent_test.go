@@ -1504,6 +1504,18 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Session          usage-session")
 	out.Reset()
 
+	require.NoError(t, app.Insights([]string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "insights"`)
+	require.Contains(t, out.String(), `"sessions": 1`)
+	require.Contains(t, out.String(), `"tool_uses": 1`)
+	require.Contains(t, out.String(), `"name": "read_file"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/insights --limit 1", sess))
+	require.Contains(t, out.String(), "Insights")
+	require.Contains(t, out.String(), "Recent prompts")
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/summary", sess))
 	require.Contains(t, out.String(), "Summary")
 	require.Contains(t, out.String(), "Session          usage-session")
