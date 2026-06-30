@@ -868,6 +868,62 @@ func TestLocalExtraArgumentErrorContracts(t *testing.T) {
 	}
 }
 
+func TestLocalListFlagOptionContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := []struct {
+		name      string
+		args      []string
+		command   string
+		errorKind string
+		hint      string
+	}{
+		{
+			name:      "agents list flag",
+			args:      []string{"--config", configPath, "--output-format", "json", "agents", "list", "--unknown-flag"},
+			command:   "agents list",
+			errorKind: "unknown_option",
+			hint:      "codog agents list",
+		},
+		{
+			name:      "skills list flag",
+			args:      []string{"--config", configPath, "--output-format", "json", "skills", "list", "--unknown-flag"},
+			command:   "skills list",
+			errorKind: "unknown_option",
+			hint:      "codog skills list",
+		},
+		{
+			name:      "plugins list flag",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "list", "--unknown-flag"},
+			command:   "plugins list",
+			errorKind: "cli_parse",
+			hint:      "codog plugins list",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, tc.errorKind, report.ErrorKind)
+			require.Equal(t, "error", report.Status)
+			require.Equal(t, tc.command, report.Command)
+			require.Equal(t, "--unknown-flag", report.Option)
+			require.Contains(t, report.Hint, tc.hint)
+		})
+	}
+}
+
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",

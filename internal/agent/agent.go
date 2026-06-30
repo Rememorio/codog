@@ -2792,7 +2792,11 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		return a.listAgents(format, "")
 	}
 	if args[0] == "list" {
-		return a.listAgents(format, strings.Join(args[1:], " "))
+		filter, err := parseListFilterArgs("agents list", args[1:], "codog agents list [FILTER] [--json|--output-format text|json]", "unknown_option")
+		if err != nil {
+			return renderCLIError(a.Out, err, format)
+		}
+		return a.listAgents(format, filter)
 	}
 	if args[0] == "show" {
 		if len(args) < 2 {
@@ -2999,6 +3003,21 @@ func (a *App) Marketplace(args []string) error {
 		return err
 	}
 	if len(args) == 0 || args[0] == "list" {
+		if len(args) > 1 {
+			if option := firstFlagShapedArg(args[1:]); option != "" {
+				return renderCLIError(a.Out, unknownOptionError{
+					Kind:    "cli_parse",
+					Command: "plugins list",
+					Option:  option,
+					Usage:   "codog plugins list [--json|--output-format text|json]",
+				}, format)
+			}
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "plugins list",
+				Args:    append([]string(nil), args[1:]...),
+				Usage:   "codog plugins list [--json|--output-format text|json]",
+			}, format)
+		}
 		return a.listPlugins(format)
 	}
 	var payload any
@@ -11534,6 +11553,7 @@ type cliErrorReport struct {
 	Status      string            `json:"status"`
 	Command     string            `json:"command,omitempty"`
 	Args        []string          `json:"args,omitempty"`
+	Option      string            `json:"option,omitempty"`
 	Message     string            `json:"message"`
 	Hint        string            `json:"hint"`
 	Value       string            `json:"value,omitempty"`
@@ -11585,6 +11605,17 @@ type toolNameError struct {
 
 func (e toolNameError) Error() string {
 	return fmt.Sprintf("invalid_tool_name: unknown tool name %q for %s", e.ToolName, e.Argument)
+}
+
+type unknownOptionError struct {
+	Kind    string
+	Command string
+	Option  string
+	Usage   string
+}
+
+func (e unknownOptionError) Error() string {
+	return fmt.Sprintf("unknown_option: unknown option %q for %s", e.Option, e.Command)
 }
 
 type unexpectedExtraArgsError struct {
@@ -11705,6 +11736,29 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			ToolName:    toolName,
 			Available:   append([]string(nil), toolErr.Available...),
 			ToolAliases: copyStringMap(toolErr.Aliases),
+		}
+	}
+	var optionErr unknownOptionError
+	if errors.As(err, &optionErr) {
+		kind := strings.TrimSpace(optionErr.Kind)
+		if kind == "" {
+			kind = "unknown_option"
+		}
+		command := strings.TrimSpace(optionErr.Command)
+		option := strings.TrimSpace(optionErr.Option)
+		usage := strings.TrimSpace(optionErr.Usage)
+		hint := fmt.Sprintf("Remove %s or use a supported option.", option)
+		if usage != "" {
+			hint = "Usage: " + usage
+		}
+		return cliErrorReport{
+			Kind:      kind,
+			ErrorKind: kind,
+			Status:    "error",
+			Command:   command,
+			Option:    option,
+			Message:   fmt.Sprintf("unknown option %q for %s", option, command),
+			Hint:      hint,
 		}
 	}
 	var extraArgsErr unexpectedExtraArgsError
@@ -18026,13 +18080,20 @@ func (a *App) skillUninstallRoots(target string) []string {
 }
 
 func (a *App) listSkills(args []string) error {
-	format, err := parseSimpleOutputFormat("skills", args)
+	remaining, format, err := stripJSONOnlyOutputFormat("skills", args)
 	if err != nil {
 		return err
+	}
+	filter, err := parseListFilterArgs("skills list", remaining, "codog skills list [FILTER] [--json|--output-format text|json]", "unknown_option")
+	if err != nil {
+		return renderCLIError(a.Out, err, format)
 	}
 	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
 	if err != nil {
 		return err
+	}
+	if filter != "" {
+		all = filterSkills(all, filter)
 	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(map[string]any{"kind": "skills", "action": "list", "skills": all}, "", "  ")
@@ -18051,6 +18112,39 @@ func (a *App) listSkills(args []string) error {
 		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", skill.Name, skill.Source, enabled, skill.Path)
 	}
 	return nil
+}
+
+func filterSkills(all []skills.Skill, filter string) []skills.Skill {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return all
+	}
+	out := make([]skills.Skill, 0, len(all))
+	for _, skill := range all {
+		if strings.Contains(strings.ToLower(skill.Name), filter) ||
+			strings.Contains(strings.ToLower(skill.DisplayName), filter) ||
+			strings.Contains(strings.ToLower(skill.Description), filter) {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func parseListFilterArgs(command string, args []string, usage string, errorKind string) (string, error) {
+	if option := firstFlagShapedArg(args); option != "" {
+		return "", unknownOptionError{Kind: errorKind, Command: command, Option: option, Usage: usage}
+	}
+	return strings.TrimSpace(strings.Join(args, " ")), nil
+}
+
+func firstFlagShapedArg(args []string) string {
+	for _, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if strings.HasPrefix(arg, "-") {
+			return arg
+		}
+	}
+	return ""
 }
 
 func (a *App) Commands(args []string) error {
