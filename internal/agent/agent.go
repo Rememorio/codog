@@ -14335,7 +14335,7 @@ func (a *App) Git(args []string) error {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE")
+		return errors.New("usage: codog git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git stash [list|push|apply|pop] | git commit [--all] MESSAGE [--json|--output-format text|json]")
 	}
 	switch args[0] {
 	case "status":
@@ -14351,13 +14351,7 @@ func (a *App) Git(args []string) error {
 	case "stash":
 		return a.Stash(args[1:])
 	case "commit":
-		options := parseGitCommitArgs(args[1:])
-		result, err := gitops.Commit(a.Workspace, options)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		return a.GitCommit(args[1:], "json")
 	case "branch":
 		return a.Branch(args[1:])
 	case "tag":
@@ -14406,7 +14400,7 @@ func rewriteLeadingGitOutputFormat(args []string) ([]string, error) {
 
 func gitSubcommandAcceptsOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "status", "diff", "log", "changelog", "blame", "branch", "tag", "stash":
+	case "status", "diff", "log", "changelog", "blame", "branch", "tag", "stash", "commit":
 		return true
 	default:
 		return false
@@ -15618,31 +15612,126 @@ func (a *App) handleBlameSlash(args []string) {
 }
 
 func (a *App) handleCommitSlash(args []string) {
-	options := parseGitCommitArgs(args)
-	result, err := gitops.Commit(a.Workspace, options)
+	req, err := parseGitCommitArgs(args, "text")
 	if err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
-	fmt.Fprintf(a.Err, "commit %s\n", result.Commit)
-	if result.Summary != "" {
-		fmt.Fprintln(a.Out, result.Summary)
+	report, err := a.buildCommitReport(req)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return
+	}
+	fmt.Fprintf(a.Err, "commit %s\n", report.Commit)
+	if report.Summary != "" {
+		fmt.Fprintln(a.Out, report.Summary)
 	}
 }
 
-func parseGitCommitArgs(args []string) gitops.CommitOptions {
-	options := gitops.CommitOptions{}
+type gitCommitRequest struct {
+	Format  string
+	Options gitops.CommitOptions
+}
+
+type commitReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	All     bool   `json:"all"`
+	Commit  string `json:"commit"`
+	Summary string `json:"summary"`
+	Output  string `json:"output,omitempty"`
+}
+
+func (a *App) GitCommit(args []string, defaultFormat string) error {
+	req, err := parseGitCommitArgs(args, defaultFormat)
+	if err != nil {
+		return err
+	}
+	report, err := a.buildCommitReport(req)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderCommitReport(a.Out, report)
+	return nil
+}
+
+func (a *App) buildCommitReport(req gitCommitRequest) (commitReport, error) {
+	result, err := gitops.Commit(a.Workspace, req.Options)
+	if err != nil {
+		return commitReport{}, err
+	}
+	return commitReport{
+		Kind:    "commit",
+		Action:  "create",
+		Status:  "ok",
+		All:     req.Options.All,
+		Commit:  result.Commit,
+		Summary: result.Summary,
+		Output:  result.Output,
+	}, nil
+}
+
+func renderCommitReport(out io.Writer, report commitReport) {
+	fmt.Fprintln(out, "Commit")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Commit           %s\n", report.Commit)
+	fmt.Fprintf(out, "  All              %t\n", report.All)
+	if strings.TrimSpace(report.Summary) != "" {
+		fmt.Fprintf(out, "  Summary          %s\n", report.Summary)
+	}
+	if strings.TrimSpace(report.Output) != "" {
+		fmt.Fprintf(out, "  Output           %s\n", strings.ReplaceAll(strings.TrimSpace(report.Output), "\n", "\n                   "))
+	}
+}
+
+func parseGitCommitArgs(args []string, defaultFormat string) (gitCommitRequest, error) {
+	req := gitCommitRequest{Format: defaultFormat}
+	normalized, err := normalizeTextOrJSON(req.Format, "git commit")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
 	message := []string{}
-	for _, arg := range args {
-		switch arg {
-		case "--all", "-a":
-			options.All = true
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--all" || arg == "-a":
+			req.Options.All = true
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("git commit output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--":
+			message = append(message, args[i+1:]...)
+			i = len(args)
 		default:
 			message = append(message, arg)
 		}
 	}
-	options.Message = strings.Join(message, " ")
-	return options
+	normalized, err = normalizeTextOrJSON(req.Format, "git commit")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	req.Options.Message = strings.Join(message, " ")
+	return req, nil
 }
 
 type exportRequest struct {
@@ -18473,7 +18562,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "changelog", "chrome",
-		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
+		"color", "commands", "commit", "commit-push-pr", "compact", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "log", "marketplace",
@@ -18649,8 +18738,8 @@ Usage:
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
-  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE
-  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE
+  %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]
+  %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE [--json|--output-format text|json]
   %s [flags] stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json]
   %s [flags] changelog [count] [--json|--output-format text|json]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]

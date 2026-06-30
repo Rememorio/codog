@@ -295,6 +295,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.Equal(t, "stash", command)
 	require.Equal(t, []string{"list", "--output-format", "json"}, rest)
 
+	_, command, rest, err = parseFlags([]string{"--output-format", "text", "commit", "--all", "message"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "commit", command)
+	require.Equal(t, []string{"--all", "message", "--output-format", "text"}, rest)
+
 	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
@@ -718,6 +723,13 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 	require.NoError(t, app.Git([]string{"commit", "--all", "add", "notes"}))
 	require.Contains(t, out.String(), `"commit":`)
 	require.Contains(t, out.String(), "add notes")
+	var commitJSON commitReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &commitJSON))
+	require.Equal(t, "commit", commitJSON.Kind)
+	require.Equal(t, "create", commitJSON.Action)
+	require.Equal(t, "ok", commitJSON.Status)
+	require.True(t, commitJSON.All)
+	require.Contains(t, commitJSON.Summary, "add notes")
 	out.Reset()
 
 	require.NoError(t, app.Git([]string{"log", "1"}))
@@ -757,8 +769,10 @@ func TestGitCommandStatusDiffAndCommit(t *testing.T) {
 
 	runGit(t, workspace, "tag", "v0.1.0")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644))
-	runGit(t, workspace, "add", ".")
-	runGit(t, workspace, "commit", "-m", "feat: add feature")
+	require.NoError(t, app.Git([]string{"--output-format", "text", "commit", "--all", "feat: add feature"}))
+	require.Contains(t, out.String(), "Commit")
+	require.Contains(t, out.String(), "feat: add feature")
+	out.Reset()
 	require.NoError(t, app.ReleaseNotes([]string{"--from", "v0.1.0", "--json"}))
 	require.Contains(t, out.String(), `"kind": "release_notes"`)
 	require.Contains(t, out.String(), `"name": "Features"`)
@@ -950,9 +964,19 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/commit --all slash commit", sess))
 	require.Contains(t, errOut.String(), "commit ")
 	errOut.Reset()
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "slash-json.txt"), []byte("slash json\n"), 0o644))
+	require.True(t, app.handleSlash(context.Background(), "/commit --json --all slash json commit", sess))
+	var commitJSON commitReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &commitJSON))
+	require.Equal(t, "commit", commitJSON.Kind)
+	require.Equal(t, "ok", commitJSON.Status)
+	require.Contains(t, commitJSON.Summary, "slash json commit")
+	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/log 1", sess))
-	require.Contains(t, out.String(), "slash commit")
+	require.Contains(t, out.String(), "slash json commit")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/log --json 1", sess))
@@ -961,11 +985,11 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.Equal(t, "git_log", logJSON.Kind)
 	require.Equal(t, "ok", logJSON.Status)
 	require.Equal(t, 1, logJSON.Count)
-	require.Equal(t, "slash commit", logJSON.Entries[0].Subject)
+	require.Equal(t, "slash json commit", logJSON.Entries[0].Subject)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/changelog 1", sess))
-	require.Contains(t, out.String(), "slash commit")
+	require.Contains(t, out.String(), "slash json commit")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/changelog --json 1", sess))
@@ -974,7 +998,7 @@ func TestGitSlashDiffAndCommit(t *testing.T) {
 	require.Equal(t, "changelog", changelogJSON.Kind)
 	require.Equal(t, "ok", changelogJSON.Status)
 	require.Equal(t, 1, changelogJSON.Count)
-	require.Equal(t, "slash commit", changelogJSON.Entries[0].Subject)
+	require.Equal(t, "slash json commit", changelogJSON.Entries[0].Subject)
 	out.Reset()
 
 	runGit(t, workspace, "tag", "v0.2.0")
