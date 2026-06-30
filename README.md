@@ -292,8 +292,9 @@ Claude Code source.
 - `codog cron list|create|delete|due|run-due` and `/cron` manage scheduled
   recurring prompt entries and can start due prompts as background tasks for
   agent-trigger workflows.
-- `codog team list|create|get|delete` and `/team` manage groups of background
-  Codog prompt tasks for multi-agent work.
+- `codog team list|create|get|status|logs|watch|delete` and `/team` manage
+  groups of background Codog prompt tasks, including aggregate status, log
+  tails, and JSON watch events for multi-agent work.
 - `codog agents list|run|worktrees` lists `.codog/agents/*.json` definitions,
   launches named background workers, and can isolate them in git worktrees with
   `agents run --worktree`.

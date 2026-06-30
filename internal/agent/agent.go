@@ -2551,6 +2551,9 @@ type teamRequest struct {
 	Tasks     []team.TaskSpec
 	Status    string
 	SessionID string
+	Limit     int64
+	Offset    int64
+	MaxEvents int
 }
 
 type teamCommandReport struct {
@@ -2561,8 +2564,30 @@ type teamCommandReport struct {
 	Teams        []team.Team       `json:"teams,omitempty"`
 	Team         *team.Team        `json:"team,omitempty"`
 	Tasks        []background.Task `json:"tasks,omitempty"`
+	Logs         []teamTaskLog     `json:"logs,omitempty"`
+	MissingTasks []string          `json:"missing_tasks,omitempty"`
 	StoppedTasks []string          `json:"stopped_tasks,omitempty"`
 	Message      string            `json:"message,omitempty"`
+}
+
+type teamTaskLog struct {
+	TaskID string `json:"task_id"`
+	Log    string `json:"log,omitempty"`
+	Bytes  int    `json:"bytes"`
+	Error  string `json:"error,omitempty"`
+}
+
+type teamWatchEvent struct {
+	Kind     string           `json:"kind"`
+	TeamID   string           `json:"team_id"`
+	TeamName string           `json:"team_name,omitempty"`
+	Type     string           `json:"type"`
+	TaskID   string           `json:"task_id"`
+	Offset   int64            `json:"offset,omitempty"`
+	Data     string           `json:"data,omitempty"`
+	Status   string           `json:"status,omitempty"`
+	Error    string           `json:"error,omitempty"`
+	Task     *background.Task `json:"task,omitempty"`
 }
 
 func (a *App) Team(args []string) error {
@@ -2571,6 +2596,7 @@ func (a *App) Team(args []string) error {
 		return err
 	}
 	store := team.NewStore(a.Config.ConfigHome)
+	taskStore := background.NewStore(a.Config.ConfigHome)
 	report := teamCommandReport{Kind: "team", Action: req.Action, Status: "ok"}
 	switch req.Action {
 	case "list":
@@ -2592,14 +2618,40 @@ func (a *App) Team(args []string) error {
 		}
 		report.Team = &item
 		report.Count = 1
+	case "status":
+		item, tasks, missing, err := refreshTeamStatus(store, taskStore, req.ID)
+		if err != nil {
+			return err
+		}
+		report.Team = &item
+		report.Tasks = tasks
+		report.MissingTasks = missing
+		report.Count = len(tasks)
+		if len(missing) > 0 {
+			report.Message = fmt.Sprintf("%d team tasks were missing from the background store", len(missing))
+		}
+	case "logs":
+		item, err := store.Get(req.ID)
+		if err != nil {
+			return err
+		}
+		report.Team = &item
+		report.Logs = readTeamLogs(taskStore, item, req.Limit)
+		report.Count = len(report.Logs)
+	case "watch":
+		item, err := store.Get(req.ID)
+		if err != nil {
+			return err
+		}
+		return a.watchTeam(context.Background(), taskStore, item, req)
 	case "create":
 		exe, err := a.executablePath()
 		if err != nil {
 			return err
 		}
-		taskStore := background.NewStore(a.Config.ConfigHome)
 		taskIDs := make([]string, 0, len(req.Tasks))
-		for _, spec := range req.Tasks {
+		taskSpecs := append([]team.TaskSpec(nil), req.Tasks...)
+		for index, spec := range taskSpecs {
 			prompt := strings.TrimSpace(spec.Prompt)
 			if spec.Description != "" {
 				prompt = "Task: " + strings.TrimSpace(spec.Description) + "\n\n" + prompt
@@ -2609,11 +2661,12 @@ func (a *App) Team(args []string) error {
 				return err
 			}
 			taskIDs = append(taskIDs, task.ID)
+			taskSpecs[index].TaskID = task.ID
 			report.Tasks = append(report.Tasks, task)
 			a.runTaskCreatedHook(context.Background(), task)
 			a.runNotificationHook(context.Background(), "team_task_started", "Team task started", fmt.Sprintf("Team %s started background task %s", req.Name, task.ID))
 		}
-		item, err := store.Create(req.Name, req.Tasks, taskIDs)
+		item, err := store.Create(req.Name, taskSpecs, taskIDs)
 		if err != nil {
 			return err
 		}
@@ -2625,7 +2678,6 @@ func (a *App) Team(args []string) error {
 		if err != nil {
 			return err
 		}
-		taskStore := background.NewStore(a.Config.ConfigHome)
 		for _, id := range existing.TaskIDs {
 			task, err := taskStore.Stop(id)
 			if err != nil {
@@ -2654,7 +2706,7 @@ func (a *App) Team(args []string) error {
 }
 
 func parseTeamArgs(args []string) (teamRequest, error) {
-	req := teamRequest{Action: "list", Format: "text"}
+	req := teamRequest{Action: "list", Format: "text", Limit: 64 * 1024}
 	actionSet := false
 	positionals := []string{}
 	for i := 0; i < len(args); i++ {
@@ -2696,6 +2748,60 @@ func parseTeamArgs(args []string) (teamRequest, error) {
 			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session-id="))
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimSpace(strings.TrimPrefix(arg, "--session="))
+		case arg == "--bytes" || arg == "--limit":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team log byte limit is required")
+			}
+			limit, err := strconv.ParseInt(args[i], 10, 64)
+			if err != nil || limit < 0 {
+				return req, errors.New("team log byte limit must be a non-negative integer")
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--bytes="):
+			limit, err := strconv.ParseInt(strings.TrimPrefix(arg, "--bytes="), 10, 64)
+			if err != nil || limit < 0 {
+				return req, errors.New("team log byte limit must be a non-negative integer")
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.ParseInt(strings.TrimPrefix(arg, "--limit="), 10, 64)
+			if err != nil || limit < 0 {
+				return req, errors.New("team log byte limit must be a non-negative integer")
+			}
+			req.Limit = limit
+		case arg == "--offset":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team watch offset is required")
+			}
+			offset, err := strconv.ParseInt(args[i], 10, 64)
+			if err != nil || offset < 0 {
+				return req, errors.New("team watch offset must be a non-negative integer")
+			}
+			req.Offset = offset
+		case strings.HasPrefix(arg, "--offset="):
+			offset, err := strconv.ParseInt(strings.TrimPrefix(arg, "--offset="), 10, 64)
+			if err != nil || offset < 0 {
+				return req, errors.New("team watch offset must be a non-negative integer")
+			}
+			req.Offset = offset
+		case arg == "--max-events":
+			i++
+			if i >= len(args) {
+				return req, errors.New("team watch max events is required")
+			}
+			events, err := strconv.Atoi(args[i])
+			if err != nil || events < 0 {
+				return req, errors.New("team watch max events must be a non-negative integer")
+			}
+			req.MaxEvents = events
+		case strings.HasPrefix(arg, "--max-events="):
+			events, err := strconv.Atoi(strings.TrimPrefix(arg, "--max-events="))
+			if err != nil || events < 0 {
+				return req, errors.New("team watch max events must be a non-negative integer")
+			}
+			req.MaxEvents = events
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown team flag %q", arg)
 		case !actionSet && isTeamAction(arg):
@@ -2715,7 +2821,7 @@ func parseTeamArgs(args []string) (teamRequest, error) {
 		if len(positionals) != 0 {
 			return req, errors.New("usage: codog team list [--status STATUS] [--json|--output-format text|json]")
 		}
-	case "get", "delete":
+	case "get", "status", "logs", "watch", "delete":
 		if len(positionals) != 1 {
 			return req, fmt.Errorf("usage: codog team %s TEAM_ID [--json|--output-format text|json]", req.Action)
 		}
@@ -2745,9 +2851,199 @@ func parseTeamTaskSpec(value string) team.TaskSpec {
 	return team.TaskSpec{Prompt: value}
 }
 
+func refreshTeamStatus(store team.Store, taskStore background.Store, id string) (team.Team, []background.Task, []string, error) {
+	item, err := store.Get(id)
+	if err != nil {
+		return team.Team{}, nil, nil, err
+	}
+	tasks, missing := loadTeamTasks(taskStore, item.TaskIDs, true)
+	nextStatus := aggregateTeamStatus(item.Status, tasks, missing)
+	if item.Status != nextStatus {
+		item.Status = nextStatus
+		item.UpdatedAt = time.Now().UTC()
+		if err := store.Save(item); err != nil {
+			return team.Team{}, nil, nil, err
+		}
+	}
+	return item, tasks, missing, nil
+}
+
+func loadTeamTasks(taskStore background.Store, taskIDs []string, refresh bool) ([]background.Task, []string) {
+	tasks := make([]background.Task, 0, len(taskIDs))
+	missing := []string{}
+	for _, id := range taskIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		var (
+			task background.Task
+			err  error
+		)
+		if refresh {
+			task, err = taskStore.Status(id)
+		} else {
+			task, err = taskStore.Get(id)
+		}
+		if err != nil {
+			missing = append(missing, id)
+			continue
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, missing
+}
+
+func aggregateTeamStatus(current string, tasks []background.Task, missing []string) string {
+	if strings.EqualFold(current, "deleted") {
+		return "deleted"
+	}
+	if len(missing) > 0 {
+		return "degraded"
+	}
+	if len(tasks) == 0 {
+		return "created"
+	}
+	running := false
+	failed := false
+	stopped := false
+	completed := false
+	for _, task := range tasks {
+		switch task.Status {
+		case "running":
+			running = true
+		case "failed", "exited":
+			failed = true
+		case "stopped":
+			stopped = true
+		case "completed":
+			completed = true
+		}
+	}
+	switch {
+	case running:
+		return "running"
+	case failed:
+		return "failed"
+	case stopped:
+		return "stopped"
+	case completed:
+		return "completed"
+	default:
+		return strings.TrimSpace(current)
+	}
+}
+
+func readTeamLogs(taskStore background.Store, item team.Team, limit int64) []teamTaskLog {
+	logs := make([]teamTaskLog, 0, len(item.TaskIDs))
+	for _, id := range item.TaskIDs {
+		log, err := taskStore.Logs(id, limit)
+		entry := teamTaskLog{TaskID: id, Log: log, Bytes: len([]byte(log))}
+		if err != nil {
+			entry.Error = err.Error()
+		}
+		logs = append(logs, entry)
+	}
+	return logs
+}
+
+func (a *App) watchTeam(ctx context.Context, taskStore background.Store, item team.Team, req teamRequest) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	offsets := map[string]int64{}
+	lastStatus := map[string]string{}
+	for _, id := range item.TaskIDs {
+		offsets[id] = req.Offset
+	}
+	events := 0
+	emit := func(event teamWatchEvent) error {
+		if req.Format == "json" {
+			return json.NewEncoder(a.Out).Encode(event)
+		}
+		switch event.Type {
+		case "status":
+			fmt.Fprintf(a.Out, "%s status %s\n", event.TaskID, event.Status)
+		case "log":
+			if event.Data != "" {
+				fmt.Fprintf(a.Out, "%s log %s", event.TaskID, event.Data)
+				if !strings.HasSuffix(event.Data, "\n") {
+					fmt.Fprintln(a.Out)
+				}
+			}
+		case "error":
+			fmt.Fprintf(a.Out, "%s error %s\n", event.TaskID, event.Error)
+		}
+		return nil
+	}
+	for {
+		running := false
+		for _, id := range item.TaskIDs {
+			task, err := taskStore.Status(id)
+			if err != nil {
+				if lastStatus[id] != "error" {
+					event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "error", TaskID: id, Error: err.Error()}
+					if err := emit(event); err != nil {
+						return err
+					}
+					events++
+					lastStatus[id] = "error"
+				}
+				if req.MaxEvents > 0 && events >= req.MaxEvents {
+					return nil
+				}
+				continue
+			}
+			if task.Status == "running" {
+				running = true
+			}
+			if lastStatus[id] == "" || lastStatus[id] != task.Status {
+				event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "status", TaskID: id, Status: task.Status, Error: task.Error, Task: &task}
+				if err := emit(event); err != nil {
+					return err
+				}
+				events++
+				lastStatus[id] = task.Status
+				if req.MaxEvents > 0 && events >= req.MaxEvents {
+					return nil
+				}
+			}
+			nextOffset, data, err := taskStore.LogFrom(id, offsets[id])
+			if err != nil {
+				event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "error", TaskID: id, Error: err.Error()}
+				if err := emit(event); err != nil {
+					return err
+				}
+				events++
+				if req.MaxEvents > 0 && events >= req.MaxEvents {
+					return nil
+				}
+			} else if data != "" {
+				offsets[id] = nextOffset
+				event := teamWatchEvent{Kind: "team_watch", TeamID: item.ID, TeamName: item.Name, Type: "log", TaskID: id, Offset: nextOffset, Data: data}
+				if err := emit(event); err != nil {
+					return err
+				}
+				events++
+				if req.MaxEvents > 0 && events >= req.MaxEvents {
+					return nil
+				}
+			}
+		}
+		if !running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func isTeamAction(value string) bool {
 	switch normalizeTeamAction(value) {
-	case "list", "get", "create", "delete":
+	case "list", "get", "status", "logs", "watch", "create", "delete":
 		return true
 	default:
 		return false
@@ -2760,6 +3056,12 @@ func normalizeTeamAction(value string) string {
 		return "list"
 	case "get", "show":
 		return "get"
+	case "status", "stat":
+		return "status"
+	case "logs", "log":
+		return "logs"
+	case "watch", "tail", "follow":
+		return "watch"
 	case "create", "add", "new":
 		return "create"
 	case "delete", "remove", "rm":
@@ -2777,7 +3079,7 @@ func renderTeamReport(out io.Writer, report teamCommandReport) {
 		for _, item := range report.Teams {
 			fmt.Fprintf(out, "  %s  %s  %s  tasks=%d\n", item.ID, item.Name, item.Status, len(item.Tasks))
 		}
-	case "get", "create", "delete":
+	case "get", "create", "delete", "status":
 		if report.Team == nil {
 			return
 		}
@@ -2789,8 +3091,31 @@ func renderTeamReport(out io.Writer, report teamCommandReport) {
 		if len(report.StoppedTasks) > 0 {
 			fmt.Fprintf(out, "  Stopped tasks    %d\n", len(report.StoppedTasks))
 		}
+		for _, task := range report.Tasks {
+			fmt.Fprintf(out, "  Task             %s  %s  pid=%d\n", task.ID, task.Status, task.PID)
+		}
+		for _, id := range report.MissingTasks {
+			fmt.Fprintf(out, "  Missing task     %s\n", id)
+		}
 		if report.Message != "" {
 			fmt.Fprintf(out, "  Message          %s\n", report.Message)
+		}
+	case "logs":
+		if report.Team == nil {
+			return
+		}
+		fmt.Fprintf(out, "  ID               %s\n", report.Team.ID)
+		fmt.Fprintf(out, "  Name             %s\n", report.Team.Name)
+		for _, log := range report.Logs {
+			fmt.Fprintf(out, "\n--- task %s (%d bytes) ---\n", log.TaskID, log.Bytes)
+			if log.Error != "" {
+				fmt.Fprintf(out, "error: %s\n", log.Error)
+				continue
+			}
+			fmt.Fprint(out, log.Log)
+			if log.Log != "" && !strings.HasSuffix(log.Log, "\n") {
+				fmt.Fprintln(out)
+			}
 		}
 	}
 }
@@ -21461,7 +21786,7 @@ Usage:
   %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
   %s tasks|bashes list|status|stop|restart|logs|watch ID
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
-  %s team list|create|get|delete [ARGS...] [--json|--output-format text|json]
+  %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set

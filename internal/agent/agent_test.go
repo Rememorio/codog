@@ -6617,7 +6617,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	script := filepath.Join(t.TempDir(), "codog-shim")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 5\n"), 0o755))
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho team-log \"$@\"\nsleep 5\n"), 0o755))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -6636,7 +6636,34 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.NotNil(t, created.Team)
 	require.Equal(t, "reviewers", created.Team.Name)
 	require.Len(t, created.Team.Tasks, 2)
+	require.NotEmpty(t, created.Team.Tasks[0].TaskID)
 	require.Len(t, created.Tasks, 2)
+	out.Reset()
+
+	require.NoError(t, app.Team([]string{"status", created.Team.ID, "--json"}))
+	var status teamCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, created.Team.ID, status.Team.ID)
+	require.Len(t, status.Tasks, 2)
+	require.Equal(t, "running", status.Team.Status)
+	out.Reset()
+
+	require.Eventually(t, func() bool {
+		out.Reset()
+		require.NoError(t, app.Team([]string{"logs", created.Team.ID, "--bytes", "4096", "--json"}))
+		return strings.Contains(out.String(), "team-log")
+	}, 2*time.Second, 20*time.Millisecond)
+	var logs teamCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &logs))
+	require.Equal(t, "logs", logs.Action)
+	require.Len(t, logs.Logs, 2)
+	require.Contains(t, logs.Logs[0].Log, "team-log")
+	out.Reset()
+
+	require.NoError(t, app.Team([]string{"watch", created.Team.ID, "--max-events", "2", "--json"}))
+	require.Contains(t, out.String(), `"kind":"team_watch"`)
+	require.Contains(t, out.String(), `"type":"status"`)
 	out.Reset()
 
 	require.NoError(t, app.Team([]string{"list", "--json"}))

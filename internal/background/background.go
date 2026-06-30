@@ -477,6 +477,14 @@ func (s Store) Logs(id string, limitBytes int64) (string, error) {
 	return string(data), nil
 }
 
+func (s Store) LogFrom(id string, offset int64) (int64, string, error) {
+	task, err := s.Get(id)
+	if err != nil {
+		return offset, "", err
+	}
+	return s.readLogFrom(task.LogPath, offset)
+}
+
 func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit func(WatchEvent) error) error {
 	if emit == nil {
 		return errors.New("watch emit callback is required")
