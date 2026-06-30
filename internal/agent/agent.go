@@ -108,7 +108,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 				return err
 			}
 			return renderVersion(os.Stdout, workspace, args[1:])
+		case "--acp", "-acp":
+			return renderACPStatus(os.Stdout, args[1:])
 		}
+	}
+	if acpArgs, ok, err := parseACPGlobalInvocation(args); ok || err != nil {
+		if err != nil {
+			return err
+		}
+		return renderACPStatus(os.Stdout, acpArgs)
 	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
@@ -124,6 +132,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 		return renderVersion(os.Stdout, workspace, rest)
+	}
+	if command == "acp" {
+		return renderACPStatus(os.Stdout, rest)
 	}
 	if command == "config" {
 		cfg, paths, err := config.LoadForInspection(overrides)
@@ -8863,6 +8874,174 @@ func renderVersion(out io.Writer, workspace string, args []string) error {
 	return nil
 }
 
+type acpStatusReport struct {
+	SchemaVersion string       `json:"schema_version"`
+	Kind          string       `json:"kind"`
+	Action        string       `json:"action"`
+	Status        string       `json:"status"`
+	Supported     bool         `json:"supported"`
+	Message       string       `json:"message"`
+	LaunchCommand *string      `json:"launch_command"`
+	Protocol      acpProtocol  `json:"protocol"`
+	Contracts     acpContracts `json:"contracts"`
+	Aliases       []string     `json:"aliases"`
+}
+
+type acpProtocol struct {
+	Name              string  `json:"name"`
+	JSONRPC           bool    `json:"json_rpc"`
+	Daemon            bool    `json:"daemon"`
+	Endpoint          *string `json:"endpoint"`
+	ServeStartsDaemon bool    `json:"serve_starts_daemon"`
+}
+
+type acpContracts struct {
+	BlockingGates             []string `json:"blocking_gates"`
+	StableStatusSurface       string   `json:"stable_status_surface"`
+	UnsupportedInvocationKind string   `json:"unsupported_invocation_kind"`
+}
+
+type acpUnsupportedReport struct {
+	SchemaVersion string   `json:"schema_version"`
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	Supported     bool     `json:"supported"`
+	Message       string   `json:"message"`
+	Invocation    []string `json:"invocation"`
+	Hint          string   `json:"hint"`
+}
+
+func renderACPStatus(out io.Writer, args []string) error {
+	format, unsupported, err := parseACPArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(unsupported) > 0 {
+		report := acpUnsupportedReport{
+			SchemaVersion: "1.0",
+			Kind:          "unsupported_acp_invocation",
+			Action:        "status",
+			Status:        "error",
+			Supported:     false,
+			Message:       "unsupported ACP invocation. Use `codog acp` or `codog acp serve`.",
+			Invocation:    append([]string(nil), args...),
+			Hint:          "ACP/Zed editor integration is not implemented yet; `codog acp serve` reports status only.",
+		}
+		if format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+		}
+		return fmt.Errorf("unsupported_acp_invocation: unsupported ACP invocation %q", strings.Join(unsupported, " "))
+	}
+	report := buildACPStatusReport()
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "ACP / Zed")
+	fmt.Fprintln(out, "  Status           not implemented")
+	fmt.Fprintln(out, "  Supported        false")
+	fmt.Fprintln(out, "  Serve            status only; no daemon is started")
+	fmt.Fprintln(out, "  Protocol         no JSON-RPC endpoint is available")
+	fmt.Fprintln(out, "  Surface          codog acp [serve] --output-format json")
+	fmt.Fprintln(out, "  Message          "+report.Message)
+	return nil
+}
+
+func buildACPStatusReport() acpStatusReport {
+	return acpStatusReport{
+		SchemaVersion: "1.0",
+		Kind:          "acp",
+		Action:        "status",
+		Status:        "not_implemented",
+		Supported:     false,
+		Message:       "ACP/Zed editor integration is not implemented in Codog yet. `codog acp serve` reports status only and does not launch a daemon or JSON-RPC endpoint. Use `codog prompt`, the REPL, or `codog doctor` for local verification.",
+		Protocol: acpProtocol{
+			Name:              "ACP/Zed",
+			JSONRPC:           false,
+			Daemon:            false,
+			ServeStartsDaemon: false,
+		},
+		Contracts: acpContracts{
+			BlockingGates: []string{
+				"task_packet_schema",
+				"session_control_schema",
+				"event_report_schema",
+			},
+			StableStatusSurface:       "codog acp [serve] --output-format json",
+			UnsupportedInvocationKind: "unsupported_acp_invocation",
+		},
+		Aliases: []string{"acp", "--acp", "-acp"},
+	}
+}
+
+func parseACPGlobalInvocation(args []string) ([]string, bool, error) {
+	if len(args) == 0 {
+		return nil, false, nil
+	}
+	switch {
+	case args[0] == "--json":
+		if len(args) >= 2 && args[1] == "acp" {
+			acpArgs := append([]string{"--json"}, args[2:]...)
+			return acpArgs, true, nil
+		}
+	case args[0] == "--output-format" || args[0] == "-o":
+		if len(args) < 2 {
+			return nil, false, nil
+		}
+		if len(args) >= 3 && args[2] == "acp" {
+			acpArgs := append([]string{args[0], args[1]}, args[3:]...)
+			return acpArgs, true, nil
+		}
+	case strings.HasPrefix(args[0], "--output-format="):
+		if len(args) >= 2 && args[1] == "acp" {
+			acpArgs := append([]string{args[0]}, args[2:]...)
+			return acpArgs, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func parseACPArgs(args []string) (string, []string, error) {
+	format := "text"
+	unsupported := []string{}
+	serveSeen := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "serve":
+			if serveSeen {
+				unsupported = append(unsupported, arg)
+			}
+			serveSeen = true
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return "", nil, errors.New("acp output format is required")
+			}
+			format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			unsupported = append(unsupported, arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, unsupported, nil
+	default:
+		return "", nil, fmt.Errorf("unknown acp output format %q", format)
+	}
+}
+
+func (a *App) ACP(args []string) error {
+	return renderACPStatus(a.Out, args)
+}
+
 func initProject(out io.Writer, workspace string, args []string) error {
 	format, err := parseSimpleOutputFormat("init", args)
 	if err != nil {
@@ -11817,6 +11996,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/mcp":
 		if err := a.MCP(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/acp":
+		if err := a.ACP(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/brief":
@@ -15879,6 +16062,7 @@ Usage:
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
   %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
+  %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
   %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
@@ -15961,6 +16145,7 @@ Usage:
   %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]
   %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
+  %s --acp|-acp [serve] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
   %s config [get SECTION|paths|set KEY VALUE|unset KEY]
 

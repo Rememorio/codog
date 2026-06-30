@@ -100,6 +100,67 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
 }
 
+func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
+	var out bytes.Buffer
+
+	require.NoError(t, renderACPStatus(&out, nil))
+	require.Contains(t, out.String(), "ACP / Zed")
+	require.Contains(t, out.String(), "not implemented")
+	require.Contains(t, out.String(), "no daemon is started")
+	out.Reset()
+
+	require.NoError(t, renderACPStatus(&out, []string{"serve", "--output-format", "json"}))
+	var report acpStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "1.0", report.SchemaVersion)
+	require.Equal(t, "acp", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "not_implemented", report.Status)
+	require.False(t, report.Supported)
+	require.Nil(t, report.LaunchCommand)
+	require.Equal(t, "ACP/Zed", report.Protocol.Name)
+	require.False(t, report.Protocol.JSONRPC)
+	require.False(t, report.Protocol.Daemon)
+	require.Nil(t, report.Protocol.Endpoint)
+	require.False(t, report.Protocol.ServeStartsDaemon)
+	require.Equal(t, "unsupported_acp_invocation", report.Contracts.UnsupportedInvocationKind)
+	require.Contains(t, report.Contracts.BlockingGates, "task_packet_schema")
+	require.Contains(t, report.Aliases, "--acp")
+	out.Reset()
+
+	err := renderACPStatus(&out, []string{"start", "--json"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_acp_invocation")
+	var unsupported acpUnsupportedReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &unsupported))
+	require.Equal(t, "unsupported_acp_invocation", unsupported.Kind)
+	require.Equal(t, "error", unsupported.Status)
+	require.False(t, unsupported.Supported)
+	require.Equal(t, []string{"start", "--json"}, unsupported.Invocation)
+}
+
+func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T) {
+	args, ok, err := parseACPGlobalInvocation([]string{"--output-format", "json", "acp", "serve"})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"--output-format", "json", "serve"}, args)
+
+	args, ok, err = parseACPGlobalInvocation([]string{"--json", "acp"})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"--json"}, args)
+
+	args, ok, err = parseACPGlobalInvocation([]string{"--output-format=json", "acp"})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"--output-format=json"}, args)
+
+	args, ok, err = parseACPGlobalInvocation([]string{"--json", "prompt", "hello"})
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, args)
+}
+
 func TestParseFlagsSupportsPermissionSkipAliases(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--dangerously-skip-permissions", "prompt", "hello"}, config.FlagOverrides{})
 	require.NoError(t, err)
@@ -381,6 +442,11 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/version", sess))
 	require.Contains(t, out.String(), "Codog")
 	require.Contains(t, out.String(), "Version")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/acp --json", sess))
+	require.Contains(t, out.String(), `"kind": "acp"`)
+	require.Contains(t, out.String(), `"status": "not_implemented"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/sandbox", sess))

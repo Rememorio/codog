@@ -145,6 +145,7 @@ func Specs() []Spec {
 		{Name: "/commands", Usage: "/commands [list|show|run]", Description: "List, show, or render custom Markdown slash commands."},
 		{Name: "/hooks", Usage: "/hooks [list|run pre|post]", Description: "Inspect or test configured tool hooks."},
 		{Name: "/mcp", Usage: "/mcp [list|serve|show|add|remove|tools]", Description: "Serve, manage, or inspect stdio MCP servers."},
+		{Name: "/acp", Usage: "/acp [serve]", Description: "Show ACP/Zed editor integration status."},
 		{Name: "/ide", Usage: "/ide [status|clear]", Description: "Inspect or clear trusted editor bridge state."},
 		{Name: "/bridge-kick", Usage: "/bridge-kick [status|clear]", Description: "Inspect or clear local bridge diagnostics."},
 		{Name: "/upgrade", Usage: "/upgrade [check|download|install|rollback]", Description: "Run update checks and installer workflows."},

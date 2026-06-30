@@ -95,6 +95,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/commands")
 	require.Contains(t, out.String(), "/hooks")
 	require.Contains(t, out.String(), "/mcp")
+	require.Contains(t, out.String(), "/acp")
 	require.Contains(t, out.String(), "/bridge-kick")
 	require.Contains(t, out.String(), "/system-prompt")
 	require.Contains(t, out.String(), "/tool-details")
@@ -145,6 +146,8 @@ func TestHiddenDisabledCommandsStayOutOfHelpAndCompletion(t *testing.T) {
 }
 
 func TestCandidatesFiltersSlashCommands(t *testing.T) {
+	require.Contains(t, Candidates("/ac"), "/acp")
+
 	candidates := Candidates("/co")
 	require.Contains(t, candidates, "/compact")
 	require.Contains(t, candidates, "/completion")
