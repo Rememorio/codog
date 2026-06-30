@@ -13608,6 +13608,8 @@ func shareFileName(sessionID string, format string) string {
 		ext = "json"
 	case session.ExportJSONL:
 		ext = "jsonl"
+	case session.ExportHTML:
+		ext = "html"
 	}
 	return shareSafeSessionID(sessionID) + "." + ext
 }
@@ -13722,7 +13724,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog copy [last|N|all] [--session ID] [--format markdown|json|jsonl] [--json]")
+				return req, errors.New("usage: codog copy [last|N|all] [--session ID] [--format markdown|json|jsonl|html] [--json]")
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -13730,7 +13732,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--resume":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog copy [last|N|all] [--resume ID|latest] [--format markdown|json|jsonl] [--json]")
+				return req, errors.New("usage: codog copy [last|N|all] [--resume ID|latest] [--format markdown|json|jsonl|html] [--json]")
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
@@ -13888,7 +13890,7 @@ func (a *App) handleExportSlash(args []string, sess *session.Session) {
 		return
 	}
 	if req.Output == "" {
-		req.Output = session.DefaultExportFilename(sess)
+		req.Output = session.DefaultExportFilenameForFormat(sess, req.Format)
 	}
 	data, exported, err := a.Sessions.Export(req.SessionID, req.Format)
 	if err != nil {
@@ -13915,7 +13917,7 @@ func parseExportArgs(args []string, defaultSession string) (exportRequest, error
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]")
+				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]")
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -13923,7 +13925,7 @@ func parseExportArgs(args []string, defaultSession string) (exportRequest, error
 		case arg == "--output" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]")
+				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]")
 			}
 			req.Output = args[index]
 		case strings.HasPrefix(arg, "--output="):
@@ -13931,7 +13933,7 @@ func parseExportArgs(args []string, defaultSession string) (exportRequest, error
 		case arg == "--format" || arg == "--output-format":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl]")
+				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]")
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--format="):
@@ -15570,7 +15572,7 @@ Usage:
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
-  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl] | share [DIR] [--session ID] [--format markdown|json|jsonl] | copy [last|N|all] [--session ID]
+  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID]
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]

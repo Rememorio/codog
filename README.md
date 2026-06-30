@@ -68,8 +68,8 @@ Claude Code source.
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/bridge-kick`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
-- `/export` and `codog export` write session transcripts as markdown, JSON, or
-  raw JSONL.
+- `/export` and `codog export` write session transcripts as markdown, JSON,
+  raw JSONL, or HTML.
 - `/share` and `codog share` write a local share artifact for the current or
   selected session under `.codog/share` by default.
 - `/copy` and `codog copy [last|N|all]` copy the latest assistant response, the

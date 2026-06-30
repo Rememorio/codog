@@ -3459,6 +3459,15 @@ func TestExportCommandWritesFormats(t *testing.T) {
 	data, err := os.ReadFile(output)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"id": "source"`)
+	out.Reset()
+
+	htmlOutput := filepath.Join(workspace, "transcript.html")
+	require.NoError(t, app.Export([]string{"--session=source", "--format=html", "--output", htmlOutput}))
+	require.Contains(t, out.String(), `"format": "html"`)
+	data, err = os.ReadFile(htmlOutput)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "<!doctype html>")
+	require.Contains(t, string(data), "export me")
 }
 
 func TestExportSlashWritesCurrentSession(t *testing.T) {
@@ -3476,6 +3485,13 @@ func TestExportSlashWritesCurrentSession(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "notes.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "slash export")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/export --format html", sess))
+	require.Contains(t, errOut.String(), "exported session source")
+	data, err = os.ReadFile(filepath.Join(workspace, "slash-export.html"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "<!doctype html>")
 }
 
 func TestShareCommandAndSlashWritesLocalArtifact(t *testing.T) {
@@ -3495,6 +3511,13 @@ func TestShareCommandAndSlashWritesLocalArtifact(t *testing.T) {
 	data, err := os.ReadFile(sharedJSON)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"id": "source"`)
+	out.Reset()
+
+	require.NoError(t, app.Share([]string{"--session", "source", "--format=html", "html-share"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), "Shared session source")
+	data, err = os.ReadFile(filepath.Join(workspace, "html-share", "source.html"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "<!doctype html>")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/share shared", sess))
@@ -3539,6 +3562,11 @@ func TestCopyCommandAndSlash(t *testing.T) {
 
 	require.NoError(t, app.Copy(context.Background(), []string{"all", "--session=source", "--format=json"}, config.FlagOverrides{}))
 	require.Contains(t, string(copied), `"id": "source"`)
+	require.Contains(t, out.String(), "Copied all")
+	out.Reset()
+
+	require.NoError(t, app.Copy(context.Background(), []string{"all", "--session=source", "--format=html"}, config.FlagOverrides{}))
+	require.Contains(t, string(copied), "<!doctype html>")
 	require.Contains(t, out.String(), "Copied all")
 	out.Reset()
 

@@ -296,11 +296,11 @@ func TestPromptHistoryDisabledMarkerSuppressesUserMessageFallback(t *testing.T) 
 	require.Empty(t, entries)
 }
 
-func TestExportMarkdownJSONAndJSONL(t *testing.T) {
+func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {
 	store := NewStore(t.TempDir())
-	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize this repo")))
+	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize <this> repo")))
 	require.NoError(t, store.Append("export-session", anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{
-		{Type: "text", Text: "Summary"},
+		{Type: "text", Text: "Summary <ok>"},
 		{Type: "tool_use", ID: "tool-1", Name: "grep", Input: []byte(`{"pattern":"TODO"}`)},
 	}}))
 
@@ -310,17 +310,25 @@ func TestExportMarkdownJSONAndJSONL(t *testing.T) {
 	require.Contains(t, string(markdown), "# Conversation Export")
 	require.Contains(t, string(markdown), "- **Session**: `export-session`")
 	require.Contains(t, string(markdown), "## 1. user")
-	require.Contains(t, string(markdown), "Summarize this repo")
+	require.Contains(t, string(markdown), "Summarize <this> repo")
 	require.Contains(t, string(markdown), "[tool_use id=tool-1 name=grep]")
 
 	data, _, err := store.Export("export-session", "json")
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"id": "export-session"`)
-	require.Contains(t, string(data), `"Summary"`)
+	require.Contains(t, string(data), "Summary")
 
 	raw, _, err := store.Export("export-session", "jsonl")
 	require.NoError(t, err)
 	require.Contains(t, string(raw), `"session_id":"export-session"`)
 
+	html, _, err := store.Export("export-session", "html")
+	require.NoError(t, err)
+	require.Contains(t, string(html), "<!doctype html>")
+	require.Contains(t, string(html), "Summarize &lt;this&gt; repo")
+	require.Contains(t, string(html), "Summary &lt;ok&gt;")
+	require.Contains(t, string(html), "[tool_use id=tool-1 name=grep]")
+
 	require.Equal(t, "summarize-this-repo.md", DefaultExportFilename(sess))
+	require.Equal(t, "summarize-this-repo.html", DefaultExportFilenameForFormat(sess, "html"))
 }

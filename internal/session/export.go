@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ const (
 	ExportMarkdown = "markdown"
 	ExportJSON     = "json"
 	ExportJSONL    = "jsonl"
+	ExportHTML     = "html"
 )
 
 type ExportedSession struct {
@@ -51,6 +53,8 @@ func (s *Store) Export(id string, format string) ([]byte, *Session, error) {
 			return nil, nil, err
 		}
 		return data, sess, nil
+	case ExportHTML:
+		return []byte(RenderHTML(sess)), sess, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported export format %q", format)
 	}
@@ -64,6 +68,8 @@ func NormalizeExportFormat(format string) (string, error) {
 		return ExportJSON, nil
 	case "jsonl", "raw":
 		return ExportJSONL, nil
+	case "html", "htm":
+		return ExportHTML, nil
 	default:
 		return "", fmt.Errorf("unsupported export format %q", format)
 	}
@@ -85,7 +91,55 @@ func RenderMarkdown(sess *Session) string {
 	return out.String()
 }
 
+func RenderHTML(sess *Session) string {
+	var out bytes.Buffer
+	fmt.Fprintln(&out, "<!doctype html>")
+	fmt.Fprintln(&out, `<html lang="en">`)
+	fmt.Fprintln(&out, "<head>")
+	fmt.Fprintln(&out, `<meta charset="utf-8">`)
+	fmt.Fprintln(&out, `<meta name="viewport" content="width=device-width, initial-scale=1">`)
+	fmt.Fprintf(&out, "<title>Codog Session %s</title>\n", html.EscapeString(sess.ID))
+	fmt.Fprintln(&out, `<style>`)
+	fmt.Fprintln(&out, `body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f8fafc;color:#0f172a}`)
+	fmt.Fprintln(&out, `main{max-width:920px;margin:0 auto;padding:32px 20px}`)
+	fmt.Fprintln(&out, `header{border-bottom:1px solid #dbe3ef;margin-bottom:24px;padding-bottom:16px}`)
+	fmt.Fprintln(&out, `h1{font-size:26px;margin:0 0 8px}`)
+	fmt.Fprintln(&out, `.meta{color:#475569;font-size:14px}`)
+	fmt.Fprintln(&out, `.message{border:1px solid #dbe3ef;background:white;border-radius:8px;margin:16px 0;padding:16px}`)
+	fmt.Fprintln(&out, `.role{font-weight:650;text-transform:uppercase;letter-spacing:0;font-size:12px;color:#475569;margin-bottom:12px}`)
+	fmt.Fprintln(&out, `pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e2e8f0;border-radius:6px;padding:12px;overflow:auto}`)
+	fmt.Fprintln(&out, `.text{white-space:pre-wrap;line-height:1.55}`)
+	fmt.Fprintln(&out, `</style>`)
+	fmt.Fprintln(&out, "</head>")
+	fmt.Fprintln(&out, "<body>")
+	fmt.Fprintln(&out, "<main>")
+	fmt.Fprintln(&out, "<header>")
+	fmt.Fprintln(&out, "<h1>Conversation Export</h1>")
+	fmt.Fprintf(&out, `<div class="meta">Session %s - %d messages</div>`+"\n", html.EscapeString(sess.ID), len(sess.Messages))
+	fmt.Fprintln(&out, "</header>")
+	for index, msg := range sess.Messages {
+		fmt.Fprintln(&out, `<section class="message">`)
+		fmt.Fprintf(&out, `<div class="role">%d. %s</div>`+"\n", index+1, html.EscapeString(msg.Role))
+		for _, block := range msg.Content {
+			renderBlockHTML(&out, block)
+		}
+		fmt.Fprintln(&out, "</section>")
+	}
+	fmt.Fprintln(&out, "</main>")
+	fmt.Fprintln(&out, "</body>")
+	fmt.Fprintln(&out, "</html>")
+	return out.String()
+}
+
 func DefaultExportFilename(sess *Session) string {
+	return DefaultExportFilenameForFormat(sess, ExportMarkdown)
+}
+
+func DefaultExportFilenameForFormat(sess *Session, format string) string {
+	normalized, err := NormalizeExportFormat(format)
+	if err != nil {
+		normalized = ExportMarkdown
+	}
 	stem := "conversation"
 	for _, msg := range sess.Messages {
 		if msg.Role != "user" {
@@ -94,11 +148,11 @@ func DefaultExportFilename(sess *Session) string {
 		for _, block := range msg.Content {
 			if strings.TrimSpace(block.Text) != "" {
 				stem = strings.TrimSpace(strings.Split(block.Text, "\n")[0])
-				return safeExportStem(stem) + ".md"
+				return safeExportStem(stem) + exportExtension(normalized)
 			}
 		}
 	}
-	return stem + ".md"
+	return stem + exportExtension(normalized)
 }
 
 func renderBlockMarkdown(out *bytes.Buffer, block anthropic.ContentBlock) {
@@ -124,6 +178,44 @@ func renderBlockMarkdown(out *bytes.Buffer, block anthropic.ContentBlock) {
 		if summary != "" {
 			fmt.Fprintf(out, "[%s] %s\n\n", block.Type, summary)
 		}
+	}
+}
+
+func renderBlockHTML(out *bytes.Buffer, block anthropic.ContentBlock) {
+	switch block.Type {
+	case "text":
+		if block.Text != "" {
+			fmt.Fprintf(out, `<div class="text">%s</div>`+"\n", html.EscapeString(block.Text))
+		}
+	case "tool_use":
+		input := strings.TrimSpace(string(block.Input))
+		if input == "" {
+			input = "{}"
+		}
+		fmt.Fprintf(out, `<pre>[tool_use id=%s name=%s] %s</pre>`+"\n", html.EscapeString(block.ID), html.EscapeString(block.Name), html.EscapeString(input))
+	case "tool_result":
+		fmt.Fprintf(out, `<pre>[tool_result id=%s error=%t] %s</pre>`+"\n", html.EscapeString(block.ToolUseID), block.IsError, html.EscapeString(block.Content))
+	default:
+		summary := strings.TrimSpace(block.Text)
+		if summary == "" {
+			summary = strings.TrimSpace(block.Content)
+		}
+		if summary != "" {
+			fmt.Fprintf(out, `<pre>[%s] %s</pre>`+"\n", html.EscapeString(block.Type), html.EscapeString(summary))
+		}
+	}
+}
+
+func exportExtension(format string) string {
+	switch format {
+	case ExportJSON:
+		return ".json"
+	case ExportJSONL:
+		return ".jsonl"
+	case ExportHTML:
+		return ".html"
+	default:
+		return ".md"
 	}
 }
 
