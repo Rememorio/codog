@@ -175,17 +175,18 @@ func TestDefaultLSPCandidatesIncludesGo(t *testing.T) {
 
 func TestLSPStoreLifecycle(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("uses POSIX sh")
+		t.Skip("uses POSIX sleep")
 	}
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	store := NewLSPStore(configHome, workspace)
-	status, err := store.Start("go", []string{"sh", "-c", "sleep 30"})
+	status, err := store.Start("go", []string{"sleep", "30"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = store.Stop("go") })
 	require.Equal(t, "go", status.Language)
 	require.Equal(t, "running", status.Task.Status)
-	require.Contains(t, status.Command, "sleep 30")
+	require.Contains(t, status.Command, "sleep")
+	require.Contains(t, status.Command, "30")
 
 	list, err := store.List()
 	require.NoError(t, err)

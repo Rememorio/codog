@@ -1516,6 +1516,21 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Recent prompts")
 	out.Reset()
 
+	thinkBackPath := filepath.Join(workspace, "think-back.html")
+	require.NoError(t, app.ThinkBack([]string{"--year", "2026", "--output", thinkBackPath, "--json"}))
+	require.Contains(t, out.String(), `"kind": "think_back"`)
+	require.Contains(t, out.String(), `"year": 2026`)
+	_, err = os.Stat(thinkBackPath)
+	require.NoError(t, err)
+	out.Reset()
+
+	slashThinkBackPath := filepath.Join(workspace, "slash-think-back.html")
+	require.True(t, app.handleSlash(context.Background(), "/think-back --year 2026 --output "+slashThinkBackPath, sess))
+	require.Contains(t, out.String(), "Think Back")
+	_, err = os.Stat(slashThinkBackPath)
+	require.NoError(t, err)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/summary", sess))
 	require.Contains(t, out.String(), "Summary")
 	require.Contains(t, out.String(), "Session          usage-session")

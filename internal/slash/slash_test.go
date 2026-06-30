@@ -36,6 +36,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/compact")
 	require.Contains(t, out.String(), "/usage")
 	require.Contains(t, out.String(), "/stats")
+	require.Contains(t, out.String(), "/think-back")
 	require.Contains(t, out.String(), "/rate-limit-options")
 	require.Contains(t, out.String(), "/plan")
 	require.Contains(t, out.String(), "/exit-plan")

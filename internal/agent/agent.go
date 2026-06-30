@@ -67,6 +67,7 @@ import (
 	localstatus "github.com/Rememorio/codog/internal/status"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/terminalsetup"
+	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/tui"
@@ -301,6 +302,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "insights":
 		return app.Insights(rest)
+	case "think-back", "thinkback":
+		return app.ThinkBack(rest)
 	case "compact":
 		return app.Compact(rest, overrides)
 	case "extra-usage":
@@ -11298,6 +11301,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Insights(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/think-back", "/thinkback":
+		if err := a.ThinkBack(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/extra-usage":
 		if err := a.ExtraUsage(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -14830,6 +14837,110 @@ func parseInsightsArgs(args []string) (insightsRequest, error) {
 	return req, nil
 }
 
+type thinkBackRequest struct {
+	Format string
+	Year   int
+	Limit  int
+	Output string
+}
+
+func (a *App) ThinkBack(args []string) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parseThinkBackArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := thinkback.Write(a.Sessions, thinkback.Options{
+		Workspace: a.Workspace,
+		Year:      req.Year,
+		Limit:     req.Limit,
+		Output:    req.Output,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return thinkback.RenderJSON(a.Out, report)
+	}
+	thinkback.RenderText(a.Out, report)
+	return nil
+}
+
+func parseThinkBackArgs(args []string) (thinkBackRequest, error) {
+	req := thinkBackRequest{Format: "text", Limit: 8}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("think-back output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--year":
+			index++
+			if index >= len(args) {
+				return req, errors.New("think-back year is required")
+			}
+			year, err := parseThinkBackYear(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Year = year
+		case strings.HasPrefix(arg, "--year="):
+			year, err := parseThinkBackYear(strings.TrimPrefix(arg, "--year="))
+			if err != nil {
+				return req, err
+			}
+			req.Year = year
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("think-back limit is required")
+			}
+			limit, err := parsePositiveInt(args[index], "think-back limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "think-back limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, errors.New("think-back output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		default:
+			return req, fmt.Errorf("unknown think-back argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "think-back"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func parseThinkBackYear(value string) (int, error) {
+	year, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || year < 2000 || year > 9999 {
+		return 0, errors.New("think-back year must be a four digit year")
+	}
+	return year, nil
+}
+
 func (a *App) sessionUsageValues(sessionID string) ([]anthropic.Usage, error) {
 	entries, err := a.Sessions.Usage(sessionID)
 	if err != nil {
@@ -15348,6 +15459,7 @@ Usage:
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] insights [--limit N] [--json|--output-format text|json]
+  %s [flags] think-back [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
