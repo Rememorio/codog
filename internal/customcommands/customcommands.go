@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Rememorio/codog/internal/frontmatter"
+	"github.com/Rememorio/codog/internal/plugins"
 )
 
 type Command struct {
@@ -41,6 +42,7 @@ var ErrNotFound = errors.New("custom command not found")
 type root struct {
 	path   string
 	source string
+	prefix string
 }
 
 func Load(configHome, workspace string) ([]Command, error) {
@@ -62,7 +64,7 @@ func Load(configHome, workspace string) ([]Command, error) {
 			if !strings.HasSuffix(entry.Name(), ".md") {
 				return nil
 			}
-			name, err := commandName(root.path, path)
+			name, err := commandName(root, path)
 			if err != nil {
 				return err
 			}
@@ -92,7 +94,11 @@ func Find(configHome, workspace, name string) (Command, error) {
 		return Command{}, errors.New("command name is required")
 	}
 	for _, root := range rootsByPrecedence(configHome, workspace) {
-		path := filepath.Join(root.path, commandPathName(name)+".md")
+		rootName, ok := commandNameForRoot(root, name)
+		if !ok {
+			continue
+		}
+		path := filepath.Join(root.path, commandPathName(rootName)+".md")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -152,23 +158,53 @@ func parseCommandDocument(name string, path string, source string, text string) 
 }
 
 func roots(configHome, workspace string) []root {
-	return []root{
-		{filepath.Join(configHome, "commands"), "user"},
-		{filepath.Join(workspace, ".claude", "commands"), "claude"},
-		{filepath.Join(workspace, ".codog", "commands"), "workspace"},
+	out := []root{
+		{path: filepath.Join(configHome, "commands"), source: "user"},
+		{path: filepath.Join(workspace, ".claude", "commands"), source: "claude"},
+		{path: filepath.Join(workspace, ".codog", "commands"), source: "workspace"},
 	}
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return out
+	}
+	for _, manifest := range manifests {
+		if !manifest.Enabled {
+			continue
+		}
+		out = append(out, root{
+			path:   filepath.Join(manifest.Root, "commands"),
+			source: "plugin:" + manifest.ID,
+			prefix: manifest.ID,
+		})
+	}
+	return out
 }
 
 func rootsByPrecedence(configHome, workspace string) []root {
-	return []root{
-		{filepath.Join(workspace, ".codog", "commands"), "workspace"},
-		{filepath.Join(workspace, ".claude", "commands"), "claude"},
-		{filepath.Join(configHome, "commands"), "user"},
+	base := []root{
+		{path: filepath.Join(workspace, ".codog", "commands"), source: "workspace"},
+		{path: filepath.Join(workspace, ".claude", "commands"), source: "claude"},
+		{path: filepath.Join(configHome, "commands"), source: "user"},
 	}
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return base
+	}
+	for _, manifest := range manifests {
+		if !manifest.Enabled {
+			continue
+		}
+		base = append(base, root{
+			path:   filepath.Join(manifest.Root, "commands"),
+			source: "plugin:" + manifest.ID,
+			prefix: manifest.ID,
+		})
+	}
+	return base
 }
 
-func commandName(root string, path string) (string, error) {
-	rel, err := filepath.Rel(root, path)
+func commandName(root root, path string) (string, error) {
+	rel, err := filepath.Rel(root.path, path)
 	if err != nil {
 		return "", err
 	}
@@ -177,7 +213,18 @@ func commandName(root string, path string) (string, error) {
 	for i, part := range parts {
 		parts[i] = strings.TrimSpace(part)
 	}
-	return strings.Join(parts, ":"), nil
+	return namespacePluginName(root.prefix, strings.Join(parts, ":")), nil
+}
+
+func commandNameForRoot(root root, name string) (string, bool) {
+	if root.prefix == "" {
+		return name, true
+	}
+	prefix := strings.ToLower(root.prefix) + ":"
+	if !strings.HasPrefix(strings.ToLower(name), prefix) {
+		return "", false
+	}
+	return name[len(root.prefix)+1:], true
 }
 
 func commandPathName(name string) string {
@@ -189,6 +236,15 @@ func normalizeName(name string) string {
 	name = strings.TrimSuffix(name, ".md")
 	name = strings.ReplaceAll(filepath.ToSlash(name), "/", ":")
 	return name
+}
+
+func namespacePluginName(prefix string, name string) string {
+	prefix = strings.TrimSpace(prefix)
+	name = strings.TrimSpace(name)
+	if prefix == "" || name == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix)+":") {
+		return name
+	}
+	return prefix + ":" + name
 }
 
 func preview(body string) string {

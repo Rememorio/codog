@@ -15,14 +15,17 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "skills", "review"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "plain.md"), []byte("Plain skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "review", "SKILL.md"), []byte("Review skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize", "SKILL.md"), []byte("Summarize skill"), 0o644))
 
 	all, err := Load(configHome, workspace)
 	require.NoError(t, err)
-	require.Len(t, all, 3)
-	require.Equal(t, []string{"plain", "review", "team:audit"}, skillNames(all))
+	require.Len(t, all, 4)
+	require.Equal(t, []string{"demo:summarize", "plain", "review", "team:audit"}, skillNames(all))
 
 	skill, err := Find(configHome, workspace, "team:audit")
 	require.NoError(t, err)
@@ -31,6 +34,11 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.Contains(t, rendered, `<skill name="team:audit"`)
 	require.Contains(t, rendered, "Audit skill")
 	require.Contains(t, rendered, "User request: check auth")
+
+	skill, err = Find(configHome, workspace, "demo:summarize")
+	require.NoError(t, err)
+	require.Equal(t, "plugin:demo", skill.Source)
+	require.Equal(t, "Summarize skill", skill.Body)
 
 	_, err = Find(configHome, workspace, "missing")
 	require.True(t, errors.Is(err, ErrNotFound))

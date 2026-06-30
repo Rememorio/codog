@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Rememorio/codog/internal/frontmatter"
+	"github.com/Rememorio/codog/internal/plugins"
 )
 
 type Skill struct {
@@ -55,17 +56,15 @@ type UninstallReport struct {
 
 var ErrNotFound = errors.New("skill not found")
 
+type root struct {
+	path   string
+	source string
+	prefix string
+}
+
 func Load(configHome, workspace string) ([]Skill, error) {
-	roots := []struct {
-		path   string
-		source string
-	}{
-		{filepath.Join(configHome, "skills"), "user"},
-		{filepath.Join(workspace, ".codog", "skills"), "workspace"},
-		{filepath.Join(workspace, ".claude", "skills"), "claude"},
-	}
 	var out []Skill
-	for _, root := range roots {
+	for _, root := range roots(configHome, workspace) {
 		if _, err := os.Stat(root.path); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -82,7 +81,7 @@ func Load(configHome, workspace string) ([]Skill, error) {
 			if !isSkillFile(path, entry.Name()) {
 				return nil
 			}
-			name, err := skillName(root.path, path)
+			name, err := skillName(root, path)
 			if err != nil {
 				return err
 			}
@@ -102,6 +101,29 @@ func Load(configHome, workspace string) ([]Skill, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func roots(configHome, workspace string) []root {
+	out := []root{
+		{path: filepath.Join(configHome, "skills"), source: "user"},
+		{path: filepath.Join(workspace, ".codog", "skills"), source: "workspace"},
+		{path: filepath.Join(workspace, ".claude", "skills"), source: "claude"},
+	}
+	manifests, err := plugins.Load(workspace)
+	if err != nil {
+		return out
+	}
+	for _, manifest := range manifests {
+		if !manifest.Enabled {
+			continue
+		}
+		out = append(out, root{
+			path:   filepath.Join(manifest.Root, "skills"),
+			source: "plugin:" + manifest.ID,
+			prefix: manifest.ID,
+		})
+	}
+	return out
 }
 
 func Find(configHome, workspace, name string) (Skill, error) {
@@ -460,18 +482,30 @@ func isSkillFile(path string, name string) bool {
 	return strings.HasSuffix(name, ".md") && filepath.Base(filepath.Dir(path)) != ""
 }
 
-func skillName(root string, path string) (string, error) {
-	rel, err := filepath.Rel(root, path)
+func skillName(root root, path string) (string, error) {
+	rel, err := filepath.Rel(root.path, path)
 	if err != nil {
 		return "", err
 	}
 	rel = filepath.ToSlash(rel)
+	var name string
 	if pathpkg.Base(rel) == "SKILL.md" {
 		dir := strings.TrimSuffix(pathpkg.Dir(rel), ".")
-		return strings.ReplaceAll(dir, "/", ":"), nil
+		name = strings.ReplaceAll(dir, "/", ":")
+	} else {
+		rel = strings.TrimSuffix(rel, ".md")
+		name = strings.ReplaceAll(rel, "/", ":")
 	}
-	rel = strings.TrimSuffix(rel, ".md")
-	return strings.ReplaceAll(rel, "/", ":"), nil
+	return namespacePluginName(root.prefix, name), nil
+}
+
+func namespacePluginName(prefix string, name string) string {
+	prefix = strings.TrimSpace(prefix)
+	name = strings.TrimSpace(name)
+	if prefix == "" || name == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix)+":") {
+		return name
+	}
+	return prefix + ":" + name
 }
 
 func escapeAttr(value string) string {

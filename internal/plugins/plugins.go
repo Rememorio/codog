@@ -30,6 +30,8 @@ type Manifest struct {
 	Description string         `json:"description,omitempty"`
 	Tools       []ToolManifest `json:"tools,omitempty"`
 	Commands    []string       `json:"commands,omitempty"`
+	Skills      []string       `json:"skills,omitempty"`
+	Agents      []string       `json:"agents,omitempty"`
 	Hooks       []string       `json:"hooks,omitempty"`
 	Path        string         `json:"path,omitempty"`
 	Root        string         `json:"root,omitempty"`
@@ -132,6 +134,8 @@ type rawManifest struct {
 	Description string            `json:"description,omitempty"`
 	Tools       []json.RawMessage `json:"tools,omitempty"`
 	Commands    []string          `json:"commands,omitempty"`
+	Skills      []string          `json:"skills,omitempty"`
+	Agents      []string          `json:"agents,omitempty"`
 	Hooks       []string          `json:"hooks,omitempty"`
 }
 
@@ -291,12 +295,41 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 	for index, command := range manifest.Commands {
 		r.validateComponentPath(fmt.Sprintf("commands[%d]", index), command)
 	}
+	for index, skill := range manifest.Skills {
+		r.validateComponentPath(fmt.Sprintf("skills[%d]", index), skill)
+	}
+	for index, agent := range manifest.Agents {
+		r.validateComponentPath(fmt.Sprintf("agents[%d]", index), agent)
+	}
 	for index, hook := range manifest.Hooks {
 		r.validateComponentPath(fmt.Sprintf("hooks[%d]", index), hook)
 	}
-	if len(manifest.Tools) == 0 && len(manifest.Commands) == 0 && len(manifest.Hooks) == 0 {
-		r.addWarning("plugin", "manifest declares no tools, commands, or hooks", "empty_plugin")
+	hasContent := len(manifest.Tools) > 0 ||
+		len(manifest.Commands) > 0 ||
+		len(manifest.Skills) > 0 ||
+		len(manifest.Agents) > 0 ||
+		len(manifest.Hooks) > 0 ||
+		dirHasEntries(filepath.Join(manifest.Root, "commands")) ||
+		dirHasEntries(filepath.Join(manifest.Root, "skills")) ||
+		dirHasEntries(filepath.Join(manifest.Root, "agents")) ||
+		dirHasEntries(filepath.Join(manifest.Root, "hooks"))
+	if !hasContent {
+		r.addWarning("plugin", "manifest declares no tools, commands, skills, agents, or hooks", "empty_plugin")
 	}
+}
+
+func dirHasEntries(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func (r *ValidationResult) validateComponentPath(field string, value string) {
@@ -706,6 +739,8 @@ func LoadManifest(dir string) (Manifest, error) {
 		Version:     raw.Version,
 		Description: raw.Description,
 		Commands:    raw.Commands,
+		Skills:      raw.Skills,
+		Agents:      raw.Agents,
 		Hooks:       raw.Hooks,
 		Path:        path,
 		Root:        dir,

@@ -15,6 +15,7 @@ func TestLoadFindAndRenderCommands(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands", "team"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "commands"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "commands", "review.md"), []byte(`---
 description: Review a file.
 allowed-tools: Read, Bash(go test:*)
@@ -25,11 +26,14 @@ User review $ARGUMENTS`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "fix.md"), []byte("Claude fix {{args}}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "audit.md"), []byte("Team audit $ARGUMENTS"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "fix.md"), []byte("Codog fix {{ ARGUMENTS }}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "commands", "deploy.md"), []byte("Deploy $ARGUMENTS"), 0o644))
 
 	commands, err := Load(configHome, workspace)
 	require.NoError(t, err)
-	require.Len(t, commands, 4)
+	require.Len(t, commands, 5)
 	require.Contains(t, commandNames(commands), "team:audit")
+	require.Contains(t, commandNames(commands), "demo:deploy")
 
 	command, err := Find(configHome, workspace, "/fix")
 	require.NoError(t, err)
@@ -56,6 +60,11 @@ User review $ARGUMENTS`), 0o644))
 	require.Equal(t, "team:audit", command.Name)
 	require.Equal(t, "claude", command.Source)
 	require.Equal(t, "Team audit security", Render(command, "security").Rendered)
+
+	command, err = Find(configHome, workspace, "demo:deploy")
+	require.NoError(t, err)
+	require.Equal(t, "plugin:demo", command.Source)
+	require.Equal(t, "Deploy prod", Render(command, "prod").Rendered)
 }
 
 func commandNames(commands []Command) []string {

@@ -147,6 +147,18 @@ func TestValidatePluginManifestInvalidJSON(t *testing.T) {
 	requireValidationCode(t, result.Errors, "invalid_json")
 }
 
+func TestValidatePluginManifestRecognizesStandardContentDirs(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "skills", "review"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "skills", "review", "SKILL.md"), []byte("Review skill"), 0o644))
+
+	result, err := Validate(source)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	requireNoValidationCode(t, result.Warnings, "empty_plugin")
+}
+
 func requireValidationCode(t *testing.T, messages []ValidationMessage, code string) {
 	t.Helper()
 	for _, message := range messages {
@@ -155,6 +167,13 @@ func requireValidationCode(t *testing.T, messages []ValidationMessage, code stri
 		}
 	}
 	require.Failf(t, "missing validation message", "code %q not found in %#v", code, messages)
+}
+
+func requireNoValidationCode(t *testing.T, messages []ValidationMessage, code string) {
+	t.Helper()
+	for _, message := range messages {
+		require.NotEqual(t, code, message.Code)
+	}
 }
 
 func TestFetchMarketplaceVerifiesSignature(t *testing.T) {
