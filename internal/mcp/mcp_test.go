@@ -57,7 +57,22 @@ func TestCallToolAndReadResource(t *testing.T) {
 	require.Equal(t, 1, auth.ResourceCount)
 }
 
+func TestListToolsIncludesProcessStderr(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_FAIL_STDERR=1"},
+	}
+
+	tools := ListTools(context.Background(), "test", server)
+	require.Contains(t, tools.Error, "mcp boot failed")
+}
+
 func TestMCPHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_MCP_FAIL_STDERR") == "1" {
+		fmt.Fprintln(os.Stderr, "mcp boot failed")
+		os.Exit(2)
+	}
 	if os.Getenv("CODOG_MCP_HELPER") != "1" {
 		return
 	}

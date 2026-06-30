@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/Rememorio/codog/internal/config"
@@ -135,6 +137,8 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
 	cmd.Env = append(os.Environ(), server.Env...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
@@ -159,14 +163,14 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+		return InitializeResult{Server: serverName, Status: "error", Error: mcpError(err, &stderr).Error()}
 	}
 	resp, err := readResponse(reader)
 	if err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+		return InitializeResult{Server: serverName, Status: "error", Error: mcpError(err, &stderr).Error()}
 	}
 	if resp.Error != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: resp.Error.Message}
+		return InitializeResult{Server: serverName, Status: "error", Error: mcpError(errors.New(resp.Error.Message), &stderr).Error()}
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 
@@ -238,6 +242,8 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
 	cmd.Env = append(os.Environ(), server.Env...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return ToolListResult{Server: serverName, Error: err.Error()}
@@ -262,19 +268,19 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return ToolListResult{Server: serverName, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: mcpError(err, &stderr).Error()}
 	}
 	if _, err := readResponse(reader); err != nil {
-		return ToolListResult{Server: serverName, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: mcpError(err, &stderr).Error()}
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
 	resp, err := readResponse(reader)
 	if err != nil {
-		return ToolListResult{Server: serverName, Error: err.Error()}
+		return ToolListResult{Server: serverName, Error: mcpError(err, &stderr).Error()}
 	}
 	if resp.Error != nil {
-		return ToolListResult{Server: serverName, Error: resp.Error.Message}
+		return ToolListResult{Server: serverName, Error: mcpError(errors.New(resp.Error.Message), &stderr).Error()}
 	}
 	var payload struct {
 		Tools []map[string]json.RawMessage `json:"tools"`
@@ -420,6 +426,8 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
 	cmd.Env = append(os.Environ(), server.Env...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -444,23 +452,41 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return nil, err
+		return nil, mcpError(err, &stderr)
 	}
 	if _, err := readResponse(reader); err != nil {
-		return nil, err
+		return nil, mcpError(err, &stderr)
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 	if err := send(stdin, req); err != nil {
-		return nil, err
+		return nil, mcpError(err, &stderr)
 	}
 	resp, err := readResponse(reader)
 	if err != nil {
-		return nil, err
+		return nil, mcpError(err, &stderr)
 	}
 	if resp.Error != nil {
-		return nil, errors.New(resp.Error.Message)
+		return nil, mcpError(errors.New(resp.Error.Message), &stderr)
 	}
 	return resp.Result, nil
+}
+
+func mcpError(err error, stderr *bytes.Buffer) error {
+	if err == nil || stderr == nil {
+		return err
+	}
+	preview := strings.TrimSpace(stderr.String())
+	if preview == "" {
+		return err
+	}
+	return fmt.Errorf("%w; stderr: %s", err, clipMCPText(preview, 4096))
+}
+
+func clipMCPText(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
 }
 
 func send(w io.Writer, req rpcRequest) error {
