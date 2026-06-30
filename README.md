@@ -202,8 +202,8 @@ Claude Code source.
   session message/input mutation and rewind, background prompt turns, background
   tasks, terminal command streams, logs/watch streams, workspace file
   list/search/read/write/edit/diff operations, Go diagnostics and
-  code-intelligence queries, bearer-token auth, and heartbeat lease/failure
-  state.
+  code-intelligence queries, editor identity/open-file/selection state,
+  bearer-token auth, and heartbeat lease/failure state.
 - `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
   identity, open-file/selection state, session mutation/rewind, background
   prompt turns, workspace info, file listing/search/diff, diagnostics,

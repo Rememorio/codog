@@ -14,19 +14,21 @@ import (
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
 type Server struct {
-	Sessions   *session.Store
-	ConfigHome string
-	Workspace  string
-	AuthToken  string
-	LeaseTTL   time.Duration
-	Executable string
-	Now        func() time.Time
+	Sessions    *session.Store
+	ConfigHome  string
+	Workspace   string
+	AuthToken   string
+	LeaseTTL    time.Duration
+	Executable  string
+	EditorToken string
+	Now         func() time.Time
 }
 
 type Failure struct {
@@ -72,6 +74,10 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/code/hover", s.codeHover)
 	mux.HandleFunc("/code/completion", s.codeCompletion)
 	mux.HandleFunc("/code/format", s.codeFormat)
+	mux.HandleFunc("/editor/identify", s.editorIdentify)
+	mux.HandleFunc("/editor/state", s.editorState)
+	mux.HandleFunc("/editor/open", s.editorOpen)
+	mux.HandleFunc("/editor/selection", s.editorSelection)
 	return s.withAuth(mux)
 }
 
@@ -1026,6 +1032,91 @@ func (s Server) codeFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"kind": "format", "write": payload.Write, "result": result})
+}
+
+func (s Server) editorIdentify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	params, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	identity, err := s.editorBridge().IdentifyEditor(params)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, identity)
+}
+
+func (s Server) editorState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	state, err := s.editorBridge().EditorState()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, state)
+}
+
+func (s Server) editorOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	params, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	openFile, err := s.editorBridge().OpenEditorFile(params)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, openFile)
+}
+
+func (s Server) editorSelection(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		state, err := s.editorBridge().EditorState()
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, state.Selection)
+	case http.MethodPost:
+		params, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		selection, err := s.editorBridge().SetEditorSelection(params)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, selection)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s Server) editorBridge() bridge.Server {
+	return bridge.Server{
+		Sessions:   s.Sessions,
+		Workspace:  s.Workspace,
+		ConfigHome: s.ConfigHome,
+		TrustToken: s.EditorToken,
+		Executable: s.Executable,
+	}
 }
 
 func decodeOptionalJSONPayload(r *http.Request, value any) error {

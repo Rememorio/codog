@@ -39,7 +39,23 @@ type EditorState struct {
 	UpdatedAt time.Time        `json:"updated_at,omitempty"`
 }
 
-func (s Server) editorIdentify(params json.RawMessage) (any, error) {
+func (s Server) IdentifyEditor(params json.RawMessage) (*EditorIdentity, error) {
+	return s.editorIdentify(params)
+}
+
+func (s Server) EditorState() (EditorState, error) {
+	return s.editorState()
+}
+
+func (s Server) OpenEditorFile(params json.RawMessage) (*EditorOpenFile, error) {
+	return s.editorOpen(params)
+}
+
+func (s Server) SetEditorSelection(params json.RawMessage) (*EditorSelection, error) {
+	return s.editorSelection(params)
+}
+
+func (s Server) editorIdentify(params json.RawMessage) (*EditorIdentity, error) {
 	var payload struct {
 		Editor    string `json:"editor"`
 		Version   string `json:"version"`
@@ -83,11 +99,11 @@ func (s Server) editorIdentify(params json.RawMessage) (any, error) {
 	return state.Identity, nil
 }
 
-func (s Server) editorState() (any, error) {
+func (s Server) editorState() (EditorState, error) {
 	return s.loadEditorState()
 }
 
-func (s Server) editorOpen(params json.RawMessage) (any, error) {
+func (s Server) editorOpen(params json.RawMessage) (*EditorOpenFile, error) {
 	if _, err := s.requireTrustedEditor(); err != nil {
 		return nil, err
 	}
@@ -121,7 +137,7 @@ func (s Server) editorOpen(params json.RawMessage) (any, error) {
 	return state.OpenFile, nil
 }
 
-func (s Server) editorSelection(params json.RawMessage) (any, error) {
+func (s Server) editorSelection(params json.RawMessage) (*EditorSelection, error) {
 	if _, err := s.requireTrustedEditor(); err != nil {
 		return nil, err
 	}

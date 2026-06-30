@@ -202,6 +202,66 @@ func TestControlSessionPromptStartsBackgroundRun(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 }
 
+func TestControlEditorBridgeEndpoints(t *testing.T) {
+	root := t.TempDir()
+	configHome := filepath.Join(root, "home")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	server := httptest.NewServer(Server{
+		Sessions:    &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome:  configHome,
+		Workspace:   root,
+		EditorToken: "secret",
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/editor/identify", "application/json", bytes.NewBufferString(`{"editor":"VS Code","workspace":"`+filepath.ToSlash(root)+`","token":"wrong"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	resp, err = http.Post(server.URL+"/editor/identify", "application/json", bytes.NewBufferString(`{"editor":"VS Code","version":"1.0","workspace":"`+filepath.ToSlash(root)+`","token":"secret"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"editor":"VS Code"`)
+	require.Contains(t, string(body), `"trusted":true`)
+
+	resp, err = http.Post(server.URL+"/editor/open", "application/json", bytes.NewBufferString(`{"path":"main.go"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"path":"main.go"`)
+
+	resp, err = http.Post(server.URL+"/editor/selection", "application/json", bytes.NewBufferString(`{"start_line":1,"start_column":1,"end_line":1,"end_column":8}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"path":"main.go"`)
+	require.Contains(t, string(body), `"text":"package"`)
+
+	resp, err = http.Get(server.URL + "/editor/selection")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"text":"package"`)
+
+	resp, err = http.Get(server.URL + "/editor/state")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"open_file":{"path":"main.go"`)
+	require.Contains(t, string(body), `"selection":{"path":"main.go"`)
+	require.FileExists(t, filepath.Join(configHome, "bridge", "editor-state.json"))
+}
+
 func TestControlBackgroundLifecycle(t *testing.T) {
 	root := t.TempDir()
 	server := httptest.NewServer(Server{

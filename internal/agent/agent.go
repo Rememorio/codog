@@ -398,12 +398,13 @@ func (a *App) Remote(args []string) error {
 	executable, _ := os.Executable()
 	fmt.Fprintf(a.Err, "codog remote control listening on http://%s\n", addr)
 	return http.ListenAndServe(addr, control.Server{
-		Sessions:   a.Sessions,
-		ConfigHome: a.Config.ConfigHome,
-		Workspace:  a.Workspace,
-		AuthToken:  a.Config.Future.RemoteAuthToken,
-		LeaseTTL:   time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
-		Executable: executable,
+		Sessions:    a.Sessions,
+		ConfigHome:  a.Config.ConfigHome,
+		Workspace:   a.Workspace,
+		AuthToken:   a.Config.Future.RemoteAuthToken,
+		LeaseTTL:    time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
+		Executable:  executable,
+		EditorToken: a.Config.Future.EditorBridgeToken,
 	}.Handler())
 }
 
