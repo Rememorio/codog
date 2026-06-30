@@ -2442,11 +2442,18 @@ type hooksRequest struct {
 }
 
 type hooksListReport struct {
-	Kind        string   `json:"kind"`
-	Action      string   `json:"action"`
-	Status      string   `json:"status"`
-	PreToolUse  []string `json:"pre_tool_use"`
-	PostToolUse []string `json:"post_tool_use"`
+	Kind                string               `json:"kind"`
+	Action              string               `json:"action"`
+	Status              string               `json:"status"`
+	PreToolUse          []string             `json:"pre_tool_use"`
+	PostToolUse         []string             `json:"post_tool_use"`
+	PreToolUseCommands  []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
+	PostToolUseCommands []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
+}
+
+type hookCommandSummary struct {
+	Matcher string `json:"matcher,omitempty"`
+	Command string `json:"command"`
 }
 
 func (a *App) Hooks(ctx context.Context, args []string) error {
@@ -2457,11 +2464,13 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 	switch req.Action {
 	case "list":
 		report := hooksListReport{
-			Kind:        "hooks",
-			Action:      "list",
-			Status:      "ok",
-			PreToolUse:  append([]string(nil), a.Config.Hooks.PreToolUse...),
-			PostToolUse: append([]string(nil), a.Config.Hooks.PostToolUse...),
+			Kind:                "hooks",
+			Action:              "list",
+			Status:              "ok",
+			PreToolUse:          append([]string(nil), a.Config.Hooks.PreToolUse...),
+			PostToolUse:         append([]string(nil), a.Config.Hooks.PostToolUse...),
+			PreToolUseCommands:  hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
+			PostToolUseCommands: hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -2593,16 +2602,52 @@ func normalizeHookEvent(value string) (string, error) {
 	}
 }
 
+func summarizeHookCommands(commands []config.HookCommand) []hookCommandSummary {
+	out := make([]hookCommandSummary, 0, len(commands))
+	for _, command := range commands {
+		if strings.TrimSpace(command.Command) == "" {
+			continue
+		}
+		out = append(out, hookCommandSummary{
+			Matcher: strings.TrimSpace(command.Matcher),
+			Command: strings.TrimSpace(command.Command),
+		})
+	}
+	return out
+}
+
+func hookCommandsForList(commands []config.HookCommand, legacy []string) []hookCommandSummary {
+	summaries := summarizeHookCommands(commands)
+	if len(summaries) != 0 || len(legacy) == 0 {
+		return summaries
+	}
+	out := make([]hookCommandSummary, 0, len(legacy))
+	for _, command := range legacy {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			out = append(out, hookCommandSummary{Command: command})
+		}
+	}
+	return out
+}
+
 func renderHooksList(out io.Writer, report hooksListReport) {
 	fmt.Fprintln(out, "Hooks")
 	fmt.Fprintf(out, "  Pre tool use     %d\n", len(report.PreToolUse))
-	for _, command := range report.PreToolUse {
-		fmt.Fprintf(out, "    %s\n", command)
+	for _, command := range report.PreToolUseCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 	fmt.Fprintf(out, "  Post tool use    %d\n", len(report.PostToolUse))
-	for _, command := range report.PostToolUse {
-		fmt.Fprintf(out, "    %s\n", command)
+	for _, command := range report.PostToolUseCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
+}
+
+func renderHookCommandSummary(command hookCommandSummary) string {
+	if strings.TrimSpace(command.Matcher) == "" {
+		return command.Command
+	}
+	return fmt.Sprintf("[%s] %s", command.Matcher, command.Command)
 }
 
 func renderHooksRun(out io.Writer, report hooks.RunReport) {

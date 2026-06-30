@@ -1589,6 +1589,12 @@ func TestHooksCommandAndSlash(t *testing.T) {
 			Hooks: config.HookConfig{
 				PreToolUse:  []string{"cat > " + shellQuote(prePath)},
 				PostToolUse: []string{"cat > " + shellQuote(postPath)},
+				PreToolUseCommands: []config.HookCommand{
+					{Matcher: "read_*", Command: "cat > " + shellQuote(prePath)},
+				},
+				PostToolUseCommands: []config.HookCommand{
+					{Matcher: "bash", Command: "cat > " + shellQuote(postPath)},
+				},
 			},
 		},
 		Workspace: workspace,
@@ -1600,6 +1606,10 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.Hooks(context.Background(), []string{"list", "--json"}))
 	require.Contains(t, out.String(), `"pre_tool_use"`)
 	require.Contains(t, out.String(), `"post_tool_use"`)
+	var hooksList hooksListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
+	require.Equal(t, "read_*", hooksList.PreToolUseCommands[0].Matcher)
+	require.Contains(t, hooksList.PreToolUseCommands[0].Command, "cat >")
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "pre", "--tool", "read_file", "--input", `{"path":"README.md"}`}))
