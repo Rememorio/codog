@@ -3449,6 +3449,12 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 		Err:    io.Discard,
 	}
 
+	require.NoError(t, app.MCP(context.Background(), []string{"list"}))
+	require.Contains(t, out.String(), `"status": "ok"`)
+	require.Contains(t, out.String(), `"tool_count": 1`)
+	require.Contains(t, out.String(), `"tools": [`)
+	out.Reset()
+
 	require.NoError(t, app.MCP(context.Background(), []string{"tools", "test"}))
 	require.Contains(t, out.String(), `"name": "echo"`)
 	require.Contains(t, out.String(), `"input_schema"`)

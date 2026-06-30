@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,9 +18,15 @@ import (
 )
 
 type ServerStatus struct {
-	Name  string   `json:"name"`
-	Tools []string `json:"tools,omitempty"`
-	Error string   `json:"error,omitempty"`
+	Name            string          `json:"name"`
+	Status          string          `json:"status"`
+	Command         string          `json:"command,omitempty"`
+	ResolvedPath    string          `json:"resolved_path,omitempty"`
+	ProtocolVersion string          `json:"protocol_version,omitempty"`
+	ServerInfo      json.RawMessage `json:"server_info,omitempty"`
+	ToolCount       int             `json:"tool_count,omitempty"`
+	Tools           []string        `json:"tools,omitempty"`
+	Error           string          `json:"error,omitempty"`
 }
 
 type InitializeResult struct {
@@ -109,23 +116,71 @@ type rpcResponse struct {
 }
 
 func InspectAll(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
+	return inspectServers(ctx, servers, Inspect)
+}
+
+func PreflightAll(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
+	return inspectServers(ctx, servers, Preflight)
+}
+
+func inspectServers(ctx context.Context, servers map[string]config.MCPServerConfig, inspect func(context.Context, string, config.MCPServerConfig) ServerStatus) []ServerStatus {
 	statuses := make([]ServerStatus, 0, len(servers))
-	for name, server := range servers {
-		statuses = append(statuses, Inspect(ctx, name, server))
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		statuses = append(statuses, inspect(ctx, name, servers[name]))
 	}
 	return statuses
 }
 
 func Inspect(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
+	status := Preflight(ctx, name, server)
+	if status.Error != "" {
+		return status
+	}
 	result := ListTools(ctx, name, server)
 	if result.Error != "" {
-		return ServerStatus{Name: name, Error: result.Error}
+		status.Status = "error"
+		status.Error = result.Error
+		return status
 	}
 	tools := make([]string, 0, len(result.Tools))
 	for _, tool := range result.Tools {
 		tools = append(tools, tool.Name)
 	}
-	return ServerStatus{Name: name, Tools: tools}
+	sort.Strings(tools)
+	status.ToolCount = len(tools)
+	status.Tools = tools
+	return status
+}
+
+func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
+	status := ServerStatus{Name: name, Command: server.Command}
+	if strings.TrimSpace(server.Command) == "" {
+		status.Status = "missing_command"
+		status.Error = "missing command"
+		return status
+	}
+	resolved, err := exec.LookPath(server.Command)
+	if err != nil {
+		status.Status = "command_not_found"
+		status.Error = err.Error()
+		return status
+	}
+	status.ResolvedPath = resolved
+	initialized := Initialize(ctx, name, server)
+	status.ProtocolVersion = initialized.ProtocolVersion
+	status.ServerInfo = initialized.ServerInfo
+	if initialized.Error != "" {
+		status.Status = "error"
+		status.Error = initialized.Error
+		return status
+	}
+	status.Status = "ok"
+	return status
 }
 
 func Initialize(ctx context.Context, serverName string, server config.MCPServerConfig) InitializeResult {

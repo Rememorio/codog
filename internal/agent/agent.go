@@ -11188,6 +11188,7 @@ func (a *App) Doctor(args []string) error {
 	for _, file := range memoryFiles {
 		memoryPaths = append(memoryPaths, file.Path)
 	}
+	mcpStatuses := mcp.PreflightAll(context.Background(), a.Config.MCPServers)
 	sandboxStatus := sandbox.Detect()
 	report := doctor.Run(doctor.Options{
 		Workspace:          a.Workspace,
@@ -11198,6 +11199,7 @@ func (a *App) Doctor(args []string) error {
 		AuthToken:          a.Config.AuthToken,
 		PermissionMode:     a.Config.PermissionMode,
 		ToolCount:          toolCount,
+		MCPServerStatuses:  mcpStatuses,
 		SessionCount:       sessionCount,
 		MemoryFiles:        memoryPaths,
 		UserPromptSubmit:   a.Config.Hooks.UserPromptSubmit,

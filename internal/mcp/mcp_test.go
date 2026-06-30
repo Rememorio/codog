@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -66,6 +67,33 @@ func TestListToolsIncludesProcessStderr(t *testing.T) {
 
 	tools := ListTools(context.Background(), "test", server)
 	require.Contains(t, tools.Error, "mcp boot failed")
+}
+
+func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1"},
+	}
+	ready := Preflight(context.Background(), "test", server)
+	require.Equal(t, "ok", ready.Status)
+	require.NotEmpty(t, ready.ResolvedPath)
+	require.Equal(t, "2024-11-05", ready.ProtocolVersion)
+	require.Contains(t, string(ready.ServerInfo), `"name":"test"`)
+
+	missing := Preflight(context.Background(), "missing", config.MCPServerConfig{Command: filepath.Join(t.TempDir(), "missing-mcp")})
+	require.Equal(t, "command_not_found", missing.Status)
+	require.Contains(t, missing.Error, "missing-mcp")
+
+	statuses := InspectAll(context.Background(), map[string]config.MCPServerConfig{
+		"test":    server,
+		"missing": {Command: filepath.Join(t.TempDir(), "missing-mcp")},
+	})
+	require.Equal(t, []string{"missing", "test"}, []string{statuses[0].Name, statuses[1].Name})
+	require.Equal(t, "command_not_found", statuses[0].Status)
+	require.Equal(t, "ok", statuses[1].Status)
+	require.Equal(t, 1, statuses[1].ToolCount)
+	require.Equal(t, []string{"echo"}, statuses[1].Tools)
 }
 
 func TestMCPHelperProcess(t *testing.T) {

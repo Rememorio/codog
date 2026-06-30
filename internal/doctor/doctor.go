@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/mcp"
 )
 
 const (
@@ -29,6 +31,7 @@ type Options struct {
 	AuthToken          string
 	PermissionMode     string
 	ToolCount          int
+	MCPServerStatuses  []mcp.ServerStatus
 	SessionCount       int
 	MemoryFiles        []string
 	UserPromptSubmit   []string
@@ -92,6 +95,7 @@ func Run(opts Options) Report {
 		checkModel(opts.Model),
 		checkPermissions(opts.PermissionMode),
 		checkTools(opts.ToolCount),
+		checkMCP(opts.MCPServerStatuses),
 		checkSessions(opts.SessionCount),
 		checkHooks(opts),
 		checkGit(opts.Workspace),
@@ -245,6 +249,45 @@ func checkTools(count int) Check {
 		return Check{Name: "Tools", Status: StatusFail, Summary: "No tools are registered."}
 	}
 	return Check{Name: "Tools", Status: StatusOK, Summary: "Tool registry is populated.", Details: []string{fmt.Sprintf("Registered tools: %d", count)}}
+}
+
+func checkMCP(statuses []mcp.ServerStatus) Check {
+	if len(statuses) == 0 {
+		return Check{Name: "MCP", Status: StatusOK, Summary: "No MCP servers are configured.", Details: []string{"Configured servers: 0"}}
+	}
+	details := make([]string, 0, len(statuses)+1)
+	details = append(details, fmt.Sprintf("Configured servers: %d", len(statuses)))
+	failures := 0
+	for _, status := range statuses {
+		state := strings.TrimSpace(status.Status)
+		if state == "" {
+			state = "unknown"
+		}
+		detail := fmt.Sprintf("%s: %s", status.Name, state)
+		if status.ToolCount != 0 {
+			detail += fmt.Sprintf(" tools=%d", status.ToolCount)
+		}
+		if status.ResolvedPath != "" {
+			detail += " path=" + status.ResolvedPath
+		}
+		if status.Error != "" {
+			detail += " error=" + status.Error
+		}
+		details = append(details, detail)
+		if state != StatusOK {
+			failures++
+		}
+	}
+	if failures != 0 {
+		return Check{
+			Name:    "MCP",
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("%d MCP server(s) are unavailable.", failures),
+			Details: details,
+			Hint:    "Fix missing MCP commands or server startup errors before relying on MCP tools.",
+		}
+	}
+	return Check{Name: "MCP", Status: StatusOK, Summary: "All configured MCP servers responded.", Details: details}
 }
 
 func checkSessions(count int) Check {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/stretchr/testify/require"
 )
 
@@ -111,6 +112,31 @@ func TestRunAcceptsExistingHookPath(t *testing.T) {
 	hooks := findCheck(t, report, "Hooks")
 	require.Equal(t, StatusOK, hooks.Status)
 	require.Contains(t, hooks.Summary, "runnable")
+}
+
+func TestRunWarnsForUnavailableMCPServer(t *testing.T) {
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		MCPServerStatuses: []mcp.ServerStatus{
+			{Name: "ready", Status: "ok", ToolCount: 2, ResolvedPath: "echo"},
+			{Name: "missing", Status: "command_not_found", Error: "missing command"},
+		},
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	check := findCheck(t, report, "MCP")
+	require.Equal(t, StatusWarn, check.Status)
+	require.Contains(t, check.Summary, "1 MCP server")
+	require.Contains(t, strings.Join(check.Details, "\n"), "missing: command_not_found")
 }
 
 func findCheck(t *testing.T, report Report, name string) Check {
