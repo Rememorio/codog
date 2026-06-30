@@ -1221,8 +1221,28 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), "Use focused tests.")
 	out.Reset()
 
+	require.NoError(t, app.Memory([]string{"path", "AGENTS.md", "--json"}))
+	require.Contains(t, out.String(), `"action": "path"`)
+	require.Contains(t, out.String(), "AGENTS.md")
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"ensure", ".codog/instructions.md"}))
+	require.Contains(t, out.String(), "Memory File")
+	_, err = os.Stat(filepath.Join(workspace, ".codog", "instructions.md"))
+	require.NoError(t, err)
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"edit", ".codog/instructions.md", "--no-open", "--json"}))
+	require.Contains(t, out.String(), `"action": "edit"`)
+	require.Contains(t, out.String(), `"Editor launch skipped."`)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/memory show AGENTS.md", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/memory edit --no-open", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Memory File")
 }
 
 func TestFocusCommandAndSlashInjectsSystemPrompt(t *testing.T) {

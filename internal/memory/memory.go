@@ -64,6 +64,17 @@ type AppendReport struct {
 	Bytes  int    `json:"bytes"`
 }
 
+type FileReport struct {
+	Kind    string `json:"kind"`
+	Action  string `json:"action"`
+	Status  string `json:"status"`
+	Path    string `json:"path"`
+	Created bool   `json:"created"`
+	Opened  bool   `json:"opened,omitempty"`
+	Editor  string `json:"editor,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 func Discover(workspace string) ([]File, error) {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
@@ -148,12 +159,99 @@ func Append(workspace string, text string) (AppendReport, error) {
 	return AppendReport{Kind: "memory", Action: "add", Status: "ok", Path: path, Bytes: len(payload)}, nil
 }
 
-func BuildReport(workspace string) (Report, error) {
-	absWorkspace := strings.TrimSpace(workspace)
-	if absWorkspace == "" {
-		absWorkspace = "."
+func Path(workspace string, target string) (FileReport, error) {
+	path, err := ResolvePath(workspace, target)
+	if err != nil {
+		return FileReport{}, err
 	}
-	absWorkspace, err := filepath.Abs(absWorkspace)
+	return FileReport{Kind: "memory", Action: "path", Status: "ok", Path: path}, nil
+}
+
+func Ensure(workspace string, target string) (FileReport, error) {
+	path, err := ResolvePath(workspace, target)
+	if err != nil {
+		return FileReport{}, err
+	}
+	report := FileReport{Kind: "memory", Action: "ensure", Status: "ready", Path: path}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return report, err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return report, nil
+		}
+		return report, err
+	}
+	defer file.Close()
+	report.Status = "created"
+	report.Created = true
+	return report, nil
+}
+
+func Edit(workspace string, target string, editor string, openEditor bool) (FileReport, error) {
+	report, err := Ensure(workspace, target)
+	if err != nil {
+		return FileReport{}, err
+	}
+	report.Action = "edit"
+	if !openEditor {
+		report.Message = "Editor launch skipped."
+		return report, nil
+	}
+	editor = resolveEditor(editor)
+	if editor == "" {
+		report.Message = "No editor configured; set VISUAL or EDITOR, or pass --editor."
+		return report, nil
+	}
+	fields := strings.Fields(editor)
+	if len(fields) == 0 {
+		report.Message = "No editor configured; set VISUAL or EDITOR, or pass --editor."
+		return report, nil
+	}
+	cmd := exec.Command(fields[0], append(fields[1:], report.Path)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return report, err
+	}
+	report.Status = "opened"
+	report.Opened = true
+	report.Editor = editor
+	report.Message = "Opened memory file in editor."
+	return report, nil
+}
+
+func ResolvePath(workspace string, target string) (string, error) {
+	absWorkspace, err := absWorkspacePath(workspace)
+	if err != nil {
+		return "", err
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return filepath.Join(absWorkspace, "AGENTS.md"), nil
+	}
+	if files, err := Discover(absWorkspace); err == nil {
+		for _, file := range files {
+			if matchesTarget(file, target) {
+				return file.Path, nil
+			}
+		}
+	}
+	path := target
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(absWorkspace, path)
+	}
+	path = filepath.Clean(path)
+	if !isWithin(path, absWorkspace) {
+		return "", fmt.Errorf("memory path escapes workspace: %s", target)
+	}
+	return path, nil
+}
+
+func BuildReport(workspace string) (Report, error) {
+	absWorkspace, err := absWorkspacePath(workspace)
 	if err != nil {
 		return Report{}, err
 	}
@@ -190,6 +288,20 @@ func RenderAppendReport(w io.Writer, report AppendReport) {
 	fmt.Fprintln(w, "Memory Updated")
 	fmt.Fprintf(w, "  Path             %s\n", report.Path)
 	fmt.Fprintf(w, "  Bytes appended   %d\n", report.Bytes)
+}
+
+func RenderFileReport(w io.Writer, report FileReport) {
+	fmt.Fprintln(w, "Memory File")
+	fmt.Fprintf(w, "  Action           %s\n", report.Action)
+	fmt.Fprintf(w, "  Status           %s\n", report.Status)
+	fmt.Fprintf(w, "  Path             %s\n", report.Path)
+	fmt.Fprintf(w, "  Created          %t\n", report.Created)
+	if report.Editor != "" {
+		fmt.Fprintf(w, "  Editor           %s\n", report.Editor)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(w, "  Message          %s\n", report.Message)
+	}
 }
 
 func Summaries(files []File) []Summary {
@@ -386,6 +498,29 @@ func canonicalPath(path string) string {
 		return clean
 	}
 	return resolved
+}
+
+func absWorkspacePath(workspace string) (string, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	return canonicalPath(absWorkspace), nil
+}
+
+func resolveEditor(editor string) string {
+	editor = strings.TrimSpace(editor)
+	if editor != "" {
+		return editor
+	}
+	if visual := strings.TrimSpace(os.Getenv("VISUAL")); visual != "" {
+		return visual
+	}
+	return strings.TrimSpace(os.Getenv("EDITOR"))
 }
 
 func escapeAttr(value string) string {

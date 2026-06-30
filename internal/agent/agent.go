@@ -7603,6 +7603,8 @@ func initProject(out io.Writer, workspace string, args []string) error {
 type memoryRequest struct {
 	Action string
 	Format string
+	Editor string
+	NoOpen bool
 	Rest   []string
 }
 
@@ -7648,6 +7650,39 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 			return nil
 		}
 		memory.RenderAppendReport(out, report)
+	case "path":
+		report, err := memory.Path(workspace, strings.Join(req.Rest, " "))
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderFileReport(out, report)
+	case "ensure":
+		report, err := memory.Ensure(workspace, strings.Join(req.Rest, " "))
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderFileReport(out, report)
+	case "edit":
+		report, err := memory.Edit(workspace, strings.Join(req.Rest, " "), req.Editor, !req.NoOpen)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderFileReport(out, report)
 	default:
 		return fmt.Errorf("unknown memory action %q", req.Action)
 	}
@@ -7662,6 +7697,16 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 		switch {
 		case arg == "--json":
 			req.Format = "json"
+		case arg == "--no-open":
+			req.NoOpen = true
+		case arg == "--editor":
+			if i+1 >= len(args) {
+				return req, errors.New("memory editor is required")
+			}
+			i++
+			req.Editor = args[i]
+		case strings.HasPrefix(arg, "--editor="):
+			req.Editor = strings.TrimPrefix(arg, "--editor=")
 		case arg == "--output-format":
 			if i+1 >= len(args) {
 				return req, errors.New("memory output format is required")
@@ -7676,7 +7721,7 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 			if !actionSet {
 				action := strings.ToLower(arg)
 				switch action {
-				case "list", "show", "add":
+				case "list", "show", "add", "path", "ensure", "edit":
 					req.Action = action
 					actionSet = true
 					continue
@@ -13887,7 +13932,7 @@ Usage:
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
-  %s [flags] memory [list|show|add] [--json|--output-format text|json]
+  %s [flags] memory [list|show|add|path|ensure|edit] [ARGS...] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]

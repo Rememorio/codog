@@ -129,6 +129,33 @@ func TestAppendAddsWorkspaceAgentsMemory(t *testing.T) {
 	require.Equal(t, "Existing\n\nUse focused tests.\n", string(data))
 }
 
+func TestPathEnsureAndEditMemoryFile(t *testing.T) {
+	root := t.TempDir()
+	expectedRoot, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+
+	pathReport, err := Path(root, "")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(expectedRoot, "AGENTS.md"), pathReport.Path)
+
+	ensureReport, err := Ensure(root, ".codog/instructions.md")
+	require.NoError(t, err)
+	require.Equal(t, "created", ensureReport.Status)
+	require.True(t, ensureReport.Created)
+	_, err = os.Stat(filepath.Join(root, ".codog", "instructions.md"))
+	require.NoError(t, err)
+
+	editReport, err := Edit(root, "AGENTS.md", "", false)
+	require.NoError(t, err)
+	require.Equal(t, "edit", editReport.Action)
+	require.True(t, editReport.Created)
+	require.Contains(t, editReport.Message, "skipped")
+
+	_, err = ResolvePath(root, "../outside.md")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes workspace")
+}
+
 func TestRenderReportWithAndWithoutFiles(t *testing.T) {
 	var out bytes.Buffer
 	RenderReport(&out, Report{WorkingDirectory: "/repo", InstructionFiles: 0})
