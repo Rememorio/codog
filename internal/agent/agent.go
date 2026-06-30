@@ -332,6 +332,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.InstallGitHubApp(rest)
 	case "install-slack-app":
 		return app.InstallSlackApp(rest)
+	case "stickers":
+		return app.Stickers(rest)
 	case "issue":
 		return app.IssueDraft(rest, overrides)
 	case "run":
@@ -7290,7 +7292,27 @@ type installSlackAppReport struct {
 	Message      string `json:"message,omitempty"`
 }
 
+type stickersRequest struct {
+	Format string
+	Target string
+	Path   string
+	Open   bool
+}
+
+type stickersReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	URL        string `json:"url"`
+	Opened     bool   `json:"opened"`
+	Opener     string `json:"opener,omitempty"`
+	OrderCount int    `json:"order_count"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
 const slackAppURL = "https://slack.com/marketplace/A08SF47R6P4-claude"
+const stickerOrderURL = "https://www.stickermule.com/claudecode"
 
 var openExternalURL = openSystemURL
 
@@ -7559,6 +7581,113 @@ func renderInstallSlackAppReport(out io.Writer, report installSlackAppReport) {
 		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
 	}
 	fmt.Fprintf(out, "  Install count    %d\n", report.InstallCount)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func (a *App) Stickers(args []string) error {
+	req, err := parseStickersArgs(args)
+	if err != nil {
+		return err
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	count := a.Config.Future.StickerOrderCount + 1
+	if _, err := config.SetFileValue(path, "future.sticker_order_count", count); err != nil {
+		return err
+	}
+	a.Config.Future.StickerOrderCount = count
+	report := stickersReport{
+		Kind:       "stickers",
+		Action:     "open",
+		Status:     "ok",
+		URL:        stickerOrderURL,
+		OrderCount: count,
+		Path:       path,
+		Message:    "Visit the sticker page to order Claude Code stickers.",
+	}
+	if req.Open {
+		opener, err := openExternalURL(stickerOrderURL)
+		if err != nil {
+			report.Status = "open_failed"
+			report.Message = "Could not open a browser automatically. Visit the URL manually."
+		} else {
+			report.Opened = true
+			report.Opener = opener
+			report.Message = "Opening sticker order page in browser."
+		}
+	} else {
+		report.Action = "show"
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderStickersReport(a.Out, report)
+	return nil
+}
+
+func parseStickersArgs(args []string) (stickersRequest, error) {
+	req := stickersRequest{Format: "text", Target: "user", Open: true}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("stickers output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("stickers target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("stickers config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--open":
+			req.Open = true
+		case arg == "--no-open":
+			req.Open = false
+		default:
+			return req, fmt.Errorf("unknown stickers option %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "stickers"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderStickersReport(out io.Writer, report stickersReport) {
+	fmt.Fprintln(out, "Sticker Order")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  URL              %s\n", report.URL)
+	fmt.Fprintf(out, "  Opened           %t\n", report.Opened)
+	if report.Opener != "" {
+		fmt.Fprintf(out, "  Opener           %s\n", report.Opener)
+	}
+	fmt.Fprintf(out, "  Order count      %d\n", report.OrderCount)
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
 	}
@@ -10360,6 +10489,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/install-slack-app":
 		if err := a.InstallSlackApp(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/stickers":
+		if err := a.Stickers(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/issue":
@@ -14219,6 +14352,7 @@ Usage:
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]
+  %s [flags] stickers [--no-open] [--json|--output-format text|json]
   %s [flags] issue [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
@@ -14292,7 +14426,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
