@@ -103,6 +103,24 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
 }
 
+func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
+	var out bytes.Buffer
+	require.NoError(t, renderHelpCommand(&out, nil))
+	require.Contains(t, out.String(), "Usage:")
+	require.Contains(t, out.String(), "prompt")
+	out.Reset()
+
+	require.NoError(t, renderHelpCommand(&out, []string{"doctor", "--output-format", "json"}))
+	var report helpReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "help", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "doctor", report.Topic)
+	require.Equal(t, "codog doctor [ARGS...]", report.Usage)
+	require.Contains(t, report.Help, "Usage:")
+}
+
 func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	var out bytes.Buffer
 
@@ -251,6 +269,11 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "plugins", command)
 	require.Equal(t, []string{"--output-format", "json"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "help", "doctor"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "help", command)
+	require.Equal(t, []string{"doctor", "--output-format", "json"}, rest)
 }
 
 func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {

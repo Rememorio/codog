@@ -103,8 +103,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if len(args) > 0 {
 		switch args[0] {
 		case "--help", "-h":
-			printHelp(os.Stdout)
-			return nil
+			return renderHelpCommand(os.Stdout, args[1:])
 		case "--version", "-v":
 			workspace, err := os.Getwd()
 			if err != nil {
@@ -133,8 +132,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return err
 	}
 	if command == "help" || command == "--help" || command == "-h" {
-		printHelp(os.Stdout)
-		return nil
+		return renderHelpCommand(os.Stdout, rest)
 	}
 	if command == "version" || command == "--version" || command == "-v" {
 		workspace, err := os.Getwd()
@@ -17928,7 +17926,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
 		"debug-tool-call", "desktop", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
-		"init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
+		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
 		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
@@ -17951,8 +17949,74 @@ func argsHaveOutputFormat(args []string) bool {
 	return false
 }
 
+type helpReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Topic  string `json:"topic,omitempty"`
+	Usage  string `json:"usage"`
+	Help   string `json:"help"`
+}
+
+func renderHelpCommand(out io.Writer, args []string) error {
+	format, topic, err := parseHelpArgs(args)
+	if err != nil {
+		return err
+	}
+	help := helpText(filepath.Base(os.Args[0]))
+	if format == "json" {
+		usage := "codog [flags] COMMAND [ARGS...]"
+		if topic != "" {
+			usage = "codog " + topic + " [ARGS...]"
+		}
+		data, _ := json.MarshalIndent(helpReport{
+			Kind:   "help",
+			Action: "show",
+			Status: "ok",
+			Topic:  topic,
+			Usage:  usage,
+			Help:   help,
+		}, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprint(out, help)
+	return nil
+}
+
+func parseHelpArgs(args []string) (string, string, error) {
+	format := "text"
+	topicParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", "", errors.New("help output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return "", "", fmt.Errorf("unknown help flag %q", arg)
+		default:
+			topicParts = append(topicParts, arg)
+		}
+	}
+	if err := validateTextOrJSON(format, "help"); err != nil {
+		return "", "", err
+	}
+	return format, strings.TrimSpace(strings.Join(topicParts, " ")), nil
+}
+
 func printHelp(out io.Writer) {
-	exe := filepath.Base(os.Args[0])
+	fmt.Fprint(out, helpText(filepath.Base(os.Args[0])))
+}
+
+func helpText(exe string) string {
 	help := `%s is a Go-native coding agent CLI.
 
 Usage:
@@ -18092,7 +18156,7 @@ Flags:
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
-	fmt.Fprint(out, strings.ReplaceAll(help, "%s", exe))
+	return strings.ReplaceAll(help, "%s", exe)
 }
 
 func redact(value string) string {
