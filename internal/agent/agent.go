@@ -330,7 +330,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Changelog(rest)
 	case "release-notes":
 		return app.ReleaseNotes(rest)
-	case "review":
+	case "review", "ultrareview":
 		return app.Review(rest)
 	case "feedback":
 		return app.Feedback(rest, overrides)
@@ -436,9 +436,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Remote(rest)
 	case "remote-env":
 		return app.RemoteEnv(rest)
-	case "remote-setup":
+	case "remote-setup", "web-setup":
 		return app.RemoteSetup(rest, overrides)
-	case "bridge":
+	case "bridge", "remote-control":
 		return app.Bridge(rest)
 	case "desktop", "app":
 		return app.Desktop(rest, overrides)
@@ -10938,8 +10938,12 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RemoteEnv(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/remote-setup":
+	case "/remote-setup", "/web-setup":
 		if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/remote-control":
+		if err := a.Bridge(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/desktop", "/app":
@@ -11016,7 +11020,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Bughunter(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/review":
+	case "/review", "/ultrareview":
 		if err := a.Review(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -15144,7 +15148,7 @@ Usage:
   %s [flags] search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
   %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]
-  %s [flags] review [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
+  %s [flags] review|ultrareview [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
@@ -15200,12 +15204,12 @@ Usage:
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote serve [addr] | bridge serve | ide [status|clear] | updater check|verify|download|install|rollback
+  %s remote serve [addr] | bridge|remote-control serve | ide [status|clear] | updater check|verify|download|install|rollback
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
-  %s remote-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
+  %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]
   %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY

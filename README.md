@@ -62,10 +62,10 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/init-verifiers`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
-  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
+  `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
   sessions with list, show, exists, fork, switch, rename, and delete actions.
 - `/export` and `codog export` write session transcripts as markdown, JSON, or
@@ -96,8 +96,9 @@ Claude Code source.
 - `/bughunter` and `codog bughunter [PATH] [--limit N]` scan local code for
   likely correctness issues such as unchecked returns, panics, os.Exit,
   defer-in-loop, and loop variable capture.
-- `/review` and `codog review [--staged|--base REF]` summarize changed files,
-  added/deleted lines, and security findings limited to the changed paths.
+- `/review`, `/ultrareview`, `codog review`, and `codog ultrareview`
+  summarize changed files, added/deleted lines, and security findings limited
+  to the changed paths.
 - `/feedback` and `codog feedback` write a local Markdown feedback report with
   version, git, session, model, permission, and workspace diagnostics.
 - `/pr`, `/issue`, `codog pr`, and `codog issue` write local Markdown drafts
@@ -265,10 +266,10 @@ Claude Code source.
 - `codog remote-env show|set|clear` and `/remote-env` manage default remote
   session enablement, auth-token presence, and lease duration without printing
   token values.
-- `codog remote-setup status|enable|disable|clear` and `/remote-setup` prepare
-  the local remote-control endpoint, report the server command and URLs, and
-  can persist enablement, token presence, and lease duration without printing
-  token values.
+- `codog remote-setup status|enable|disable|clear`, `codog web-setup`, and
+  `/remote-setup` or `/web-setup` prepare the local remote-control endpoint,
+  report the server command and URLs, and can persist enablement, token
+  presence, and lease duration without printing token values.
 - `codog desktop`, `codog mobile`, `/desktop`, and `/mobile` report local
   bridge or remote-control handoff instructions for the current or selected
   session, with text and JSON output.
@@ -304,7 +305,8 @@ Claude Code source.
   list/search/read/write/edit/diff operations, Go diagnostics and
   code-intelligence queries, editor identity/open-file/selection state,
   bearer-token auth, and heartbeat lease/failure state.
-- `codog bridge serve` starts a stdio JSON-RPC bridge for trusted editor
+- `codog bridge serve`, `codog remote-control serve`, and
+  `/remote-control serve` start a stdio JSON-RPC bridge for trusted editor
   identity, open-file/selection state, session mutation/rewind, background
   prompt turns, workspace info, file listing/search/diff, diagnostics,
   code-intelligence queries, background task control/watch events, and bounded

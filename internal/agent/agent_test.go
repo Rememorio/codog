@@ -1923,6 +1923,51 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	require.Contains(t, out.String(), "127.0.0.1:9999")
 	require.Contains(t, out.String(), "active-session")
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/web-setup status --addr 127.0.0.1:8888", &session.Session{ID: "web-session"}))
+	require.Contains(t, out.String(), "Remote Setup")
+	require.Contains(t, out.String(), "127.0.0.1:8888")
+	require.Contains(t, out.String(), "web-session")
+	require.Empty(t, errOut.String())
+}
+
+func TestRunCLIRoutesWebSetupAlias(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "web-setup", "status", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "remote_setup"`)
+	require.Contains(t, out, `"remote_url": "http://127.0.0.1:8791"`)
+}
+
+func TestRunCLIRoutesRemoteControlAlias(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	_, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "remote-control"}, config.FlagOverrides{})
+	})
+	require.ErrorContains(t, err, "usage: codog bridge serve")
 }
 
 func TestDesktopAndMobileHandoffCommands(t *testing.T) {
@@ -2104,7 +2149,30 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"rule": "pipe-to-shell"`)
 	out.Reset()
 
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "ultrareview", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "review"`)
+	require.Contains(t, cliOut, `"rule": "pipe-to-shell"`)
+
 	require.True(t, app.handleSlash(context.Background(), "/review", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Review")
+	require.Contains(t, out.String(), "Security findings")
+	require.Contains(t, out.String(), "script.sh")
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/ultrareview", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Review")
 	require.Contains(t, out.String(), "Security findings")
 	require.Contains(t, out.String(), "script.sh")
