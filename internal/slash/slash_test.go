@@ -157,6 +157,21 @@ func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Empty(t, Candidates("co"))
 }
 
+func TestHookCandidatesIncludeCurrentEvents(t *testing.T) {
+	candidates := Candidates("/hooks run ")
+	for _, candidate := range []string{
+		"/hooks run user-prompt-submit",
+		"/hooks run session-start",
+		"/hooks run stop",
+		"/hooks run pre-compact",
+		"/hooks run cwd-changed",
+		"/hooks run file-changed",
+		"/hooks run instructions-loaded",
+	} {
+		require.Contains(t, candidates, candidate)
+	}
+}
+
 func TestCandidatesWithOptionsIncludeModelAndSessions(t *testing.T) {
 	candidates := CandidatesWithOptions("/resume", CandidateOptions{
 		Model:            "claude-test",
