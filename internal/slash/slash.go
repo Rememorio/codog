@@ -80,7 +80,7 @@ func Specs() []Spec {
 		{Name: "/completion", Usage: "/completion PREFIX", Description: "List Go completion candidates for a prefix."},
 		{Name: "/format", Usage: "/format PATH [--write]", Description: "Preview or write gofmt output for a Go file."},
 		{Name: "/export", Usage: "/export [file]", Description: "Export the current session transcript."},
-		{Name: "/copy", Usage: "/copy [last|all]", Description: "Copy the latest response or session transcript to the clipboard."},
+		{Name: "/copy", Usage: "/copy [last|N|all]", Description: "Copy the latest, Nth-latest response, or session transcript to the clipboard."},
 		{Name: "/history", Usage: "/history [limit]", Description: "Show recent prompts recorded for the current session."},
 		{Name: "/summary", Usage: "/summary", Description: "Summarize the current session."},
 		{Name: "/todos", Usage: "/todos [list|add|start|done|pending|clear]", Description: "Show or update the workspace todo list."},

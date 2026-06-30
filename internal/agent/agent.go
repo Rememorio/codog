@@ -11419,6 +11419,7 @@ type shareReport struct {
 type copyRequest struct {
 	SessionID string
 	Scope     string
+	Nth       int
 	Format    string
 	JSON      bool
 }
@@ -11429,6 +11430,7 @@ type copyReport struct {
 	Status    string `json:"status"`
 	SessionID string `json:"session_id"`
 	Scope     string `json:"scope"`
+	Nth       int    `json:"nth,omitempty"`
 	Format    string `json:"format"`
 	Bytes     int    `json:"bytes"`
 	Clipboard string `json:"clipboard"`
@@ -11686,12 +11688,17 @@ func (a *App) Copy(ctx context.Context, args []string, overrides config.FlagOver
 	if err != nil {
 		return err
 	}
+	nth := 0
+	if req.Scope == "nth" {
+		nth = req.Nth
+	}
 	report := copyReport{
 		Kind:      "copy",
 		Action:    "copy",
 		Status:    "ok",
 		SessionID: sess.ID,
 		Scope:     req.Scope,
+		Nth:       nth,
 		Format:    format,
 		Bytes:     len(data),
 		Clipboard: clipboard,
@@ -11701,7 +11708,7 @@ func (a *App) Copy(ctx context.Context, args []string, overrides config.FlagOver
 		fmt.Fprintln(a.Out, string(encoded))
 		return nil
 	}
-	fmt.Fprintf(a.Out, "Copied %s from session %s to clipboard (%d bytes).\n", req.Scope, sess.ID, len(data))
+	fmt.Fprintf(a.Out, "Copied %s from session %s to clipboard (%d bytes).\n", copyScopeLabel(req), sess.ID, len(data))
 	return nil
 }
 
@@ -11722,12 +11729,19 @@ func (a *App) copyPayload(req copyRequest) ([]byte, *session.Session, string, er
 	if err != nil {
 		return nil, nil, "", err
 	}
-	data := []byte(renderLastSessionMessage(sess))
+	text := renderNthAssistantMessage(sess, req.Nth)
+	if strings.TrimSpace(text) == "" && req.Nth == 1 {
+		text = renderLastSessionMessage(sess)
+	}
+	if strings.TrimSpace(text) == "" && req.Nth > 1 {
+		return nil, nil, "", fmt.Errorf("assistant response %d not found", req.Nth)
+	}
+	data := []byte(text)
 	return data, sess, "text", nil
 }
 
 func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, error) {
-	req := copyRequest{Scope: "last", SessionID: "latest"}
+	req := copyRequest{Scope: "last", Nth: 1, SessionID: "latest"}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
 	}
@@ -11742,7 +11756,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog copy [last|all] [--session ID] [--format markdown|json|jsonl] [--json]")
+				return req, errors.New("usage: codog copy [last|N|all] [--session ID] [--format markdown|json|jsonl] [--json]")
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -11750,7 +11764,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--resume":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog copy [last|all] [--resume ID|latest] [--format markdown|json|jsonl] [--json]")
+				return req, errors.New("usage: codog copy [last|N|all] [--resume ID|latest] [--format markdown|json|jsonl] [--json]")
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
@@ -11767,14 +11781,24 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "last" || arg == "latest":
 			req.Scope = "last"
+			req.Nth = 1
 		case arg == "all" || arg == "session":
 			req.Scope = "all"
+			req.Nth = 0
 		default:
-			return req, fmt.Errorf("unknown copy argument %q", arg)
+			nth, err := strconv.Atoi(arg)
+			if err != nil {
+				return req, fmt.Errorf("unknown copy argument %q", arg)
+			}
+			if nth < 1 {
+				return req, errors.New("copy response index must be greater than zero")
+			}
+			req.Scope = "nth"
+			req.Nth = nth
 		}
 	}
-	if req.Scope == "last" && strings.TrimSpace(req.Format) != "" && req.Format != "text" {
-		return req, errors.New("copy last only supports text format")
+	if req.Scope != "all" && strings.TrimSpace(req.Format) != "" && req.Format != "text" {
+		return req, errors.New("copy response only supports text format")
 	}
 	if req.Scope == "all" {
 		if _, err := session.NormalizeExportFormat(req.Format); err != nil {
@@ -11782,6 +11806,35 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		}
 	}
 	return req, nil
+}
+
+func copyScopeLabel(req copyRequest) string {
+	if req.Scope == "nth" {
+		return fmt.Sprintf("response %d", req.Nth)
+	}
+	return req.Scope
+}
+
+func renderNthAssistantMessage(sess *session.Session, nth int) string {
+	if nth < 1 {
+		return ""
+	}
+	count := 0
+	for index := len(sess.Messages) - 1; index >= 0; index-- {
+		msg := sess.Messages[index]
+		if msg.Role != "assistant" {
+			continue
+		}
+		text := renderMessagePlainText(msg)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		count++
+		if count == nth {
+			return text
+		}
+	}
+	return ""
 }
 
 func renderLastSessionMessage(sess *session.Session) string {
@@ -13382,7 +13435,7 @@ Usage:
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
-  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl] | share [DIR] [--session ID] [--format markdown|json|jsonl] | copy [last|all] [--session ID]
+  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl] | share [DIR] [--session ID] [--format markdown|json|jsonl] | copy [last|N|all] [--session ID]
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]

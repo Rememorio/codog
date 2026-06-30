@@ -72,8 +72,9 @@ Claude Code source.
   raw JSONL.
 - `/share` and `codog share` write a local share artifact for the current or
   selected session under `.codog/share` by default.
-- `/copy` and `codog copy [last|all]` copy the latest assistant response or a
-  formatted session transcript to the system clipboard.
+- `/copy` and `codog copy [last|N|all]` copy the latest assistant response, the
+  Nth-latest assistant response, or a formatted session transcript to the
+  system clipboard.
 - `/history` and `codog history [--session ID] [--limit N] [--json]` show
   prompts recorded for a session, with legacy fallback to user transcript
   messages.

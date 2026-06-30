@@ -2984,6 +2984,8 @@ func TestCopyCommandAndSlash(t *testing.T) {
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "copy prompt")))
 	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "copy response")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "copy followup")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "latest copy response")))
 	sess, err := store.Open("source")
 	require.NoError(t, err)
 	var copied []byte
@@ -2998,13 +3000,24 @@ func TestCopyCommandAndSlash(t *testing.T) {
 	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: &errOut}
 
 	require.NoError(t, app.Copy(context.Background(), []string{"last", "--session", "source", "--json"}, config.FlagOverrides{}))
-	require.Equal(t, "copy response\n", string(copied))
+	require.Equal(t, "latest copy response\n", string(copied))
 	require.Contains(t, out.String(), `"clipboard": "test-clipboard"`)
+	out.Reset()
+
+	require.NoError(t, app.Copy(context.Background(), []string{"2", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.Equal(t, "copy response\n", string(copied))
+	require.Contains(t, out.String(), `"scope": "nth"`)
+	require.Contains(t, out.String(), `"nth": 2`)
 	out.Reset()
 
 	require.NoError(t, app.Copy(context.Background(), []string{"all", "--session=source", "--format=json"}, config.FlagOverrides{}))
 	require.Contains(t, string(copied), `"id": "source"`)
 	require.Contains(t, out.String(), "Copied all")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/copy 2", sess))
+	require.Equal(t, "copy response\n", string(copied))
+	require.Empty(t, errOut.String())
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/copy all", sess))
