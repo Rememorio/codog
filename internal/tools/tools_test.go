@@ -297,6 +297,17 @@ func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {
 	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "notes.md")))
 }
 
+func TestDeriveGlobWalkRootUsesFixedPrefix(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "pkg"), 0o755))
+
+	require.Equal(t, filepath.Join(workspace, "src", "pkg"), deriveGlobWalkRoot(workspace, "src/pkg/**/*.go"))
+	require.Equal(t, filepath.Join(workspace, "src"), deriveGlobWalkRoot(workspace, "src/**/*.{go,md}"))
+	require.Equal(t, workspace, deriveGlobWalkRoot(workspace, "**/*.go"))
+	require.Equal(t, workspace, deriveGlobWalkRoot(workspace, "../*.go"))
+	require.Equal(t, workspace, deriveGlobWalkRoot(workspace, "missing/**/*.go"))
+}
+
 func TestEditFileRequiresUniqueMatch(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "a.txt")

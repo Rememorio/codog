@@ -2416,7 +2416,11 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	var files []string
 	var matches []map[string]any
 	seen := 0
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	walkRoot := root
+	if payload.Glob != "" {
+		walkRoot = deriveGlobWalkRoot(root, payload.Glob)
+	}
+	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -2612,7 +2616,8 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		limit = 200
 	}
 	var files []string
-	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	walkRoot := deriveGlobWalkRoot(root, payload.Pattern)
+	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -2704,6 +2709,33 @@ func expandBracePatterns(pattern string, limit int) []string {
 		return []string{pattern}
 	}
 	return out
+}
+
+func deriveGlobWalkRoot(root string, pattern string) string {
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	if pattern == "" || filepath.IsAbs(pattern) {
+		return root
+	}
+	parts := strings.Split(pattern, "/")
+	fixed := []string{}
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." || strings.ContainsAny(part, "*?[{") {
+			break
+		}
+		fixed = append(fixed, part)
+	}
+	if len(fixed) == 0 {
+		return root
+	}
+	candidate := filepath.Join(append([]string{root}, fixed...)...)
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return root
+	}
+	return candidate
 }
 
 func pathMatch(pattern string, value string) (bool, error) {
