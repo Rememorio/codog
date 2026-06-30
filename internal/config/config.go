@@ -54,6 +54,12 @@ type RateLimitConfig struct {
 	MaxBackoffMS     int `json:"max_backoff_ms,omitempty"`
 }
 
+type PrivacyConfig struct {
+	TelemetryEnabled     *bool `json:"telemetry_enabled,omitempty"`
+	CrashReportsEnabled  *bool `json:"crash_reports_enabled,omitempty"`
+	PromptHistoryEnabled *bool `json:"prompt_history_enabled,omitempty"`
+}
+
 type MCPServerConfig struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
@@ -96,9 +102,12 @@ type Config struct {
 	Model               string                     `json:"model,omitempty"`
 	SystemPrompt        string                     `json:"system_prompt,omitempty"`
 	AppendSystemPrompt  string                     `json:"append_system_prompt,omitempty"`
+	Theme               string                     `json:"theme,omitempty"`
+	EditorMode          string                     `json:"editorMode,omitempty"`
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
+	Privacy             PrivacyConfig              `json:"privacy_settings,omitempty"`
 	PermissionRules     PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
@@ -486,6 +495,12 @@ func merge(dst *Config, src Config) {
 	if src.AppendSystemPrompt != "" {
 		dst.AppendSystemPrompt = joinPromptAppend(dst.AppendSystemPrompt, src.AppendSystemPrompt)
 	}
+	if src.Theme != "" {
+		dst.Theme = src.Theme
+	}
+	if src.EditorMode != "" {
+		dst.EditorMode = src.EditorMode
+	}
 	if src.MaxTokens != 0 {
 		dst.MaxTokens = src.MaxTokens
 	}
@@ -494,6 +509,9 @@ func merge(dst *Config, src Config) {
 	}
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
+	}
+	if privacyConfigSet(src.Privacy) {
+		mergePrivacyConfig(&dst.Privacy, src.Privacy)
 	}
 	if permissionRulesSet(src.PermissionRules) {
 		mergePermissionRules(&dst.PermissionRules, src.PermissionRules)
@@ -547,6 +565,24 @@ func permissionRulesSet(rules PermissionRules) bool {
 		len(rules.Deny) != 0 ||
 		len(rules.Ask) != 0 ||
 		len(rules.DeniedTools) != 0
+}
+
+func privacyConfigSet(cfg PrivacyConfig) bool {
+	return cfg.TelemetryEnabled != nil ||
+		cfg.CrashReportsEnabled != nil ||
+		cfg.PromptHistoryEnabled != nil
+}
+
+func mergePrivacyConfig(dst *PrivacyConfig, src PrivacyConfig) {
+	if src.TelemetryEnabled != nil {
+		dst.TelemetryEnabled = src.TelemetryEnabled
+	}
+	if src.CrashReportsEnabled != nil {
+		dst.CrashReportsEnabled = src.CrashReportsEnabled
+	}
+	if src.PromptHistoryEnabled != nil {
+		dst.PromptHistoryEnabled = src.PromptHistoryEnabled
+	}
 }
 
 func DefaultRateLimitConfig() RateLimitConfig {
@@ -681,8 +717,23 @@ func applyEnv(cfg *Config) {
 	if value := os.Getenv("CODOG_APPEND_SYSTEM_PROMPT"); value != "" {
 		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, value)
 	}
+	if value := os.Getenv("CODOG_THEME"); value != "" {
+		cfg.Theme = value
+	}
+	if value := os.Getenv("CODOG_EDITOR_MODE"); value != "" {
+		cfg.EditorMode = value
+	}
 	if value := os.Getenv("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value
+	}
+	if value, ok := parseBoolEnv("CODOG_PRIVACY_TELEMETRY_ENABLED"); ok {
+		cfg.Privacy.TelemetryEnabled = &value
+	}
+	if value, ok := parseBoolEnv("CODOG_PRIVACY_CRASH_REPORTS_ENABLED"); ok {
+		cfg.Privacy.CrashReportsEnabled = &value
+	}
+	if value, ok := parseBoolEnv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED"); ok {
+		cfg.Privacy.PromptHistoryEnabled = &value
 	}
 	if value := os.Getenv("CODOG_CONFIG_HOME"); value != "" {
 		cfg.ConfigHome = expandHome(value)
@@ -863,4 +914,16 @@ func splitPathList(value string) []string {
 		}
 	}
 	return out
+}
+
+func parseBoolEnv(name string) (bool, bool) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return false, false
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, false
+	}
+	return parsed, true
 }

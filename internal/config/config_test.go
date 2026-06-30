@@ -119,6 +119,41 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"theme": "dark",
+		"editorMode": "vim",
+		"privacy_settings": {
+			"telemetry_enabled": true,
+			"crash_reports_enabled": false,
+			"prompt_history_enabled": false
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "dark", cfg.Theme)
+	require.Equal(t, "vim", cfg.EditorMode)
+	require.NotNil(t, cfg.Privacy.TelemetryEnabled)
+	require.True(t, *cfg.Privacy.TelemetryEnabled)
+	require.NotNil(t, cfg.Privacy.CrashReportsEnabled)
+	require.False(t, *cfg.Privacy.CrashReportsEnabled)
+	require.NotNil(t, cfg.Privacy.PromptHistoryEnabled)
+	require.False(t, *cfg.Privacy.PromptHistoryEnabled)
+
+	t.Setenv("CODOG_THEME", "light")
+	t.Setenv("CODOG_EDITOR_MODE", "default")
+	t.Setenv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED", "true")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "light", cfg.Theme)
+	require.Equal(t, "default", cfg.EditorMode)
+	require.NotNil(t, cfg.Privacy.PromptHistoryEnabled)
+	require.True(t, *cfg.Privacy.PromptHistoryEnabled)
+}
+
 func TestLoadSkipPermissionsFlagOverridesPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

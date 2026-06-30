@@ -91,6 +91,9 @@ func Specs() []Spec {
 		{Name: "/unfocus", Usage: "/unfocus [PATH...|--all]", Description: "Remove focused context paths."},
 		{Name: "/add-dir", Usage: "/add-dir [PATH...|remove PATH|clear]", Description: "Allow tools to access additional directories."},
 		{Name: "/output-style", Usage: "/output-style [list|show|set|clear]", Description: "Show or change the active output style."},
+		{Name: "/theme", Usage: "/theme [list|NAME|clear]", Description: "Show or change the terminal theme preference."},
+		{Name: "/vim", Usage: "/vim [on|off|toggle|status]", Description: "Toggle vim keybinding preference."},
+		{Name: "/privacy-settings", Usage: "/privacy-settings [show|set KEY on|off|clear KEY]", Description: "Show or change local privacy preferences."},
 		{Name: "/skills", Usage: "/skills [list|show|invoke|install|uninstall]", Description: "List, show, install, remove, or render Markdown skills."},
 		{Name: "/commands", Usage: "/commands [list|show|run]", Description: "List, show, or render custom Markdown slash commands."},
 		{Name: "/hooks", Usage: "/hooks [list|run pre|post]", Description: "Inspect or test configured tool hooks."},
@@ -181,6 +184,8 @@ func AllCandidates(options CandidateOptions) []string {
 		"/permissions read-only",
 		"/permissions workspace-write",
 		"/permissions danger-full-access",
+		"/privacy-settings show",
+		"/privacy-settings set prompt-history off",
 		"/plugin list",
 		"/plugin install ",
 		"/plugin enable ",
@@ -200,7 +205,10 @@ func AllCandidates(options CandidateOptions) []string {
 		"/teleport ",
 		"/templates list",
 		"/templates apply ",
+		"/theme list",
+		"/theme dark",
 		"/unfocus --all",
+		"/vim toggle",
 	} {
 		add(candidate)
 	}

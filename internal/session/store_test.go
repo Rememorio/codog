@@ -286,6 +286,16 @@ func TestAppendInputIgnoresBlankInput(t *testing.T) {
 	require.Empty(t, entries)
 }
 
+func TestPromptHistoryDisabledMarkerSuppressesUserMessageFallback(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.AppendPromptHistoryDisabled("source"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "private prompt")))
+
+	entries, err := store.PromptHistory("source")
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
 func TestExportMarkdownJSONAndJSONL(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "Summarize this repo")))

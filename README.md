@@ -60,7 +60,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/sandbox`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
+  `/security-review`, `/bughunter`, `/review`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/vim`, `/privacy-settings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -133,6 +133,9 @@ Claude Code source.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
+- `/theme`, `/vim`, and `/privacy-settings` persist local interface and privacy
+  preferences such as terminal theme, vim keybinding mode, and prompt history
+  recording.
 - `codog mcp list|serve|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt`
   manages and inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls or through the

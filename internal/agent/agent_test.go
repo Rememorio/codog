@@ -1408,6 +1408,93 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Theme([]string{"dark", "--json"}))
+	require.Contains(t, out.String(), `"kind": "theme"`)
+	require.Contains(t, out.String(), `"theme": "dark"`)
+	require.Equal(t, "dark", app.Config.Theme)
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"theme": "dark"`)
+	out.Reset()
+
+	require.NoError(t, app.Vim([]string{"on", "--json"}))
+	require.Contains(t, out.String(), `"kind": "vim"`)
+	require.Contains(t, out.String(), `"enabled": true`)
+	require.Equal(t, "vim", app.Config.EditorMode)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"editorMode": "vim"`)
+	out.Reset()
+
+	require.NoError(t, app.PrivacySettings([]string{"set", "prompt-history", "off", "--json"}))
+	require.Contains(t, out.String(), `"kind": "privacy_settings"`)
+	require.Contains(t, out.String(), `"prompt_history_enabled": false`)
+	require.False(t, app.promptHistoryEnabled())
+	require.Empty(t, app.replHistoryFile())
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"prompt_history_enabled": false`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/theme clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Theme")
+	require.Equal(t, "", app.Config.Theme)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/privacy-settings enable prompt-history", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Privacy Settings")
+	require.True(t, app.promptHistoryEnabled())
+	require.Empty(t, errOut.String())
+}
+
+func TestPromptHistoryPreferenceSkipsInputRecords(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	disabled := false
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:          configHome,
+			Model:               "mock",
+			BaseURL:             server.URL,
+			APIKey:              "test-key",
+			MaxTokens:           100,
+			MaxTurns:            1,
+			AutoCompactMessages: 40,
+			PermissionMode:      "workspace-write",
+			MCPServers:          map[string]config.MCPServerConfig{},
+			Privacy:             config.PrivacyConfig{PromptHistoryEnabled: &disabled},
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Prompt(context.Background(), "private prompt", config.FlagOverrides{SessionID: "private-session"}))
+	history, err := app.Sessions.PromptHistory("private-session")
+	require.NoError(t, err)
+	require.Empty(t, history)
+	require.Contains(t, out.String(), "done")
+}
+
 func TestTodosCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer

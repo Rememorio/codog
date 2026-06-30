@@ -243,6 +243,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AddDir(rest)
 	case "output-style":
 		return app.OutputStyle(rest)
+	case "theme":
+		return app.Theme(rest)
+	case "vim":
+		return app.Vim(rest)
+	case "privacy-settings":
+		return app.PrivacySettings(rest)
 	case "skills":
 		return app.Skills(rest)
 	case "commands":
@@ -3275,6 +3281,645 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 	return req, nil
 }
 
+var availableThemes = []string{"default", "dark", "light", "ansi", "no-color"}
+
+type themeRequest struct {
+	Action string
+	Name   string
+	Format string
+	Target string
+	Path   string
+}
+
+type themeReport struct {
+	Kind      string   `json:"kind"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	Theme     string   `json:"theme"`
+	Previous  string   `json:"previous,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Available []string `json:"available"`
+}
+
+func (a *App) Theme(args []string) error {
+	req, err := parseThemeArgs(args)
+	if err != nil {
+		return err
+	}
+	report := themeReport{
+		Kind:      "theme",
+		Action:    req.Action,
+		Status:    "ok",
+		Theme:     effectiveTheme(a.Config.Theme),
+		Available: append([]string(nil), availableThemes...),
+	}
+	switch req.Action {
+	case "status", "list":
+	case "set":
+		if err := validateThemeName(req.Name); err != nil {
+			return err
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		previous := effectiveTheme(a.Config.Theme)
+		if _, err := config.SetFileValue(path, "theme", req.Name); err != nil {
+			return err
+		}
+		a.Config.Theme = req.Name
+		report.Action = "set"
+		report.Theme = effectiveTheme(a.Config.Theme)
+		report.Previous = previous
+		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		previous := effectiveTheme(a.Config.Theme)
+		if _, err := config.UnsetFileValue(path, "theme"); err != nil {
+			return err
+		}
+		a.Config.Theme = ""
+		report.Action = "clear"
+		report.Theme = effectiveTheme(a.Config.Theme)
+		report.Previous = previous
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown theme command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderThemeReport(a.Out, report)
+	return nil
+}
+
+func parseThemeArgs(args []string) (themeRequest, error) {
+	req := themeRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("theme output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("theme target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("theme config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "theme"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "list":
+		req.Action = "list"
+	case "set":
+		if len(rest) < 2 {
+			return req, errors.New("theme name is required")
+		}
+		req.Action = "set"
+		req.Name = rest[1]
+	case "clear", "reset":
+		req.Action = "clear"
+	default:
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected theme argument %q", rest[1])
+		}
+		req.Action = "set"
+		req.Name = rest[0]
+	}
+	return req, nil
+}
+
+func renderThemeReport(out io.Writer, report themeReport) {
+	fmt.Fprintln(out, "Theme")
+	fmt.Fprintf(out, "  Active           %s\n", report.Theme)
+	if report.Previous != "" {
+		fmt.Fprintf(out, "  Previous         %s\n", report.Previous)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	fmt.Fprintf(out, "  Available        %s\n", strings.Join(report.Available, ", "))
+}
+
+func effectiveTheme(theme string) string {
+	theme = strings.TrimSpace(theme)
+	if theme == "" {
+		return "default"
+	}
+	return theme
+}
+
+func validateThemeName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("theme name is required")
+	}
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("invalid theme name %q", name)
+	}
+	return nil
+}
+
+type vimRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+}
+
+type vimReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	EditorMode string `json:"editor_mode"`
+	Previous   string `json:"previous,omitempty"`
+	Path       string `json:"path,omitempty"`
+}
+
+func (a *App) Vim(args []string) error {
+	req, err := parseVimArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := effectiveEditorMode(a.Config.EditorMode)
+	report := vimReport{
+		Kind:       "vim",
+		Action:     req.Action,
+		Status:     "ok",
+		Enabled:    editorModeIsVim(previous),
+		EditorMode: previous,
+	}
+	switch req.Action {
+	case "status":
+	case "on", "off", "toggle":
+		nextEnabled := req.Action == "on"
+		if req.Action == "toggle" {
+			nextEnabled = !editorModeIsVim(previous)
+		}
+		nextMode := "default"
+		if nextEnabled {
+			nextMode = "vim"
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "editorMode", nextMode); err != nil {
+			return err
+		}
+		a.Config.EditorMode = nextMode
+		report.Action = "set"
+		report.Enabled = nextEnabled
+		report.EditorMode = nextMode
+		report.Previous = previous
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown vim command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderVimReport(a.Out, report)
+	return nil
+}
+
+func parseVimArgs(args []string) (vimRequest, error) {
+	req := vimRequest{Action: "toggle", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("vim output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("vim target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("vim config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "vim"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	if len(rest) > 1 && strings.ToLower(rest[0]) != "set" {
+		return req, fmt.Errorf("unexpected vim argument %q", rest[1])
+	}
+	action := strings.ToLower(rest[0])
+	if action == "set" {
+		if len(rest) < 2 {
+			return req, errors.New("vim mode is required")
+		}
+		action = strings.ToLower(rest[1])
+	}
+	switch action {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "vim":
+		req.Action = "on"
+	case "off", "disable", "disabled", "default", "emacs":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	default:
+		return req, fmt.Errorf("unknown vim mode %q", action)
+	}
+	return req, nil
+}
+
+func renderVimReport(out io.Writer, report vimReport) {
+	fmt.Fprintln(out, "Vim")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Editor mode      %s\n", report.EditorMode)
+	if report.Previous != "" {
+		fmt.Fprintf(out, "  Previous         %s\n", report.Previous)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+}
+
+func effectiveEditorMode(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return "default"
+	}
+	return mode
+}
+
+func editorModeIsVim(mode string) bool {
+	return strings.EqualFold(strings.TrimSpace(mode), "vim")
+}
+
+type privacyRequest struct {
+	Action string
+	Key    string
+	Value  bool
+	Format string
+	Target string
+	Path   string
+}
+
+type privacyReport struct {
+	Kind     string          `json:"kind"`
+	Action   string          `json:"action"`
+	Status   string          `json:"status"`
+	Settings map[string]bool `json:"settings"`
+	Key      string          `json:"key,omitempty"`
+	Value    *bool           `json:"value,omitempty"`
+	Path     string          `json:"path,omitempty"`
+}
+
+func (a *App) PrivacySettings(args []string) error {
+	req, err := parsePrivacyArgs(args)
+	if err != nil {
+		return err
+	}
+	report := privacyReport{
+		Kind:     "privacy_settings",
+		Action:   req.Action,
+		Status:   "ok",
+		Settings: effectivePrivacySettings(a.Config.Privacy),
+	}
+	switch req.Action {
+	case "show":
+	case "set":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "privacy_settings."+req.Key, req.Value); err != nil {
+			return err
+		}
+		a.setPrivacyValue(req.Key, &req.Value)
+		report.Settings = effectivePrivacySettings(a.Config.Privacy)
+		report.Key = req.Key
+		report.Value = &req.Value
+		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "privacy_settings."+req.Key); err != nil {
+			return err
+		}
+		a.setPrivacyValue(req.Key, nil)
+		report.Settings = effectivePrivacySettings(a.Config.Privacy)
+		report.Key = req.Key
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown privacy-settings command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderPrivacyReport(a.Out, report)
+	return nil
+}
+
+func parsePrivacyArgs(args []string) (privacyRequest, error) {
+	req := privacyRequest{Action: "show", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("privacy-settings output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("privacy-settings target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("privacy-settings config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "privacy-settings"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	action := strings.ToLower(rest[0])
+	switch action {
+	case "show", "status", "list":
+		req.Action = "show"
+		return req, nil
+	case "set":
+		if len(rest) < 3 {
+			return req, errors.New("usage: privacy-settings set KEY on|off")
+		}
+		key, err := canonicalPrivacyKey(rest[1])
+		if err != nil {
+			return req, err
+		}
+		value, err := parseOnOff(rest[2])
+		if err != nil {
+			return req, err
+		}
+		req.Action = "set"
+		req.Key = key
+		req.Value = value
+		return req, nil
+	case "enable", "enabled", "on":
+		if len(rest) < 2 {
+			return req, errors.New("privacy setting key is required")
+		}
+		key, err := canonicalPrivacyKey(rest[1])
+		if err != nil {
+			return req, err
+		}
+		req.Action = "set"
+		req.Key = key
+		req.Value = true
+		return req, nil
+	case "disable", "disabled", "off":
+		if len(rest) < 2 {
+			return req, errors.New("privacy setting key is required")
+		}
+		key, err := canonicalPrivacyKey(rest[1])
+		if err != nil {
+			return req, err
+		}
+		req.Action = "set"
+		req.Key = key
+		req.Value = false
+		return req, nil
+	case "clear", "reset", "unset":
+		if len(rest) < 2 {
+			return req, errors.New("privacy setting key is required")
+		}
+		key, err := canonicalPrivacyKey(rest[1])
+		if err != nil {
+			return req, err
+		}
+		req.Action = "clear"
+		req.Key = key
+		return req, nil
+	default:
+		if len(rest) != 2 {
+			return req, fmt.Errorf("unknown privacy-settings command %q", rest[0])
+		}
+		key, err := canonicalPrivacyKey(rest[0])
+		if err != nil {
+			return req, err
+		}
+		value, err := parseOnOff(rest[1])
+		if err != nil {
+			return req, err
+		}
+		req.Action = "set"
+		req.Key = key
+		req.Value = value
+		return req, nil
+	}
+}
+
+func renderPrivacyReport(out io.Writer, report privacyReport) {
+	fmt.Fprintln(out, "Privacy Settings")
+	for _, key := range []string{"telemetry_enabled", "crash_reports_enabled", "prompt_history_enabled"} {
+		label := privacyLabel(key)
+		state := "disabled"
+		if report.Settings[key] {
+			state = "enabled"
+		}
+		fmt.Fprintf(out, "  %-16s %s\n", label, state)
+	}
+	if report.Key != "" {
+		fmt.Fprintf(out, "  Updated          %s\n", report.Key)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+}
+
+func effectivePrivacySettings(cfg config.PrivacyConfig) map[string]bool {
+	return map[string]bool{
+		"telemetry_enabled":      privacyBool(cfg.TelemetryEnabled, false),
+		"crash_reports_enabled":  privacyBool(cfg.CrashReportsEnabled, false),
+		"prompt_history_enabled": privacyBool(cfg.PromptHistoryEnabled, true),
+	}
+}
+
+func privacyBool(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func (a *App) promptHistoryEnabled() bool {
+	return privacyBool(a.Config.Privacy.PromptHistoryEnabled, true)
+}
+
+func (a *App) setPrivacyValue(key string, value *bool) {
+	switch key {
+	case "telemetry_enabled":
+		a.Config.Privacy.TelemetryEnabled = value
+	case "crash_reports_enabled":
+		a.Config.Privacy.CrashReportsEnabled = value
+	case "prompt_history_enabled":
+		a.Config.Privacy.PromptHistoryEnabled = value
+	}
+}
+
+func canonicalPrivacyKey(raw string) (string, error) {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	key = strings.ReplaceAll(key, "_", "-")
+	switch key {
+	case "telemetry", "analytics", "telemetry-enabled":
+		return "telemetry_enabled", nil
+	case "crash", "crash-report", "crash-reports", "crash-reports-enabled":
+		return "crash_reports_enabled", nil
+	case "history", "prompt-history", "prompt-history-enabled":
+		return "prompt_history_enabled", nil
+	default:
+		return "", fmt.Errorf("unknown privacy setting %q", raw)
+	}
+}
+
+func privacyLabel(key string) string {
+	switch key {
+	case "telemetry_enabled":
+		return "Telemetry"
+	case "crash_reports_enabled":
+		return "Crash reports"
+	case "prompt_history_enabled":
+		return "Prompt history"
+	default:
+		return key
+	}
+}
+
+func parseOnOff(raw string) (bool, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	switch value {
+	case "on", "enable", "enabled", "yes", "y":
+		return true, nil
+	case "off", "disable", "disabled", "no", "n":
+		return false, nil
+	default:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, fmt.Errorf("expected on or off, got %q", raw)
+		}
+		return parsed, nil
+	}
+}
+
+func validateTextOrJSON(format, command string) error {
+	switch format {
+	case "text", "json":
+		return nil
+	default:
+		return fmt.Errorf("unknown %s output format %q", command, format)
+	}
+}
+
+func (a *App) preferenceConfigPath(target, path string) (string, error) {
+	if strings.TrimSpace(path) != "" {
+		return a.resolveOutputPath(path), nil
+	}
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "user", "global":
+		if strings.TrimSpace(a.Config.ConfigHome) == "" {
+			return "", errors.New("config home is unavailable")
+		}
+		return filepath.Join(a.Config.ConfigHome, "config.json"), nil
+	case "project", "workspace":
+		return a.resolveOutputPath(".codog.json"), nil
+	case "local":
+		return a.resolveOutputPath(".codog.local.json"), nil
+	default:
+		return "", fmt.Errorf("unknown config target %q", target)
+	}
+}
+
 type todosRequest struct {
 	Action   string
 	ID       string
@@ -5727,8 +6372,14 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 }
 
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
-	if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
-		return err
+	if a.promptHistoryEnabled() {
+		if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
+			return err
+		}
+	} else {
+		if err := a.Sessions.AppendPromptHistoryDisabled(sess.ID); err != nil {
+			return err
+		}
 	}
 	modelInput := a.expandSkillInvocation(input)
 	modelInput = a.expandPromptReferences(modelInput)
@@ -5865,7 +6516,9 @@ func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readl
 		if line == "" {
 			continue
 		}
-		_ = rl.SaveHistory(line)
+		if a.promptHistoryEnabled() {
+			_ = rl.SaveHistory(line)
+		}
 		if line == "/exit" || line == "/quit" {
 			return nil
 		}
@@ -5909,6 +6562,9 @@ func (a *App) newLineReader(activeSessionID string) (*readline.Instance, bool, e
 }
 
 func (a *App) replHistoryFile() string {
+	if !a.promptHistoryEnabled() {
+		return ""
+	}
 	if strings.TrimSpace(a.Config.ConfigHome) == "" {
 		return ""
 	}
@@ -6033,6 +6689,18 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/output-style":
 		if err := a.OutputStyle(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/theme":
+		if err := a.Theme(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/vim":
+		if err := a.Vim(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/privacy-settings":
+		if err := a.PrivacySettings(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/cost":
@@ -6735,6 +7403,10 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	switch strings.ToLower(args[0]) {
 	case "model":
 		return map[string]any{"model": cfg.Model, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns}, nil
+	case "interface", "ui":
+		return map[string]any{"theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
+	case "privacy", "privacy-settings":
+		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
 	case "mcp":
@@ -9507,6 +10179,9 @@ Usage:
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
+  %s [flags] theme [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
@@ -9555,8 +10230,8 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

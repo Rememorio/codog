@@ -165,6 +165,27 @@ func (s *Store) AppendInput(id string, input string) error {
 	})
 }
 
+func (s *Store) AppendPromptHistoryDisabled(id string) error {
+	if strings.TrimSpace(id) == "" {
+		return errors.New("session id is required")
+	}
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return err
+	}
+	path := s.pathFor(id)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return writeRecord(file, Record{
+		Type:      "prompt_history",
+		Time:      time.Now().UTC(),
+		Input:     "disabled",
+		SessionID: id,
+	})
+}
+
 func (s *Store) Exists(id string) (bool, error) {
 	if strings.TrimSpace(id) == "" {
 		return false, errors.New("session id is required")
@@ -399,6 +420,11 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 	}
 	if len(entries) != 0 {
 		return entries, nil
+	}
+	for _, record := range records {
+		if record.Type == "prompt_history" && strings.EqualFold(strings.TrimSpace(record.Input), "disabled") {
+			return nil, nil
+		}
 	}
 	for _, record := range records {
 		if record.Message == nil || record.Message.Role != "user" {
