@@ -707,6 +707,14 @@ func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 	require.Contains(t, string(data), `"name": "kept"`)
 	require.Contains(t, string(data), "# Title")
 
+	out, err = NotebookEditTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"notebook_path":"analysis.ipynb","cell_id":"0","cell_type":"markdown","new_source":"# Renamed"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"index": 0`)
+	data, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Renamed")
+	require.NotContains(t, string(data), "# Title")
+
 	registry := NewRegistry(workspace)
 	info, ok := registry.Info("notebook_edit")
 	require.True(t, ok)

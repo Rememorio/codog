@@ -2938,11 +2938,12 @@ func (NotebookEditTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"notebook_path": map[string]any{"type": "string"},
 				"cell_index":    map[string]any{"type": "integer", "minimum": 0},
+				"cell_id":       map[string]any{"type": "string"},
 				"cell_type":     map[string]any{"type": "string", "enum": []string{"code", "markdown", "raw"}},
 				"new_source":    map[string]any{"type": "string"},
 				"edit_mode":     map[string]any{"type": "string", "enum": []string{"replace", "insert", "delete"}},
 			},
-			"required":             []string{"notebook_path", "cell_index"},
+			"required":             []string{"notebook_path"},
 			"additionalProperties": false,
 		},
 	}
@@ -2953,7 +2954,8 @@ func (NotebookEditTool) Permission() Permission { return PermissionWorkspace }
 func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		NotebookPath string `json:"notebook_path"`
-		CellIndex    int    `json:"cell_index"`
+		CellIndex    *int   `json:"cell_index"`
+		CellID       string `json:"cell_id"`
 		CellType     string `json:"cell_type"`
 		NewSource    string `json:"new_source"`
 		EditMode     string `json:"edit_mode"`
@@ -2968,8 +2970,12 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 	if !strings.HasSuffix(strings.ToLower(path), ".ipynb") {
 		return "", errors.New("notebook_path must point to a .ipynb file")
 	}
+	index, err := resolveNotebookEditIndex(path, payload.CellIndex, payload.CellID, payload.EditMode)
+	if err != nil {
+		return "", err
+	}
 	result, err := codeintel.EditNotebook(path, codeintel.NotebookEditOptions{
-		Index:    payload.CellIndex,
+		Index:    index,
 		CellType: payload.CellType,
 		Source:   payload.NewSource,
 		Mode:     payload.EditMode,
@@ -2978,6 +2984,47 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+func resolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode string) (int, error) {
+	if cellIndex != nil {
+		if *cellIndex < 0 {
+			return 0, errors.New("cell_index must be non-negative")
+		}
+		return *cellIndex, nil
+	}
+	cellID = strings.TrimSpace(cellID)
+	if cellID == "" {
+		if strings.EqualFold(strings.TrimSpace(mode), "insert") {
+			return 0, nil
+		}
+		return 0, errors.New("cell_index or cell_id is required")
+	}
+	if index, err := strconv.Atoi(cellID); err == nil && index >= 0 {
+		return index, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var notebook map[string]any
+	if err := json.Unmarshal(data, &notebook); err != nil {
+		return 0, err
+	}
+	rawCells, ok := notebook["cells"].([]any)
+	if !ok {
+		return 0, errors.New("notebook cells array not found")
+	}
+	for index, raw := range rawCells {
+		cell, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if stringValue(cell["id"]) == cellID {
+			return index, nil
+		}
+	}
+	return 0, fmt.Errorf("cell_id %q not found", cellID)
 }
 
 type LSPTool struct {
