@@ -49,6 +49,8 @@ type Options struct {
 	SubagentStop       []string
 	WorktreeCreate     []string
 	WorktreeRemove     []string
+	TaskCreated        []string
+	TaskCompleted      []string
 	SandboxDefault     string
 	SandboxOK          bool
 }
@@ -268,7 +270,9 @@ func checkHooks(opts Options) Check {
 	subagentStop := compactHookCommands(opts.SubagentStop)
 	worktreeCreate := compactHookCommands(opts.WorktreeCreate)
 	worktreeRemove := compactHookCommands(opts.WorktreeRemove)
-	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop) + len(worktreeCreate) + len(worktreeRemove)
+	taskCreated := compactHookCommands(opts.TaskCreated)
+	taskCompleted := compactHookCommands(opts.TaskCompleted)
+	total := len(userPromptSubmit) + len(sessionStart) + len(sessionEnd) + len(setup) + len(pre) + len(post) + len(postFailure) + len(permissionRequest) + len(permissionDenied) + len(stop) + len(stopFailure) + len(preCompact) + len(postCompact) + len(notification) + len(subagentStart) + len(subagentStop) + len(worktreeCreate) + len(worktreeRemove) + len(taskCreated) + len(taskCompleted)
 	details := []string{
 		fmt.Sprintf("UserPromptSubmit hooks: %d", len(userPromptSubmit)),
 		fmt.Sprintf("SessionStart hooks: %d", len(sessionStart)),
@@ -288,6 +292,8 @@ func checkHooks(opts Options) Check {
 		fmt.Sprintf("SubagentStop hooks: %d", len(subagentStop)),
 		fmt.Sprintf("WorktreeCreate hooks: %d", len(worktreeCreate)),
 		fmt.Sprintf("WorktreeRemove hooks: %d", len(worktreeRemove)),
+		fmt.Sprintf("TaskCreated hooks: %d", len(taskCreated)),
+		fmt.Sprintf("TaskCompleted hooks: %d", len(taskCompleted)),
 	}
 	if total == 0 {
 		return Check{Name: "Hooks", Status: StatusOK, Summary: "No hooks are configured.", Details: details}
@@ -313,6 +319,8 @@ func checkHooks(opts Options) Check {
 	issues = append(issues, hookPathIssues(opts.Workspace, "SubagentStop", subagentStop)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "WorktreeCreate", worktreeCreate)...)
 	issues = append(issues, hookPathIssues(opts.Workspace, "WorktreeRemove", worktreeRemove)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "TaskCreated", taskCreated)...)
+	issues = append(issues, hookPathIssues(opts.Workspace, "TaskCompleted", taskCompleted)...)
 	if len(issues) != 0 {
 		details = append(details, issues...)
 		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Some hook command paths could not be found.", Details: details, Hint: "Fix missing hook script paths or use a command available on PATH."}

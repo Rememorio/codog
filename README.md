@@ -193,7 +193,8 @@ Claude Code source.
   `pre_tool_use`, `post_tool_use`, `post_tool_use_failure`,
   `permission_request`, `permission_denied`, `stop`, `stop_failure`,
   `pre_compact`, `post_compact`, `notification`, `subagent_start`,
-  `subagent_stop`, `worktree_create`, and `worktree_remove`; `codog hooks
+  `subagent_stop`, `worktree_create`, `worktree_remove`, `task_created`, and
+  `task_completed`; `codog hooks
   list|run` inspects and test-runs configured hooks with the same JSON payload
   shape used by live sessions. Hook config accepts simple string arrays and the
   documented Claude Code object format with nested command, HTTP, prompt, and
@@ -210,7 +211,9 @@ Claude Code source.
   `CODOG_HOOK_LAST_ASSISTANT_MESSAGE`, plus permission-specific
   `CODOG_HOOK_TOOL_NAME`, `CODOG_HOOK_TOOL_USE_ID`, and `CODOG_HOOK_REASON`,
   plus worktree-specific `CODOG_HOOK_WORKTREE_ID`,
-  `CODOG_HOOK_WORKTREE_PATH`, and `CODOG_HOOK_REF`;
+  `CODOG_HOOK_WORKTREE_PATH`, and `CODOG_HOOK_REF`, plus task-specific
+  `CODOG_HOOK_TASK_ID`, `CODOG_HOOK_TASK_KIND`, and
+  `CODOG_HOOK_TASK_STATUS`;
   run reports include stdout,
   stderr, HTTP status, duration, success, and exit code.
 - `codog brief MESSAGE [--status normal|proactive] [--attach PATH]` and
@@ -436,7 +439,9 @@ URL --model MODEL` as a focused provider configuration shortcut.
     "subagent_start": ["echo agent-start >&2"],
     "subagent_stop": ["echo agent-stop >&2"],
     "worktree_create": ["echo worktree-create >&2"],
-    "worktree_remove": ["echo worktree-remove >&2"]
+    "worktree_remove": ["echo worktree-remove >&2"],
+    "task_created": ["echo task-created >&2"],
+    "task_completed": ["echo task-completed >&2"]
   },
   "mcp_servers": {
     "example": {

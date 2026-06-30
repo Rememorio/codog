@@ -2865,6 +2865,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	subagentStopPath := filepath.Join(workspace, "subagent-stop.json")
 	worktreeCreatePath := filepath.Join(workspace, "worktree-create.json")
 	worktreeRemovePath := filepath.Join(workspace, "worktree-remove.json")
+	taskCreatedPath := filepath.Join(workspace, "task-created.json")
+	taskCompletedPath := filepath.Join(workspace, "task-completed.json")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -2888,6 +2890,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				SubagentStop:       []string{"cat > " + shellQuote(subagentStopPath)},
 				WorktreeCreate:     []string{"cat > " + shellQuote(worktreeCreatePath)},
 				WorktreeRemove:     []string{"cat > " + shellQuote(worktreeRemovePath)},
+				TaskCreated:        []string{"cat > " + shellQuote(taskCreatedPath)},
+				TaskCompleted:      []string{"cat > " + shellQuote(taskCompletedPath)},
 				UserPromptSubmitCommands: []config.HookCommand{
 					{Command: "cat > " + shellQuote(promptPath)},
 				},
@@ -2942,6 +2946,12 @@ func TestHooksCommandAndSlash(t *testing.T) {
 				WorktreeRemoveCommands: []config.HookCommand{
 					{Matcher: "agent-*", Command: "cat > " + shellQuote(worktreeRemovePath)},
 				},
+				TaskCreatedCommands: []config.HookCommand{
+					{Matcher: "agent", Command: "cat > " + shellQuote(taskCreatedPath)},
+				},
+				TaskCompletedCommands: []config.HookCommand{
+					{Matcher: "agent", Command: "cat > " + shellQuote(taskCompletedPath)},
+				},
 			},
 		},
 		Workspace: workspace,
@@ -2969,6 +2979,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"subagent_stop"`)
 	require.Contains(t, out.String(), `"worktree_create"`)
 	require.Contains(t, out.String(), `"worktree_remove"`)
+	require.Contains(t, out.String(), `"task_created"`)
+	require.Contains(t, out.String(), `"task_completed"`)
 	var hooksList hooksListReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &hooksList))
 	require.Contains(t, hooksList.UserPromptSubmitCommands[0].Command, "cat >")
@@ -2989,6 +3001,8 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "reviewer", hooksList.SubagentStopCommands[0].Matcher)
 	require.Equal(t, "agent-*", hooksList.WorktreeCreateCommands[0].Matcher)
 	require.Equal(t, "agent-*", hooksList.WorktreeRemoveCommands[0].Matcher)
+	require.Equal(t, "agent", hooksList.TaskCreatedCommands[0].Matcher)
+	require.Equal(t, "agent", hooksList.TaskCompletedCommands[0].Matcher)
 	out.Reset()
 
 	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello"}))
@@ -3207,6 +3221,41 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Equal(t, "agent-1", worktreeRemoveHook.WorktreeID)
 	require.Equal(t, filepath.Join(workspace, "wt"), worktreeRemoveHook.WorktreePath)
 	require.Equal(t, "abc123", worktreeRemoveHook.Ref)
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "task-created", "--task-id", "task-1", "--task-kind", "agent", "--task-status", "running", "--input", `{"id":"task-1"}`}))
+	data, err = os.ReadFile(taskCreatedPath)
+	require.NoError(t, err)
+	var taskCreatedHook struct {
+		Event      string `json:"event"`
+		Tool       string `json:"tool"`
+		TaskID     string `json:"task_id"`
+		TaskKind   string `json:"task_kind"`
+		TaskStatus string `json:"task_status"`
+	}
+	require.NoError(t, json.Unmarshal(data, &taskCreatedHook))
+	require.Equal(t, "task_created", taskCreatedHook.Event)
+	require.Equal(t, "agent", taskCreatedHook.Tool)
+	require.Equal(t, "task-1", taskCreatedHook.TaskID)
+	require.Equal(t, "agent", taskCreatedHook.TaskKind)
+	require.Equal(t, "running", taskCreatedHook.TaskStatus)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "task-completed", "--task-id", "task-1", "--task-kind", "agent", "--task-status", "stopped", "--reason", "manual"}))
+	data, err = os.ReadFile(taskCompletedPath)
+	require.NoError(t, err)
+	var taskCompletedHook struct {
+		Event      string `json:"event"`
+		Reason     string `json:"reason"`
+		TaskID     string `json:"task_id"`
+		TaskKind   string `json:"task_kind"`
+		TaskStatus string `json:"task_status"`
+	}
+	require.NoError(t, json.Unmarshal(data, &taskCompletedHook))
+	require.Equal(t, "task_completed", taskCompletedHook.Event)
+	require.Equal(t, "manual", taskCompletedHook.Reason)
+	require.Equal(t, "task-1", taskCompletedHook.TaskID)
+	require.Equal(t, "agent", taskCompletedHook.TaskKind)
+	require.Equal(t, "stopped", taskCompletedHook.TaskStatus)
 	require.Empty(t, errOut.String())
 }
 

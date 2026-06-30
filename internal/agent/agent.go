@@ -2206,6 +2206,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		a.runTaskCreatedHook(context.Background(), task)
 		a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
 		return nil
 	}
@@ -2228,6 +2229,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		a.runTaskCompletedHook(context.Background(), task, "manual")
 		a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
 		if task.Kind == "agent" {
 			a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
@@ -2240,6 +2242,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
+		a.runTaskCreatedHook(context.Background(), task)
 		a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
 		return nil
 	case "logs":
@@ -2290,6 +2293,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		for _, task := range result.Restarted {
+			a.runTaskCreatedHook(context.Background(), task)
 			a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
 		}
 		return nil
@@ -2718,6 +2722,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	}
 	data, _ := json.MarshalIndent(response, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
+	a.runTaskCreatedHook(context.Background(), task)
 	a.runSubagentStartHook(context.Background(), task.ID, selected.Name)
 	return nil
 }
@@ -4477,6 +4482,9 @@ type hooksRequest struct {
 	WorktreeID       string
 	WorktreePath     string
 	Ref              string
+	TaskID           string
+	TaskKind         string
+	TaskStatus       string
 	StopHookActive   bool
 	Reason           string
 }
@@ -4503,6 +4511,8 @@ type hooksListReport struct {
 	SubagentStop               []string             `json:"subagent_stop"`
 	WorktreeCreate             []string             `json:"worktree_create"`
 	WorktreeRemove             []string             `json:"worktree_remove"`
+	TaskCreated                []string             `json:"task_created"`
+	TaskCompleted              []string             `json:"task_completed"`
 	PreToolUseCommands         []hookCommandSummary `json:"pre_tool_use_commands,omitempty"`
 	PostToolUseCommands        []hookCommandSummary `json:"post_tool_use_commands,omitempty"`
 	PostToolUseFailureCommands []hookCommandSummary `json:"post_tool_use_failure_commands,omitempty"`
@@ -4521,6 +4531,8 @@ type hooksListReport struct {
 	SubagentStopCommands       []hookCommandSummary `json:"subagent_stop_commands,omitempty"`
 	WorktreeCreateCommands     []hookCommandSummary `json:"worktree_create_commands,omitempty"`
 	WorktreeRemoveCommands     []hookCommandSummary `json:"worktree_remove_commands,omitempty"`
+	TaskCreatedCommands        []hookCommandSummary `json:"task_created_commands,omitempty"`
+	TaskCompletedCommands      []hookCommandSummary `json:"task_completed_commands,omitempty"`
 }
 
 type hookCommandSummary struct {
@@ -4559,6 +4571,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SubagentStop:               append([]string(nil), a.Config.Hooks.SubagentStop...),
 			WorktreeCreate:             append([]string(nil), a.Config.Hooks.WorktreeCreate...),
 			WorktreeRemove:             append([]string(nil), a.Config.Hooks.WorktreeRemove...),
+			TaskCreated:                append([]string(nil), a.Config.Hooks.TaskCreated...),
+			TaskCompleted:              append([]string(nil), a.Config.Hooks.TaskCompleted...),
 			PreToolUseCommands:         hookCommandsForList(a.Config.Hooks.PreToolUseCommands, a.Config.Hooks.PreToolUse),
 			PostToolUseCommands:        hookCommandsForList(a.Config.Hooks.PostToolUseCommands, a.Config.Hooks.PostToolUse),
 			PostToolUseFailureCommands: hookCommandsForList(a.Config.Hooks.PostToolUseFailureCommands, a.Config.Hooks.PostToolUseFailure),
@@ -4577,6 +4591,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			SubagentStopCommands:       hookCommandsForList(a.Config.Hooks.SubagentStopCommands, a.Config.Hooks.SubagentStop),
 			WorktreeCreateCommands:     hookCommandsForList(a.Config.Hooks.WorktreeCreateCommands, a.Config.Hooks.WorktreeCreate),
 			WorktreeRemoveCommands:     hookCommandsForList(a.Config.Hooks.WorktreeRemoveCommands, a.Config.Hooks.WorktreeRemove),
+			TaskCreatedCommands:        hookCommandsForList(a.Config.Hooks.TaskCreatedCommands, a.Config.Hooks.TaskCreated),
+			TaskCompletedCommands:      hookCommandsForList(a.Config.Hooks.TaskCompletedCommands, a.Config.Hooks.TaskCompleted),
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -4605,6 +4621,9 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			WorktreeID:       req.WorktreeID,
 			WorktreePath:     req.WorktreePath,
 			Ref:              req.Ref,
+			TaskID:           req.TaskID,
+			TaskKind:         req.TaskKind,
+			TaskStatus:       req.TaskStatus,
 			StopHookActive:   req.StopHookActive,
 		}
 		if req.Event == "notification" {
@@ -4684,6 +4703,23 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			if req.Event == "worktree_create" {
 				payload.Reason = ""
 			}
+		} else if req.Event == "task_created" || req.Event == "task_completed" {
+			payload.TaskID = firstNonEmpty(req.TaskID, req.Tool)
+			payload.TaskKind = firstNonEmpty(req.TaskKind, req.AgentType, "background")
+			payload.Tool = firstNonEmpty(payload.TaskKind, payload.TaskID)
+			payload.Message = ""
+			payload.Title = ""
+			payload.NotificationType = ""
+			payload.AgentID = ""
+			payload.AgentType = ""
+			payload.TranscriptPath = ""
+			payload.LastAssistant = ""
+			payload.StopHookActive = false
+			payload.ToolName = ""
+			payload.ToolInput = nil
+			if req.Event == "task_created" {
+				payload.Reason = ""
+			}
 		} else {
 			payload.Message = ""
 			payload.Title = ""
@@ -4699,11 +4735,19 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			payload.WorktreeID = ""
 			payload.WorktreePath = ""
 			payload.Ref = ""
+			payload.TaskID = ""
+			payload.TaskKind = ""
+			payload.TaskStatus = ""
 		}
 		if req.Event != "worktree_create" && req.Event != "worktree_remove" {
 			payload.WorktreeID = ""
 			payload.WorktreePath = ""
 			payload.Ref = ""
+		}
+		if req.Event != "task_created" && req.Event != "task_completed" {
+			payload.TaskID = ""
+			payload.TaskKind = ""
+			payload.TaskStatus = ""
 		}
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
@@ -4841,6 +4885,30 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Ref = args[i]
 		case strings.HasPrefix(arg, "--ref="):
 			req.Ref = strings.TrimPrefix(arg, "--ref=")
+		case arg == "--task-id":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks task id is required")
+			}
+			req.TaskID = args[i]
+		case strings.HasPrefix(arg, "--task-id="):
+			req.TaskID = strings.TrimPrefix(arg, "--task-id=")
+		case arg == "--task-kind":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks task kind is required")
+			}
+			req.TaskKind = args[i]
+		case strings.HasPrefix(arg, "--task-kind="):
+			req.TaskKind = strings.TrimPrefix(arg, "--task-kind=")
+		case arg == "--task-status":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks task status is required")
+			}
+			req.TaskStatus = args[i]
+		case strings.HasPrefix(arg, "--task-status="):
+			req.TaskStatus = strings.TrimPrefix(arg, "--task-status=")
 		case arg == "--stop-hook-active":
 			req.StopHookActive = true
 		case arg == "--reason":
@@ -4947,6 +5015,10 @@ func normalizeHookEvent(value string) (string, error) {
 		return "worktree_create", nil
 	case "worktree-remove", "worktreeremove", "worktree_remove":
 		return "worktree_remove", nil
+	case "task-created", "taskcreated", "task_created":
+		return "task_created", nil
+	case "task-completed", "taskcompleted", "task_completed":
+		return "task_completed", nil
 	default:
 		return "", fmt.Errorf("unknown hook event %q", value)
 	}
@@ -5056,6 +5128,14 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	}
 	fmt.Fprintf(out, "  Worktree remove  %d\n", len(report.WorktreeRemove))
 	for _, command := range report.WorktreeRemoveCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Task created     %d\n", len(report.TaskCreated))
+	for _, command := range report.TaskCreatedCommands {
+		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
+	}
+	fmt.Fprintf(out, "  Task completed   %d\n", len(report.TaskCompleted))
+	for _, command := range report.TaskCompletedCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
 	}
 }
@@ -10366,6 +10446,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		SubagentStopHookCount:      len(a.Config.Hooks.SubagentStop),
 		WorktreeCreateHookCount:    len(a.Config.Hooks.WorktreeCreate),
 		WorktreeRemoveHookCount:    len(a.Config.Hooks.WorktreeRemove),
+		TaskCreatedHookCount:       len(a.Config.Hooks.TaskCreated),
+		TaskCompletedHookCount:     len(a.Config.Hooks.TaskCompleted),
 		EnabledSkillCount:          len(a.Config.EnabledSkills),
 		PlanActive:                 planState.Active,
 		PlanText:                   planState.Plan,
@@ -10930,6 +11012,8 @@ func (a *App) Doctor(args []string) error {
 		SubagentStop:       a.Config.Hooks.SubagentStop,
 		WorktreeCreate:     a.Config.Hooks.WorktreeCreate,
 		WorktreeRemove:     a.Config.Hooks.WorktreeRemove,
+		TaskCreated:        a.Config.Hooks.TaskCreated,
+		TaskCompleted:      a.Config.Hooks.TaskCompleted,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
 	})
@@ -16504,6 +16588,44 @@ func worktreeHookInput(allocation worktree.Allocation, source string, reason str
 	return string(data), nil
 }
 
+func (a *App) runTaskCreatedHook(ctx context.Context, task background.Task) {
+	input, err := taskHookInput(task)
+	if err != nil {
+		if a.Err != nil {
+			fmt.Fprintf(a.Err, "task created hook payload error: %v\n", err)
+		}
+		return
+	}
+	if err := a.lifecycleHookRunner().TaskCreated(ctx, task.ID, taskKindForHook(task), task.Status, input); err != nil && a.Err != nil {
+		fmt.Fprintf(a.Err, "task created hook error: %v\n", err)
+	}
+}
+
+func (a *App) runTaskCompletedHook(ctx context.Context, task background.Task, reason string) {
+	input, err := taskHookInput(task)
+	if err != nil {
+		if a.Err != nil {
+			fmt.Fprintf(a.Err, "task completed hook payload error: %v\n", err)
+		}
+		return
+	}
+	if err := a.lifecycleHookRunner().TaskCompleted(ctx, task.ID, taskKindForHook(task), task.Status, reason, input); err != nil && a.Err != nil {
+		fmt.Fprintf(a.Err, "task completed hook error: %v\n", err)
+	}
+}
+
+func taskHookInput(task background.Task) (string, error) {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func taskKindForHook(task background.Task) string {
+	return firstNonEmpty(task.Kind, "background")
+}
+
 func (a *App) runSubagentStopHook(ctx context.Context, agentID string, agentType string, transcriptPath string, lastAssistant string, stopHookActive bool) {
 	if strings.TrimSpace(agentID) == "" {
 		return
@@ -17003,7 +17125,7 @@ Usage:
   %s [flags] skills [list|show|invoke|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--json|--output-format text|json]
+  %s [flags] hooks [list|run pre|post|post-failure|permission-request|permission-denied|user-prompt-submit|session-start|session-end|setup|stop|stop-failure|pre-compact|post-compact|notification|subagent-start|subagent-stop|worktree-create|worktree-remove|task-created|task-completed] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

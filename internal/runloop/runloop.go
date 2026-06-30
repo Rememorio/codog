@@ -205,6 +205,8 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SubagentStop) != 0 ||
 		len(cfg.WorktreeCreate) != 0 ||
 		len(cfg.WorktreeRemove) != 0 ||
+		len(cfg.TaskCreated) != 0 ||
+		len(cfg.TaskCompleted) != 0 ||
 		len(cfg.PreToolUseCommands) != 0 ||
 		len(cfg.PostToolUseCommands) != 0 ||
 		len(cfg.PostToolUseFailureCommands) != 0 ||
@@ -222,7 +224,9 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.SubagentStartCommands) != 0 ||
 		len(cfg.SubagentStopCommands) != 0 ||
 		len(cfg.WorktreeCreateCommands) != 0 ||
-		len(cfg.WorktreeRemoveCommands) != 0
+		len(cfg.WorktreeRemoveCommands) != 0 ||
+		len(cfg.TaskCreatedCommands) != 0 ||
+		len(cfg.TaskCompletedCommands) != 0
 }
 
 func (r Runner) emitToolUse(call ToolCall) {

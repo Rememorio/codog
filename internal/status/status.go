@@ -39,6 +39,8 @@ type Options struct {
 	SubagentStopHookCount      int
 	WorktreeCreateHookCount    int
 	WorktreeRemoveHookCount    int
+	TaskCreatedHookCount       int
+	TaskCompletedHookCount     int
 	EnabledSkillCount          int
 	PlanActive                 bool
 	PlanText                   string
@@ -117,6 +119,8 @@ type ConfigStatus struct {
 	SubagentStopHookCount      int    `json:"subagent_stop_hook_count"`
 	WorktreeCreateHookCount    int    `json:"worktree_create_hook_count"`
 	WorktreeRemoveHookCount    int    `json:"worktree_remove_hook_count"`
+	TaskCreatedHookCount       int    `json:"task_created_hook_count"`
+	TaskCompletedHookCount     int    `json:"task_completed_hook_count"`
 	EnabledSkillCount          int    `json:"enabled_skill_count"`
 }
 
@@ -211,6 +215,8 @@ func Build(opts Options) Snapshot {
 			SubagentStopHookCount:      opts.SubagentStopHookCount,
 			WorktreeCreateHookCount:    opts.WorktreeCreateHookCount,
 			WorktreeRemoveHookCount:    opts.WorktreeRemoveHookCount,
+			TaskCreatedHookCount:       opts.TaskCreatedHookCount,
+			TaskCompletedHookCount:     opts.TaskCompletedHookCount,
 			EnabledSkillCount:          opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{

@@ -176,6 +176,12 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 		WorktreeRemoveCommands: []config.HookCommand{
 			{Matcher: "agent-*", Type: "command", Command: "worktree-remove"},
 		},
+		TaskCreatedCommands: []config.HookCommand{
+			{Matcher: "agent", Type: "command", Command: "task-created"},
+		},
+		TaskCompletedCommands: []config.HookCommand{
+			{Matcher: "agent", Type: "command", Command: "task-completed"},
+		},
 	}
 
 	require.Equal(t, []string{"write-only", "all"}, CommandsForEvent(cfg, "pre_tool_use", "write_file"))
@@ -198,6 +204,8 @@ func TestCommandsForEventFiltersMatchers(t *testing.T) {
 	require.Equal(t, []string{"agent-stop"}, CommandsForEvent(cfg, "subagent-stop", "reviewer"))
 	require.Equal(t, []string{"worktree-create"}, CommandsForEvent(cfg, "worktree-create", "agent-1"))
 	require.Equal(t, []string{"worktree-remove"}, CommandsForEvent(cfg, "worktree-remove", "agent-1"))
+	require.Equal(t, []string{"task-created"}, CommandsForEvent(cfg, "task-created", "agent"))
+	require.Equal(t, []string{"task-completed"}, CommandsForEvent(cfg, "task-completed", "agent"))
 	require.Equal(t, []string{"all"}, CommandsForEvent(cfg, "pre_tool_use", "grep"))
 }
 
