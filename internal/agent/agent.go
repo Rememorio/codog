@@ -167,6 +167,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
 		return err
 	}
+	if handled, err := renderLocalRouteGuard(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+		return err
+	}
 	if command == "mock-server" {
 		addr := ":8089"
 		if len(rest) > 0 {
@@ -11454,6 +11457,8 @@ type cliErrorReport struct {
 	Kind        string            `json:"kind"`
 	ErrorKind   string            `json:"error_kind"`
 	Status      string            `json:"status"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
 	Message     string            `json:"message"`
 	Hint        string            `json:"hint"`
 	Value       string            `json:"value,omitempty"`
@@ -11496,6 +11501,16 @@ type toolNameError struct {
 
 func (e toolNameError) Error() string {
 	return fmt.Sprintf("invalid_tool_name: unknown tool name %q for %s", e.ToolName, e.Argument)
+}
+
+type unexpectedExtraArgsError struct {
+	Command string
+	Args    []string
+	Usage   string
+}
+
+func (e unexpectedExtraArgsError) Error() string {
+	return fmt.Sprintf("unexpected_extra_args: %s got unexpected arguments: %s", e.Command, strings.Join(e.Args, " "))
 }
 
 type promptErrorReport struct {
@@ -11598,6 +11613,24 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			ToolAliases: copyStringMap(toolErr.Aliases),
 		}
 	}
+	var extraArgsErr unexpectedExtraArgsError
+	if errors.As(err, &extraArgsErr) {
+		command := strings.TrimSpace(extraArgsErr.Command)
+		args := append([]string(nil), extraArgsErr.Args...)
+		usage := strings.TrimSpace(extraArgsErr.Usage)
+		if usage == "" {
+			usage = "codog " + command
+		}
+		return cliErrorReport{
+			Kind:      "unexpected_extra_args",
+			ErrorKind: "unexpected_extra_args",
+			Status:    "error",
+			Command:   command,
+			Args:      args,
+			Message:   fmt.Sprintf("%s does not accept extra arguments: %s", command, strings.Join(args, " ")),
+			Hint:      "Usage: " + usage,
+		}
+	}
 	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
 		kind = "invalid_permission_mode"
 		message = strings.TrimSpace(rest)
@@ -11670,13 +11703,17 @@ func renderUnknownSlashCommand(out io.Writer, command string, format string) err
 }
 
 func renderInteractiveOnly(out io.Writer, command string, format string) error {
+	return renderInteractiveOnlyWithHint(out, command, fmt.Sprintf("%s is only available in an interactive REPL session", command), "Run `codog repl` and use the command there.", format)
+}
+
+func renderInteractiveOnlyWithHint(out io.Writer, command string, message string, hint string, format string) error {
 	report := slashErrorReport{
 		Kind:      "interactive_only",
 		ErrorKind: "interactive_only",
 		Status:    "error",
 		Command:   command,
-		Message:   fmt.Sprintf("%s is only available in an interactive REPL session", command),
-		Hint:      "Run `codog repl` and use the command there.",
+		Message:   message,
+		Hint:      hint,
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -11685,6 +11722,59 @@ func renderInteractiveOnly(out io.Writer, command string, format string) error {
 		return &ExitError{Code: 1, Err: err, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: err}
+}
+
+func renderLocalRouteGuard(out io.Writer, command string, args []string, format string) (bool, error) {
+	meaningful := routeMeaningfulArgs(args)
+	lower := strings.ToLower(strings.TrimSpace(command))
+	if lower == "model" && len(meaningful) > 1 {
+		err := unexpectedExtraArgsError{Command: "model", Args: meaningful[1:], Usage: "codog model [MODEL]"}
+		return true, renderCLIError(out, err, format)
+	}
+	interactive := false
+	slashName := "/" + lower
+	hint := fmt.Sprintf("Run `codog repl` and use `%s` there.", slashName)
+	switch lower {
+	case "session":
+		interactive = len(meaningful) > 0
+		hint = "Run `codog repl` and use `/session`, or use `codog sessions ...` for saved session management."
+	case "clear", "fork":
+		interactive = len(meaningful) > 0
+	case "cost", "usage", "stats":
+		interactive = len(meaningful) > 0
+	case "memory":
+		interactive = len(meaningful) > 0 && strings.EqualFold(meaningful[0], "reset")
+	case "ultraplan":
+		interactive = len(meaningful) > 0 && !isPlanAction(meaningful[0])
+	}
+	if !interactive {
+		return false, nil
+	}
+	invocation := strings.TrimSpace(strings.Join(append([]string{command}, meaningful...), " "))
+	if invocation == "" {
+		invocation = command
+	}
+	message := fmt.Sprintf("%s is only available in an interactive REPL session", invocation)
+	return true, renderInteractiveOnlyWithHint(out, invocation, message, hint, format)
+}
+
+func routeMeaningfulArgs(args []string) []string {
+	out := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			continue
+		case arg == "--output-format" || arg == "-o":
+			index++
+			continue
+		case strings.HasPrefix(arg, "--output-format="):
+			continue
+		default:
+			out = append(out, arg)
+		}
+	}
+	return out
 }
 
 func renderCommandNotFound(out io.Writer, command string, args []string, format string) error {

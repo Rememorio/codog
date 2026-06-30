@@ -650,6 +650,57 @@ func TestGlobalToolRuleValidationContracts(t *testing.T) {
 	require.Contains(t, report.Hint, "read,glob")
 }
 
+func TestLocalRouteGuardContracts(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	cases := [][]string{
+		{"session", "bogus"},
+		{"session", "nuke"},
+		{"cost", "breakdown"},
+		{"clear", "--force"},
+		{"memory", "reset"},
+		{"ultraplan", "bogus"},
+		{"usage", "extra"},
+		{"stats", "extra"},
+		{"fork", "newbranch"},
+	}
+	for _, route := range cases {
+		t.Run(strings.Join(route, " "), func(t *testing.T) {
+			args := append([]string{"--config", configPath, "--output-format", "json"}, route...)
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report slashErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "interactive_only", report.ErrorKind)
+			require.NotEmpty(t, report.Hint)
+			require.NotContains(t, out, "config_parse_error")
+			require.NotContains(t, out, "missing_credentials")
+		})
+	}
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "model", "opus", "extra"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "unexpected_extra_args", report.ErrorKind)
+	require.Equal(t, "model", report.Command)
+	require.Equal(t, []string{"extra"}, report.Args)
+	require.Contains(t, report.Hint, "codog model")
+	require.NotContains(t, out, "config_parse_error")
+	require.NotContains(t, out, "missing_credentials")
+}
+
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--system-prompt", "base",
