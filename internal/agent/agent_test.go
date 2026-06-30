@@ -220,6 +220,29 @@ func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 	require.Equal(t, []string{"hello"}, rest)
 }
 
+func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, config.FlagOverrides{}, overrides)
+	require.Equal(t, "status", command)
+	require.Equal(t, []string{"--output-format", "json"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--json", "skills", "show", "review"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "skills", command)
+	require.Equal(t, []string{"show", "review", "--output-format", "json"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--output-format=json", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "status", "--output-format", "text"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Equal(t, []string{"--output-format", "text"}, rest)
+}
+
 func TestDumpManifestsCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -3624,6 +3647,23 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "Review hooks")
 }
 
+func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), nil))
+	require.Contains(t, out.String(), "No MCP servers configured.")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"--output-format", "json"}))
+	require.Contains(t, out.String(), `"kind": "mcp"`)
+	require.Contains(t, out.String(), `"server_count": 0`)
+}
+
 func TestRegisterMCPToolsContinuesAfterBrokenServer(t *testing.T) {
 	workspace := t.TempDir()
 	good := config.MCPServerConfig{
@@ -4737,6 +4777,21 @@ func TestBuildAgentCommandQuotesPrompt(t *testing.T) {
 	require.Contains(t, command, "--model 'mock-model'")
 	require.Contains(t, command, "prompt 'review carefully")
 	require.Contains(t, command, "'\"'\"'$HOME'\"'\"'")
+}
+
+func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "agents"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "agents", "reviewer.json"), []byte(`{"name":"reviewer","prompt":"review"}`), 0o644))
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"--output-format", "json", "list"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"name": "reviewer"`)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"list", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"name": "reviewer"`)
 }
 
 func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {

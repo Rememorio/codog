@@ -2659,6 +2659,11 @@ func (a *App) Agents(args []string) error {
 }
 
 func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides) error {
+	var err error
+	args, _, err = stripJSONOnlyOutputFormat("agents", args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 || args[0] == "list" {
 		return a.ListAgents()
 	}
@@ -10784,6 +10789,32 @@ func parseSimpleOutputFormat(command string, args []string) (string, error) {
 	}
 }
 
+func stripJSONOnlyOutputFormat(command string, args []string) ([]string, string, error) {
+	format := "text"
+	remaining := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return nil, "", fmt.Errorf("%s output format is required", command)
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
+	if err := validateTextOrJSON(format, command); err != nil {
+		return nil, "", err
+	}
+	return remaining, format, nil
+}
+
 func parsePlanArgs(args []string) (planRequest, error) {
 	req := planRequest{Action: "show", Format: "text"}
 	textParts := []string{}
@@ -16106,8 +16137,24 @@ func addTemplateVar(vars map[string]string, value string) error {
 }
 
 func (a *App) MCP(ctx context.Context, args []string) error {
+	cleanArgs, format, err := stripJSONOnlyOutputFormat("mcp", args)
+	if err != nil {
+		return err
+	}
+	args = cleanArgs
 	if len(args) == 0 || args[0] == "list" {
 		if len(a.Config.MCPServers) == 0 {
+			if format == "json" {
+				data, _ := json.MarshalIndent(map[string]any{
+					"kind":         "mcp",
+					"action":       "list",
+					"status":       "ok",
+					"server_count": 0,
+					"servers":      []any{},
+				}, "", "  ")
+				fmt.Fprintln(a.Out, string(data))
+				return nil
+			}
 			fmt.Fprintln(a.Out, "No MCP servers configured.")
 			return nil
 		}
@@ -17495,6 +17542,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	printMode := false
+	jsonOutput := false
+	outputFormat := ""
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
@@ -17506,6 +17555,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
+	flags.BoolVar(&jsonOutput, "json", false, "alias for --output-format json for local commands")
+	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
+	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
 	flags.StringVar(&base.PermissionMode, "permission-mode", base.PermissionMode, "read-only, workspace-write, danger-full-access, prompt, allow")
 	flags.BoolVar(&base.SkipPermissions, "dangerously-skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
 	flags.BoolVar(&base.SkipPermissions, "skip-permissions", base.SkipPermissions, "alias for --permission-mode allow")
@@ -17530,7 +17582,51 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	if len(rest) == 0 {
 		return base, "", nil, nil
 	}
-	return base, rest[0], rest[1:], nil
+	command, rest := rest[0], rest[1:]
+	if outputFormat == "" && jsonOutput {
+		outputFormat = "json"
+	}
+	rest = injectGlobalOutputFormat(command, rest, outputFormat)
+	return base, command, rest, nil
+}
+
+func injectGlobalOutputFormat(command string, rest []string, format string) []string {
+	format = strings.TrimSpace(format)
+	if format == "" || !commandAcceptsGlobalOutputFormat(command) || argsHaveOutputFormat(rest) {
+		return rest
+	}
+	out := append([]string(nil), rest...)
+	out = append(out, "--output-format", format)
+	return out
+}
+
+func commandAcceptsGlobalOutputFormat(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "add-dir", "advisor", "agents", "background", "brief", "bughunter", "chrome",
+		"color", "commands", "commit-push-pr", "compact", "context", "ctx_viz",
+		"debug-tool-call", "desktop", "doctor", "dump-manifests", "effort", "env",
+		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
+		"init", "init-verifiers", "insights", "issue", "keybindings", "marketplace",
+		"mcp", "memory", "mobile", "output-style", "passes", "pr", "pr-comments",
+		"privacy-settings", "project", "rate-limit-options", "reload-plugins",
+		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
+		"search", "security-review", "skills", "state", "status", "statusline",
+		"stickers", "stats", "system-prompt", "templates", "terminal-setup", "theme",
+		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
+		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
+		return true
+	default:
+		return false
+	}
+}
+
+func argsHaveOutputFormat(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" || arg == "--output-format" || arg == "-o" || strings.HasPrefix(arg, "--output-format=") {
+			return true
+		}
+	}
+	return false
 }
 
 func printHelp(out io.Writer) {
@@ -17667,6 +17763,8 @@ Flags:
   --disallowed-tools TOOL[,TOOL]
   --max-turns N
   --max-tokens N
+  --json
+  --output-format text|json
   --config PATH
 
 Environment:
