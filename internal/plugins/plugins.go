@@ -18,24 +18,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/signing"
 )
 
 const DisabledMarker = ".disabled"
 
 type Manifest struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Version     string         `json:"version,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Tools       []ToolManifest `json:"tools,omitempty"`
-	Commands    []string       `json:"commands,omitempty"`
-	Skills      []string       `json:"skills,omitempty"`
-	Agents      []string       `json:"agents,omitempty"`
-	Hooks       []string       `json:"hooks,omitempty"`
-	Path        string         `json:"path,omitempty"`
-	Root        string         `json:"root,omitempty"`
-	Enabled     bool           `json:"enabled"`
+	ID          string                            `json:"id"`
+	Name        string                            `json:"name"`
+	Version     string                            `json:"version,omitempty"`
+	Description string                            `json:"description,omitempty"`
+	Tools       []ToolManifest                    `json:"tools,omitempty"`
+	Commands    []string                          `json:"commands,omitempty"`
+	Skills      []string                          `json:"skills,omitempty"`
+	Agents      []string                          `json:"agents,omitempty"`
+	Hooks       []string                          `json:"hooks,omitempty"`
+	MCPServers  map[string]config.MCPServerConfig `json:"mcp_servers,omitempty"`
+	Path        string                            `json:"path,omitempty"`
+	Root        string                            `json:"root,omitempty"`
+	Enabled     bool                              `json:"enabled"`
 }
 
 type ToolManifest struct {
@@ -128,15 +130,17 @@ type preparedRemotePlugin struct {
 }
 
 type rawManifest struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Version     string            `json:"version,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Tools       []json.RawMessage `json:"tools,omitempty"`
-	Commands    []string          `json:"commands,omitempty"`
-	Skills      []string          `json:"skills,omitempty"`
-	Agents      []string          `json:"agents,omitempty"`
-	Hooks       []string          `json:"hooks,omitempty"`
+	ID              string                            `json:"id"`
+	Name            string                            `json:"name"`
+	Version         string                            `json:"version,omitempty"`
+	Description     string                            `json:"description,omitempty"`
+	Tools           []json.RawMessage                 `json:"tools,omitempty"`
+	Commands        []string                          `json:"commands,omitempty"`
+	Skills          []string                          `json:"skills,omitempty"`
+	Agents          []string                          `json:"agents,omitempty"`
+	Hooks           []string                          `json:"hooks,omitempty"`
+	MCPServers      map[string]config.MCPServerConfig `json:"mcp_servers,omitempty"`
+	MCPServersCamel map[string]config.MCPServerConfig `json:"mcpServers,omitempty"`
 }
 
 func Load(workspace string) ([]Manifest, error) {
@@ -304,17 +308,28 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 	for index, hook := range manifest.Hooks {
 		r.validateComponentPath(fmt.Sprintf("hooks[%d]", index), hook)
 	}
+	for name, server := range manifest.MCPServers {
+		basePath := fmt.Sprintf("mcp_servers.%s", name)
+		if strings.TrimSpace(name) == "" {
+			r.addError("mcp_servers", "mcp server name is required", "missing_mcp_server_name")
+			continue
+		}
+		if strings.TrimSpace(server.Command) == "" {
+			r.addWarning(basePath+".command", "mcp server has no command and will not start", "missing_mcp_server_command")
+		}
+	}
 	hasContent := len(manifest.Tools) > 0 ||
 		len(manifest.Commands) > 0 ||
 		len(manifest.Skills) > 0 ||
 		len(manifest.Agents) > 0 ||
 		len(manifest.Hooks) > 0 ||
+		len(manifest.MCPServers) > 0 ||
 		dirHasEntries(filepath.Join(manifest.Root, "commands")) ||
 		dirHasEntries(filepath.Join(manifest.Root, "skills")) ||
 		dirHasEntries(filepath.Join(manifest.Root, "agents")) ||
 		dirHasEntries(filepath.Join(manifest.Root, "hooks"))
 	if !hasContent {
-		r.addWarning("plugin", "manifest declares no tools, commands, skills, agents, or hooks", "empty_plugin")
+		r.addWarning("plugin", "manifest declares no tools, commands, skills, agents, hooks, or mcp servers", "empty_plugin")
 	}
 }
 
@@ -763,6 +778,15 @@ func LoadManifest(dir string) (Manifest, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Manifest{}, err
 	}
+	mcpServers := raw.MCPServers
+	if len(raw.MCPServersCamel) != 0 {
+		if mcpServers == nil {
+			mcpServers = map[string]config.MCPServerConfig{}
+		}
+		for name, server := range raw.MCPServersCamel {
+			mcpServers[name] = server
+		}
+	}
 	manifest := Manifest{
 		ID:          raw.ID,
 		Name:        raw.Name,
@@ -772,6 +796,7 @@ func LoadManifest(dir string) (Manifest, error) {
 		Skills:      raw.Skills,
 		Agents:      raw.Agents,
 		Hooks:       raw.Hooks,
+		MCPServers:  mcpServers,
 		Path:        path,
 		Root:        dir,
 		Enabled:     !Disabled(dir),

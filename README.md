@@ -297,8 +297,8 @@ Claude Code source.
   install or update SHA-256 verified zip bundles from signed remote marketplace
   indexes.
 - Enabled plugins can contribute namespaced `commands/`, `skills/`, `agents/`,
-  `hooks/hooks.json`, and manifest-declared tools from their installed plugin
-  directory.
+  `hooks/hooks.json`, manifest-declared `mcp_servers`, and manifest-declared
+  tools from their installed plugin directory.
 - `codog reload-plugins` and `/reload-plugins` rebuild the current process
   tool registry from installed local plugins after install, update, enable, or
   disable operations.

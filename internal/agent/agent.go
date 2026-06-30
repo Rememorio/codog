@@ -230,6 +230,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := applyPluginHookConfigs(&cfg, workspace); err != nil {
 		return err
 	}
+	if err := applyPluginMCPServers(&cfg, workspace); err != nil {
+		return err
+	}
 	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
 	if err != nil {
 		return err
@@ -603,6 +606,26 @@ func applyPluginHookConfigs(cfg *config.Config, workspace string) error {
 	}
 	for _, file := range files {
 		config.MergeHookConfig(&cfg.Hooks, file.Config)
+	}
+	return nil
+}
+
+func applyPluginMCPServers(cfg *config.Config, workspace string) error {
+	servers, err := plugins.LoadMCPServers(workspace)
+	if err != nil {
+		return err
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	if cfg.MCPServers == nil {
+		cfg.MCPServers = map[string]config.MCPServerConfig{}
+	}
+	for name, server := range servers {
+		if _, exists := cfg.MCPServers[name]; exists {
+			continue
+		}
+		cfg.MCPServers[name] = server
 	}
 	return nil
 }

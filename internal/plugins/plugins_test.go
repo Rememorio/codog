@@ -23,7 +23,7 @@ func TestLoadPluginManifest(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"name":"Demo","version":"0.1.0","commands":["demo"],"skills":["./skills/review"],"agents":["./agents/helper.json"],"tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"name":"Demo","version":"0.1.0","commands":["demo"],"skills":["./skills/review"],"agents":["./agents/helper.json"],"mcp_servers":{"local":{"command":"demo-mcp","args":["--stdio"]}},"tools":[{"name":"demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
 
 	manifests, err := Load(workspace)
 	require.NoError(t, err)
@@ -33,10 +33,31 @@ func TestLoadPluginManifest(t *testing.T) {
 	require.Equal(t, []string{"demo"}, manifests[0].Commands)
 	require.Equal(t, []string{"./skills/review"}, manifests[0].Skills)
 	require.Equal(t, []string{"./agents/helper.json"}, manifests[0].Agents)
+	require.Equal(t, "demo-mcp", manifests[0].MCPServers["local"].Command)
+	require.Equal(t, []string{"--stdio"}, manifests[0].MCPServers["local"].Args)
 	require.Len(t, manifests[0].Tools, 1)
 	require.Equal(t, "demo_tool", manifests[0].Tools[0].Name)
 	require.Equal(t, "cat", manifests[0].Tools[0].Command)
 	require.True(t, manifests[0].Enabled)
+}
+
+func TestLoadMCPServersNamespacesEnabledPluginServers(t *testing.T) {
+	workspace := t.TempDir()
+	root := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{
+		"id":"demo",
+		"name":"demo",
+		"mcp_servers":{"local":{"command":"echo","args":["hi"]}},
+		"mcpServers":{"camel":{"command":"cat"}}
+	}`), 0o644))
+
+	servers, err := LoadMCPServers(workspace)
+	require.NoError(t, err)
+	require.Len(t, servers, 2)
+	require.Equal(t, "echo", servers["plugin:demo:local"].Command)
+	require.Equal(t, []string{"hi"}, servers["plugin:demo:local"].Args)
+	require.Equal(t, "cat", servers["plugin:demo:camel"].Command)
 }
 
 func TestInstallDisableEnableRemovePlugin(t *testing.T) {

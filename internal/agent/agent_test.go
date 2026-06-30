@@ -4820,6 +4820,28 @@ func TestPluginHooksLoadedByRunCLI(t *testing.T) {
 	require.Equal(t, "echo plugin-pre", report.PreToolUseCommands[0].Command)
 }
 
+func TestPluginMCPServersMergeIntoRuntimeConfig(t *testing.T) {
+	workspace := t.TempDir()
+	pluginRoot := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(pluginRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{
+		"id":"demo",
+		"name":"demo",
+		"mcp_servers":{"local":{"command":"plugin-mcp","args":["--stdio"],"env":["A=B"]}}
+	}`), 0o644))
+
+	cfg := config.Config{
+		MCPServers: map[string]config.MCPServerConfig{
+			"user": {Command: "user-mcp"},
+		},
+	}
+	require.NoError(t, applyPluginMCPServers(&cfg, workspace))
+	require.Equal(t, "user-mcp", cfg.MCPServers["user"].Command)
+	require.Equal(t, "plugin-mcp", cfg.MCPServers["plugin:demo:local"].Command)
+	require.Equal(t, []string{"--stdio"}, cfg.MCPServers["plugin:demo:local"].Args)
+	require.Equal(t, []string{"A=B"}, cfg.MCPServers["plugin:demo:local"].Env)
+}
+
 func TestPermissionHooksFromPrompter(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")
