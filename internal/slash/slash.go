@@ -107,6 +107,7 @@ func Specs() []Spec {
 		{Name: "/ultrareview", Usage: "/ultrareview [--staged|--base REF]", Description: "Alias for local branch review."},
 		{Name: "/feedback", Usage: "/feedback [MESSAGE]", Description: "Write a local feedback report with workspace diagnostics."},
 		{Name: "/pr", Usage: "/pr [CONTEXT]", Description: "Write a local pull request draft from git and session context."},
+		{Name: "/commit-push-pr", Usage: "/commit-push-pr MESSAGE [--dry-run]", Description: "Commit changes, push the branch, and create or update a GitHub PR."},
 		{Name: "/pr-comments", Usage: "/pr-comments [PR] [--repo OWNER/REPO]", Description: "Fetch GitHub pull request comments with gh."},
 		{Name: "/install-github-app", Usage: "/install-github-app [--workflow claude|review|all]", Description: "Create Claude Code GitHub Actions workflow files."},
 		{Name: "/install-slack-app", Usage: "/install-slack-app [--no-open]", Description: "Open or show the Claude Slack app installation URL."},

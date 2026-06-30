@@ -73,6 +73,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/security-review")
 	require.Contains(t, out.String(), "/review")
 	require.Contains(t, out.String(), "/ultrareview")
+	require.Contains(t, out.String(), "/commit-push-pr")
 	require.Contains(t, out.String(), "/pr-comments")
 	require.Contains(t, out.String(), "/passes")
 	require.Contains(t, out.String(), "/focus")

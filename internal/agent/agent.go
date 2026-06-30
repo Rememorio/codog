@@ -54,6 +54,7 @@ import (
 	"github.com/Rememorio/codog/internal/projectinit"
 	"github.com/Rememorio/codog/internal/prompthistory"
 	"github.com/Rememorio/codog/internal/promptrefs"
+	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/releasenotes"
 	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
@@ -336,6 +337,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Feedback(rest, overrides)
 	case "pr":
 		return app.PullRequestDraft(rest, overrides)
+	case "commit-push-pr":
+		return app.CommitPushPR(ctx, rest)
 	case "pr-comments", "pr_comments":
 		return app.PRComments(ctx, rest)
 	case "install-github-app":
@@ -7380,6 +7383,173 @@ func (a *App) PullRequestDraft(args []string, overrides config.FlagOverrides) er
 	return a.writeDraft("pr", args, overrides)
 }
 
+type commitPushPRRequest struct {
+	Format  string
+	Message string
+	Title   string
+	Body    string
+	Branch  string
+	Base    string
+	Remote  string
+	All     bool
+	Draft   bool
+	NoPR    bool
+	DryRun  bool
+}
+
+func (a *App) CommitPushPR(ctx context.Context, args []string) error {
+	req, err := parseCommitPushPRArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := prworkflow.Run(ctx, prworkflow.Options{
+		Workspace: a.Workspace,
+		Message:   req.Message,
+		Title:     req.Title,
+		Body:      req.Body,
+		Branch:    req.Branch,
+		Base:      req.Base,
+		Remote:    req.Remote,
+		All:       req.All,
+		Draft:     req.Draft,
+		NoPR:      req.NoPR,
+		DryRun:    req.DryRun,
+	})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderCommitPushPRReport(a.Out, report)
+	return nil
+}
+
+func parseCommitPushPRArgs(args []string) (commitPushPRRequest, error) {
+	req := commitPushPRRequest{Format: "text", Remote: "origin", All: true}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--message" || arg == "-m":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr message is required")
+			}
+			req.Message = args[index]
+		case strings.HasPrefix(arg, "--message="):
+			req.Message = strings.TrimPrefix(arg, "--message=")
+		case arg == "--title":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr title is required")
+			}
+			req.Title = args[index]
+		case strings.HasPrefix(arg, "--title="):
+			req.Title = strings.TrimPrefix(arg, "--title=")
+		case arg == "--body":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr body is required")
+			}
+			req.Body = args[index]
+		case strings.HasPrefix(arg, "--body="):
+			req.Body = strings.TrimPrefix(arg, "--body=")
+		case arg == "--branch" || arg == "-b":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr branch is required")
+			}
+			req.Branch = args[index]
+		case strings.HasPrefix(arg, "--branch="):
+			req.Branch = strings.TrimPrefix(arg, "--branch=")
+		case arg == "--base":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr base branch is required")
+			}
+			req.Base = args[index]
+		case strings.HasPrefix(arg, "--base="):
+			req.Base = strings.TrimPrefix(arg, "--base=")
+		case arg == "--remote":
+			index++
+			if index >= len(args) {
+				return req, errors.New("commit-push-pr remote is required")
+			}
+			req.Remote = args[index]
+		case strings.HasPrefix(arg, "--remote="):
+			req.Remote = strings.TrimPrefix(arg, "--remote=")
+		case arg == "--draft":
+			req.Draft = true
+		case arg == "--no-pr":
+			req.NoPR = true
+		case arg == "--dry-run":
+			req.DryRun = true
+		case arg == "--all":
+			req.All = true
+		case arg == "--staged":
+			req.All = false
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown commit-push-pr flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "commit-push-pr"); err != nil {
+		return req, err
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		req.Message = strings.Join(positionals, " ")
+	}
+	if strings.TrimSpace(req.Message) == "" && strings.TrimSpace(req.Title) != "" {
+		req.Message = req.Title
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		return req, errors.New("commit-push-pr requires a commit message")
+	}
+	return req, nil
+}
+
+func renderCommitPushPRReport(out io.Writer, report prworkflow.Report) {
+	fmt.Fprintln(out, "Commit Push PR")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Dry run          %t\n", report.DryRun)
+	fmt.Fprintf(out, "  Branch           %s\n", report.Branch)
+	if report.Base != "" {
+		fmt.Fprintf(out, "  Base             %s\n", report.Base)
+	}
+	fmt.Fprintf(out, "  Remote           %s\n", report.Remote)
+	fmt.Fprintf(out, "  Title            %s\n", report.Title)
+	if report.Commit != "" {
+		fmt.Fprintf(out, "  Commit           %s\n", report.Commit)
+	}
+	if report.PRURL != "" {
+		fmt.Fprintf(out, "  PR URL           %s\n", report.PRURL)
+	}
+	for _, step := range report.Steps {
+		fmt.Fprintf(out, "  Step             %-12s %s", step.Name, step.Status)
+		if len(step.Command) > 0 {
+			fmt.Fprintf(out, "  %s", strings.Join(step.Command, " "))
+		}
+		fmt.Fprintln(out)
+		if step.Output != "" {
+			fmt.Fprintf(out, "    %s\n", prompthistory.Preview(step.Output, 180))
+		}
+	}
+}
+
 type prCommentsRequest struct {
 	PR     string
 	Repo   string
@@ -11030,6 +11200,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/pr":
 		if err := a.PullRequestDraft(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/commit-push-pr":
+		if err := a.CommitPushPR(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/pr-comments", "/pr_comments":
@@ -15151,6 +15325,7 @@ Usage:
   %s [flags] review|ultrareview [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
+  %s [flags] commit-push-pr MESSAGE [--title TITLE] [--body BODY] [--branch NAME] [--base REF] [--remote NAME] [--staged] [--draft] [--no-pr] [--dry-run] [--json|--output-format text|json]
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]

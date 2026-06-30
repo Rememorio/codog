@@ -19,7 +19,7 @@ func TestCompleteSlashCommand(t *testing.T) {
 
 func TestCompleteSlashCommandShowsMultipleMatches(t *testing.T) {
 	ta := textarea.New()
-	ta.SetValue("/co")
+	ta.SetValue("/comp")
 	m := model{textarea: ta}
 
 	m = m.completeSlashCommand()

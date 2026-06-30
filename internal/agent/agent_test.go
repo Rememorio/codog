@@ -2273,6 +2273,40 @@ func TestPullRequestAndIssueDraftCommands(t *testing.T) {
 	require.Contains(t, string(data), "Issue: flaky workflow")
 }
 
+func TestCommitPushPRDryRunCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("base\nchange\n"), 0o644))
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "commit-push-pr", "feat: dry run", "--dry-run", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "commit_push_pr"`)
+	require.Contains(t, cliOut, `"status": "planned"`)
+	require.Contains(t, cliOut, `"pull_request"`)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	require.True(t, app.handleSlash(context.Background(), "/commit-push-pr feat: slash dry run --dry-run --no-pr", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Commit Push PR")
+	require.Contains(t, out.String(), "Dry run          true")
+	require.NotContains(t, out.String(), "pull_request")
+	require.Empty(t, errOut.String())
+}
+
 func TestInstallGitHubAppCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer
