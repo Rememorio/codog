@@ -1145,6 +1145,17 @@ func TestRunAndProjectCommandSurfaces(t *testing.T) {
 	require.Contains(t, out.String(), `"exit_code": 0`)
 	out.Reset()
 
+	nodeCommand, err := languageCommand(workspace, "node", []string{"console.log(1)"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"node", "-e", "console.log(1)"}, nodeCommand)
+	scriptPath := filepath.Join(workspace, "script.py")
+	require.NoError(t, os.WriteFile(scriptPath, []byte("print(1)\n"), 0o644))
+	pythonCommand, err := languageCommand(workspace, "python", []string{"script.py", "arg"})
+	require.NoError(t, err)
+	require.Len(t, pythonCommand, 3)
+	require.Equal(t, scriptPath, pythonCommand[1])
+	require.Equal(t, "arg", pythonCommand[2])
+
 	require.NoError(t, app.ProjectCommand(context.Background(), "test", nil))
 	require.Contains(t, out.String(), "Command")
 	require.Contains(t, out.String(), "go test ./...")

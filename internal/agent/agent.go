@@ -356,6 +356,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.IssueDraft(rest, overrides)
 	case "run":
 		return app.RunCommand(ctx, rest)
+	case "node", "python":
+		return app.LanguageCommand(ctx, command, rest)
 	case "test":
 		return app.ProjectCommand(ctx, "test", rest)
 	case "build":
@@ -6669,6 +6671,19 @@ func (a *App) RunCommand(ctx context.Context, args []string) error {
 	return a.runCommandRequest(ctx, "run", req)
 }
 
+func (a *App) LanguageCommand(ctx context.Context, language string, args []string) error {
+	req, err := parseCommandRequest(args, nil)
+	if err != nil {
+		return err
+	}
+	command, err := languageCommand(a.Workspace, language, req.Command)
+	if err != nil {
+		return err
+	}
+	req.Command = command
+	return a.runCommandRequest(ctx, language, req)
+}
+
 func (a *App) ProjectCommand(ctx context.Context, kind string, args []string) error {
 	req, err := parseCommandRequest(args, defaultProjectCommand(kind))
 	if err != nil {
@@ -6751,6 +6766,51 @@ func parseCommandRequest(args []string, defaultCommand []string) (commandRequest
 		return req, errors.New("usage: codog run COMMAND [ARG...]")
 	}
 	return req, nil
+}
+
+func languageCommand(workspace, language string, args []string) ([]string, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("usage: codog %s CODE|FILE [ARG...]", language)
+	}
+	var executable string
+	var inlineFlag string
+	switch strings.ToLower(language) {
+	case "node", "javascript", "js":
+		executable = "node"
+		inlineFlag = "-e"
+	case "python", "python3", "py":
+		executable = pythonExecutable()
+		inlineFlag = "-c"
+	default:
+		return nil, fmt.Errorf("unknown language command %q", language)
+	}
+	if path, ok := existingLanguageScript(workspace, args[0]); ok {
+		return append([]string{executable, path}, args[1:]...), nil
+	}
+	return []string{executable, inlineFlag, strings.Join(args, " ")}, nil
+}
+
+func existingLanguageScript(workspace, value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	path := value
+	if !filepath.IsAbs(path) && strings.TrimSpace(workspace) != "" {
+		path = filepath.Join(workspace, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	return path, true
+}
+
+func pythonExecutable() string {
+	if _, err := exec.LookPath("python3"); err == nil {
+		return "python3"
+	}
+	return "python"
 }
 
 func parseCommandTimeout(value string) (int, error) {
@@ -11389,6 +11449,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RunCommand(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/node", "/python":
+		language := strings.TrimPrefix(fields[0], "/")
+		if err := a.LanguageCommand(ctx, language, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/test":
 		if err := a.ProjectCommand(ctx, "test", fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -15473,6 +15538,7 @@ Usage:
   %s [flags] changelog [count]
   %s [flags] release-notes [FROM [TO]] [--limit N] [--format markdown|json]
   %s [flags] run [--timeout-ms N] COMMAND [ARG...]
+  %s [flags] node|python [--timeout-ms N] CODE|FILE [ARG...]
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
   %s [flags] symbols|diagnostics|map|references|definition|hover|teleport|completion|format [ARGS...] [--json]
   %s mock-server :8089

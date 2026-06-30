@@ -51,6 +51,8 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/stash")
 	require.Contains(t, out.String(), "/blame")
 	require.Contains(t, out.String(), "/run")
+	require.Contains(t, out.String(), "/node")
+	require.Contains(t, out.String(), "/python")
 	require.Contains(t, out.String(), "/test")
 	require.Contains(t, out.String(), "/build")
 	require.Contains(t, out.String(), "/lint")

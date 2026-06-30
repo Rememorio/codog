@@ -63,7 +63,7 @@ Claude Code source.
   `/advisor`, `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/init-verifiers`, `/files`, `/search`,
   `/security-review`, `/bughunter`, `/review`, `/ultrareview`, `/feedback`, `/pr`, `/commit-push-pr`, `/pr-comments`, `/install-github-app`, `/install-slack-app`, `/stickers`, `/passes`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/insights`, `/think-back`, `/extra-usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
-  `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
+  `/run`, `/node`, `/python`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/web-setup`, `/remote-control`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/bashes`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
 - `/session`, `/rename`, `codog rename`, and `codog sessions` manage saved
@@ -108,6 +108,9 @@ Claude Code source.
   default, commit, push the branch, and create or update a GitHub PR through
   `gh`; `--dry-run`, `--staged`, `--no-pr`, `--draft`, `--branch`, `--base`,
   and `--remote` keep the workflow explicit.
+- `codog node CODE|FILE`, `codog python CODE|FILE`, `/node`, and `/python`
+  run JavaScript or Python snippets and scripts through the same timeout and
+  text/JSON command runner used by `/run`.
 - `/context` and `codog context [--resume latest]` summarize prompt context,
   project memory, focused paths, session token estimates, git state, and local
   preflight signals before a provider request.
