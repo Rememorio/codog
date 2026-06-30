@@ -4204,6 +4204,36 @@ func TestMCPServeCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"read_file"`)
 }
 
+func TestMCPSelfCommand(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{PermissionMode: "workspace-write"},
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"self", "--json"}))
+	var report mcpSelfReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "mcp", report.Kind)
+	require.Equal(t, "self", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Contains(t, report.Tools, "read_file")
+	require.Contains(t, report.Resources, "codog://workspace")
+	require.Contains(t, report.Prompts, "review_changes")
+	require.Greater(t, report.ToolCount, 0)
+	require.Greater(t, report.ResourceCount, 0)
+	require.Greater(t, report.PromptCount, 0)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"self"}))
+	require.Contains(t, out.String(), "MCP Self")
+	require.Contains(t, out.String(), "Resources")
+}
+
 func TestSlashAliasesForExistingSurfaces(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -17281,6 +17281,8 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "serve":
 		return a.mcpServe(ctx, args[1:])
+	case "self", "self-test":
+		return a.mcpSelf(ctx, args[1:], format)
 	case "show":
 		return a.mcpShow(args[1:])
 	case "add":
@@ -17361,12 +17363,111 @@ func renderMCPList(out io.Writer, statuses []mcp.ServerStatus) {
 	fmt.Fprintln(out, string(data))
 }
 
-const mcpUsage = "usage: codog mcp list | serve | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+
+type mcpSelfReport struct {
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	ToolCount     int      `json:"tool_count"`
+	ResourceCount int      `json:"resource_count"`
+	PromptCount   int      `json:"prompt_count"`
+	Tools         []string `json:"tools"`
+	Resources     []string `json:"resources"`
+	Prompts       []string `json:"prompts"`
+}
+
+func (a *App) mcpSelf(ctx context.Context, args []string, format string) error {
+	if len(args) != 0 {
+		return errors.New("usage: codog mcp self [--json|--output-format text|json]")
+	}
+	registry := a.mcpRegistry()
+	input := strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"prompts/list","params":{}}`,
+		"",
+	}, "\n"))
+	var output bytes.Buffer
+	if err := mcpserver.Serve(ctx, input, &output, registry, a.mcpServerOptions()); err != nil {
+		return err
+	}
+	responses, err := decodeMCPResponseLines(output.String())
+	if err != nil {
+		return err
+	}
+	report := mcpSelfReport{Kind: "mcp", Action: "self", Status: "ok"}
+	for _, response := range responses {
+		result, _ := response["result"].(map[string]any)
+		if result == nil {
+			continue
+		}
+		if values, ok := result["tools"].([]any); ok {
+			report.Tools = mcpValueStrings(values, "name")
+			report.ToolCount = len(report.Tools)
+		}
+		if values, ok := result["resources"].([]any); ok {
+			report.Resources = mcpValueStrings(values, "uri")
+			report.ResourceCount = len(report.Resources)
+		}
+		if values, ok := result["prompts"].([]any); ok {
+			report.Prompts = mcpValueStrings(values, "name")
+			report.PromptCount = len(report.Prompts)
+		}
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "MCP Self")
+	fmt.Fprintf(a.Out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(a.Out, "  Tools            %d\n", report.ToolCount)
+	fmt.Fprintf(a.Out, "  Resources        %d\n", report.ResourceCount)
+	fmt.Fprintf(a.Out, "  Prompts          %d\n", report.PromptCount)
+	if len(report.Resources) > 0 {
+		fmt.Fprintf(a.Out, "  Resource URIs    %s\n", strings.Join(report.Resources, ", "))
+	}
+	return nil
+}
+
+func decodeMCPResponseLines(output string) ([]map[string]any, error) {
+	var responses []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var response map[string]any
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
+}
+
+func mcpValueStrings(values []any, key string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		item, _ := value.(map[string]any)
+		text, _ := item[key].(string)
+		if strings.TrimSpace(text) != "" {
+			out = append(out, text)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 func (a *App) mcpServe(ctx context.Context, args []string) error {
 	if len(args) != 0 {
 		return errors.New("usage: codog mcp serve")
 	}
+	return mcpserver.Serve(ctx, mcpReader(a.In, os.Stdin), mcpWriter(a.Out, os.Stdout), a.mcpRegistry(), a.mcpServerOptions())
+}
+
+func (a *App) mcpRegistry() *tools.Registry {
 	registry := a.Tools
 	if registry == nil {
 		registry = tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
@@ -17376,20 +17477,30 @@ func (a *App) mcpServe(ctx context.Context, args []string) error {
 			MCPServers:      a.Config.MCPServers,
 		})
 	}
-	in := a.In
-	if in == nil {
-		in = os.Stdin
-	}
-	out := a.Out
-	if out == nil {
-		out = os.Stdout
-	}
-	return mcpserver.Serve(ctx, in, out, registry, mcpserver.Options{
+	return registry
+}
+
+func (a *App) mcpServerOptions() mcpserver.Options {
+	return mcpserver.Options{
 		Version:         version,
 		Workspace:       a.Workspace,
 		PermissionMode:  a.Config.PermissionMode,
 		PermissionRules: a.Config.PermissionRules,
-	})
+	}
+}
+
+func mcpReader(value io.Reader, fallback io.Reader) io.Reader {
+	if value != nil {
+		return value
+	}
+	return fallback
+}
+
+func mcpWriter(value io.Writer, fallback io.Writer) io.Writer {
+	if value != nil {
+		return value
+	}
+	return fallback
 }
 
 func (a *App) mcpShow(args []string) error {
@@ -18882,7 +18993,7 @@ Usage:
   %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
   %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
-  %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
+  %s [flags] mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
