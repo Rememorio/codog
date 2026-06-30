@@ -138,6 +138,9 @@ Claude Code source.
 - `codog output-style list|show|set|clear` discovers built-in, user, and
   workspace Markdown output styles, persists the active workspace style, and
   injects it into future prompts.
+- `codog model`, `codog max-tokens`, `codog max-turns`,
+  `codog permissions`, and `codog allowed-tools` expose the matching runtime
+  slash controls as scriptable CLI commands.
 - `/theme`, `/color`, `/vim`, `/effort`, `/fast`, and `/privacy-settings`
   persist local interface, reasoning, runtime, and privacy preferences such as
   terminal theme, vim keybinding mode, reasoning effort, fast mode, and prompt

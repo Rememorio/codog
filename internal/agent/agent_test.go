@@ -625,6 +625,31 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/permissions invalid", sess))
 	require.Equal(t, "read-only", app.Config.PermissionMode)
 	require.Contains(t, errOut.String(), "unknown permission mode: invalid")
+	errOut.Reset()
+
+	require.NoError(t, app.Model([]string{"model-c"}))
+	require.Equal(t, "model-c", app.Config.Model)
+	require.Contains(t, out.String(), "model=model-c")
+	out.Reset()
+
+	require.NoError(t, app.MaxTokens([]string{"4096"}))
+	require.Equal(t, 4096, app.Config.MaxTokens)
+	require.Contains(t, out.String(), "max_tokens=4096")
+	out.Reset()
+
+	require.NoError(t, app.MaxTurns([]string{"8"}))
+	require.Equal(t, 8, app.Config.MaxTurns)
+	require.Contains(t, out.String(), "max_turns=8")
+	out.Reset()
+
+	require.NoError(t, app.Permissions([]string{"workspace-write"}))
+	require.Equal(t, "workspace-write", app.Config.PermissionMode)
+	require.Contains(t, out.String(), "permission_mode=workspace-write")
+	out.Reset()
+
+	require.NoError(t, app.AllowedTools([]string{"add", "grep"}))
+	require.Contains(t, app.Config.PermissionRules.Allow, "grep")
+	require.Contains(t, out.String(), "Allowed tools")
 }
 
 func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {

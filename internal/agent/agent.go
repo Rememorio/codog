@@ -245,6 +245,16 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AddDir(rest)
 	case "output-style":
 		return app.OutputStyle(rest)
+	case "model":
+		return app.Model(rest)
+	case "max-tokens":
+		return app.MaxTokens(rest)
+	case "max-turns":
+		return app.MaxTurns(rest)
+	case "permissions":
+		return app.Permissions(rest)
+	case "allowed-tools":
+		return app.AllowedTools(rest)
 	case "theme":
 		return app.Theme(rest)
 	case "color":
@@ -8499,6 +8509,20 @@ func (a *App) handleConfigSlash(args []string) {
 	fmt.Fprintln(a.Out, string(data))
 }
 
+func (a *App) Model(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
+		return nil
+	}
+	model := strings.TrimSpace(strings.Join(args, " "))
+	if model == "" {
+		return errors.New("usage: codog model [name]")
+	}
+	a.Config.Model = model
+	fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
+	return nil
+}
+
 func (a *App) handleModelSlash(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintf(a.Err, "model=%s\n", a.Config.Model)
@@ -8511,6 +8535,23 @@ func (a *App) handleModelSlash(args []string) {
 	}
 	a.Config.Model = model
 	fmt.Fprintf(a.Err, "model=%s\n", a.Config.Model)
+}
+
+func (a *App) MaxTokens(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintf(a.Out, "max_tokens=%d\n", a.Config.MaxTokens)
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("usage: codog max-tokens [count]")
+	}
+	value, err := strconv.Atoi(args[0])
+	if err != nil || value <= 0 {
+		return errors.New("max_tokens must be a positive integer")
+	}
+	a.Config.MaxTokens = value
+	fmt.Fprintf(a.Out, "max_tokens=%d\n", a.Config.MaxTokens)
+	return nil
 }
 
 func (a *App) handleMaxTokensSlash(args []string) {
@@ -8529,6 +8570,23 @@ func (a *App) handleMaxTokensSlash(args []string) {
 	}
 	a.Config.MaxTokens = value
 	fmt.Fprintf(a.Err, "max_tokens=%d\n", a.Config.MaxTokens)
+}
+
+func (a *App) MaxTurns(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintf(a.Out, "max_turns=%d\n", a.Config.MaxTurns)
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("usage: codog max-turns [count]")
+	}
+	value, err := strconv.Atoi(args[0])
+	if err != nil || value <= 0 {
+		return errors.New("max_turns must be a positive integer")
+	}
+	a.Config.MaxTurns = value
+	fmt.Fprintf(a.Out, "max_turns=%d\n", a.Config.MaxTurns)
+	return nil
 }
 
 func (a *App) handleMaxTurnsSlash(args []string) {
@@ -8576,6 +8634,30 @@ func renderToolInfo(out io.Writer, info tools.ToolInfo) {
 	fmt.Fprintln(out, string(data))
 }
 
+func (a *App) Permissions(args []string) error {
+	if len(args) == 0 || args[0] == "show" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"permission_mode":  a.Config.PermissionMode,
+			"permission_rules": a.Config.PermissionRules,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	mode := args[0]
+	if args[0] == "mode" || args[0] == "set" {
+		if len(args) < 2 {
+			return errors.New("usage: codog permissions [read-only|workspace-write|danger-full-access|prompt|allow]")
+		}
+		mode = args[1]
+	}
+	if !validPermissionMode(mode) {
+		return fmt.Errorf("unknown permission mode: %s", mode)
+	}
+	a.Config.PermissionMode = mode
+	fmt.Fprintf(a.Out, "permission_mode=%s\n", a.Config.PermissionMode)
+	return nil
+}
+
 func (a *App) handlePermissionsSlash(args []string) {
 	if len(args) == 0 || args[0] == "show" {
 		data, _ := json.MarshalIndent(map[string]any{
@@ -8599,6 +8681,32 @@ func (a *App) handlePermissionsSlash(args []string) {
 	}
 	a.Config.PermissionMode = mode
 	fmt.Fprintf(a.Err, "permission_mode=%s\n", a.Config.PermissionMode)
+}
+
+func (a *App) AllowedTools(args []string) error {
+	action := "list"
+	if len(args) > 0 {
+		action = strings.ToLower(args[0])
+	}
+	switch action {
+	case "list", "show":
+	case "add":
+		if len(args) < 2 {
+			return errors.New("usage: codog allowed-tools add TOOL [TOOL...]")
+		}
+		a.Config.PermissionRules.Allow = addRuleValues(a.Config.PermissionRules.Allow, args[1:])
+	case "remove", "rm", "delete":
+		if len(args) < 2 {
+			return errors.New("usage: codog allowed-tools remove TOOL [TOOL...]")
+		}
+		a.Config.PermissionRules.Allow = removeRuleValues(a.Config.PermissionRules.Allow, args[1:])
+	case "clear":
+		a.Config.PermissionRules.Allow = nil
+	default:
+		return fmt.Errorf("unknown allowed-tools action: %s", args[0])
+	}
+	renderAllowedTools(a.Out, a.Config.PermissionRules.Allow)
+	return nil
 }
 
 func (a *App) handleAllowedToolsSlash(args []string) {
@@ -11579,6 +11687,11 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|run pre|post] [--tool NAME] [--input JSON] [--output TEXT] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
+  %s [flags] model [NAME]
+  %s [flags] max-tokens [N]
+  %s [flags] max-turns [N]
+  %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
+  %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
   %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] status [--json|--output-format text|json]
@@ -11660,7 +11773,7 @@ Flags:
 
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {
