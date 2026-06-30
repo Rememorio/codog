@@ -438,6 +438,29 @@ func TestPrompterBashValidation(t *testing.T) {
 	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`)))
 }
 
+func TestPrompterAlwaysAllowAddsSessionRule(t *testing.T) {
+	var prompt strings.Builder
+	var decisions []PermissionDecision
+	p := &Prompter{
+		Mode: PermissionPrompt,
+		In:   strings.NewReader("a\n"),
+		Err:  &prompt,
+		OnDecision: func(next PermissionDecision) {
+			decisions = append(decisions, next)
+		},
+	}
+
+	require.NoError(t, p.Authorize("write_file", PermissionWorkspace, []byte(`{"path":"a.txt"}`)))
+	require.Contains(t, prompt.String(), "always for session")
+	require.ElementsMatch(t, []string{"write_file"}, p.AllowRules)
+	require.Len(t, decisions, 1)
+	require.Equal(t, "user_approved_always", decisions[0].Reason)
+
+	require.NoError(t, p.Authorize("write_file", PermissionWorkspace, []byte(`{"path":"b.txt"}`)))
+	require.Len(t, decisions, 2)
+	require.Equal(t, "allow_rule", decisions[1].Reason)
+}
+
 func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	registry := NewRegistry(t.TempDir())
 

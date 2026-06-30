@@ -507,12 +507,19 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 		fmt.Fprintf(p.Err, "\nBash validation warning: %s\n", decision.Message)
 	}
 	p.emitRequest(decision)
-	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N] ", name, required, string(input))
+	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N/a=always for session] ", name, required, string(input))
 	reader := bufio.NewReader(p.In)
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	if answer == "y" || answer == "yes" {
 		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved"})
+		return nil
+	}
+	if answer == "a" || answer == "always" {
+		if !ruleMatchesTool(p.AllowRules, name) {
+			p.AllowRules = append(p.AllowRules, name)
+		}
+		p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: true, Reason: "user_approved_always"})
 		return nil
 	}
 	p.emitDecision(PermissionDecision{ToolName: name, Required: required, Mode: decision.Mode, Input: decision.Input, Allowed: false, Reason: "user_denied"})

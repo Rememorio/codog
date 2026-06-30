@@ -3564,7 +3564,7 @@ func TestPermissionHooksFromPrompter(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(deniedPayload), `"event":"permission_denied"`)
 	require.Contains(t, string(deniedPayload), `"reason":"user_denied"`)
-	require.Contains(t, errOut.String(), "Allow? [y/N]")
+	require.Contains(t, errOut.String(), "Allow? [y/N/a=always for session]")
 }
 
 func TestMCPCommandToolsCallAndResources(t *testing.T) {
