@@ -2474,6 +2474,9 @@ func (a *App) RegisterPluginTools() error {
 			if name == "" {
 				continue
 			}
+			if !plugins.ValidToolPermission(tool.Permission) {
+				return fmt.Errorf("plugin tool %q declares unsupported permission %q", name, tool.Permission)
+			}
 			if a.Tools.Has(name) {
 				return fmt.Errorf("plugin tool %q conflicts with an existing tool", name)
 			}
@@ -3046,6 +3049,32 @@ func (a *App) Marketplace(args []string) error {
 			return err
 		}
 		payload = manifest
+	case "validate":
+		if len(args) < 2 {
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "plugins",
+				Action:    args[0],
+				Status:    "error",
+				ErrorKind: "plugin_source_required",
+				Message:   "plugin validation requires a source path",
+				Hint:      "Usage: codog plugins validate PATH [--json|--output-format text|json]",
+			}, format)
+		}
+		if len(args) > 2 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "plugins validate",
+				Args:    append([]string(nil), args[2:]...),
+				Usage:   "codog plugins validate PATH [--json|--output-format text|json]",
+			}, format)
+		}
+		result, err := plugins.Validate(args[1])
+		if err != nil {
+			if os.IsNotExist(err) {
+				return renderPluginSourceNotFound(a.Out, args[0], args[1], format)
+			}
+			return err
+		}
+		return renderPluginValidation(a.Out, args[1], result, format)
 	case "install-remote":
 		result, err := a.marketplaceInstallRemote(args[1:])
 		if err != nil {
@@ -3119,7 +3148,7 @@ func (a *App) Marketplace(args []string) error {
 			Status:    "error",
 			ErrorKind: "unknown_plugins_action",
 			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      "Use `codog plugins list`, `show`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+			Hint:      "Use `codog plugins list`, `show`, `validate`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
 		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
@@ -3162,6 +3191,56 @@ func renderPluginSourceNotFound(out io.Writer, action string, source string, for
 		Message:   fmt.Sprintf("plugin source %q was not found", source),
 		Hint:      "Pass a directory containing plugin.json or the path to a plugin.json file.",
 	}, format)
+}
+
+type pluginValidationReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Source string `json:"source"`
+	plugins.ValidationResult
+}
+
+func renderPluginValidation(out io.Writer, source string, result plugins.ValidationResult, format string) error {
+	status := "ok"
+	if !result.Success {
+		status = "error"
+	}
+	report := pluginValidationReport{
+		Kind:             "plugin",
+		Action:           "validate",
+		Status:           status,
+		Source:           source,
+		ValidationResult: result,
+	}
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		if !result.Success {
+			return &ExitError{Code: 1, Err: errors.New("plugin validation failed"), Silent: true}
+		}
+		return nil
+	}
+	fmt.Fprintf(out, "Plugin Validation\n\n")
+	fmt.Fprintf(out, "  Source   %s\n", source)
+	fmt.Fprintf(out, "  File     %s\n", result.FilePath)
+	fmt.Fprintf(out, "  Status   %s\n", status)
+	if len(result.Errors) > 0 {
+		fmt.Fprintln(out, "\nErrors:")
+		for _, item := range result.Errors {
+			fmt.Fprintf(out, "  - %s: %s\n", item.Path, item.Message)
+		}
+	}
+	if len(result.Warnings) > 0 {
+		fmt.Fprintln(out, "\nWarnings:")
+		for _, item := range result.Warnings {
+			fmt.Fprintf(out, "  - %s: %s\n", item.Path, item.Message)
+		}
+	}
+	if !result.Success {
+		return &ExitError{Code: 1, Err: errors.New("plugin validation failed"), Silent: true}
+	}
+	return nil
 }
 
 func (a *App) marketplaceRemote(args []string) ([]plugins.MarketplaceIndex, error) {
@@ -20738,7 +20817,7 @@ Usage:
   %s tasks|bashes list|status|stop|restart|logs|watch ID
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
-  %s plugin|plugins|marketplace list|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
+  %s plugin|plugins|marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp

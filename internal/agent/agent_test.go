@@ -966,6 +966,13 @@ func TestPluginMutationErrorContracts(t *testing.T) {
 			errorKind: "plugin_source_not_found",
 			hint:      "plugin.json",
 		},
+		{
+			name:      "validate source not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "validate", filepath.Join(t.TempDir(), "missing-plugin")},
+			action:    "validate",
+			errorKind: "plugin_source_not_found",
+			hint:      "plugin.json",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -985,6 +992,39 @@ func TestPluginMutationErrorContracts(t *testing.T) {
 			require.Contains(t, report.Hint, tc.hint)
 		})
 	}
+}
+
+func TestMarketplaceValidateCommand(t *testing.T) {
+	workspace := t.TempDir()
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":"demo","name":"demo","version":"1.0.0","description":"Demo","tools":[{"name":"demo_tool","command":"echo","permission":"read-only"}]}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out}
+	require.NoError(t, app.Marketplace([]string{"validate", source, "--json"}))
+	var report pluginValidationReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "plugin", report.Kind)
+	require.Equal(t, "validate", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.Success)
+	require.Empty(t, report.Errors)
+	require.Equal(t, "demo", report.Manifest.ID)
+
+	out.Reset()
+	badSource := filepath.Join(t.TempDir(), "bad")
+	require.NoError(t, os.MkdirAll(badSource, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(badSource, "plugin.json"), []byte(`{"id":"bad","name":"bad","tools":[{"name":"bad_tool","command":"echo","permission":"root"}]}`), 0o644))
+	err := app.Marketplace([]string{"validate", badSource, "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "error", report.Status)
+	require.False(t, report.Success)
+	require.Equal(t, "invalid_tool_permission", report.Errors[0].Code)
 }
 
 func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
@@ -6936,6 +6976,23 @@ func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
 	require.Contains(t, out.String(), `"enabled": false`)
 
 	require.NoError(t, app.RegisterPluginTools())
+	require.False(t, app.Tools.Has("demo_tool"))
+}
+
+func TestRegisterPluginToolsRejectsUnknownPermission(t *testing.T) {
+	workspace := t.TempDir()
+	dir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"demo","tools":[{"name":"demo_tool","command":"cat","permission":"root"}]}`), 0o644))
+
+	app := &App{
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Out:       io.Discard,
+	}
+	err := app.RegisterPluginTools()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported permission")
 	require.False(t, app.Tools.Has("demo_tool"))
 }
 

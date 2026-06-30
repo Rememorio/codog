@@ -45,6 +45,21 @@ type ToolManifest struct {
 	Permission  string         `json:"permission,omitempty"`
 }
 
+type ValidationMessage struct {
+	Path    string `json:"path"`
+	Message string `json:"message"`
+	Code    string `json:"code,omitempty"`
+}
+
+type ValidationResult struct {
+	Success  bool                `json:"success"`
+	Errors   []ValidationMessage `json:"errors"`
+	Warnings []ValidationMessage `json:"warnings"`
+	FilePath string              `json:"file_path"`
+	FileType string              `json:"file_type"`
+	Manifest *Manifest           `json:"manifest,omitempty"`
+}
+
 type MarketplaceIndex struct {
 	Name           string         `json:"name,omitempty"`
 	Plugins        []RemotePlugin `json:"plugins,omitempty"`
@@ -148,6 +163,210 @@ func Load(workspace string) ([]Manifest, error) {
 	}
 	sort.Slice(manifests, func(i, j int) bool { return manifests[i].ID < manifests[j].ID })
 	return manifests, nil
+}
+
+func Validate(source string) (ValidationResult, error) {
+	result := ValidationResult{Success: true, FileType: "plugin"}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		result.addError("file", "plugin source is required", "missing_source")
+		return result.finish(), nil
+	}
+	dir, manifestPath, err := pluginManifestSource(source)
+	result.FilePath = manifestPath
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result.finish(), err
+		}
+		result.addError("file", err.Error(), "invalid_source")
+		return result.finish(), nil
+	}
+	result.FilePath = manifestPath
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result.finish(), err
+		}
+		result.addError("file", fmt.Sprintf("failed to read file: %v", err), "read_failed")
+		return result.finish(), nil
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		result.addError("json", fmt.Sprintf("invalid JSON syntax: %v", err), "invalid_json")
+		return result.finish(), nil
+	}
+	result.validateManifestFields(fields)
+
+	manifest, err := LoadManifest(dir)
+	if err != nil {
+		result.addError("manifest", err.Error(), "invalid_manifest")
+		return result.finish(), nil
+	}
+	result.Manifest = &manifest
+	if err := validateID(manifest.ID); err != nil {
+		result.addError("id", err.Error(), "invalid_plugin_id")
+	}
+	result.validateManifest(manifest, fields)
+	return result.finish(), nil
+}
+
+func (r *ValidationResult) addError(path string, message string, code string) {
+	r.Errors = append(r.Errors, ValidationMessage{Path: path, Message: message, Code: code})
+}
+
+func (r *ValidationResult) addWarning(path string, message string, code string) {
+	r.Warnings = append(r.Warnings, ValidationMessage{Path: path, Message: message, Code: code})
+}
+
+func (r ValidationResult) finish() ValidationResult {
+	if r.Errors == nil {
+		r.Errors = []ValidationMessage{}
+	}
+	if r.Warnings == nil {
+		r.Warnings = []ValidationMessage{}
+	}
+	r.Success = len(r.Errors) == 0
+	return r
+}
+
+func (r *ValidationResult) validateManifestFields(fields map[string]json.RawMessage) {
+	known := map[string]bool{
+		"id": true, "name": true, "version": true, "description": true,
+		"tools": true, "commands": true, "hooks": true,
+		"author": true, "agents": true, "skills": true,
+		"mcpServers": true, "mcp_servers": true,
+		"outputStyles": true, "output_styles": true,
+		"userConfig": true, "user_config": true,
+		"dependencies": true, "lspServers": true, "lsp_servers": true,
+		"source": true, "category": true, "tags": true, "strict": true,
+	}
+	for field := range fields {
+		if !known[field] {
+			r.addWarning(field, fmt.Sprintf("field %q is not used by the current plugin runtime", field), "unknown_field")
+		}
+	}
+	for _, field := range []string{"source", "category", "tags", "strict"} {
+		if _, ok := fields[field]; ok {
+			r.addWarning(field, fmt.Sprintf("field %q belongs in marketplace metadata, not plugin.json", field), "marketplace_only_field")
+		}
+	}
+}
+
+func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string]json.RawMessage) {
+	if _, ok := fields["id"]; !ok {
+		r.addWarning("id", "no plugin id specified; install will use the plugin directory name", "missing_id")
+	}
+	if _, ok := fields["name"]; !ok {
+		r.addWarning("name", "no plugin name specified; display name will fall back to the plugin id", "missing_name")
+	}
+	if _, ok := fields["version"]; !ok {
+		r.addWarning("version", `no version specified; consider adding a semver value such as "1.0.0"`, "missing_version")
+	}
+	if _, ok := fields["description"]; !ok {
+		r.addWarning("description", "no description provided; adding one helps users understand the plugin", "missing_description")
+	}
+	if manifest.Name != "" && !isKebabCase(manifest.Name) {
+		r.addWarning("name", fmt.Sprintf("plugin name %q is not kebab-case", manifest.Name), "non_kebab_name")
+	}
+
+	seenTools := map[string]bool{}
+	for index, tool := range manifest.Tools {
+		basePath := fmt.Sprintf("tools[%d]", index)
+		name := strings.TrimSpace(tool.Name)
+		if name == "" {
+			r.addError(basePath+".name", "plugin tool name is required", "missing_tool_name")
+		} else if seenTools[strings.ToLower(name)] {
+			r.addError(basePath+".name", fmt.Sprintf("duplicate plugin tool %q", name), "duplicate_tool_name")
+		} else {
+			seenTools[strings.ToLower(name)] = true
+		}
+		if strings.TrimSpace(tool.Command) == "" {
+			r.addWarning(basePath+".command", "plugin tool has no command and will not be registered", "missing_tool_command")
+		}
+		if tool.Permission != "" && !ValidToolPermission(tool.Permission) {
+			r.addError(basePath+".permission", fmt.Sprintf("unknown tool permission %q", tool.Permission), "invalid_tool_permission")
+		}
+	}
+	for index, command := range manifest.Commands {
+		r.validateComponentPath(fmt.Sprintf("commands[%d]", index), command)
+	}
+	for index, hook := range manifest.Hooks {
+		r.validateComponentPath(fmt.Sprintf("hooks[%d]", index), hook)
+	}
+	if len(manifest.Tools) == 0 && len(manifest.Commands) == 0 && len(manifest.Hooks) == 0 {
+		r.addWarning("plugin", "manifest declares no tools, commands, or hooks", "empty_plugin")
+	}
+}
+
+func (r *ValidationResult) validateComponentPath(field string, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		r.addError(field, "component path cannot be empty", "empty_component_path")
+		return
+	}
+	if filepath.IsAbs(value) {
+		r.addError(field, fmt.Sprintf("component path %q must be relative to the plugin root", value), "absolute_component_path")
+	}
+	if strings.Contains(value, `\`) {
+		r.addError(field, fmt.Sprintf("component path %q must use forward slashes", value), "backslash_component_path")
+	}
+	if containsParentPathSegment(value) {
+		r.addError(field, fmt.Sprintf("component path %q must not contain parent-directory segments", value), "path_traversal")
+	}
+}
+
+func ValidToolPermission(permission string) bool {
+	switch strings.TrimSpace(permission) {
+	case "", "read-only", "workspace-write", "danger-full-access":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsParentPathSegment(value string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(value), "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func isKebabCase(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	lastHyphen := false
+	for index, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			lastHyphen = false
+		case r >= '0' && r <= '9':
+			lastHyphen = false
+		case r == '-' && index > 0 && !lastHyphen:
+			lastHyphen = true
+		default:
+			return false
+		}
+	}
+	return !lastHyphen
+}
+
+func pluginManifestSource(source string) (string, string, error) {
+	dir, err := sourceDir(source)
+	if err != nil {
+		path := source
+		if strings.TrimSpace(path) != "" {
+			if abs, absErr := filepath.Abs(path); absErr == nil {
+				path = abs
+			}
+		}
+		return "", path, err
+	}
+	return dir, filepath.Join(dir, "plugin.json"), nil
 }
 
 func FetchMarketplace(ctx context.Context, indexURL, publicKey string) (MarketplaceIndex, error) {
@@ -523,9 +742,21 @@ func Install(workspace, source string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	manifest, err := LoadManifest(sourceDir)
+	validation, err := Validate(sourceDir)
 	if err != nil {
 		return Manifest{}, err
+	}
+	if !validation.Success {
+		return Manifest{}, validationFailure(validation)
+	}
+	manifest := Manifest{}
+	if validation.Manifest != nil {
+		manifest = *validation.Manifest
+	} else {
+		manifest, err = LoadManifest(sourceDir)
+		if err != nil {
+			return Manifest{}, err
+		}
 	}
 	if err := validateID(manifest.ID); err != nil {
 		return Manifest{}, err
@@ -540,6 +771,17 @@ func Install(workspace, source string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	return LoadManifest(target)
+}
+
+func validationFailure(result ValidationResult) error {
+	if len(result.Errors) == 0 {
+		return errors.New("plugin validation failed")
+	}
+	first := result.Errors[0]
+	if first.Path == "" {
+		return fmt.Errorf("plugin validation failed: %s", first.Message)
+	}
+	return fmt.Errorf("plugin validation failed: %s: %s", first.Path, first.Message)
 }
 
 func Enable(workspace, id string) (Manifest, error) {

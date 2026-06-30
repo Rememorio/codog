@@ -75,6 +75,88 @@ func TestInstallRejectsUnsafePluginID(t *testing.T) {
 	require.Contains(t, err.Error(), "single path component")
 }
 
+func TestInstallRejectsInvalidPluginManifest(t *testing.T) {
+	workspace := t.TempDir()
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":"demo","tools":[{"name":"demo_tool","command":"cat","permission":"root"}]}`), 0o644))
+
+	_, err := Install(workspace, source)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "plugin validation failed")
+	require.Contains(t, err.Error(), "permission")
+	require.NoDirExists(t, filepath.Join(workspace, ".codog", "plugins", "demo"))
+}
+
+func TestValidatePluginManifestAcceptsDirectoryAndFile(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	manifestPath := filepath.Join(source, "plugin.json")
+	require.NoError(t, os.WriteFile(manifestPath, []byte(`{"id":"demo","name":"demo","version":"1.0.0","description":"Demo","tools":[{"name":"demo_tool","command":"echo","permission":"read-only"}]}`), 0o644))
+
+	result, err := Validate(source)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+	require.Equal(t, manifestPath, result.FilePath)
+	require.NotNil(t, result.Manifest)
+	require.Equal(t, "demo", result.Manifest.ID)
+
+	result, err = Validate(manifestPath)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Equal(t, manifestPath, result.FilePath)
+}
+
+func TestValidatePluginManifestReportsWarningsAndErrors(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{
+		"id":"demo",
+		"name":"Demo Plugin",
+		"source":"./plugins/demo",
+		"tools":[
+			{"name":"demo_tool","command":"echo","permission":"root"},
+			{"name":"demo_tool","command":"echo"}
+		],
+		"commands":["../bad.md"],
+		"hooks":["hooks/hook.json"]
+	}`), 0o644))
+
+	result, err := Validate(source)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	requireValidationCode(t, result.Errors, "invalid_tool_permission")
+	requireValidationCode(t, result.Errors, "duplicate_tool_name")
+	requireValidationCode(t, result.Errors, "path_traversal")
+	requireValidationCode(t, result.Warnings, "missing_version")
+	requireValidationCode(t, result.Warnings, "missing_description")
+	requireValidationCode(t, result.Warnings, "marketplace_only_field")
+	requireValidationCode(t, result.Warnings, "non_kebab_name")
+}
+
+func TestValidatePluginManifestInvalidJSON(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "plugin.json"), []byte(`{"id":`), 0o644))
+
+	result, err := Validate(source)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	requireValidationCode(t, result.Errors, "invalid_json")
+}
+
+func requireValidationCode(t *testing.T, messages []ValidationMessage, code string) {
+	t.Helper()
+	for _, message := range messages {
+		if message.Code == code {
+			return
+		}
+	}
+	require.Failf(t, "missing validation message", "code %q not found in %#v", code, messages)
+}
+
 func TestFetchMarketplaceVerifiesSignature(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)

@@ -292,9 +292,10 @@ Claude Code source.
 - `codog agents list|run|worktrees` lists `.codog/agents/*.json` definitions,
   launches named background workers, and can isolate them in git worktrees with
   `agents run --worktree`.
-- `codog marketplace list|remote|updates|install|install-remote|update|enable|disable|remove`
-  manages local plugins, checks marketplace updates, and can install or update
-  SHA-256 verified zip bundles from signed remote marketplace indexes.
+- `codog marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove`
+  manages and validates local plugins, checks marketplace updates, and can
+  install or update SHA-256 verified zip bundles from signed remote marketplace
+  indexes.
 - `codog reload-plugins` and `/reload-plugins` rebuild the current process
   tool registry from installed local plugins after install, update, enable, or
   disable operations.
