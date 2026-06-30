@@ -28,6 +28,16 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, grepChunks.OK)
 	require.Equal(t, 1, grepChunks.ToolCalls)
 	require.Contains(t, grepChunks.Output, "grep chunk harness ok")
+
+	bashApproved := findScenario(t, report, "bash_permission_prompt_approved")
+	require.True(t, bashApproved.OK)
+	require.Equal(t, 1, bashApproved.ToolCalls)
+	require.Contains(t, bashApproved.Output, "bash approved harness ok")
+
+	bashDenied := findScenario(t, report, "bash_permission_prompt_denied")
+	require.True(t, bashDenied.OK)
+	require.Equal(t, 1, bashDenied.ToolCalls)
+	require.Contains(t, bashDenied.Output, "bash denied harness ok")
 }
 
 func findScenario(t *testing.T, report Report, name string) ScenarioReport {

@@ -206,6 +206,58 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		{
+			name:       "bash_permission_prompt_approved",
+			permission: tools.PermissionWorkspace,
+			promptIn:   "y\n",
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "bash",
+					Input: json.RawMessage(`{"command":"printf approved-bash","timeout":1000}`),
+				}}},
+				{Text: "bash approved harness ok"},
+			},
+			prompt: "approve bash",
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "bash approved harness ok") {
+					return fmt.Errorf("missing approved bash final response")
+				}
+				if err := expectToolCalls(result, 1, false); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "approved-bash") {
+					return fmt.Errorf("missing approved bash stdout in tool output")
+				}
+				return nil
+			},
+		},
+		{
+			name:       "bash_permission_prompt_denied",
+			permission: tools.PermissionWorkspace,
+			promptIn:   "n\n",
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "bash",
+					Input: json.RawMessage(`{"command":"printf denied-bash","timeout":1000}`),
+				}}},
+				{Text: "bash denied harness ok"},
+			},
+			prompt: "deny bash",
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "bash denied harness ok") {
+					return fmt.Errorf("missing denied bash final response")
+				}
+				if err := expectToolCalls(result, 1, true); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "permission denied") {
+					return fmt.Errorf("missing permission denial in tool output")
+				}
+				return nil
+			},
+		},
 	}
 
 	report := Report{Total: len(scenarios)}
