@@ -129,6 +129,9 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 		"fast_mode": true,
 		"voice_enabled": true,
 		"voice_command": "cat",
+		"future": {
+			"chrome_default_enabled": true
+		},
 		"privacy_settings": {
 			"telemetry_enabled": true,
 			"crash_reports_enabled": false,
@@ -146,6 +149,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.NotNil(t, cfg.VoiceEnabled)
 	require.True(t, *cfg.VoiceEnabled)
 	require.Equal(t, "cat", cfg.VoiceCommand)
+	require.NotNil(t, cfg.Future.ChromeDefaultEnabled)
+	require.True(t, *cfg.Future.ChromeDefaultEnabled)
 	require.NotNil(t, cfg.Privacy.TelemetryEnabled)
 	require.True(t, *cfg.Privacy.TelemetryEnabled)
 	require.NotNil(t, cfg.Privacy.CrashReportsEnabled)

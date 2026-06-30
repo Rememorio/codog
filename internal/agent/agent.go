@@ -271,6 +271,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Fast(rest)
 	case "voice":
 		return app.Voice(rest)
+	case "chrome":
+		return app.Chrome(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
 	case "keybindings":
@@ -5402,6 +5404,215 @@ func renderVoiceReport(out io.Writer, report voiceReport) {
 	}
 }
 
+const (
+	chromeExtensionURL   = "https://claude.ai/chrome"
+	chromePermissionsURL = "https://clau.de/chrome/permissions"
+	chromeReconnectURL   = "https://clau.de/chrome/reconnect"
+	chromeMCPServerName  = "claude-in-chrome"
+)
+
+type chromeRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+}
+
+type chromeReport struct {
+	Kind           string `json:"kind"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	Enabled        bool   `json:"enabled"`
+	Previous       bool   `json:"previous,omitempty"`
+	Configured     bool   `json:"configured"`
+	MCPServer      string `json:"mcp_server"`
+	InstallURL     string `json:"install_url"`
+	PermissionsURL string `json:"permissions_url"`
+	ReconnectURL   string `json:"reconnect_url"`
+	RecommendedURL string `json:"recommended_url,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Message        string `json:"message,omitempty"`
+}
+
+func (a *App) Chrome(args []string) error {
+	req, err := parseChromeArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := boolPtrEnabled(a.Config.Future.ChromeDefaultEnabled)
+	report := chromeReport{
+		Kind:           "chrome",
+		Action:         req.Action,
+		Status:         "ok",
+		Enabled:        previous,
+		Configured:     a.Config.Future.ChromeDefaultEnabled != nil,
+		MCPServer:      chromeMCPServerName,
+		InstallURL:     chromeExtensionURL,
+		PermissionsURL: chromePermissionsURL,
+		ReconnectURL:   chromeReconnectURL,
+		RecommendedURL: chromeRecommendedURL(req.Action),
+		Message:        chromeActionMessage(req.Action),
+	}
+	switch req.Action {
+	case "status", "install", "permissions", "reconnect":
+	case "on", "off", "toggle":
+		next := req.Action == "on"
+		if req.Action == "toggle" {
+			next = !previous
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.chrome_default_enabled", next); err != nil {
+			return err
+		}
+		a.Config.Future.ChromeDefaultEnabled = &next
+		report.Action = "set"
+		report.Enabled = next
+		report.Previous = previous
+		report.Configured = true
+		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "future.chrome_default_enabled"); err != nil {
+			return err
+		}
+		a.Config.Future.ChromeDefaultEnabled = nil
+		report.Enabled = false
+		report.Previous = previous
+		report.Configured = false
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown chrome command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderChromeReport(a.Out, report)
+	return nil
+}
+
+func parseChromeArgs(args []string) (chromeRequest, error) {
+	req := chromeRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("chrome output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("chrome target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("chrome config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown chrome flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "chrome"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "true":
+		req.Action = "on"
+	case "off", "disable", "disabled", "false":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+	case "install", "extension":
+		req.Action = "install"
+	case "permissions", "manage-permissions":
+		req.Action = "permissions"
+	case "reconnect", "connect":
+		req.Action = "reconnect"
+	default:
+		return req, fmt.Errorf("unknown chrome command %q", rest[0])
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected chrome argument %q", rest[1])
+	}
+	return req, nil
+}
+
+func chromeRecommendedURL(action string) string {
+	switch action {
+	case "install":
+		return chromeExtensionURL
+	case "permissions":
+		return chromePermissionsURL
+	case "reconnect":
+		return chromeReconnectURL
+	default:
+		return ""
+	}
+}
+
+func chromeActionMessage(action string) string {
+	switch action {
+	case "install":
+		return "Open the install URL in Chrome, then reconnect the extension."
+	case "permissions":
+		return "Open the permissions URL to manage site-level browser access."
+	case "reconnect":
+		return "Open the reconnect URL after installing or updating the Chrome extension."
+	default:
+		return "Chrome integration uses the claude-in-chrome MCP server when the extension is connected."
+	}
+}
+
+func renderChromeReport(out io.Writer, report chromeReport) {
+	fmt.Fprintln(out, "Chrome")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Configured       %t\n", report.Configured)
+	fmt.Fprintf(out, "  MCP server       %s\n", report.MCPServer)
+	fmt.Fprintf(out, "  Install URL      %s\n", report.InstallURL)
+	fmt.Fprintf(out, "  Permissions URL  %s\n", report.PermissionsURL)
+	fmt.Fprintf(out, "  Reconnect URL    %s\n", report.ReconnectURL)
+	if report.RecommendedURL != "" {
+		fmt.Fprintf(out, "  Recommended URL  %s\n", report.RecommendedURL)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func boolPtrEnabled(value *bool) bool {
 	return value != nil && *value
 }
@@ -9876,6 +10087,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Voice(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/chrome":
+		if err := a.Chrome(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/privacy-settings":
 		if err := a.PrivacySettings(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -13693,6 +13908,7 @@ Usage:
   %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] voice [status|set-command|on|off|toggle|clear] [--command COMMAND] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [show|path|init] [--force] [--json|--output-format text|json]
   %s [flags] cost --resume latest
@@ -13754,8 +13970,8 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
-`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+`, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe, exe)
 }
 
 func redact(value string) string {

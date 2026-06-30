@@ -79,6 +79,7 @@ type FutureConfig struct {
 	EditorBridgeSocket        string            `json:"editor_bridge_socket,omitempty"`
 	EditorBridgeToken         string            `json:"editor_bridge_token,omitempty"`
 	BackgroundStatePath       string            `json:"background_state_path,omitempty"`
+	ChromeDefaultEnabled      *bool             `json:"chrome_default_enabled,omitempty"`
 }
 
 type PermissionRules struct {
@@ -575,7 +576,8 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.UpdaterManifestURL != "" ||
 		cfg.EditorBridgeSocket != "" ||
 		cfg.EditorBridgeToken != "" ||
-		cfg.BackgroundStatePath != ""
+		cfg.BackgroundStatePath != "" ||
+		cfg.ChromeDefaultEnabled != nil
 }
 
 func permissionRulesSet(rules PermissionRules) bool {
@@ -764,6 +766,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value, ok := parseBoolEnv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED"); ok {
 		cfg.Privacy.PromptHistoryEnabled = &value
+	}
+	if value, ok := parseBoolEnv("CODOG_CHROME_DEFAULT_ENABLED"); ok {
+		cfg.Future.ChromeDefaultEnabled = &value
 	}
 	if value := os.Getenv("CODOG_CONFIG_HOME"); value != "" {
 		cfg.ConfigHome = expandHome(value)

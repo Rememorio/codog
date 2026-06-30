@@ -62,7 +62,7 @@ Claude Code source.
 - REPL slash commands: `/help`, `/status`, `/statusline`, `/config`, `/model`,
   `/max-tokens`, `/max-turns`, `/permissions`, `/allowed-tools`, `/history`,
   `/todos`, `/clear`, `/resume`, `/rename`, `/rewind`, `/share`, `/version`, `/btw`, `/sandbox`, `/sandbox-toggle`, `/heapdump`, `/project`, `/env`, `/files`, `/search`,
-  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
+  `/security-review`, `/bughunter`, `/review`, `/feedback`, `/pr`, `/pr-comments`, `/issue`, `/context`, `/focus`, `/unfocus`, `/add-dir`, `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, `/privacy-settings`, `/keybindings`, `/cost`, `/usage`, `/rate-limit-options`, `/plan`, `/exit-plan`, `/tokens`, `/compact`, `/system-prompt`, `/tool-details`, `/debug-tool-call`,
   `/run`, `/test`, `/build`, `/lint`, `/symbols`, `/diagnostics`, `/map`,
   `/references`, `/definition`, `/hover`, `/teleport`, `/completion`,
   `/format`, `/branch`, `/tag`, `/release-notes`, `/templates`, `/commands`, `/output-style`, `/skills`, `/hooks`, `/mcp`, `/brief`, `/terminal-setup`, `/remote-env`, `/remote-setup`, `/desktop`, `/mobile`, `/ide`, `/agents`, `/tasks`, `/background`, `/plugin`, `/plugins`, `/marketplace`, `/providers`, `/login`, `/logout`, `/copy`, `/stats`.
@@ -144,10 +144,11 @@ Claude Code source.
 - `codog model`, `codog max-tokens`, `codog max-turns`,
   `codog permissions`, and `codog allowed-tools` expose the matching runtime
   slash controls as scriptable CLI commands.
-- `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, and `/privacy-settings`
+- `/theme`, `/color`, `/vim`, `/effort`, `/fast`, `/voice`, `/chrome`, and `/privacy-settings`
   persist local interface, reasoning, runtime, and privacy preferences such as
   terminal theme, vim keybinding mode, reasoning effort, fast mode, external
-  voice command enablement, and prompt history recording.
+  voice command enablement, Chrome integration defaults, and prompt history
+  recording.
 - `/keybindings` and `codog keybindings [show|path|init]` show the active editor
   mode plus REPL, TUI, vim, and slash-command shortcuts, and can create a
   `keybindings.json` template under the Codog config directory.
