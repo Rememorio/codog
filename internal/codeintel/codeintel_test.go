@@ -130,6 +130,15 @@ func TestEditNotebookCell(t *testing.T) {
 	_, err = EditNotebook(path, NotebookEditOptions{Index: 10, Mode: "replace", CellType: "markdown", Source: "missing"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cell index out of range")
+
+	read, err := ReadNotebook(path, NotebookReadOptions{Limit: 1})
+	require.NoError(t, err)
+	require.Equal(t, "notebook_read", read.Kind)
+	require.Equal(t, "python", read.Language)
+	require.Equal(t, 1, read.CellCount)
+	require.Len(t, read.Cells, 1)
+	require.Equal(t, "cell-2", read.Cells[0].CellID)
+	require.Equal(t, "print('hello')\n", read.Cells[0].Source)
 }
 
 func TestParseGoTestJSONDiagnostics(t *testing.T) {

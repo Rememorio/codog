@@ -584,6 +584,31 @@ type NotebookCell struct {
 	Source   []string `json:"source"`
 }
 
+type NotebookReadOptions struct {
+	CellIndex      *int
+	Limit          int
+	IncludeOutputs bool
+}
+
+type NotebookReadCell struct {
+	Index          int    `json:"index"`
+	CellID         string `json:"cell_id,omitempty"`
+	CellType       string `json:"cell_type"`
+	Source         string `json:"source"`
+	ExecutionCount any    `json:"execution_count,omitempty"`
+	OutputCount    int    `json:"output_count,omitempty"`
+	Outputs        any    `json:"outputs,omitempty"`
+}
+
+type NotebookReadResult struct {
+	Kind      string             `json:"kind"`
+	Path      string             `json:"path"`
+	Language  string             `json:"language,omitempty"`
+	CellCount int                `json:"cell_count"`
+	Cells     []NotebookReadCell `json:"cells"`
+	Truncated bool               `json:"truncated"`
+}
+
 type NotebookEditOptions struct {
 	Index    int
 	CellType string
@@ -605,6 +630,67 @@ type NotebookEditResult struct {
 func EditNotebookCell(path string, index int, cellType string, source string) error {
 	_, err := EditNotebook(path, NotebookEditOptions{Index: index, CellType: cellType, Source: source, Mode: "replace"})
 	return err
+}
+
+func ReadNotebook(path string, options NotebookReadOptions) (NotebookReadResult, error) {
+	if options.CellIndex != nil && *options.CellIndex < 0 {
+		return NotebookReadResult{}, errors.New("cell index must be non-negative")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return NotebookReadResult{}, err
+	}
+	var notebook map[string]any
+	if err := json.Unmarshal(data, &notebook); err != nil {
+		return NotebookReadResult{}, err
+	}
+	cells, err := notebookCells(notebook)
+	if err != nil {
+		return NotebookReadResult{}, err
+	}
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	start, end := 0, len(cells)
+	if options.CellIndex != nil {
+		if *options.CellIndex >= len(cells) {
+			return NotebookReadResult{}, errors.New("cell index out of range")
+		}
+		start = *options.CellIndex
+		end = start + 1
+	}
+	outCells := make([]NotebookReadCell, 0, min(end-start, limit))
+	truncated := false
+	for index := start; index < end; index++ {
+		if len(outCells) >= limit {
+			truncated = true
+			break
+		}
+		cell := cells[index]
+		entry := NotebookReadCell{
+			Index:          index,
+			CellID:         notebookCellID(cell),
+			CellType:       notebookStringValue(cell["cell_type"]),
+			Source:         notebookSourceText(cell["source"]),
+			ExecutionCount: cell["execution_count"],
+		}
+		if outputs, ok := cell["outputs"].([]any); ok {
+			entry.OutputCount = len(outputs)
+			if options.IncludeOutputs {
+				entry.Outputs = outputs
+			}
+		}
+		outCells = append(outCells, entry)
+	}
+	return NotebookReadResult{
+		Kind:      "notebook_read",
+		Path:      path,
+		Language:  notebookLanguage(notebook),
+		CellCount: len(cells),
+		Cells:     outCells,
+		Truncated: truncated,
+	}, nil
 }
 
 func ResolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode string) (int, error) {
@@ -856,6 +942,28 @@ func makeNotebookCellIDForIndex(cells []map[string]any, index int) string {
 			return id
 		}
 	}
+}
+
+func notebookSourceText(value any) string {
+	switch source := value.(type) {
+	case string:
+		return source
+	case []any:
+		var builder strings.Builder
+		for _, line := range source {
+			builder.WriteString(notebookStringValue(line))
+		}
+		return builder.String()
+	default:
+		return ""
+	}
+}
+
+func notebookStringValue(value any) string {
+	if text, ok := value.(string); ok {
+		return text
+	}
+	return ""
 }
 
 func mapsToAny(cells []map[string]any) []any {

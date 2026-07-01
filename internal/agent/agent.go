@@ -22584,6 +22584,38 @@ func (a *App) CodeIntel(args []string) error {
 	if args[0] == "lsp" {
 		return a.CodeIntelLSP(args[1:])
 	}
+	if args[0] == "notebook-read" || args[0] == "notebook" {
+		req, err := parseCodeIntelNotebookReadArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		path, err := a.resolveCodeIntelNotebookPath(req.NotebookPath)
+		if err != nil {
+			return err
+		}
+		result, err := codeintel.ReadNotebook(path, codeintel.NotebookReadOptions{
+			CellIndex:      req.CellIndex,
+			Limit:          req.Limit,
+			IncludeOutputs: req.IncludeOutputs,
+		})
+		if err != nil {
+			return err
+		}
+		result.Path = displayCodeIntelNotebookPath(a.Workspace, result.Path)
+		report := codeIntelNotebookReadReport{
+			Kind:   "notebook_read",
+			Action: "read",
+			Status: "ok",
+			Result: result,
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderCodeIntelNotebookRead(a.Out, report)
+		return nil
+	}
 	if args[0] == "notebook-edit" {
 		req, err := parseCodeIntelNotebookEditArgs(args[1:])
 		if err != nil {
@@ -22624,6 +22656,21 @@ func (a *App) CodeIntel(args []string) error {
 	return fmt.Errorf("unknown code-intel command %q", args[0])
 }
 
+type codeIntelNotebookReadRequest struct {
+	Format         string
+	NotebookPath   string
+	CellIndex      *int
+	Limit          int
+	IncludeOutputs bool
+}
+
+type codeIntelNotebookReadReport struct {
+	Kind   string                       `json:"kind"`
+	Action string                       `json:"action"`
+	Status string                       `json:"status"`
+	Result codeintel.NotebookReadResult `json:"result"`
+}
+
 type codeIntelNotebookEditRequest struct {
 	Format       string
 	NotebookPath string
@@ -22640,6 +22687,81 @@ type codeIntelNotebookEditReport struct {
 	Action string                       `json:"action"`
 	Status string                       `json:"status"`
 	Result codeintel.NotebookEditResult `json:"result"`
+}
+
+func parseCodeIntelNotebookReadArgs(args []string) (codeIntelNotebookReadRequest, error) {
+	format, rest, err := parseCodeIntelOutputArgs("notebook-read", args)
+	if err != nil {
+		return codeIntelNotebookReadRequest{}, err
+	}
+	req := codeIntelNotebookReadRequest{Format: format, Limit: 100}
+	positionals := []string{}
+	for index := 0; index < len(rest); index++ {
+		arg := rest[index]
+		switch {
+		case arg == "--cell-index" || arg == "--index":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-read cell index is required")
+			}
+			parsed, err := parseNonNegativeInt(rest[index], "notebook-read cell index")
+			if err != nil {
+				return req, err
+			}
+			req.CellIndex = &parsed
+		case strings.HasPrefix(arg, "--cell-index="):
+			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--cell-index="), "notebook-read cell index")
+			if err != nil {
+				return req, err
+			}
+			req.CellIndex = &parsed
+		case strings.HasPrefix(arg, "--index="):
+			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--index="), "notebook-read cell index")
+			if err != nil {
+				return req, err
+			}
+			req.CellIndex = &parsed
+		case arg == "--limit":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-read limit is required")
+			}
+			parsed, err := parsePositiveInt(rest[index], "notebook-read limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = parsed
+		case strings.HasPrefix(arg, "--limit="):
+			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "notebook-read limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = parsed
+		case arg == "--include-outputs" || arg == "--outputs":
+			req.IncludeOutputs = true
+		case arg == "--no-outputs":
+			req.IncludeOutputs = false
+		case strings.HasPrefix(arg, "--include-outputs="):
+			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--include-outputs="))
+			if err != nil {
+				return req, fmt.Errorf("notebook-read include outputs must be a boolean")
+			}
+			req.IncludeOutputs = parsed
+		case strings.HasPrefix(arg, "--outputs="):
+			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--outputs="))
+			if err != nil {
+				return req, fmt.Errorf("notebook-read outputs must be a boolean")
+			}
+			req.IncludeOutputs = parsed
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) != 1 {
+		return req, errors.New("usage: codog code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json]")
+	}
+	req.NotebookPath = positionals[0]
+	return req, nil
 }
 
 func parseCodeIntelNotebookEditArgs(args []string) (codeIntelNotebookEditRequest, error) {
@@ -22810,6 +22932,9 @@ func (a *App) resolveCodeIntelNotebookPath(path string) (string, error) {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("notebook path escapes workspace: %s", path)
 	}
+	if !strings.HasSuffix(strings.ToLower(absPath), ".ipynb") {
+		return "", errors.New("notebook path must point to a .ipynb file")
+	}
 	return filepath.Clean(absPath), nil
 }
 
@@ -22823,6 +22948,38 @@ func displayCodeIntelNotebookPath(workspace string, path string) string {
 		return path
 	}
 	return filepath.ToSlash(rel)
+}
+
+func renderCodeIntelNotebookRead(out io.Writer, report codeIntelNotebookReadReport) {
+	result := report.Result
+	fmt.Fprintln(out, "Notebook Read")
+	fmt.Fprintf(out, "  Path             %s\n", result.Path)
+	if result.Language != "" {
+		fmt.Fprintf(out, "  Language         %s\n", result.Language)
+	}
+	fmt.Fprintf(out, "  Cell count       %d\n", result.CellCount)
+	fmt.Fprintf(out, "  Returned         %d\n", len(result.Cells))
+	fmt.Fprintf(out, "  Truncated        %t\n", result.Truncated)
+	for _, cell := range result.Cells {
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "Cell %d", cell.Index)
+		if cell.CellID != "" {
+			fmt.Fprintf(out, " (%s)", cell.CellID)
+		}
+		if cell.CellType != "" {
+			fmt.Fprintf(out, " [%s]", cell.CellType)
+		}
+		fmt.Fprintln(out)
+		if cell.OutputCount > 0 {
+			fmt.Fprintf(out, "Outputs           %d\n", cell.OutputCount)
+		}
+		if strings.TrimSpace(cell.Source) != "" {
+			fmt.Fprint(out, cell.Source)
+			if !strings.HasSuffix(cell.Source, "\n") {
+				fmt.Fprintln(out)
+			}
+		}
+	}
 }
 
 func renderCodeIntelNotebookEdit(out io.Writer, report codeIntelNotebookEditReport) {
@@ -35748,8 +35905,9 @@ Usage:
   %s plugin|plugins|marketplace list|show|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
-  %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-edit|lsp
+  %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
+  %s code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json|--output-format text|json]
   %s code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback

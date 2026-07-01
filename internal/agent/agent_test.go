@@ -6128,6 +6128,12 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
   "metadata": {"kernelspec":{"language":"python"}}
 }`
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "analysis.ipynb"), []byte(notebook), 0o644))
+	require.NoError(t, app.CodeIntel([]string{"notebook-read", "analysis.ipynb", "--include-outputs", "--json"}))
+	require.Contains(t, out.String(), `"kind": "notebook_read"`)
+	require.Contains(t, out.String(), `"cell_id": "cell-a"`)
+	require.Contains(t, out.String(), `"language": "python"`)
+	out.Reset()
+
 	require.NoError(t, app.CodeIntel([]string{"notebook-edit", "analysis.ipynb", "--cell-id", "cell-a", "--source", "print(2)\n", "--json"}))
 	require.Contains(t, out.String(), `"kind": "notebook_edit"`)
 	require.Contains(t, out.String(), `"cell_id": "cell-a"`)
@@ -6143,6 +6149,12 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Cell type        markdown")
 	out.Reset()
 
+	require.NoError(t, app.CodeIntel([]string{"notebook-read", "analysis.ipynb", "--cell-index", "1", "--limit", "1"}))
+	require.Contains(t, out.String(), "Notebook Read")
+	require.Contains(t, out.String(), "Cell 1")
+	require.Contains(t, out.String(), "# Notes")
+	out.Reset()
+
 	require.NoError(t, app.CodeIntel([]string{"notebook-edit", "analysis.ipynb", "0", "markdown", "Legacy title"}))
 	require.Contains(t, out.String(), "Notebook Edit")
 	data, err = os.ReadFile(filepath.Join(workspace, "analysis.ipynb"))
@@ -6153,6 +6165,10 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	_, err = parseCodeIntelNotebookEditArgs([]string{"analysis.ipynb", "--mode", "insert"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "new_source is required")
+
+	_, err = parseCodeIntelNotebookReadArgs([]string{"analysis.ipynb", "--limit", "0"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "positive integer")
 }
 
 func TestMemoryCommandAndSlash(t *testing.T) {

@@ -4445,15 +4445,6 @@ type NotebookReadTool struct {
 	AdditionalDirs []string
 }
 
-type notebookReadCell struct {
-	Index          int    `json:"index"`
-	CellType       string `json:"cell_type"`
-	Source         string `json:"source"`
-	ExecutionCount any    `json:"execution_count,omitempty"`
-	OutputCount    int    `json:"output_count,omitempty"`
-	Outputs        any    `json:"outputs,omitempty"`
-}
-
 func (NotebookReadTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "notebook_read",
@@ -4491,84 +4482,16 @@ func (t NotebookReadTool) Execute(_ context.Context, input json.RawMessage) (str
 	if !strings.HasSuffix(strings.ToLower(path), ".ipynb") {
 		return "", errors.New("notebook_path must point to a .ipynb file")
 	}
-	data, err := os.ReadFile(path)
+	result, err := codeintel.ReadNotebook(path, codeintel.NotebookReadOptions{
+		CellIndex:      payload.CellIndex,
+		Limit:          payload.Limit,
+		IncludeOutputs: payload.IncludeOutputs,
+	})
 	if err != nil {
 		return "", err
 	}
-	var notebook map[string]any
-	if err := json.Unmarshal(data, &notebook); err != nil {
-		return "", err
-	}
-	rawCells, ok := notebook["cells"].([]any)
-	if !ok {
-		return "", errors.New("notebook cells array not found")
-	}
-	limit := payload.Limit
-	if limit <= 0 {
-		limit = 100
-	}
-	start, end := 0, len(rawCells)
-	if payload.CellIndex != nil {
-		if *payload.CellIndex < 0 || *payload.CellIndex >= len(rawCells) {
-			return "", errors.New("cell index out of range")
-		}
-		start = *payload.CellIndex
-		end = start + 1
-	}
-	cells := make([]notebookReadCell, 0, min(end-start, limit))
-	truncated := false
-	for index := start; index < end; index++ {
-		if len(cells) >= limit {
-			truncated = true
-			break
-		}
-		cell, ok := rawCells[index].(map[string]any)
-		if !ok {
-			return "", errors.New("notebook cell is not an object")
-		}
-		entry := notebookReadCell{
-			Index:          index,
-			CellType:       stringValue(cell["cell_type"]),
-			Source:         notebookSourceText(cell["source"]),
-			ExecutionCount: cell["execution_count"],
-		}
-		if outputs, ok := cell["outputs"].([]any); ok {
-			entry.OutputCount = len(outputs)
-			if payload.IncludeOutputs {
-				entry.Outputs = outputs
-			}
-		}
-		cells = append(cells, entry)
-	}
-	return pretty(map[string]any{
-		"kind":       "notebook_read",
-		"path":       displayPath(t.Workspace, path),
-		"cell_count": len(rawCells),
-		"cells":      cells,
-		"truncated":  truncated,
-	}), nil
-}
-
-func notebookSourceText(value any) string {
-	switch source := value.(type) {
-	case string:
-		return source
-	case []any:
-		var builder strings.Builder
-		for _, line := range source {
-			builder.WriteString(stringValue(line))
-		}
-		return builder.String()
-	default:
-		return ""
-	}
-}
-
-func stringValue(value any) string {
-	if text, ok := value.(string); ok {
-		return text
-	}
-	return ""
+	result.Path = displayPath(t.Workspace, path)
+	return pretty(result), nil
 }
 
 type NotebookEditTool struct {
