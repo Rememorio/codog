@@ -694,7 +694,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 77)
+	require.Len(t, infos, 78)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -748,7 +748,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("cron_list")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
-	for _, name := range []string{"recovery_recipe", "recovery_attempt", "recovery_status"} {
+	for _, name := range []string{"policy_evaluate", "recovery_recipe", "recovery_attempt", "recovery_status"} {
 		info, ok = registry.Info(name)
 		require.True(t, ok)
 		require.Equal(t, PermissionReadOnly, info.Permission)
@@ -1009,6 +1009,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"BranchFreshness":              "branch_freshness",
 		"BranchFreshnessTool":          "branch_freshness",
 		"GitStatusTool":                "git_status",
+		"PolicyEvaluate":               "policy_evaluate",
+		"PolicyEvaluateTool":           "policy_evaluate",
 		"GlobTool":                     "glob",
 		"GlobSearch":                   "glob",
 		"GlobSearchTool":               "glob",
@@ -2219,6 +2221,28 @@ func TestRecoveryAttemptToolRecordsFailedStep(t *testing.T) {
 	require.Contains(t, out, `"kind": "restart_plugin"`)
 	require.Contains(t, out, `"kind": "retry_mcp_handshake"`)
 	require.Contains(t, out, `"last_failure_summary": "mcp still unhealthy"`)
+}
+
+func TestPolicyEvaluateToolReturnsActions(t *testing.T) {
+	out, err := PolicyEvaluateTool{}.Execute(context.Background(), []byte(`{
+		"lane_id":"lane-7",
+		"green_level":3,
+		"green_contract_satisfied":true,
+		"review_status":"approved",
+		"diff_scope":"scoped",
+		"branch_status":"stale",
+		"branch_behind":2,
+		"verification_blocked":true,
+		"completed":true
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "policy_evaluation"`)
+	require.Contains(t, out, `"kind": "merge_forward"`)
+	require.Contains(t, out, `"kind": "closeout_lane"`)
+	require.Contains(t, out, `"kind": "cleanup_session"`)
+	require.Contains(t, out, `"rule_id": "stale-branch-merge-forward"`)
+	require.Contains(t, out, `"rule_id": "lane-completed-closeout"`)
+	require.NotContains(t, out, `"kind": "merge_to_dev"`)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

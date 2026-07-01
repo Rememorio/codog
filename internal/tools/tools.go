@@ -37,6 +37,7 @@ import (
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
+	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/recovery"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
@@ -194,6 +195,8 @@ var claudeToolAliases = map[string]string{
 	"notebookreadtool":             "notebook_read",
 	"powershell":                   "powershell",
 	"powershelltool":               "powershell",
+	"policyevaluate":               "policy_evaluate",
+	"policyevaluatetool":           "policy_evaluate",
 	"read":                         "read_file",
 	"readfile":                     "read_file",
 	"readtool":                     "read_file",
@@ -354,6 +357,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"NotebookReadTool":             "notebook_read",
 	"PowerShell":                   "powershell",
 	"PowerShellTool":               "powershell",
+	"PolicyEvaluate":               "policy_evaluate",
+	"PolicyEvaluateTool":           "policy_evaluate",
 	"Read":                         "read_file",
 	"ReadMcpResource":              "read_mcp_resource",
 	"ReadMcpResourceTool":          "read_mcp_resource",
@@ -538,6 +543,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(CronCreateTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronListTool{ConfigHome: opts.ConfigHome})
+	r.Register(PolicyEvaluateTool{})
 	r.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1441,6 +1447,46 @@ func (t GetMCPPromptTool) Execute(ctx context.Context, input json.RawMessage) (s
 		return "", errors.New(result.Error)
 	}
 	return pretty(result), nil
+}
+
+type PolicyEvaluateTool struct{}
+
+func (PolicyEvaluateTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "policy_evaluate",
+		Description: "Evaluate Codog automation policy for a lane context and return structured next actions.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"lane_id":                  map[string]any{"type": "string"},
+				"green_level":              map[string]any{"type": "integer", "minimum": 0},
+				"green_contract_satisfied": map[string]any{"type": "boolean"},
+				"branch_status":            map[string]any{"type": "string"},
+				"branch_behind":            map[string]any{"type": "integer", "minimum": 0},
+				"verification_blocked":     map[string]any{"type": "boolean"},
+				"blocker":                  map[string]any{"type": "string"},
+				"review_status":            map[string]any{"type": "string"},
+				"diff_scope":               map[string]any{"type": "string"},
+				"completed":                map[string]any{"type": "boolean"},
+				"retry_count":              map[string]any{"type": "integer", "minimum": 0},
+				"retry_limit":              map[string]any{"type": "integer", "minimum": 0},
+			},
+		},
+	}
+}
+
+func (PolicyEvaluateTool) Permission() Permission { return PermissionReadOnly }
+
+func (PolicyEvaluateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var ctx policyengine.LaneContext
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &ctx); err != nil {
+			return "", err
+		}
+	}
+	evaluation := policyengine.DefaultEngine().Evaluate(ctx)
+	return pretty(evaluation), nil
 }
 
 func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {

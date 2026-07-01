@@ -17953,6 +17953,7 @@ func codogCapabilityFeatures() []string {
 		"one_shot_prompt",
 		"openai_compatible_streaming",
 		"permission_confirmation",
+		"policy_engine",
 		"plugin_marketplace",
 		"prompt_cache_stats",
 		"project_memory",
