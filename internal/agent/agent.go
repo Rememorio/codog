@@ -181,6 +181,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if command == "providers" {
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
+			if config.IsFileError(err) {
+				return renderProvidersWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+			}
 			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 		}
 		applyStoredOAuthToken(&cfg, time.Now().UTC())
@@ -250,6 +253,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		if config.IsFileError(err) && isPluginsCommand(command) {
 			return renderPluginsWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
+		}
+		if config.IsFileError(err) && isProvidersCommand(command) {
+			return renderProvidersWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
 		if config.IsFileError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
@@ -773,6 +779,15 @@ func isPluginsCommand(command string) bool {
 	}
 }
 
+func isProvidersCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "providers", "/providers":
+		return true
+	default:
+		return false
+	}
+}
+
 func renderStatusWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
 	cfg, err := config.Default(overrides)
 	if err != nil {
@@ -904,6 +919,50 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 		return nil
 	}
 	return renderCLIError(out, loadErr, format)
+}
+
+func renderProvidersWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	providerArgs := append([]string(nil), rest...)
+	if !argsHaveOutputFormat(providerArgs) {
+		providerArgs = injectGlobalOutputFormat("providers", providerArgs, requestedOutputFormat(originalArgs))
+	}
+	req, err := parseProviderCommandArgs(providerArgs)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	if req.Action == "set" {
+		return renderCLIError(out, loadErr, req.Format)
+	}
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, req.Format)
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	report, err := buildProvidersReport(cfg, req.Action)
+	if err != nil {
+		return err
+	}
+	report = withProviderConfigLoadError(report, loadErr)
+	if req.Action == "show" {
+		payload, err := providerShowPayload(report, req.Name)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		renderProviderShowText(out, payload)
+		return nil
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	renderProvidersText(out, report)
+	return nil
 }
 
 func renderPluginsWithConfigLoadError(out io.Writer, command string, rest []string, originalArgs []string, loadErr error) error {
@@ -6760,13 +6819,15 @@ type providerAuthReport struct {
 }
 
 type activeProviderReport struct {
-	Name      string             `json:"name"`
-	Protocol  string             `json:"protocol"`
-	BaseURL   string             `json:"base_url"`
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	MaxTurns  int                `json:"max_turns"`
-	Auth      providerAuthReport `json:"auth"`
+	Name                string             `json:"name"`
+	Protocol            string             `json:"protocol"`
+	BaseURL             string             `json:"base_url"`
+	Model               string             `json:"model"`
+	MaxTokens           int                `json:"max_tokens"`
+	MaxTurns            int                `json:"max_turns"`
+	Auth                providerAuthReport `json:"auth"`
+	ConfigLoadError     *string            `json:"config_load_error,omitempty"`
+	ConfigLoadErrorKind string             `json:"config_load_error_kind,omitempty"`
 }
 
 type oauthProviderSummary struct {
@@ -6777,11 +6838,14 @@ type oauthProviderSummary struct {
 }
 
 type providersReport struct {
-	Kind          string                 `json:"kind"`
-	Action        string                 `json:"action"`
-	Active        activeProviderReport   `json:"active"`
-	Presets       []providerPreset       `json:"presets,omitempty"`
-	OAuthProfiles []oauthProviderSummary `json:"oauth_profiles,omitempty"`
+	Kind                string                 `json:"kind"`
+	Action              string                 `json:"action"`
+	Status              string                 `json:"status"`
+	Active              activeProviderReport   `json:"active"`
+	Presets             []providerPreset       `json:"presets,omitempty"`
+	OAuthProfiles       []oauthProviderSummary `json:"oauth_profiles,omitempty"`
+	ConfigLoadError     *string                `json:"config_load_error"`
+	ConfigLoadErrorKind string                 `json:"config_load_error_kind,omitempty"`
 }
 
 type providerSetReport struct {
@@ -6989,10 +7053,31 @@ func buildProvidersReport(cfg config.Config, action string) (providersReport, er
 	return providersReport{
 		Kind:          "providers",
 		Action:        action,
+		Status:        "ok",
 		Active:        activeProvider(cfg),
 		Presets:       providerPresets(),
 		OAuthProfiles: oauthProfiles,
 	}, nil
+}
+
+func withProviderConfigLoadError(report providersReport, loadErr error) providersReport {
+	if loadErr == nil {
+		return report
+	}
+	message := strings.TrimSpace(loadErr.Error())
+	if message == "" {
+		return report
+	}
+	kind := buildCLIErrorReport(loadErr).ErrorKind
+	if strings.TrimSpace(kind) == "" {
+		kind = "config_load_failed"
+	}
+	report.Status = "degraded"
+	report.ConfigLoadError = &message
+	report.ConfigLoadErrorKind = kind
+	report.Active.ConfigLoadError = &message
+	report.Active.ConfigLoadErrorKind = kind
+	return report
 }
 
 func activeProvider(cfg config.Config) activeProviderReport {
@@ -7186,6 +7271,12 @@ func sameProviderURL(left, right string) bool {
 
 func renderProvidersText(out io.Writer, report providersReport) {
 	active := report.Active
+	if report.ConfigLoadError != nil {
+		fmt.Fprintf(out, "Status: %s\n", report.Status)
+		fmt.Fprintf(out, "Config load: degraded: %s\n", *report.ConfigLoadError)
+		fmt.Fprintln(out, "Hint: Fix the listed config file or run `codog doctor` for details.")
+		fmt.Fprintln(out)
+	}
 	fmt.Fprintf(out, "Provider: %s (%s)\n", active.Name, active.Protocol)
 	fmt.Fprintf(out, "Model: %s\n", active.Model)
 	fmt.Fprintf(out, "Base URL: %s\n", active.BaseURL)
@@ -18727,6 +18818,7 @@ func codogCapabilityFeatures() []string {
 		"plugin_marketplace",
 		"plugins_config_load_degraded",
 		"powershell_output_contract",
+		"providers_config_load_degraded",
 		"prompt_cache_stats",
 		"project_memory",
 		"notification_preferences",
@@ -33304,7 +33396,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
-		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",

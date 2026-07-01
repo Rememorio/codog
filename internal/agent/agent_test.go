@@ -673,6 +673,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "policy_engine")
 	require.Contains(t, report.Features, "plugins_config_load_degraded")
+	require.Contains(t, report.Features, "providers_config_load_degraded")
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "recovery_recipes_ledger")
 	require.Contains(t, report.Features, "resume_safe_slash_metadata")
@@ -11408,6 +11409,67 @@ func TestProvidersStatusRedactsAuth(t *testing.T) {
 	require.Contains(t, out.String(), `"api_key": true`)
 	require.NotContains(t, out.String(), "api-key-secret")
 	require.NotContains(t, out.String(), "stored-access-token")
+}
+
+func TestProvidersDegradeOnMalformedConfigFile(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "providers"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report providersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "providers", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, "anthropic", report.Active.Name)
+	require.Equal(t, config.DefaultModel, report.Active.Model)
+	require.NotNil(t, report.ConfigLoadError)
+	require.Contains(t, *report.ConfigLoadError, "broken.json")
+	require.Contains(t, *report.ConfigLoadError, "unexpected end of JSON input")
+	require.Equal(t, "config_load_failed", report.ConfigLoadErrorKind)
+	require.NotNil(t, report.Active.ConfigLoadError)
+	require.Equal(t, report.ConfigLoadErrorKind, report.Active.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/providers"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.NotNil(t, report.ConfigLoadError)
+	require.True(t, commandAcceptsGlobalOutputFormat("providers"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "providers", "show", "current"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var active activeProviderReport
+	require.NoError(t, json.Unmarshal([]byte(out), &active))
+	require.Equal(t, "anthropic", active.Name)
+	require.NotNil(t, active.ConfigLoadError)
+	require.Equal(t, "config_load_failed", active.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "text", "providers"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Status: degraded")
+	require.Contains(t, out, "Config load: degraded")
+	require.Contains(t, out, "broken.json")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "providers", "set", "openai"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var errorReport cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
+	require.Equal(t, "config_load_failed", errorReport.ErrorKind)
+	require.NotContains(t, out, "config_load_error")
 }
 
 func TestProvidersSetWritesConfig(t *testing.T) {
