@@ -176,7 +176,7 @@ func Run(ctx context.Context) (Report, error) {
 				{ToolUses: []mockanthropic.ToolUse{{
 					ID:          "tool-1",
 					Name:        "grep",
-					InputDeltas: []string{`{"pattern":"Need`, `le","path":"."}`},
+					InputDeltas: []string{`{"pattern":"Need`, `le","path":".","output_mode":"content"}`},
 				}}},
 				{Text: "grep chunk harness ok"},
 			},

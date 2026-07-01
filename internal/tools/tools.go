@@ -2632,7 +2632,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	}
 	mode := strings.TrimSpace(payload.OutputMode)
 	if mode == "" {
-		mode = "content"
+		mode = "files_with_matches"
 	}
 	if mode != "content" && mode != "files_with_matches" && mode != "count" {
 		return "", fmt.Errorf("unsupported grep output_mode %q", payload.OutputMode)

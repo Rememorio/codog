@@ -244,7 +244,15 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "c.go"), []byte("nothing\n"), 0o644))
 
 	registry := NewRegistry(workspace)
-	out, err := registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
+	out, err := registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"output_mode": "files_with_matches"`)
+	require.Contains(t, out, `"filenames":`)
+	require.Contains(t, out, "a.go")
+	require.Contains(t, out, "b.py")
+	require.NotContains(t, out, `"matches":`)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"output_mode": "files_with_matches"`)
 	require.Contains(t, out, "a.go")

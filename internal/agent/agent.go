@@ -12605,6 +12605,7 @@ func (a *App) searchReport(ctx context.Context, req searchRequest) (searchReport
 		"pattern":     req.Query,
 		"path":        req.Path,
 		"glob":        req.Glob,
+		"output_mode": "content",
 		"ignore_case": req.IgnoreCase,
 		"limit":       req.Limit,
 	})
