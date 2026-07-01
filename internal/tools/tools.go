@@ -7643,12 +7643,52 @@ func (t ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if limit > 50 {
 		limit = 50
 	}
-	matches := searchToolInfos(t.Registry.Infos(), payload.Query, limit)
+	query := strings.TrimSpace(payload.Query)
+	matches := searchToolInfos(t.Registry.Infos(), query, limit)
+	if selected, ok := selectToolInfos(t.Registry, query, limit); ok {
+		matches = selected
+	}
 	return pretty(map[string]any{
-		"query":   strings.TrimSpace(payload.Query),
-		"matches": matches,
-		"total":   len(matches),
+		"query":            query,
+		"normalized_query": normalizeToolSearchQuery(query),
+		"matches":          matches,
+		"match_names":      toolInfoNames(matches),
+		"total":            len(matches),
 	}), nil
+}
+
+func selectToolInfos(registry *Registry, query string, limit int) ([]ToolInfo, bool) {
+	query = strings.TrimSpace(query)
+	if !strings.HasPrefix(strings.ToLower(query), "select:") {
+		return nil, false
+	}
+	selection := strings.TrimSpace(query[len("select:"):])
+	if selection == "" {
+		return []ToolInfo{}, true
+	}
+	parts := strings.Split(selection, ",")
+	out := make([]ToolInfo, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+		info, ok := registry.Info(name)
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(info.Name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, info)
+	}
+	return out, true
 }
 
 func searchToolInfos(infos []ToolInfo, query string, limit int) []ToolInfo {
@@ -7683,6 +7723,27 @@ func searchToolInfos(infos []ToolInfo, query string, limit int) []ToolInfo {
 		matches = append(matches, match.info)
 	}
 	return matches
+}
+
+func toolInfoNames(infos []ToolInfo) []string {
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	return names
+}
+
+func normalizeToolSearchQuery(query string) string {
+	terms := strings.FieldsFunc(strings.TrimSpace(query), func(r rune) bool {
+		return r == ',' || r == '\t' || r == '\n' || r == '\r' || r == ' '
+	})
+	normalized := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if token := toolAliasKey(term); token != "" {
+			normalized = append(normalized, token)
+		}
+	}
+	return strings.Join(normalized, " ")
 }
 
 func toolInfoScore(info ToolInfo, terms []string, query string) int {

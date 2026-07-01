@@ -18162,6 +18162,7 @@ func codogCapabilityFeatures() []string {
 		"telemetry_preferences",
 		"task_id_alias_schemas",
 		"task_output_runtime_fields",
+		"tool_search_select_query",
 		"typed_task_packets",
 		"updater",
 		"voice_listen",

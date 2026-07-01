@@ -2099,8 +2099,34 @@ func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
 	out, err := ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"web fetch","max_results":3}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"query": "web fetch"`)
+	require.Contains(t, out, `"normalized_query": "web fetch"`)
 	require.Contains(t, out, `"name": "web_fetch"`)
 	require.NotContains(t, out, `"name": "write_file"`)
+
+	out, err = ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"select:Bash,Read,Nope","max_results":5}`))
+	require.NoError(t, err)
+	var selected struct {
+		Query           string   `json:"query"`
+		NormalizedQuery string   `json:"normalized_query"`
+		MatchNames      []string `json:"match_names"`
+		Matches         []struct {
+			Name string `json:"name"`
+		} `json:"matches"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &selected))
+	require.Equal(t, "select:Bash,Read,Nope", selected.Query)
+	require.Equal(t, "selectbash read nope", selected.NormalizedQuery)
+	require.Equal(t, []string{"bash", "read_file"}, selected.MatchNames)
+	require.Len(t, selected.Matches, 2)
+	require.Equal(t, "bash", selected.Matches[0].Name)
+	require.Equal(t, "read_file", selected.Matches[1].Name)
+
+	out, err = ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"select:Bash,Read","max_results":1}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"match_names": [
+    "bash"
+  ]`)
+	require.NotContains(t, out, `"name": "read_file"`)
 
 	info, ok := registry.Info("tool_search")
 	require.True(t, ok)
