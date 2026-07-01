@@ -143,6 +143,38 @@ func (s *Store) Open(id string) (*Session, error) {
 	return &Session{ID: id, Messages: messages, Path: path}, nil
 }
 
+func (s *Store) Create(id string) (*Session, error) {
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return nil, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = newID()
+	}
+	if err := validateSessionID(id); err != nil {
+		return nil, err
+	}
+	if exists, err := s.Exists(id); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, fmt.Errorf("session %q already exists", id)
+	}
+	path := filepath.Join(s.Dir, id+".jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if err := writeRecord(file, Record{
+		Type:      "session",
+		Time:      time.Now().UTC(),
+		SessionID: id,
+	}); err != nil {
+		return nil, err
+	}
+	return &Session{ID: id, Path: path}, nil
+}
+
 func (s *Store) Append(id string, msg anthropic.Message) error {
 	return s.AppendWithUsage(id, msg, nil)
 }

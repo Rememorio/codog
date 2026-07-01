@@ -72,6 +72,31 @@ func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	require.Equal(t, "legacy-session", latest)
 }
 
+func TestCreateEmptySession(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	created, err := store.Create("")
+	require.NoError(t, err)
+	require.NotEmpty(t, created.ID)
+	require.Empty(t, created.Messages)
+	require.FileExists(t, created.Path)
+
+	ok, err := store.Exists(created.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	opened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, created.ID, opened.ID)
+	require.Empty(t, opened.Messages)
+	sessions, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	require.Equal(t, created.ID, sessions[0].ID)
+	_, err = store.Create(created.ID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+}
+
 func TestForkExistsAndDeleteSession(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "before fork"}}}))

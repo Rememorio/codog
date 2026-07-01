@@ -319,6 +319,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SessionsCommand(rest)
 	case "resume":
 		return app.ResumeCommand(rest)
+	case "clear":
+		return app.ClearCommand(rest)
 	case "backfill-sessions":
 		return app.BackfillSessions(rest)
 	case "rename":
@@ -14755,6 +14757,7 @@ func builtInCommandNames() []string {
 		"changelog",
 		"checkpoint",
 		"chrome",
+		"clear",
 		"code-intel",
 		"color",
 		"commands",
@@ -15437,7 +15440,7 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	slashName := "/" + lower
 	hint := fmt.Sprintf("Run `codog repl` and use `%s` there.", slashName)
 	switch lower {
-	case "clear", "fork":
+	case "fork":
 		interactive = len(meaningful) > 0
 	case "cost", "usage", "stats":
 		interactive = len(meaningful) > 0
@@ -22533,6 +22536,92 @@ func renderResumeCommand(out io.Writer, report resumeCommandReport) {
 	}
 }
 
+type clearCommandReport struct {
+	Kind             string   `json:"kind"`
+	Action           string   `json:"action"`
+	Status           string   `json:"status"`
+	SessionID        string   `json:"session_id"`
+	MessageCount     int      `json:"message_count"`
+	Path             string   `json:"path"`
+	ContinueCommands []string `json:"continue_commands"`
+}
+
+func (a *App) ClearCommand(args []string) error {
+	format, err := parseClearCommandFormat(args)
+	if err != nil {
+		return err
+	}
+	sess, err := a.Sessions.Create("")
+	if err != nil {
+		return err
+	}
+	exe := strings.TrimSpace(a.Executable)
+	if exe == "" {
+		exe = "codog"
+	}
+	report := clearCommandReport{
+		Kind:         "clear",
+		Action:       "create_session",
+		Status:       "ok",
+		SessionID:    sess.ID,
+		MessageCount: len(sess.Messages),
+		Path:         sess.Path,
+		ContinueCommands: []string{
+			strings.Join([]string{shellQuote(exe), "--session", shellQuote(sess.ID), "repl"}, " "),
+			strings.Join([]string{shellQuote(exe), "--session", shellQuote(sess.ID), "prompt", shellQuote("...")}, " "),
+		},
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderClearCommand(a.Out, report)
+	return nil
+}
+
+func parseClearCommandFormat(args []string) (string, error) {
+	format := "text"
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--confirm":
+			continue
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", errors.New("clear output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			return "", fmt.Errorf("unknown clear flag %q", arg)
+		}
+	}
+	switch format {
+	case "text", "json":
+		return format, nil
+	default:
+		return "", fmt.Errorf("unknown clear output format %q", format)
+	}
+}
+
+func renderClearCommand(out io.Writer, report clearCommandReport) {
+	fmt.Fprintln(out, "Clear Session")
+	fmt.Fprintf(out, "  Session ID        %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Messages          %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Path              %s\n", report.Path)
+	if len(report.ContinueCommands) > 0 {
+		fmt.Fprintln(out, "  Continue")
+		for _, command := range report.ContinueCommands {
+			fmt.Fprintf(out, "    %s\n", command)
+		}
+	}
+}
+
 func (a *App) BackfillSessions(args []string) error {
 	format, err := parseSimpleOutputFormat("backfill-sessions", args)
 	if err != nil {
@@ -25960,7 +26049,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
-		"bug", "checkpoint", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
+		"bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
@@ -26653,6 +26742,20 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Topic = "sessions"
 		spec.Command = "sessions"
 		return spec, true
+	case "clear":
+		return commandHelpSpec{
+			Topic:                   "clear",
+			Command:                 "clear",
+			Usage:                   "codog clear [--confirm] [--output-format text|json]",
+			Text:                    "Clear\n\nUsage:\n  codog clear [--confirm] [--output-format text|json]\n\nCreates and reports a fresh empty local session id without deleting existing session JSONL files. In an interactive REPL, `/clear` switches the active conversation to a fresh session.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"session_id", "message_count", "path", "continue_commands"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
 	case "resume":
 		return commandHelpSpec{
 			Topic:                   "resume",
@@ -26698,6 +26801,7 @@ Usage:
   %s [flags] language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
+  %s [flags] clear [--confirm] [--json|--output-format text|json]
   %s [flags] sessions [list|show|exists|fork|rename|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]

@@ -221,6 +221,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.False(t, *report.RequiresProviderRequest)
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"clear", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "clear", report.Topic)
+	require.Equal(t, "clear", report.Command)
+	require.Contains(t, report.Help, "fresh empty local session")
+	require.Contains(t, report.OutputFields, "continue_commands")
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"reset", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "reset", report.Topic)
@@ -430,6 +440,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
+	require.Contains(t, report.Commands, "clear")
 	require.Contains(t, report.Commands, "permissions")
 	require.Contains(t, report.Commands, "plan")
 	require.Contains(t, report.Commands, "teleport")
@@ -1253,7 +1264,6 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 
 	cases := [][]string{
 		{"cost", "breakdown"},
-		{"clear", "--force"},
 		{"memory", "reset"},
 		{"ultraplan", "bogus"},
 		{"usage", "extra"},
@@ -1860,6 +1870,35 @@ func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
 	require.Contains(t, out.String(), "Messages          2")
 }
 
+func TestClearCommandReportsFreshSessionWithoutDeletingHistory(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Executable: "codog"}
+
+	require.NoError(t, app.ClearCommand([]string{"--confirm", "--json"}))
+	var report clearCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "clear", report.Kind)
+	require.Equal(t, "create_session", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.NotEmpty(t, report.SessionID)
+	require.NotEqual(t, "source", report.SessionID)
+	require.Equal(t, 0, report.MessageCount)
+	require.Contains(t, report.ContinueCommands[0], "--session '"+report.SessionID+"' repl")
+	newExists, err := store.Exists(report.SessionID)
+	require.NoError(t, err)
+	require.True(t, newExists)
+	exists, err := store.Exists("source")
+	require.NoError(t, err)
+	require.True(t, exists)
+	out.Reset()
+
+	require.NoError(t, app.ClearCommand(nil))
+	require.Contains(t, out.String(), "Clear Session")
+	require.Contains(t, out.String(), "Messages          0")
+}
+
 func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -1888,6 +1927,31 @@ func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "source", report.SessionID)
 	require.Equal(t, 1, report.MessageCount)
+}
+
+func TestRunCLIClearCommand(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "clear", "--confirm"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report clearCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "clear", report.Kind)
+	require.Equal(t, "create_session", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.NotEmpty(t, report.SessionID)
+	require.Contains(t, report.ContinueCommands[0], "--session '"+report.SessionID+"' repl")
 }
 
 func TestBackfillSessionsCommandAndSlash(t *testing.T) {
