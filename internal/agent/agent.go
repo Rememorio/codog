@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -373,8 +374,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.MCP(ctx, rest)
 	case "capabilities":
 		return app.Capabilities(rest)
-	case "cost":
+	case "cost", "tokens":
 		return app.ShowCost(overrides)
+	case "cache":
+		return app.Cache(rest, overrides)
 	case "usage":
 		return app.Usage(rest, overrides)
 	case "stats":
@@ -13674,6 +13677,7 @@ func codogCapabilityFeatures() []string {
 		"openai_compatible_streaming",
 		"permission_confirmation",
 		"plugin_marketplace",
+		"prompt_cache_stats",
 		"project_memory",
 		"remote_control",
 		"repl",
@@ -13718,6 +13722,7 @@ func builtInCommandNames() []string {
 		"btw",
 		"bughunter",
 		"build",
+		"cache",
 		"capabilities",
 		"changelog",
 		"chrome",
@@ -13839,6 +13844,7 @@ func builtInCommandNames() []string {
 		"thinkback",
 		"thinkback-play",
 		"todos",
+		"tokens",
 		"tui",
 		"ultraplan",
 		"ultrareview",
@@ -16802,6 +16808,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/tokens":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
+	case "/cache":
+		if err := a.Cache(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/usage":
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -21364,6 +21374,155 @@ func (a *App) Usage(args []string, overrides config.FlagOverrides) error {
 	return nil
 }
 
+type cacheReport struct {
+	Kind                     string  `json:"kind"`
+	Action                   string  `json:"action"`
+	Status                   string  `json:"status"`
+	SessionID                string  `json:"session_id,omitempty"`
+	Model                    string  `json:"model,omitempty"`
+	MessageCount             int     `json:"message_count"`
+	UsageRecords             int     `json:"usage_records"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens"`
+	CacheTotalInputTokens    int     `json:"cache_total_input_tokens"`
+	TotalTokens              int     `json:"total_tokens"`
+	CacheHitRatio            float64 `json:"cache_hit_ratio"`
+	Source                   string  `json:"source"`
+	Message                  string  `json:"message,omitempty"`
+}
+
+func (a *App) Cache(args []string, overrides config.FlagOverrides) error {
+	format, parsedOverrides, err := parseCacheArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	report, err := a.buildCacheReport(parsedOverrides)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderCacheReport(a.Out, report)
+	return nil
+}
+
+func parseCacheArgs(args []string, overrides config.FlagOverrides) (string, config.FlagOverrides, error) {
+	format := "text"
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", overrides, errors.New("cache output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return "", overrides, errors.New("cache session id is required")
+			}
+			overrides.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			overrides.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return "", overrides, errors.New("cache resume session id is required")
+			}
+			overrides.Resume = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			overrides.Resume = strings.TrimPrefix(arg, "--resume=")
+		default:
+			return "", overrides, fmt.Errorf("unknown cache argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(format, "cache"); err != nil {
+		return "", overrides, err
+	}
+	return format, overrides, nil
+}
+
+func (a *App) buildCacheReport(overrides config.FlagOverrides) (cacheReport, error) {
+	sess, err := a.openSession(overrides)
+	if err != nil {
+		return cacheReport{}, err
+	}
+	entries, err := a.Sessions.Usage(sess.ID)
+	if err != nil {
+		return cacheReport{}, err
+	}
+	usages := make([]anthropic.Usage, 0, len(entries))
+	for _, entry := range entries {
+		usages = append(usages, entry.Usage)
+	}
+	summary, ok := usage.ActualSummary(usages, a.Config.Model)
+	source := "actual"
+	if !ok {
+		summary = usage.Estimate(sess.Messages, a.Config.Model)
+		source = "none"
+	}
+	cacheTotal := summary.CacheCreationInputTokens + summary.CacheReadInputTokens
+	ratio := 0.0
+	denominator := summary.InputTokens + cacheTotal
+	if denominator > 0 {
+		ratio = float64(summary.CacheReadInputTokens) / float64(denominator)
+	}
+	report := cacheReport{
+		Kind:                     "cache",
+		Action:                   "show",
+		Status:                   "ok",
+		SessionID:                sess.ID,
+		Model:                    a.Config.Model,
+		MessageCount:             len(sess.Messages),
+		UsageRecords:             len(entries),
+		InputTokens:              summary.InputTokens,
+		OutputTokens:             summary.OutputTokens,
+		CacheCreationInputTokens: summary.CacheCreationInputTokens,
+		CacheReadInputTokens:     summary.CacheReadInputTokens,
+		CacheTotalInputTokens:    cacheTotal,
+		TotalTokens:              summary.TotalTokens,
+		CacheHitRatio:            math.Round(ratio*10000) / 10000,
+		Source:                   source,
+	}
+	if source == "none" {
+		report.Message = "No provider cache usage records were found for this session."
+	} else if cacheTotal == 0 {
+		report.Message = "Provider usage is recorded, but no prompt cache tokens were reported."
+	}
+	return report, nil
+}
+
+func renderCacheReport(out io.Writer, report cacheReport) {
+	fmt.Fprintln(out, "Prompt Cache")
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	fmt.Fprintf(out, "  Model            %s\n", emptyAsNone(report.Model))
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Usage records    %d\n", report.UsageRecords)
+	fmt.Fprintf(out, "  Cache created    %d\n", report.CacheCreationInputTokens)
+	fmt.Fprintf(out, "  Cache read       %d\n", report.CacheReadInputTokens)
+	fmt.Fprintf(out, "  Cache total      %d\n", report.CacheTotalInputTokens)
+	fmt.Fprintf(out, "  Input tokens     %d\n", report.InputTokens)
+	fmt.Fprintf(out, "  Output tokens    %d\n", report.OutputTokens)
+	fmt.Fprintf(out, "  Total tokens     %d\n", report.TotalTokens)
+	fmt.Fprintf(out, "  Hit ratio        %.2f%%\n", report.CacheHitRatio*100)
+	fmt.Fprintf(out, "  Source           %s\n", report.Source)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 type insightsRequest struct {
 	Format string
 	Limit  int
@@ -22851,7 +23010,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "cache", "capabilities", "changelog", "chrome",
 		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
@@ -23236,6 +23395,36 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "cost":
+		return localCommandHelpSpec(
+			"cost",
+			"cost",
+			"codog [--session ID|--resume ID|latest] cost",
+			"Cost\n\nUsage:\n  codog [--session ID|--resume ID|latest] cost\n\nPrints cumulative token usage and estimated cost for the selected session as JSON.\n",
+			[]string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "total_tokens", "estimated_usd"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "cache":
+		return localCommandHelpSpec(
+			"cache",
+			"cache",
+			"codog cache [--session ID|--resume ID|latest] [--output-format text|json]",
+			"Cache\n\nUsage:\n  codog cache [--session ID|--resume ID|latest] [--output-format text|json]\n\nShows prompt cache creation and cache read token statistics recorded in the selected session JSONL usage records.\n",
+			[]string{"session_id", "usage_records", "cache_creation_input_tokens", "cache_read_input_tokens", "cache_hit_ratio", "source"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "tokens":
+		return localCommandHelpSpec(
+			"tokens",
+			"tokens",
+			"codog [--session ID|--resume ID|latest] tokens",
+			"Tokens\n\nUsage:\n  codog [--session ID|--resume ID|latest] tokens\n\nAlias for `codog cost`; prints cumulative token usage for the selected session as JSON.\n",
+			[]string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "total_tokens", "estimated_usd"},
+			[]string{"ok", "error"},
+			false,
+		), true
 	case "hooks":
 		return localCommandHelpSpec(
 			"hooks",
@@ -23465,6 +23654,7 @@ Usage:
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]
   %s [flags] cost --resume latest
+  %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] insights [--limit N] [--json|--output-format text|json]

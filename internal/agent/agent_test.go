@@ -203,6 +203,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "mcp", "--help", "--output-format", "json"},
 			topic: "mcp",
 		},
+		{
+			name:  "cache local help",
+			args:  []string{"--config", configPath, "cache", "--help", "--output-format", "json"},
+			topic: "cache",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3018,7 +3023,7 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("usage-session", anthropic.TextMessage("user", "hello usage")))
-	providerUsage := anthropic.Usage{InputTokens: 50, OutputTokens: 11, CacheReadInputTokens: 4}
+	providerUsage := anthropic.Usage{InputTokens: 50, OutputTokens: 11, CacheCreationInputTokens: 6, CacheReadInputTokens: 4}
 	require.NoError(t, store.AppendWithUsage("usage-session", anthropic.Message{
 		Role: "assistant",
 		Content: []anthropic.ContentBlock{{
@@ -3045,7 +3050,21 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"tool_results": 1`)
 	require.Contains(t, out.String(), `"source": "actual"`)
 	require.Contains(t, out.String(), `"input_tokens": 50`)
+	require.Contains(t, out.String(), `"cache_creation_input_tokens": 6`)
 	require.Contains(t, out.String(), `"cache_read_input_tokens": 4`)
+	out.Reset()
+
+	require.NoError(t, app.Cache([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
+	var cache cacheReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &cache))
+	require.Equal(t, "cache", cache.Kind)
+	require.Equal(t, "usage-session", cache.SessionID)
+	require.Equal(t, 1, cache.UsageRecords)
+	require.Equal(t, 6, cache.CacheCreationInputTokens)
+	require.Equal(t, 4, cache.CacheReadInputTokens)
+	require.Equal(t, 10, cache.CacheTotalInputTokens)
+	require.Equal(t, 0.0667, cache.CacheHitRatio)
+	require.Equal(t, "actual", cache.Source)
 	out.Reset()
 
 	require.NoError(t, app.Summary([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
@@ -3068,6 +3087,13 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/stats", sess))
 	require.Contains(t, out.String(), "Usage")
 	require.Contains(t, out.String(), "Session          usage-session")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/cache", sess))
+	require.Contains(t, out.String(), "Prompt Cache")
+	require.Contains(t, out.String(), "Cache created    6")
+	require.Contains(t, out.String(), "Cache read       4")
+	require.Contains(t, out.String(), "Hit ratio        6.67%")
 	out.Reset()
 
 	require.NoError(t, app.Insights([]string{"--json"}))
