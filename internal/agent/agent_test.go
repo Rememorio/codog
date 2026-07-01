@@ -223,6 +223,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "temperature", "--help", "--output-format", "json"},
 			topic: "temperature",
 		},
+		{
+			name:  "telemetry local help",
+			args:  []string{"--config", configPath, "telemetry", "--help", "--output-format", "json"},
+			topic: "telemetry",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,11 +288,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "temperature")
+	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "mcp_server")
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "team_watch")
+	require.Contains(t, report.Features, "telemetry_preferences")
 	require.Contains(t, report.Protocols, "mcp_stdio_server")
 	require.Contains(t, report.OutputFormats, "stream-json")
 	require.Greater(t, report.CommandCount, 20)
@@ -2368,6 +2375,61 @@ func TestTemperatureCommandAndSlash(t *testing.T) {
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "temperature")
+	require.Empty(t, errOut.String())
+}
+
+func TestTelemetryCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+		Err:    &errOut,
+	}
+
+	require.NoError(t, app.Telemetry([]string{"status", "--json"}))
+	var status telemetryReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "telemetry", status.Kind)
+	require.False(t, status.Enabled)
+	require.False(t, status.Configured)
+	out.Reset()
+
+	require.NoError(t, app.Telemetry([]string{"on", "--json"}))
+	var enabled telemetryReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &enabled))
+	require.True(t, enabled.Enabled)
+	require.True(t, enabled.Configured)
+	require.NotNil(t, app.Config.Privacy.TelemetryEnabled)
+	require.True(t, *app.Config.Privacy.TelemetryEnabled)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var persisted config.Config
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.NotNil(t, persisted.Privacy.TelemetryEnabled)
+	require.True(t, *persisted.Privacy.TelemetryEnabled)
+	out.Reset()
+
+	require.NoError(t, app.Telemetry([]string{"toggle", "--json"}))
+	var toggled telemetryReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &toggled))
+	require.False(t, toggled.Enabled)
+	require.True(t, toggled.Configured)
+	require.NotNil(t, app.Config.Privacy.TelemetryEnabled)
+	require.False(t, *app.Config.Privacy.TelemetryEnabled)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/telemetry clear --json", &session.Session{ID: "session"}))
+	var cleared telemetryReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &cleared))
+	require.False(t, cleared.Enabled)
+	require.False(t, cleared.Configured)
+	require.Nil(t, app.Config.Privacy.TelemetryEnabled)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "telemetry_enabled")
 	require.Empty(t, errOut.String())
 }
 

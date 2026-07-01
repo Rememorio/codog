@@ -364,6 +364,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Chrome(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
+	case "telemetry":
+		return app.Telemetry(rest)
 	case "keybindings":
 		return app.Keybindings(rest)
 	case "notifications":
@@ -9219,6 +9221,168 @@ func (a *App) PrivacySettings(args []string) error {
 	return nil
 }
 
+type telemetryRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+}
+
+type telemetryReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	Configured bool   `json:"configured"`
+	Previous   bool   `json:"previous,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
+func (a *App) Telemetry(args []string) error {
+	req, err := parseTelemetryArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := privacyBool(a.Config.Privacy.TelemetryEnabled, false)
+	report := a.telemetryReport(req.Action, req.Path)
+	switch req.Action {
+	case "status":
+	case "on", "off", "toggle":
+		next := req.Action == "on"
+		if req.Action == "toggle" {
+			next = !previous
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "privacy_settings.telemetry_enabled", next); err != nil {
+			return err
+		}
+		a.Config.Privacy.TelemetryEnabled = &next
+		report = a.telemetryReport("set", path)
+		report.Previous = previous
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "privacy_settings.telemetry_enabled"); err != nil {
+			return err
+		}
+		a.Config.Privacy.TelemetryEnabled = nil
+		report = a.telemetryReport("clear", path)
+		report.Previous = previous
+	default:
+		return fmt.Errorf("unknown telemetry command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTelemetryReport(a.Out, report)
+	return nil
+}
+
+func parseTelemetryArgs(args []string) (telemetryRequest, error) {
+	req := telemetryRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("telemetry output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("telemetry target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("telemetry config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown telemetry flag %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "telemetry"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "true", "yes":
+		req.Action = "on"
+	case "off", "disable", "disabled", "false", "no":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	case "clear", "reset", "unset", "default":
+		req.Action = "clear"
+	default:
+		return req, fmt.Errorf("unknown telemetry command %q", rest[0])
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected telemetry argument %q", rest[1])
+	}
+	return req, nil
+}
+
+func (a *App) telemetryReport(action string, path string) telemetryReport {
+	enabled := privacyBool(a.Config.Privacy.TelemetryEnabled, false)
+	report := telemetryReport{
+		Kind:       "telemetry",
+		Action:     action,
+		Status:     "ok",
+		Enabled:    enabled,
+		Configured: a.Config.Privacy.TelemetryEnabled != nil,
+		Path:       path,
+	}
+	if enabled {
+		report.Message = "Telemetry is enabled."
+	} else if report.Configured {
+		report.Message = "Telemetry is disabled."
+	} else {
+		report.Message = "Telemetry is unset and defaults to disabled."
+	}
+	return report
+}
+
+func renderTelemetryReport(out io.Writer, report telemetryReport) {
+	fmt.Fprintln(out, "Telemetry")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Configured       %t\n", report.Configured)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func parsePrivacyArgs(args []string) (privacyRequest, error) {
 	req := privacyRequest{Action: "show", Format: "text", Target: "user"}
 	var rest []string
@@ -13862,6 +14026,7 @@ func codogCapabilityFeatures() []string {
 		"sampling_temperature",
 		"speech_output",
 		"team_watch",
+		"telemetry_preferences",
 		"updater",
 		"voice_listen",
 		"workspace_tools",
@@ -14013,6 +14178,7 @@ func builtInCommandNames() []string {
 		"tag",
 		"tasks",
 		"temperature",
+		"telemetry",
 		"templates",
 		"terminal-setup",
 		"terminalSetup",
@@ -16977,6 +17143,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/privacy-settings":
 		if err := a.PrivacySettings(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/telemetry":
+		if err := a.Telemetry(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/keybindings":
@@ -23656,7 +23826,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
-		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "templates", "terminal-setup", "theme",
+		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
 		return true
@@ -24092,6 +24262,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "telemetry":
+		return localCommandHelpSpec(
+			"telemetry",
+			"telemetry",
+			"codog telemetry [on|off|toggle|status|clear] [--target user|project|local] [--output-format text|json]",
+			"Telemetry\n\nUsage:\n  codog telemetry [on|off|toggle|status|clear] [--target user|project|local] [--output-format text|json]\n\nShows or changes the local telemetry privacy preference stored as `privacy_settings.telemetry_enabled`.\n",
+			[]string{"enabled", "configured", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "hooks":
 		return localCommandHelpSpec(
 			"hooks",
@@ -24321,6 +24501,7 @@ Usage:
   %s [flags] speak [TEXT|last|status|set-command|clear] [--session ID|--resume latest] [--nth N] [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] telemetry [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]
   %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
