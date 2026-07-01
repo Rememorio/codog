@@ -242,6 +242,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
+		if config.IsFileError(err) && isDoctorCommand(command) {
+			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+		}
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	applyStoredOAuthToken(&cfg, time.Now().UTC())
@@ -722,6 +725,15 @@ func isStatusCommand(command string) bool {
 	}
 }
 
+func isDoctorCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "doctor", "/doctor":
+		return true
+	default:
+		return false
+	}
+}
+
 func renderStatusWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
 	cfg, err := config.Default(overrides)
 	if err != nil {
@@ -761,6 +773,47 @@ func renderStatusWithConfigLoadError(out io.Writer, command string, rest []strin
 		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
 	}
 	return app.Status(statusArgs, overrides)
+}
+
+func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	doctorArgs := append([]string(nil), rest...)
+	if strings.EqualFold(strings.TrimSpace(command), "/doctor") {
+		doctorArgs = injectGlobalOutputFormat("doctor", doctorArgs, requestedOutputFormat(originalArgs))
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	app := &App{
+		Config: cfg,
+		Client: anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Tools: tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+			SandboxStrategy: cfg.Future.SandboxStrategy,
+			Sandbox:         cfg.Future.Sandbox,
+			AdditionalDirs:  additionalDirs,
+			ConfigHome:      cfg.ConfigHome,
+			MCPServers:      cfg.MCPServers,
+			QuestionIn:      os.Stdin,
+			QuestionOut:     os.Stderr,
+		}),
+		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Workspace:           workspace,
+		Out:                 out,
+		Err:                 os.Stderr,
+		In:                  os.Stdin,
+		ConfigLoadError:     strings.TrimSpace(loadErr.Error()),
+		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
+	}
+	return app.Doctor(doctorArgs)
 }
 
 func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
@@ -18470,6 +18523,7 @@ func codogCapabilityFeatures() []string {
 		"config_layers",
 		"config_reset",
 		"cost_token_tracking",
+		"doctor_config_load_degraded",
 		"doctor_config_validation",
 		"doctor_sandbox_runtime_status",
 		"editor_bridge",
@@ -20824,48 +20878,50 @@ func (a *App) Doctor(args []string) error {
 	}
 	sandboxRuntime, _, _ := sandbox.ResolveSandboxExecutionStatusFor(sandboxStrategy, a.Workspace, sandboxOptions, sandboxStatus)
 	report := doctor.Run(doctor.Options{
-		Workspace:          a.Workspace,
-		ConfigHome:         a.Config.ConfigHome,
-		Model:              a.Config.Model,
-		BaseURL:            a.Config.BaseURL,
-		APIKey:             a.Config.APIKey,
-		AuthToken:          a.Config.AuthToken,
-		PermissionMode:     a.Config.PermissionMode,
-		ToolCount:          toolCount,
-		MCPServerStatuses:  mcpStatuses,
-		MCPValidation:      mcpValidation,
-		HookValidation:     hookValidation,
-		SessionCount:       sessionCount,
-		MemoryFiles:        memoryPaths,
-		UserPromptSubmit:   a.Config.Hooks.UserPromptSubmit,
-		SessionStart:       a.Config.Hooks.SessionStart,
-		PreToolUse:         a.Config.Hooks.PreToolUse,
-		PostToolUse:        a.Config.Hooks.PostToolUse,
-		PostToolUseFailure: a.Config.Hooks.PostToolUseFailure,
-		PermissionRequest:  a.Config.Hooks.PermissionRequest,
-		PermissionDenied:   a.Config.Hooks.PermissionDenied,
-		SessionEnd:         a.Config.Hooks.SessionEnd,
-		Setup:              a.Config.Hooks.Setup,
-		Stop:               a.Config.Hooks.Stop,
-		StopFailure:        a.Config.Hooks.StopFailure,
-		PreCompact:         a.Config.Hooks.PreCompact,
-		PostCompact:        a.Config.Hooks.PostCompact,
-		Notification:       a.Config.Hooks.Notification,
-		SubagentStart:      a.Config.Hooks.SubagentStart,
-		SubagentStop:       a.Config.Hooks.SubagentStop,
-		WorktreeCreate:     a.Config.Hooks.WorktreeCreate,
-		WorktreeRemove:     a.Config.Hooks.WorktreeRemove,
-		CwdChanged:         a.Config.Hooks.CwdChanged,
-		TaskCreated:        a.Config.Hooks.TaskCreated,
-		TaskCompleted:      a.Config.Hooks.TaskCompleted,
-		InstructionsLoaded: a.Config.Hooks.InstructionsLoaded,
-		FileChanged:        a.Config.Hooks.FileChanged,
-		SandboxDefault:     sandboxStatus.Default,
-		SandboxOK:          sandboxStatus.Available,
-		SandboxStrategies:  sandboxStatus.Strategies,
-		SandboxFallback:    sandboxStatus.FallbackReason,
-		SandboxInContainer: sandboxStatus.Container.InContainer,
-		SandboxRuntime:     &sandboxRuntime,
+		Workspace:           a.Workspace,
+		ConfigHome:          a.Config.ConfigHome,
+		Model:               a.Config.Model,
+		BaseURL:             a.Config.BaseURL,
+		APIKey:              a.Config.APIKey,
+		AuthToken:           a.Config.AuthToken,
+		PermissionMode:      a.Config.PermissionMode,
+		ConfigLoadError:     a.ConfigLoadError,
+		ConfigLoadErrorKind: a.ConfigLoadErrorKind,
+		ToolCount:           toolCount,
+		MCPServerStatuses:   mcpStatuses,
+		MCPValidation:       mcpValidation,
+		HookValidation:      hookValidation,
+		SessionCount:        sessionCount,
+		MemoryFiles:         memoryPaths,
+		UserPromptSubmit:    a.Config.Hooks.UserPromptSubmit,
+		SessionStart:        a.Config.Hooks.SessionStart,
+		PreToolUse:          a.Config.Hooks.PreToolUse,
+		PostToolUse:         a.Config.Hooks.PostToolUse,
+		PostToolUseFailure:  a.Config.Hooks.PostToolUseFailure,
+		PermissionRequest:   a.Config.Hooks.PermissionRequest,
+		PermissionDenied:    a.Config.Hooks.PermissionDenied,
+		SessionEnd:          a.Config.Hooks.SessionEnd,
+		Setup:               a.Config.Hooks.Setup,
+		Stop:                a.Config.Hooks.Stop,
+		StopFailure:         a.Config.Hooks.StopFailure,
+		PreCompact:          a.Config.Hooks.PreCompact,
+		PostCompact:         a.Config.Hooks.PostCompact,
+		Notification:        a.Config.Hooks.Notification,
+		SubagentStart:       a.Config.Hooks.SubagentStart,
+		SubagentStop:        a.Config.Hooks.SubagentStop,
+		WorktreeCreate:      a.Config.Hooks.WorktreeCreate,
+		WorktreeRemove:      a.Config.Hooks.WorktreeRemove,
+		CwdChanged:          a.Config.Hooks.CwdChanged,
+		TaskCreated:         a.Config.Hooks.TaskCreated,
+		TaskCompleted:       a.Config.Hooks.TaskCompleted,
+		InstructionsLoaded:  a.Config.Hooks.InstructionsLoaded,
+		FileChanged:         a.Config.Hooks.FileChanged,
+		SandboxDefault:      sandboxStatus.Default,
+		SandboxOK:           sandboxStatus.Available,
+		SandboxStrategies:   sandboxStatus.Strategies,
+		SandboxFallback:     sandboxStatus.FallbackReason,
+		SandboxInContainer:  sandboxStatus.Container.InContainer,
+		SandboxRuntime:      &sandboxRuntime,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")

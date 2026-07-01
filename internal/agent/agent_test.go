@@ -662,6 +662,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_reset")
+	require.Contains(t, report.Features, "doctor_config_load_degraded")
 	require.Contains(t, report.Features, "doctor_config_validation")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "interface_language")
@@ -4891,6 +4892,42 @@ func TestDoctorReportsConfigValidationChecks(t *testing.T) {
 	require.Equal(t, doctor.StatusWarn, hookValidation.Status)
 	require.Equal(t, float64(1), hookValidation.Data["invalid_count"])
 	require.Contains(t, strings.Join(hookValidation.Details, "\n"), "pre_tool_use")
+}
+
+func TestDoctorDegradesOnMalformedConfigFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "doctor"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var report doctor.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "doctor", report.Kind)
+	require.Equal(t, doctor.StatusFail, report.Status)
+	require.True(t, report.HasFailures)
+	configCheck := doctor.Check{}
+	for _, check := range report.Checks {
+		if check.Name == "Config" {
+			configCheck = check
+			break
+		}
+	}
+	require.Equal(t, "Config", configCheck.Name)
+	require.Equal(t, doctor.StatusFail, configCheck.Status)
+	require.Contains(t, configCheck.Summary, "failed to load")
+	loadError, ok := configCheck.Data["load_error"].(string)
+	require.True(t, ok)
+	require.Contains(t, loadError, "broken.json")
+	require.Equal(t, "config_load_failed", configCheck.Data["load_error_kind"])
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/doctor"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, doctor.StatusFail, report.Status)
 }
 
 func TestStatusCommandAndSlash(t *testing.T) {

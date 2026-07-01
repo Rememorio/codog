@@ -26,48 +26,50 @@ const (
 )
 
 type Options struct {
-	Workspace          string
-	ConfigHome         string
-	Model              string
-	BaseURL            string
-	APIKey             string
-	AuthToken          string
-	PermissionMode     string
-	ToolCount          int
-	MCPServerStatuses  []mcp.ServerStatus
-	MCPValidation      localstatus.MCPValidationStatus
-	HookValidation     localstatus.HookValidationStatus
-	SessionCount       int
-	MemoryFiles        []string
-	UserPromptSubmit   []string
-	SessionStart       []string
-	PreToolUse         []string
-	PostToolUse        []string
-	PostToolUseFailure []string
-	PermissionRequest  []string
-	PermissionDenied   []string
-	Stop               []string
-	StopFailure        []string
-	SessionEnd         []string
-	Setup              []string
-	PreCompact         []string
-	PostCompact        []string
-	Notification       []string
-	SubagentStart      []string
-	SubagentStop       []string
-	WorktreeCreate     []string
-	WorktreeRemove     []string
-	CwdChanged         []string
-	TaskCreated        []string
-	TaskCompleted      []string
-	InstructionsLoaded []string
-	FileChanged        []string
-	SandboxDefault     string
-	SandboxOK          bool
-	SandboxStrategies  []string
-	SandboxFallback    string
-	SandboxInContainer bool
-	SandboxRuntime     *sandbox.SandboxExecutionStatus
+	Workspace           string
+	ConfigHome          string
+	Model               string
+	BaseURL             string
+	APIKey              string
+	AuthToken           string
+	PermissionMode      string
+	ConfigLoadError     string
+	ConfigLoadErrorKind string
+	ToolCount           int
+	MCPServerStatuses   []mcp.ServerStatus
+	MCPValidation       localstatus.MCPValidationStatus
+	HookValidation      localstatus.HookValidationStatus
+	SessionCount        int
+	MemoryFiles         []string
+	UserPromptSubmit    []string
+	SessionStart        []string
+	PreToolUse          []string
+	PostToolUse         []string
+	PostToolUseFailure  []string
+	PermissionRequest   []string
+	PermissionDenied    []string
+	Stop                []string
+	StopFailure         []string
+	SessionEnd          []string
+	Setup               []string
+	PreCompact          []string
+	PostCompact         []string
+	Notification        []string
+	SubagentStart       []string
+	SubagentStop        []string
+	WorktreeCreate      []string
+	WorktreeRemove      []string
+	CwdChanged          []string
+	TaskCreated         []string
+	TaskCompleted       []string
+	InstructionsLoaded  []string
+	FileChanged         []string
+	SandboxDefault      string
+	SandboxOK           bool
+	SandboxStrategies   []string
+	SandboxFallback     string
+	SandboxInContainer  bool
+	SandboxRuntime      *sandbox.SandboxExecutionStatus
 }
 
 type Summary struct {
@@ -99,6 +101,7 @@ func Run(opts Options) Report {
 	checks := []Check{
 		checkAuth(opts),
 		checkBaseURL(opts.BaseURL),
+		checkConfigLoad(opts),
 		checkConfigHome(opts.ConfigHome),
 		checkWorkspace(opts.Workspace),
 		checkMemory(opts.MemoryFiles),
@@ -160,6 +163,51 @@ func RenderText(w io.Writer, report Report) {
 		if strings.TrimSpace(check.Hint) != "" {
 			fmt.Fprintf(w, "  Hint             %s\n", check.Hint)
 		}
+	}
+}
+
+func checkConfigLoad(opts Options) Check {
+	if strings.TrimSpace(opts.ConfigLoadError) == "" {
+		return Check{
+			Name:    "Config",
+			Status:  StatusOK,
+			Summary: "Runtime config loaded successfully.",
+			Details: []string{
+				"Config load error: none",
+				"Model: " + emptyDoctorValue(opts.Model),
+				"Permission mode: " + emptyDoctorValue(opts.PermissionMode),
+				fmt.Sprintf("MCP servers: %d", opts.MCPValidation.TotalConfigured),
+				fmt.Sprintf("Invalid MCP servers: %d", opts.MCPValidation.InvalidCount),
+				fmt.Sprintf("Invalid hooks: %d", opts.HookValidation.InvalidCount),
+			},
+			Data: map[string]any{
+				"load_error":           nil,
+				"load_error_kind":      "",
+				"model":                opts.Model,
+				"permission_mode":      opts.PermissionMode,
+				"mcp_servers":          opts.MCPValidation.TotalConfigured,
+				"mcp_invalid_servers":  opts.MCPValidation.InvalidCount,
+				"hook_invalid_entries": opts.HookValidation.InvalidCount,
+			},
+		}
+	}
+	kind := strings.TrimSpace(opts.ConfigLoadErrorKind)
+	if kind == "" {
+		kind = "config_load_failed"
+	}
+	return Check{
+		Name:    "Config",
+		Status:  StatusFail,
+		Summary: "Runtime config failed to load.",
+		Details: []string{
+			"Load error kind: " + kind,
+			"Load error: " + strings.TrimSpace(opts.ConfigLoadError),
+		},
+		Hint: "Fix the JSON syntax error in the listed config file, then rerun `codog doctor`.",
+		Data: map[string]any{
+			"load_error":      strings.TrimSpace(opts.ConfigLoadError),
+			"load_error_kind": kind,
+		},
 	}
 }
 

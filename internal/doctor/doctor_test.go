@@ -55,6 +55,32 @@ func TestRunFailsInvalidPermissionMode(t *testing.T) {
 	require.Contains(t, permissions.Hint, "workspace-write")
 }
 
+func TestRunFailsConfigLoadError(t *testing.T) {
+	report := Run(Options{
+		Workspace:           t.TempDir(),
+		ConfigHome:          t.TempDir(),
+		Model:               "claude-test",
+		BaseURL:             "https://api.example.test",
+		APIKey:              "secret",
+		PermissionMode:      "workspace-write",
+		ConfigLoadError:     "broken.json: unexpected end of JSON input",
+		ConfigLoadErrorKind: "config_load_failed",
+		ToolCount:           6,
+		SessionCount:        0,
+		SandboxDefault:      "test-sandbox",
+		SandboxOK:           true,
+	})
+
+	require.Equal(t, StatusFail, report.Status)
+	require.True(t, report.HasFailures)
+	configCheck := findCheck(t, report, "Config")
+	require.Equal(t, StatusFail, configCheck.Status)
+	require.Contains(t, configCheck.Summary, "failed to load")
+	require.Equal(t, "broken.json: unexpected end of JSON input", configCheck.Data["load_error"])
+	require.Equal(t, "config_load_failed", configCheck.Data["load_error_kind"])
+	require.Contains(t, configCheck.Hint, "codog doctor")
+}
+
 func TestRenderText(t *testing.T) {
 	report := NewReport([]Check{
 		{Name: "Auth", Status: StatusOK, Summary: "ready"},
