@@ -2103,6 +2103,40 @@ func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
 	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
+func TestTodoWriteRejectsInvalidPayloads(t *testing.T) {
+	workspace := t.TempDir()
+	tool := TodoWriteTool{Workspace: workspace}
+
+	_, err := tool.Execute(context.Background(), []byte(`{"todos":[]}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "todos must not be empty")
+
+	_, err = tool.Execute(context.Background(), []byte(`{
+		"todos": [
+			{"content": "   ", "activeForm": "Doing it", "status": "pending"}
+		]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "todo content must not be empty")
+
+	_, err = tool.Execute(context.Background(), []byte(`{
+		"todos": [
+			{"content": "Do it", "activeForm": "   ", "status": "pending"}
+		]
+	}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "todo activeForm must not be empty")
+
+	out, err := tool.Execute(context.Background(), []byte(`{
+		"todos": [
+			{"content": "One", "activeForm": "Doing one", "status": "in_progress"},
+			{"content": "Two", "activeForm": "Doing two", "status": "in_progress"}
+		]
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"total": 2`)
+}
+
 func TestWebToolsFetchAndSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

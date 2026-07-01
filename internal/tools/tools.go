@@ -8664,6 +8664,9 @@ func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
+	if err := validateTodoWriteItems(payload.Todos); err != nil {
+		return "", err
+	}
 	oldReport, err := todos.List(t.Workspace)
 	if err != nil {
 		return "", err
@@ -8689,6 +8692,21 @@ func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string
 		VerificationNudgeNeeded: todoWriteVerificationNudgeNeeded(submitted, allCompleted),
 	}
 	return pretty(output), nil
+}
+
+func validateTodoWriteItems(items []todos.Item) error {
+	if len(items) == 0 {
+		return errors.New("todos must not be empty")
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item.Content) == "" {
+			return errors.New("todo content must not be empty")
+		}
+		if strings.TrimSpace(item.ActiveForm) == "" {
+			return errors.New("todo activeForm must not be empty")
+		}
+	}
+	return nil
 }
 
 func todoItemsAllCompleted(items []todos.Item) bool {
