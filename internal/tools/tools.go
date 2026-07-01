@@ -3021,20 +3021,46 @@ func (t ReadFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if bytes.Contains(data[:min(len(data), 8192)], []byte{0}) {
 		return "", errors.New("file appears to be binary")
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := splitReadFileLines(string(data))
 	start := min(max(payload.Offset, 0), len(lines))
 	end := len(lines)
 	if payload.Limit > 0 {
 		end = min(start+payload.Limit, len(lines))
 	}
+	content := strings.Join(lines[start:end], "\n")
+	lineCount := end - start
+	filePayload := map[string]any{
+		"file_path":  path,
+		"content":    content,
+		"numLines":   lineCount,
+		"startLine":  start + 1,
+		"totalLines": len(lines),
+	}
 	return pretty(map[string]any{
-		"path":       path,
-		"start_line": start + 1,
-		"total":      len(lines),
-		"bytes":      len(data),
-		"truncated":  truncated,
-		"content":    strings.Join(lines[start:end], "\n"),
+		"type":        "text",
+		"path":        path,
+		"start_line":  start + 1,
+		"line_count":  lineCount,
+		"next_offset": end,
+		"total":       len(lines),
+		"total_lines": len(lines),
+		"has_more":    end < len(lines),
+		"bytes":       len(data),
+		"truncated":   truncated,
+		"content":     content,
+		"file":        filePayload,
 	}), nil
+}
+
+func splitReadFileLines(content string) []string {
+	if content == "" {
+		return nil
+	}
+	lines := strings.Split(content, "\n")
+	if strings.HasSuffix(content, "\n") {
+		return lines[:len(lines)-1]
+	}
+	return lines
 }
 
 type WriteFileTool struct {

@@ -61,6 +61,60 @@ func TestFileToolsEnforceSizeLimits(t *testing.T) {
 	require.Contains(t, err.Error(), "exceeds maximum editable size")
 }
 
+func TestReadFileToolReportsLineWindowMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\nbeta\ngamma\n"), 0o644))
+
+	out, err := ReadFileTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"notes.txt","offset":1,"limit":1}`))
+	require.NoError(t, err)
+	var report struct {
+		Type       string `json:"type"`
+		Path       string `json:"path"`
+		StartLine  int    `json:"start_line"`
+		LineCount  int    `json:"line_count"`
+		NextOffset int    `json:"next_offset"`
+		Total      int    `json:"total"`
+		TotalLines int    `json:"total_lines"`
+		HasMore    bool   `json:"has_more"`
+		Content    string `json:"content"`
+		File       struct {
+			FilePath   string `json:"file_path"`
+			Content    string `json:"content"`
+			NumLines   int    `json:"numLines"`
+			StartLine  int    `json:"startLine"`
+			TotalLines int    `json:"totalLines"`
+		} `json:"file"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "text", report.Type)
+	expectedPath, err := filepath.EvalSymlinks(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	require.Equal(t, expectedPath, report.Path)
+	require.Equal(t, "beta", report.Content)
+	require.Equal(t, 2, report.StartLine)
+	require.Equal(t, 1, report.LineCount)
+	require.Equal(t, 2, report.NextOffset)
+	require.Equal(t, 3, report.Total)
+	require.Equal(t, 3, report.TotalLines)
+	require.True(t, report.HasMore)
+	require.Equal(t, report.Path, report.File.FilePath)
+	require.Equal(t, "beta", report.File.Content)
+	require.Equal(t, 1, report.File.NumLines)
+	require.Equal(t, 2, report.File.StartLine)
+	require.Equal(t, 3, report.File.TotalLines)
+
+	out, err = ReadFileTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"notes.txt","offset":50}`))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "", report.Content)
+	require.Equal(t, 4, report.StartLine)
+	require.Equal(t, 0, report.LineCount)
+	require.Equal(t, 3, report.NextOffset)
+	require.False(t, report.HasMore)
+	require.Equal(t, 0, report.File.NumLines)
+	require.Equal(t, 4, report.File.StartLine)
+}
+
 func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell script")
