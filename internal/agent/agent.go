@@ -48,6 +48,7 @@ import (
 	"github.com/Rememorio/codog/internal/githubcomments"
 	"github.com/Rememorio/codog/internal/githubsetup"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/greencontract"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/insights"
@@ -540,6 +541,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BranchLock(rest)
 	case "stale-base", "base-check":
 		return app.StaleBase(rest)
+	case "green-contract", "green":
+		return app.GreenContract(rest)
 	case "trust":
 		return app.Trust(rest)
 	case "tag":
@@ -19236,6 +19239,7 @@ func codogCapabilityFeatures() []string {
 		"doctor_sandbox_runtime_status",
 		"editor_bridge",
 		"git_workflows",
+		"green_contract",
 		"hooks",
 		"hooks_health",
 		"ide_bridge",
@@ -19401,6 +19405,8 @@ func builtInCommandNames() []string {
 		"generateSessionName",
 		"git",
 		"good-claude",
+		"green",
+		"green-contract",
 		"heapdump",
 		"help",
 		"history",
@@ -20345,6 +20351,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.BranchLock(resumeSlashArgs("branch-lock", args, format))
 	case "/stale-base", "/base-check":
 		return a.StaleBase(resumeSlashArgs("stale-base", args, format))
+	case "/green-contract", "/green":
+		return a.GreenContract(resumeSlashArgs("green-contract", args, format))
 	case "/trust":
 		return a.Trust(resumeSlashArgs("trust", args, format))
 	case "/tag":
@@ -24595,6 +24603,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.StaleBase(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/green-contract", "/green":
+		if err := a.GreenContract(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/trust":
 		if err := a.Trust(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -28625,6 +28637,244 @@ func renderStaleBaseReport(out io.Writer, report staleBaseReport) {
 	}
 	if check.Warning != "" {
 		fmt.Fprintf(out, "  Warning          %s\n", check.Warning)
+	}
+}
+
+type greenContractRequest struct {
+	Format                         string
+	Action                         string
+	RequiredLevel                  string
+	ObservedLevel                  string
+	MergeReady                     bool
+	TestCommands                   []greencontract.TestCommandProvenance
+	BaseBranchFresh                bool
+	RecoveryAttemptContextRecorded bool
+	KnownFlakes                    []greencontract.KnownFlake
+}
+
+type greenContractReport struct {
+	Kind     string                 `json:"kind"`
+	Action   string                 `json:"action"`
+	Status   string                 `json:"status"`
+	Contract greencontract.Contract `json:"contract"`
+	Evidence greencontract.Evidence `json:"evidence"`
+	Outcome  greencontract.Outcome  `json:"outcome"`
+}
+
+func (a *App) GreenContract(args []string) error {
+	req, err := parseGreenContractArgs(args)
+	if err != nil {
+		return err
+	}
+	var contract greencontract.Contract
+	if req.MergeReady {
+		contract, err = greencontract.MergeReady(req.RequiredLevel)
+	} else {
+		contract, err = greencontract.New(req.RequiredLevel)
+	}
+	if err != nil {
+		return err
+	}
+	evidence := greencontract.Evidence{
+		ObservedLevel:                  req.ObservedLevel,
+		TestCommands:                   append([]greencontract.TestCommandProvenance(nil), req.TestCommands...),
+		BaseBranchFresh:                req.BaseBranchFresh,
+		KnownFlakes:                    append([]greencontract.KnownFlake(nil), req.KnownFlakes...),
+		RecoveryAttemptContextRecorded: req.RecoveryAttemptContextRecorded,
+	}
+	outcome, err := contract.EvaluateEvidence(evidence)
+	if err != nil {
+		return err
+	}
+	report := greenContractReport{
+		Kind:     "green_contract",
+		Action:   req.Action,
+		Status:   greencontract.StatusForOutcome(outcome),
+		Contract: contract,
+		Evidence: evidence,
+		Outcome:  outcome,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderGreenContractReport(a.Out, report)
+	return nil
+}
+
+func parseGreenContractArgs(args []string) (greenContractRequest, error) {
+	req := greenContractRequest{
+		Format:        "text",
+		Action:        "check",
+		RequiredLevel: greencontract.LevelWorkspace,
+		ObservedLevel: greencontract.LevelTargetedTests,
+	}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--required-level" || arg == "--required":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract required level is required")
+			}
+			req.RequiredLevel = args[i]
+		case strings.HasPrefix(arg, "--required-level="):
+			req.RequiredLevel = strings.TrimPrefix(arg, "--required-level=")
+		case strings.HasPrefix(arg, "--required="):
+			req.RequiredLevel = strings.TrimPrefix(arg, "--required=")
+		case arg == "--observed-level" || arg == "--observed" || arg == "--level":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract observed level is required")
+			}
+			req.ObservedLevel = args[i]
+		case strings.HasPrefix(arg, "--observed-level="):
+			req.ObservedLevel = strings.TrimPrefix(arg, "--observed-level=")
+		case strings.HasPrefix(arg, "--observed="):
+			req.ObservedLevel = strings.TrimPrefix(arg, "--observed=")
+		case strings.HasPrefix(arg, "--level="):
+			req.ObservedLevel = strings.TrimPrefix(arg, "--level=")
+		case arg == "--merge-ready":
+			req.MergeReady = true
+		case arg == "--test-command":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract test command is required")
+			}
+			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: args[i], ExitCode: 0})
+		case strings.HasPrefix(arg, "--test-command="):
+			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: strings.TrimPrefix(arg, "--test-command="), ExitCode: 0})
+		case arg == "--failed-test-command":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract failed test command is required")
+			}
+			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: args[i], ExitCode: 1})
+		case strings.HasPrefix(arg, "--failed-test-command="):
+			req.TestCommands = append(req.TestCommands, greencontract.TestCommandProvenance{Command: strings.TrimPrefix(arg, "--failed-test-command="), ExitCode: 1})
+		case arg == "--test-result":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract test result is required")
+			}
+			testCommand, err := parseGreenTestResult(args[i])
+			if err != nil {
+				return req, err
+			}
+			req.TestCommands = append(req.TestCommands, testCommand)
+		case strings.HasPrefix(arg, "--test-result="):
+			testCommand, err := parseGreenTestResult(strings.TrimPrefix(arg, "--test-result="))
+			if err != nil {
+				return req, err
+			}
+			req.TestCommands = append(req.TestCommands, testCommand)
+		case arg == "--base-branch-fresh" || arg == "--base-fresh":
+			req.BaseBranchFresh = true
+		case arg == "--recovery-context" || arg == "--recovery-attempt-context":
+			req.RecoveryAttemptContextRecorded = true
+		case arg == "--known-flake":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract known flake name is required")
+			}
+			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: args[i]})
+		case strings.HasPrefix(arg, "--known-flake="):
+			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: strings.TrimPrefix(arg, "--known-flake=")})
+		case arg == "--blocking-flake":
+			i++
+			if i >= len(args) {
+				return req, errors.New("green-contract blocking flake name is required")
+			}
+			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: args[i], BlocksGreen: true})
+		case strings.HasPrefix(arg, "--blocking-flake="):
+			req.KnownFlakes = append(req.KnownFlakes, greencontract.KnownFlake{TestName: strings.TrimPrefix(arg, "--blocking-flake="), BlocksGreen: true})
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown green-contract flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "green-contract")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+		if action == "check" || action == "status" || action == "verify" {
+			req.Action = "check"
+			positionals = positionals[1:]
+		}
+	}
+	if len(positionals) > 0 {
+		return req, errors.New("usage: codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--json|--output-format text|json]")
+	}
+	if level, err := greencontract.NormalizeLevel(req.RequiredLevel); err != nil {
+		return req, err
+	} else {
+		req.RequiredLevel = level
+	}
+	if level, err := greencontract.NormalizeLevel(req.ObservedLevel); err != nil {
+		return req, err
+	} else {
+		req.ObservedLevel = level
+	}
+	return req, nil
+}
+
+func parseGreenTestResult(value string) (greencontract.TestCommandProvenance, error) {
+	parts := strings.LastIndex(value, "=")
+	if parts <= 0 || parts == len(value)-1 {
+		return greencontract.TestCommandProvenance{}, errors.New("green-contract test result must use COMMAND=EXIT")
+	}
+	exitCode, err := strconv.Atoi(strings.TrimSpace(value[parts+1:]))
+	if err != nil {
+		return greencontract.TestCommandProvenance{}, fmt.Errorf("green-contract test result exit code: %w", err)
+	}
+	command := strings.TrimSpace(value[:parts])
+	if command == "" {
+		return greencontract.TestCommandProvenance{}, errors.New("green-contract test result command is required")
+	}
+	return greencontract.TestCommandProvenance{Command: command, ExitCode: exitCode}, nil
+}
+
+func renderGreenContractReport(out io.Writer, report greenContractReport) {
+	fmt.Fprintln(out, "Green Contract")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Required level   %s\n", report.Contract.RequiredLevel)
+	fmt.Fprintf(out, "  Observed level   %s\n", report.Evidence.ObservedLevel)
+	if len(report.Contract.Requirements) > 0 {
+		fmt.Fprintf(out, "  Requirements     %s\n", strings.Join(report.Contract.Requirements, ", "))
+	}
+	if len(report.Evidence.TestCommands) > 0 {
+		fmt.Fprintln(out, "  Test commands")
+		for _, command := range report.Evidence.TestCommands {
+			fmt.Fprintf(out, "    - exit=%d %s\n", command.ExitCode, command.Command)
+		}
+	}
+	fmt.Fprintf(out, "  Base fresh       %t\n", report.Evidence.BaseBranchFresh)
+	fmt.Fprintf(out, "  Recovery context %t\n", report.Evidence.RecoveryAttemptContextRecorded)
+	if len(report.Outcome.Missing) > 0 {
+		fmt.Fprintf(out, "  Missing          %s\n", strings.Join(report.Outcome.Missing, ", "))
+	}
+	if len(report.Outcome.BlockingFlakes) > 0 {
+		fmt.Fprintln(out, "  Blocking flakes")
+		for _, flake := range report.Outcome.BlockingFlakes {
+			fmt.Fprintf(out, "    - %s\n", flake.TestName)
+		}
 	}
 }
 
@@ -36284,7 +36534,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
@@ -36623,6 +36873,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Stale Base\n\nUsage:\n  codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--output-format text|json]\n  codog base-check [same flags]\n\nChecks whether the current worktree HEAD still matches an expected base commit. The expected base is resolved from `--base-commit`, `.codog-base`, or compatible `.claw-base` in that order.\n",
 			[]string{"status", "matches", "source", "expected", "actual", "warning"},
 			[]string{"matches", "diverged", "no_expected_base", "not_git_repo", "error"},
+			false,
+		), true
+	case "green-contract", "green":
+		return localCommandHelpSpec(
+			"green-contract",
+			"green-contract",
+			"codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--output-format text|json]",
+			"Green Contract\n\nUsage:\n  codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--output-format text|json]\n  codog green [same flags]\n\nEvaluates structured evidence against a green/merge-ready contract. `--merge-ready` requires a passing test command, fresh base branch evidence, recovery attempt context, and no blocking known flakes.\n",
+			[]string{"status", "contract", "evidence", "outcome", "missing", "blocking_flakes"},
+			[]string{"satisfied", "unsatisfied", "error"},
 			false,
 		), true
 	case "trust":
@@ -37616,6 +37876,7 @@ Usage:
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
   %s [flags] stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]
+  %s [flags] green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--json|--output-format text|json]
   %s [flags] trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--allow PATTERN] [--deny PATH] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]

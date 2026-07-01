@@ -5413,6 +5413,35 @@ func TestTrustCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestGreenContractCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.GreenContract([]string{
+		"check",
+		"--merge-ready",
+		"--required-level", "workspace",
+		"--observed-level", "merge-ready",
+		"--test-command", "go test ./...",
+		"--base-branch-fresh",
+		"--recovery-context",
+		"--json",
+	}))
+	require.Contains(t, out.String(), `"kind": "green_contract"`)
+	require.Contains(t, out.String(), `"status": "satisfied"`)
+	require.Contains(t, out.String(), `"required_level": "workspace"`)
+	require.Contains(t, out.String(), `"observed_level": "merge_ready"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/green-contract --merge-ready --observed-level workspace --test-result go-test-all=0", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Green Contract")
+	require.Contains(t, out.String(), "Status           unsatisfied")
+	require.Contains(t, out.String(), "Missing          base_branch_freshness, recovery_attempt_context")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))
