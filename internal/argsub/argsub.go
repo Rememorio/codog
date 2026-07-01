@@ -71,6 +71,27 @@ func Substitute(content string, rawArgs string, appendIfNoPlaceholder bool, argu
 	return content
 }
 
+func SubstituteVariables(content string, variables map[string]string) string {
+	for name, value := range variables {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		content = strings.ReplaceAll(content, "${"+name+"}", value)
+	}
+	return content
+}
+
+func SubstituteVariablesInList(values []string, variables map[string]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = SubstituteVariables(value, variables)
+	}
+	return out
+}
+
 func parseShellLike(raw string) ([]string, bool) {
 	args := []string{}
 	var current strings.Builder

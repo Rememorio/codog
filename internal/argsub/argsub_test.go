@@ -22,3 +22,15 @@ func TestSubstituteAppendsArgumentsWhenRequested(t *testing.T) {
 	require.Equal(t, "Review this\n\nARGUMENTS: file.go", Substitute("Review this", "file.go", true, nil))
 	require.Equal(t, "Review this", Substitute("Review this", "", true, nil))
 }
+
+func TestSubstituteVariables(t *testing.T) {
+	rendered := SubstituteVariables("root=${CLAUDE_PLUGIN_ROOT} missing=${UNKNOWN}", map[string]string{
+		"CLAUDE_PLUGIN_ROOT": "/tmp/plugin",
+	})
+	require.Equal(t, "root=/tmp/plugin missing=${UNKNOWN}", rendered)
+
+	values := SubstituteVariablesInList([]string{"Bash(${CLAUDE_PLUGIN_ROOT}/bin/*)", "Read"}, map[string]string{
+		"CLAUDE_PLUGIN_ROOT": "/tmp/plugin",
+	})
+	require.Equal(t, []string{"Bash(/tmp/plugin/bin/*)", "Read"}, values)
+}

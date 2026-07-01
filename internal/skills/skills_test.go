@@ -18,10 +18,13 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "extra", "rewrite"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "plain.md"), []byte("Plain skill"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "review", "SKILL.md"), []byte("Review skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "review", "SKILL.md"), []byte("Review skill from ${CLAUDE_SKILL_DIR}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo","skills":["./extra/rewrite"]}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize", "SKILL.md"), []byte("Summarize skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize", "SKILL.md"), []byte(`---
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/*)
+---
+Summarize ${CLAUDE_SKILL_DIR} ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "extra", "rewrite", "SKILL.md"), []byte("Rewrite skill"), 0o644))
 
 	all, err := Load(configHome, workspace)
@@ -45,10 +48,23 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	require.Contains(t, rendered, "Audit skill")
 	require.Contains(t, rendered, "User request: check auth")
 
+	skill, err = Find(configHome, workspace, "review")
+	require.NoError(t, err)
+	reviewDir := filepath.ToSlash(filepath.Join(workspace, ".codog", "skills", "review"))
+	require.Equal(t, reviewDir, skill.SkillDir)
+	require.Contains(t, RenderInvocation(skill, ""), "Review skill from "+reviewDir)
+
 	skill, err = Find(configHome, workspace, "demo:summarize")
 	require.NoError(t, err)
 	require.Equal(t, "plugin:demo", skill.Source)
-	require.Equal(t, "Summarize skill", skill.Body)
+	pluginRoot := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugins", "demo"))
+	pluginData := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugin-data", "demo"))
+	skillDir := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize"))
+	require.Equal(t, skillDir, skill.SkillDir)
+	require.Equal(t, pluginRoot, skill.PluginRoot)
+	require.Equal(t, pluginData, skill.PluginData)
+	require.Equal(t, []string{"Bash(" + pluginRoot + "/bin/*)"}, skill.AllowedTools)
+	require.Contains(t, RenderInvocation(skill, ""), "Summarize "+skillDir+" "+pluginRoot+" "+pluginData)
 
 	skill, err = Find(configHome, workspace, "demo:rewrite")
 	require.NoError(t, err)

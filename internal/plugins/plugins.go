@@ -768,6 +768,20 @@ func Root(workspace string) string {
 	return filepath.Join(workspace, ".codog", "plugins")
 }
 
+func DataRoot(workspace string) string {
+	return filepath.Join(workspace, ".codog", "plugin-data")
+}
+
+func DataDir(workspace string, id string) string {
+	return filepath.Join(DataRoot(workspace), id)
+}
+
+func DataDirForManifest(manifest Manifest) string {
+	root := filepath.Clean(manifest.Root)
+	codogDir := filepath.Dir(filepath.Dir(root))
+	return filepath.Join(codogDir, "plugin-data", manifest.ID)
+}
+
 func LoadManifest(dir string) (Manifest, error) {
 	path := filepath.Join(dir, "plugin.json")
 	data, err := os.ReadFile(path)

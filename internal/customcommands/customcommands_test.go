@@ -28,7 +28,10 @@ User review $file / $focus / $0 / $ARGUMENTS[1] / $ARGUMENTS / $filename`), 0o64
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "audit.md"), []byte("Team audit $ARGUMENTS"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "fix.md"), []byte("Codog fix {{ ARGUMENTS }}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo","commands":["./extra/ops.md"]}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "commands", "deploy.md"), []byte("Deploy $ARGUMENTS"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "commands", "deploy.md"), []byte(`---
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/bin/*)
+---
+Deploy ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA} $ARGUMENTS`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "extra", "ops.md"), []byte("Ops $ARGUMENTS"), 0o644))
 
 	commands, err := Load(configHome, workspace)
@@ -67,7 +70,15 @@ User review $file / $focus / $0 / $ARGUMENTS[1] / $ARGUMENTS / $filename`), 0o64
 	command, err = Find(configHome, workspace, "demo:deploy")
 	require.NoError(t, err)
 	require.Equal(t, "plugin:demo", command.Source)
-	require.Equal(t, "Deploy prod", Render(command, "prod").Rendered)
+	pluginRoot := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugins", "demo"))
+	pluginData := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugin-data", "demo"))
+	require.Equal(t, pluginRoot, command.PluginRoot)
+	require.Equal(t, pluginData, command.PluginData)
+	require.Equal(t, []string{"Bash(" + pluginRoot + "/bin/*)"}, command.AllowedTools)
+	rendered = Render(command, "prod")
+	require.Equal(t, pluginRoot, rendered.PluginRoot)
+	require.Equal(t, pluginData, rendered.PluginData)
+	require.Equal(t, "Deploy "+pluginRoot+" "+pluginData+" prod", rendered.Rendered)
 
 	command, err = Find(configHome, workspace, "demo:ops")
 	require.NoError(t, err)

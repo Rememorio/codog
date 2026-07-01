@@ -25,6 +25,9 @@ type Skill struct {
 	ArgumentHint           string   `json:"argument_hint,omitempty"`
 	Arguments              []string `json:"arguments,omitempty"`
 	Paths                  []string `json:"paths,omitempty"`
+	SkillDir               string   `json:"skill_dir,omitempty"`
+	PluginRoot             string   `json:"plugin_root,omitempty"`
+	PluginData             string   `json:"plugin_data,omitempty"`
 	Model                  string   `json:"model,omitempty"`
 	ExecutionContext       string   `json:"execution_context,omitempty"`
 	Agent                  string   `json:"agent,omitempty"`
@@ -249,9 +252,11 @@ Check that claims match current behavior, examples are portable, links or paths 
 }
 
 type root struct {
-	path   string
-	source string
-	prefix string
+	path       string
+	source     string
+	prefix     string
+	pluginRoot string
+	pluginData string
 }
 
 func Load(configHome, workspace string) ([]Skill, error) {
@@ -284,7 +289,7 @@ func Load(configHome, workspace string) ([]Skill, error) {
 			if err != nil {
 				return err
 			}
-			out = append(out, ParseDocument(name, path, root.source, string(data)))
+			out = append(out, parseDocumentFromRoot(name, path, root, string(data)))
 			return nil
 		})
 		if err != nil {
@@ -334,9 +339,11 @@ func skillRootsForPlugin(manifest plugins.Manifest) []root {
 		return nil
 	}
 	out := []root{{
-		path:   filepath.Join(manifest.Root, "skills"),
-		source: "plugin:" + manifest.ID,
-		prefix: manifest.ID,
+		path:       filepath.Join(manifest.Root, "skills"),
+		source:     "plugin:" + manifest.ID,
+		prefix:     manifest.ID,
+		pluginRoot: manifest.Root,
+		pluginData: plugins.DataDirForManifest(manifest),
 	}}
 	seen := map[string]bool{filepath.Clean(out[0].path): true}
 	for _, spec := range manifest.Skills {
@@ -364,7 +371,7 @@ func skillRootsForPlugin(manifest plugins.Manifest) []root {
 			continue
 		}
 		seen[key] = true
-		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID})
+		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID, pluginRoot: manifest.Root, pluginData: plugins.DataDirForManifest(manifest)})
 	}
 	return out
 }
@@ -553,6 +560,7 @@ func RenderInvocation(skill Skill, args string) string {
 	args = strings.TrimSpace(args)
 	renderedSkill := skill
 	renderedSkill.Body = argsub.Substitute(skill.Body, args, false, skill.Arguments)
+	renderedSkill.Body = argsub.SubstituteVariables(renderedSkill.Body, skillVariables(skill))
 	var builder strings.Builder
 	builder.WriteString("Use the following Codog skill for this request.\n\n")
 	builder.WriteString(RenderPromptBlock(renderedSkill))
@@ -584,28 +592,54 @@ func RenderPromptBlock(skill Skill) string {
 		builder.WriteString(metadata)
 		builder.WriteString("</metadata>\n\n")
 	}
-	builder.WriteString(strings.TrimSpace(skill.Body))
+	builder.WriteString(strings.TrimSpace(argsub.SubstituteVariables(skill.Body, skillVariables(skill))))
 	builder.WriteString("\n</skill>")
 	return builder.String()
 }
 
 func ParseDocument(name string, path string, source string, text string) Skill {
+	return parseDocumentWithContext(name, path, source, "", "", "", text)
+}
+
+func parseDocumentFromRoot(name string, path string, root root, text string) Skill {
+	return parseDocumentWithContext(name, path, root.source, skillDir(path), root.pluginRoot, root.pluginData, text)
+}
+
+func parseDocumentWithContext(name string, path string, source string, skillRoot string, pluginRoot string, pluginData string, text string) Skill {
 	body, values, parseErr := frontmatter.Parse(text)
 	skill := Skill{
 		Name:          name,
 		Path:          path,
 		Body:          body,
 		Source:        source,
+		SkillDir:      normalizedPathVariable(skillRoot),
+		PluginRoot:    normalizedPathVariable(pluginRoot),
+		PluginData:    normalizedPathVariable(pluginData),
 		UserInvocable: true,
 	}
 	if parseErr != nil {
 		skill.FrontmatterError = parseErr.Error()
 	}
 	applyFrontmatter(&skill, values)
+	skill.AllowedTools = argsub.SubstituteVariablesInList(skill.AllowedTools, skillVariables(skill))
 	if skill.Description == "" {
 		skill.Description = frontmatter.DescriptionFromMarkdown(skill.Body)
 	}
 	return skill
+}
+
+func skillVariables(skill Skill) map[string]string {
+	variables := map[string]string{}
+	if skill.SkillDir != "" {
+		variables["CLAUDE_SKILL_DIR"] = skill.SkillDir
+	}
+	if skill.PluginRoot != "" {
+		variables["CLAUDE_PLUGIN_ROOT"] = skill.PluginRoot
+	}
+	if skill.PluginData != "" {
+		variables["CLAUDE_PLUGIN_DATA"] = skill.PluginData
+	}
+	return variables
 }
 
 func applyFrontmatter(skill *Skill, values map[string]any) {
@@ -751,6 +785,13 @@ func skillName(root root, path string) (string, error) {
 	return namespacePluginName(root.prefix, name), nil
 }
 
+func skillDir(path string) string {
+	if strings.HasPrefix(path, "builtin://") {
+		return ""
+	}
+	return filepath.Dir(path)
+}
+
 func namespacePluginName(prefix string, name string) string {
 	prefix = strings.TrimSpace(prefix)
 	name = strings.TrimSpace(name)
@@ -758,6 +799,14 @@ func namespacePluginName(prefix string, name string) string {
 		return name
 	}
 	return prefix + ":" + name
+}
+
+func normalizedPathVariable(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.ToSlash(path)
 }
 
 func sourceRank(source string) int {

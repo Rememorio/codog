@@ -39,6 +39,10 @@ func TestLoadPluginManifest(t *testing.T) {
 	require.Equal(t, "demo_tool", manifests[0].Tools[0].Name)
 	require.Equal(t, "cat", manifests[0].Tools[0].Command)
 	require.True(t, manifests[0].Enabled)
+	require.Equal(t, filepath.Join(workspace, ".codog", "plugins"), Root(workspace))
+	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data"), DataRoot(workspace))
+	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), DataDir(workspace, "demo"))
+	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), DataDirForManifest(manifests[0]))
 }
 
 func TestLoadMCPServersNamespacesEnabledPluginServers(t *testing.T) {

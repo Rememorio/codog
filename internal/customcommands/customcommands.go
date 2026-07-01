@@ -17,6 +17,8 @@ type Command struct {
 	Name             string   `json:"name"`
 	Path             string   `json:"path"`
 	Source           string   `json:"source"`
+	PluginRoot       string   `json:"plugin_root,omitempty"`
+	PluginData       string   `json:"plugin_data,omitempty"`
 	Description      string   `json:"description,omitempty"`
 	AllowedTools     []string `json:"allowed_tools,omitempty"`
 	ArgumentHint     string   `json:"argument_hint,omitempty"`
@@ -30,6 +32,8 @@ type Rendered struct {
 	Name         string   `json:"name"`
 	Path         string   `json:"path"`
 	Source       string   `json:"source"`
+	PluginRoot   string   `json:"plugin_root,omitempty"`
+	PluginData   string   `json:"plugin_data,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 	ArgumentHint string   `json:"argument_hint,omitempty"`
@@ -41,9 +45,11 @@ type Rendered struct {
 var ErrNotFound = errors.New("custom command not found")
 
 type root struct {
-	path   string
-	source string
-	prefix string
+	path       string
+	source     string
+	prefix     string
+	pluginRoot string
+	pluginData string
 }
 
 func Load(configHome, workspace string) ([]Command, error) {
@@ -73,7 +79,7 @@ func Load(configHome, workspace string) ([]Command, error) {
 			if err != nil {
 				return err
 			}
-			commands = append(commands, parseCommandDocument(name, path, root.source, string(data)))
+			commands = append(commands, parseCommandDocument(name, path, root, string(data)))
 			return nil
 		})
 		if err != nil {
@@ -107,7 +113,7 @@ func Find(configHome, workspace, name string) (Command, error) {
 			}
 			return Command{}, err
 		}
-		return parseCommandDocument(name, path, root.source, string(data)), nil
+		return parseCommandDocument(name, path, root, string(data)), nil
 	}
 	return Command{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
@@ -115,10 +121,13 @@ func Find(configHome, workspace, name string) (Command, error) {
 func Render(command Command, args string) Rendered {
 	args = strings.TrimSpace(args)
 	rendered := argsub.Substitute(command.Body, args, true, command.Arguments)
+	rendered = argsub.SubstituteVariables(rendered, commandVariables(command))
 	return Rendered{
 		Name:         command.Name,
 		Path:         command.Path,
 		Source:       command.Source,
+		PluginRoot:   command.PluginRoot,
+		PluginData:   command.PluginData,
 		Description:  command.Description,
 		AllowedTools: append([]string(nil), command.AllowedTools...),
 		ArgumentHint: command.ArgumentHint,
@@ -128,13 +137,15 @@ func Render(command Command, args string) Rendered {
 	}
 }
 
-func parseCommandDocument(name string, path string, source string, text string) Command {
+func parseCommandDocument(name string, path string, root root, text string) Command {
 	body, values, parseErr := frontmatter.Parse(text)
 	command := Command{
-		Name:   name,
-		Path:   path,
-		Source: source,
-		Body:   body,
+		Name:       name,
+		Path:       path,
+		Source:     root.source,
+		PluginRoot: normalizedPathVariable(root.pluginRoot),
+		PluginData: normalizedPathVariable(root.pluginData),
+		Body:       body,
 	}
 	if parseErr != nil {
 		command.FrontmatterError = parseErr.Error()
@@ -145,6 +156,7 @@ func parseCommandDocument(name string, path string, source string, text string) 
 		command.ArgumentHint = frontmatter.String(values, "argument-hint")
 		command.Arguments = frontmatter.ArgumentList(values["arguments"])
 	}
+	command.AllowedTools = argsub.SubstituteVariablesInList(command.AllowedTools, commandVariables(command))
 	if command.Description == "" {
 		command.Description = frontmatter.DescriptionFromMarkdown(command.Body)
 	}
@@ -153,6 +165,17 @@ func parseCommandDocument(name string, path string, source string, text string) 
 		command.Preview = preview(command.Body)
 	}
 	return command
+}
+
+func commandVariables(command Command) map[string]string {
+	variables := map[string]string{}
+	if command.PluginRoot != "" {
+		variables["CLAUDE_PLUGIN_ROOT"] = command.PluginRoot
+	}
+	if command.PluginData != "" {
+		variables["CLAUDE_PLUGIN_DATA"] = command.PluginData
+	}
+	return variables
 }
 
 func roots(configHome, workspace string) []root {
@@ -192,9 +215,11 @@ func commandRootsForPlugin(manifest plugins.Manifest) []root {
 		return nil
 	}
 	out := []root{{
-		path:   filepath.Join(manifest.Root, "commands"),
-		source: "plugin:" + manifest.ID,
-		prefix: manifest.ID,
+		path:       filepath.Join(manifest.Root, "commands"),
+		source:     "plugin:" + manifest.ID,
+		prefix:     manifest.ID,
+		pluginRoot: manifest.Root,
+		pluginData: plugins.DataDirForManifest(manifest),
 	}}
 	seen := map[string]bool{filepath.Clean(out[0].path): true}
 	for _, spec := range manifest.Commands {
@@ -218,7 +243,7 @@ func commandRootsForPlugin(manifest plugins.Manifest) []root {
 			continue
 		}
 		seen[key] = true
-		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID})
+		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID, pluginRoot: manifest.Root, pluginData: plugins.DataDirForManifest(manifest)})
 	}
 	return out
 }
@@ -256,6 +281,14 @@ func normalizeName(name string) string {
 	name = strings.TrimSuffix(name, ".md")
 	name = strings.ReplaceAll(filepath.ToSlash(name), "/", ":")
 	return name
+}
+
+func normalizedPathVariable(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.ToSlash(path)
 }
 
 func namespacePluginName(prefix string, name string) string {
