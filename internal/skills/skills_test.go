@@ -101,6 +101,16 @@ func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "workspace", verify.Source)
 	require.Equal(t, "Project verify override.", verify.Body)
+	require.True(t, verify.Active)
+
+	all, err := Load(configHome, workspace)
+	require.NoError(t, err)
+	projectVerify := skillByNameAndSource(all, "verify", "workspace")
+	require.True(t, projectVerify.Active)
+	bundledVerify := skillByNameAndSource(all, "verify", "bundled")
+	require.False(t, bundledVerify.Active)
+	require.Equal(t, "workspace", bundledVerify.ShadowedBy)
+	require.Equal(t, projectVerify.Path, bundledVerify.ShadowedByPath)
 
 	debug, err := Find(configHome, workspace, "debug")
 	require.NoError(t, err)
@@ -241,6 +251,15 @@ func skillNames(all []Skill) []string {
 		names = append(names, skill.Name)
 	}
 	return names
+}
+
+func skillByNameAndSource(all []Skill, name string, source string) Skill {
+	for _, skill := range all {
+		if skill.Name == name && skill.Source == source {
+			return skill
+		}
+	}
+	return Skill{}
 }
 
 func requireSource(t *testing.T, roots []DiscoveryRoot, source string, path string, exists bool) {

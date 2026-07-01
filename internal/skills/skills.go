@@ -37,6 +37,9 @@ type Skill struct {
 	FrontmatterError       string   `json:"frontmatter_error,omitempty"`
 	Body                   string   `json:"body,omitempty"`
 	Source                 string   `json:"source"`
+	Active                 bool     `json:"active"`
+	ShadowedBy             string   `json:"shadowed_by,omitempty"`
+	ShadowedByPath         string   `json:"shadowed_by_path,omitempty"`
 }
 
 type DiscoveryRoot struct {
@@ -320,10 +323,14 @@ func Load(configHome, workspace string) ([]Skill, error) {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if strings.EqualFold(out[i].Name, out[j].Name) {
+			if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
+				return out[i].Path < out[j].Path
+			}
 			return sourceRank(out[i].Source) < sourceRank(out[j].Source)
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
+	annotateActiveSkills(out)
 	return out, nil
 }
 
@@ -357,6 +364,27 @@ func Sources(configHome, workspace string) []DiscoveryRoot {
 		return sourceRank(out[i].Source) < sourceRank(out[j].Source)
 	})
 	return out
+}
+
+func annotateActiveSkills(all []Skill) {
+	winners := map[string]int{}
+	for index := range all {
+		key := strings.ToLower(strings.TrimSpace(all[index].Name))
+		if key == "" {
+			all[index].Active = false
+			continue
+		}
+		winnerIndex, ok := winners[key]
+		if !ok {
+			winners[key] = index
+			all[index].Active = true
+			continue
+		}
+		winner := all[winnerIndex]
+		all[index].Active = false
+		all[index].ShadowedBy = winner.Source
+		all[index].ShadowedByPath = winner.Path
+	}
 }
 
 func discoveryRoot(root root) DiscoveryRoot {
@@ -707,6 +735,7 @@ func parseDocumentWithContext(name string, path string, source string, skillRoot
 		Path:          path,
 		Body:          body,
 		Source:        source,
+		Active:        true,
 		SkillDir:      normalizedPathVariable(skillRoot),
 		PluginRoot:    normalizedPathVariable(pluginRoot),
 		PluginData:    normalizedPathVariable(pluginData),

@@ -29746,7 +29746,14 @@ func (a *App) listSkills(args []string) error {
 		if containsFold(a.Config.EnabledSkills, skill.Name) {
 			enabled = "enabled"
 		}
-		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", skill.Name, skill.Source, enabled, skill.Path)
+		status := "active"
+		if !skill.Active {
+			status = "shadowed"
+			if skill.ShadowedBy != "" {
+				status += " by " + skill.ShadowedBy
+			}
+		}
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\n", skill.Name, skill.Source, status, enabled, skill.Path)
 	}
 	return nil
 }
@@ -35076,7 +35083,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"skills",
 			"codog skill|skills [list|sources|show|invoke|add|install|uninstall|help]",
 			"Skills\n\nUsage:\n  codog skills [list|sources|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
-			[]string{"skills", "roots", "name", "path", "body"},
+			[]string{"skills", "roots", "name", "path", "body", "active", "shadowed_by"},
 			[]string{"ok", "error"},
 			true,
 		)

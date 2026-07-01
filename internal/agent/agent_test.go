@@ -10834,6 +10834,50 @@ func requireSkillSourceRoot(t *testing.T, roots []skills.DiscoveryRoot, source s
 	require.Failf(t, "skill source root not found", "source=%s path=%s roots=%v", source, path, roots)
 }
 
+func TestSkillsListMarksShadowedEntries(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "debug.md"), []byte("User debug override."), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Skills([]string{"list", "--json"}))
+	var report struct {
+		Kind   string         `json:"kind"`
+		Action string         `json:"action"`
+		Skills []skills.Skill `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &report))
+	require.Equal(t, "skills", report.Kind)
+	require.Equal(t, "list", report.Action)
+	userDebug := skillReportEntry(report.Skills, "debug", "user")
+	require.True(t, userDebug.Active)
+	bundledDebug := skillReportEntry(report.Skills, "debug", "bundled")
+	require.False(t, bundledDebug.Active)
+	require.Equal(t, "user", bundledDebug.ShadowedBy)
+	require.Equal(t, userDebug.Path, bundledDebug.ShadowedByPath)
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"list"}))
+	require.Contains(t, out.String(), "debug\tuser\tactive")
+	require.Contains(t, out.String(), "debug\tbundled\tshadowed by user")
+}
+
+func skillReportEntry(all []skills.Skill, name string, source string) skills.Skill {
+	for _, skill := range all {
+		if skill.Name == name && skill.Source == source {
+			return skill
+		}
+	}
+	return skills.Skill{}
+}
+
 func TestSkillsInstallAndUninstallCommands(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
