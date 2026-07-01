@@ -1,44 +1,209 @@
 package sandbox
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
+type StrategyStatus struct {
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type ContainerStatus struct {
+	InContainer bool     `json:"in_container"`
+	Markers     []string `json:"markers,omitempty"`
+}
+
 type Status struct {
-	OS         string   `json:"os"`
-	Strategies []string `json:"strategies"`
-	Default    string   `json:"default"`
-	Available  bool     `json:"available"`
+	OS                 string           `json:"os"`
+	Strategies         []string         `json:"strategies"`
+	Default            string           `json:"default"`
+	Available          bool             `json:"available"`
+	StrategyStatuses   []StrategyStatus `json:"strategy_statuses,omitempty"`
+	Container          ContainerStatus  `json:"container"`
+	NamespaceSupported bool             `json:"namespace_supported"`
+	NetworkSupported   bool             `json:"network_supported"`
+	FallbackReason     string           `json:"fallback_reason,omitempty"`
+}
+
+type StrategyResolution struct {
+	Configured     string `json:"configured"`
+	Effective      string `json:"effective,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	Available      bool   `json:"available"`
+	Status         string `json:"status"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
+type DetectionInputs struct {
+	OS                 string
+	Env                []string
+	DockerEnvExists    bool
+	ContainerEnvExists bool
+	Proc1Cgroup        string
+	CommandAvailable   func(string) bool
+	UserNamespaceWorks func() bool
 }
 
 func Detect() Status {
-	status := Status{OS: runtime.GOOS}
-	switch runtime.GOOS {
-	case "darwin":
-		status.Strategies = append(status.Strategies, "sandbox-exec")
-		status.Default = "sandbox-exec"
-		status.Available = commandExists("sandbox-exec")
-	case "linux":
-		for _, candidate := range []string{"bwrap", "unshare"} {
-			if commandExists(candidate) {
-				status.Strategies = append(status.Strategies, candidate)
+	proc1Cgroup, _ := os.ReadFile("/proc/1/cgroup")
+	return DetectFor(DetectionInputs{
+		OS:                 runtime.GOOS,
+		Env:                os.Environ(),
+		DockerEnvExists:    fileExists("/.dockerenv"),
+		ContainerEnvExists: fileExists("/run/.containerenv"),
+		Proc1Cgroup:        string(proc1Cgroup),
+		CommandAvailable:   commandExists,
+		UserNamespaceWorks: unshareUserNamespaceWorks,
+	})
+}
+
+func DetectFor(inputs DetectionInputs) Status {
+	goos := strings.TrimSpace(inputs.OS)
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if inputs.CommandAvailable == nil {
+		inputs.CommandAvailable = commandExists
+	}
+	status := Status{OS: goos, Container: detectContainer(inputs)}
+	candidates := candidateStrategies(goos)
+	reasons := []string{}
+	for _, candidate := range candidates {
+		probe := probeStrategy(candidate, inputs)
+		status.StrategyStatuses = append(status.StrategyStatuses, probe)
+		if probe.Available {
+			status.Strategies = append(status.Strategies, candidate)
+			if status.Default == "" {
+				status.Default = candidate
 			}
-		}
-		if len(status.Strategies) != 0 {
-			status.Default = status.Strategies[0]
 			status.Available = true
+			continue
 		}
-	case "windows":
-		status.Strategies = append(status.Strategies, "restricted-token")
-		status.Default = "restricted-token"
-		status.Available = false
+		if probe.Reason != "" {
+			reasons = append(reasons, candidate+": "+probe.Reason)
+		}
+	}
+	status.NamespaceSupported = strategyAvailable(status.StrategyStatuses, "unshare")
+	status.NetworkSupported = status.NamespaceSupported
+	if !status.Available {
+		if len(reasons) == 0 {
+			reasons = append(reasons, "no supported sandbox strategy detected for "+goos)
+		}
+		status.FallbackReason = strings.Join(reasons, "; ")
 	}
 	return status
+}
+
+func candidateStrategies(goos string) []string {
+	switch goos {
+	case "darwin":
+		return []string{"sandbox-exec"}
+	case "linux":
+		return []string{"bwrap", "unshare"}
+	case "windows":
+		return []string{"restricted-token"}
+	default:
+		return nil
+	}
+}
+
+func probeStrategy(name string, inputs DetectionInputs) StrategyStatus {
+	switch name {
+	case "restricted-token":
+		return StrategyStatus{Name: name, Available: false, Reason: "restricted-token sandbox execution is not implemented"}
+	case "unshare":
+		if !inputs.CommandAvailable("unshare") {
+			return StrategyStatus{Name: name, Available: false, Reason: "command not found"}
+		}
+		if inputs.UserNamespaceWorks != nil && !inputs.UserNamespaceWorks() {
+			return StrategyStatus{Name: name, Available: false, Reason: "user namespaces are unavailable"}
+		}
+		return StrategyStatus{Name: name, Available: true}
+	default:
+		if inputs.CommandAvailable(name) {
+			return StrategyStatus{Name: name, Available: true}
+		}
+		return StrategyStatus{Name: name, Available: false, Reason: "command not found"}
+	}
+}
+
+func strategyAvailable(strategies []StrategyStatus, name string) bool {
+	for _, strategy := range strategies {
+		if strategy.Name == name {
+			return strategy.Available
+		}
+	}
+	return false
+}
+
+func ResolveStrategyReport(strategy string) StrategyResolution {
+	return ResolveStrategyReportFor(strategy, Detect())
+}
+
+func ResolveStrategyReportFor(strategy string, status Status) StrategyResolution {
+	configured := strings.TrimSpace(strategy)
+	switch configured {
+	case "", "off", "none":
+		return StrategyResolution{Configured: configured, Status: "disabled"}
+	case "detect":
+		if !status.Available {
+			return StrategyResolution{
+				Configured:     configured,
+				Status:         "fallback",
+				FallbackReason: status.FallbackReason,
+			}
+		}
+		return StrategyResolution{
+			Configured: configured,
+			Effective:  status.Default,
+			Enabled:    true,
+			Available:  true,
+			Status:     "enabled",
+		}
+	default:
+		for _, item := range status.StrategyStatuses {
+			if item.Name != configured {
+				continue
+			}
+			if item.Available {
+				return StrategyResolution{
+					Configured: configured,
+					Effective:  configured,
+					Enabled:    true,
+					Available:  true,
+					Status:     "enabled",
+				}
+			}
+			message := fmt.Sprintf("sandbox strategy %q is not available", configured)
+			if item.Reason != "" {
+				message += ": " + item.Reason
+			}
+			return StrategyResolution{
+				Configured:     configured,
+				Status:         "unavailable",
+				FallbackReason: item.Reason,
+				Error:          message,
+			}
+		}
+		return StrategyResolution{
+			Configured: configured,
+			Status:     "unavailable",
+			Error:      fmt.Sprintf("sandbox strategy %q is not available: unsupported strategy", configured),
+		}
+	}
 }
 
 func ShellCommand(strategy, workspace, command string) (string, []string, string, error) {
@@ -54,21 +219,11 @@ func ShellCommand(strategy, workspace, command string) (string, []string, string
 }
 
 func ResolveStrategy(strategy string) (string, error) {
-	strategy = strings.TrimSpace(strategy)
-	switch strategy {
-	case "", "off", "none":
-		return "", nil
-	case "detect":
-		status := Detect()
-		if !status.Available {
-			return "", nil
-		}
-		return status.Default, nil
+	resolution := ResolveStrategyReport(strategy)
+	if resolution.Error != "" {
+		return "", fmt.Errorf("%s", resolution.Error)
 	}
-	if !commandExists(strategy) {
-		return "", fmt.Errorf("sandbox strategy %q is not available", strategy)
-	}
-	return strategy, nil
+	return resolution.Effective, nil
 }
 
 func BuildShellCommand(strategy, workspace, command string) (string, []string, error) {
@@ -113,7 +268,72 @@ func macOSSandboxProfile(workspace string) string {
 	}, "\n")
 }
 
+func detectContainer(inputs DetectionInputs) ContainerStatus {
+	markers := []string{}
+	if inputs.DockerEnvExists {
+		markers = append(markers, "/.dockerenv")
+	}
+	if inputs.ContainerEnvExists {
+		markers = append(markers, "/run/.containerenv")
+	}
+	for _, item := range inputs.Env {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		switch strings.ToLower(key) {
+		case "container", "docker", "podman", "kubernetes_service_host":
+			markers = append(markers, "env:"+key+"="+value)
+		}
+	}
+	for _, needle := range []string{"docker", "containerd", "kubepods", "podman", "libpod"} {
+		if strings.Contains(inputs.Proc1Cgroup, needle) {
+			markers = append(markers, "/proc/1/cgroup:"+needle)
+		}
+	}
+	markers = dedupeSorted(markers)
+	return ContainerStatus{InContainer: len(markers) > 0, Markers: markers}
+}
+
+func dedupeSorted(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+var (
+	unshareProbeOnce sync.Once
+	unshareProbeOK   bool
+)
+
+func unshareUserNamespaceWorks() bool {
+	unshareProbeOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "unshare", "--user", "--map-root-user", "true")
+		err := cmd.Run()
+		unshareProbeOK = err == nil
+	})
+	return unshareProbeOK
 }

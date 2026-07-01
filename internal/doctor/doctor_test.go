@@ -179,6 +179,25 @@ func TestRunWarnsForUnavailableMCPServer(t *testing.T) {
 	require.Contains(t, strings.Join(check.Details, "\n"), "missing: command_not_found")
 }
 
+func TestRunReportsSandboxFallbackDetails(t *testing.T) {
+	report := Run(Options{
+		Workspace:       t.TempDir(),
+		ConfigHome:      t.TempDir(),
+		Model:           "claude-test",
+		BaseURL:         "https://api.example.test",
+		APIKey:          "secret",
+		PermissionMode:  "workspace-write",
+		ToolCount:       6,
+		SessionCount:    0,
+		SandboxFallback: "bwrap: command not found",
+	})
+
+	check := findCheck(t, report, "Sandbox")
+	require.Equal(t, StatusWarn, check.Status)
+	require.Contains(t, strings.Join(check.Details, "\n"), "Fallback: bwrap: command not found")
+	require.Contains(t, strings.Join(check.Details, "\n"), "In container: false")
+}
+
 func runTestGit(t *testing.T, workspace string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

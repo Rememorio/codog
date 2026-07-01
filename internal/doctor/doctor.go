@@ -60,6 +60,9 @@ type Options struct {
 	FileChanged        []string
 	SandboxDefault     string
 	SandboxOK          bool
+	SandboxStrategies  []string
+	SandboxFallback    string
+	SandboxInContainer bool
 }
 
 type Summary struct {
@@ -467,11 +470,22 @@ func checkGit(workspace string) Check {
 }
 
 func checkSandbox(opts Options) Check {
+	details := []string{}
+	if opts.SandboxDefault != "" {
+		details = append(details, "Default: "+opts.SandboxDefault)
+	}
+	if len(opts.SandboxStrategies) > 0 {
+		details = append(details, "Strategies: "+strings.Join(opts.SandboxStrategies, ", "))
+	}
+	details = append(details, fmt.Sprintf("In container: %t", opts.SandboxInContainer))
+	if opts.SandboxFallback != "" {
+		details = append(details, "Fallback: "+opts.SandboxFallback)
+	}
 	if opts.SandboxDefault == "" {
 		if opts.SandboxOK {
-			return Check{Name: "Sandbox", Status: StatusOK, Summary: "Sandbox support is available."}
+			return Check{Name: "Sandbox", Status: StatusOK, Summary: "Sandbox support is available.", Details: details}
 		}
-		return Check{Name: "Sandbox", Status: StatusWarn, Summary: "No platform sandbox strategy was detected.", Hint: "Set future.sandbox_strategy to a supported strategy when isolation is required."}
+		return Check{Name: "Sandbox", Status: StatusWarn, Summary: "No platform sandbox strategy was detected.", Details: details, Hint: "Set future.sandbox_strategy to a supported strategy when isolation is required."}
 	}
 	status := StatusOK
 	summary := "Sandbox strategy is available."
@@ -479,7 +493,7 @@ func checkSandbox(opts Options) Check {
 		status = StatusWarn
 		summary = "Configured platform sandbox strategy is not available."
 	}
-	return Check{Name: "Sandbox", Status: status, Summary: summary, Details: []string{"Default: " + opts.SandboxDefault}}
+	return Check{Name: "Sandbox", Status: status, Summary: summary, Details: details}
 }
 
 func checkDeveloperToolchain() Check {

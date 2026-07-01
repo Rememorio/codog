@@ -3530,6 +3530,9 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/sandbox", sess))
 	require.Contains(t, out.String(), `"os":`)
+	require.Contains(t, out.String(), `"strategy_statuses":`)
+	require.Contains(t, out.String(), `"container":`)
+	require.Contains(t, out.String(), `"namespace_supported":`)
 }
 
 func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
@@ -3546,6 +3549,8 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.NoError(t, app.SandboxToggle([]string{"detect", "--json"}))
 	require.Contains(t, out.String(), `"kind": "sandbox_toggle"`)
 	require.Contains(t, out.String(), `"configured_strategy": "detect"`)
+	require.Contains(t, out.String(), `"resolution_status":`)
+	require.Contains(t, out.String(), `"namespace_supported":`)
 	require.Equal(t, "detect", app.Config.Future.SandboxStrategy)
 	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
@@ -3555,6 +3560,7 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/sandbox-toggle off", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Sandbox Toggle")
 	require.Contains(t, out.String(), "Configured       off")
+	require.Contains(t, out.String(), "Namespace")
 	require.Equal(t, "off", app.Config.Future.SandboxStrategy)
 	require.Empty(t, errOut.String())
 	out.Reset()

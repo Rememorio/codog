@@ -7060,34 +7060,63 @@ func isURLish(value string) bool {
 
 func (a *App) Sandbox() error {
 	status := sandbox.Detect()
+	resolution := sandbox.ResolveStrategyReportFor(a.Config.Future.SandboxStrategy, status)
 	data, _ := json.MarshalIndent(sandboxReport{
-		Kind:       "sandbox",
-		Action:     "show",
-		Status:     sandboxReportStatus(status.Available),
-		OS:         status.OS,
-		Strategies: append([]string(nil), status.Strategies...),
-		Default:    status.Default,
-		Available:  status.Available,
+		Kind:               "sandbox",
+		Action:             "show",
+		Status:             sandboxReportStatus(status.Available, resolution.Error),
+		OS:                 status.OS,
+		Strategies:         append([]string(nil), status.Strategies...),
+		Default:            status.Default,
+		Available:          status.Available,
+		ConfiguredStrategy: strings.TrimSpace(a.Config.Future.SandboxStrategy),
+		EffectiveStrategy:  resolution.Effective,
+		Enabled:            resolution.Enabled,
+		ResolutionStatus:   resolution.Status,
+		FallbackReason:     firstNonEmptyAgentString(resolution.FallbackReason, status.FallbackReason),
+		StrategyStatuses:   status.StrategyStatuses,
+		Container:          status.Container,
+		NamespaceSupported: status.NamespaceSupported,
+		NetworkSupported:   status.NetworkSupported,
 	}, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
 
 type sandboxReport struct {
-	Kind       string   `json:"kind"`
-	Action     string   `json:"action"`
-	Status     string   `json:"status"`
-	OS         string   `json:"os"`
-	Strategies []string `json:"strategies"`
-	Default    string   `json:"default"`
-	Available  bool     `json:"available"`
+	Kind               string                   `json:"kind"`
+	Action             string                   `json:"action"`
+	Status             string                   `json:"status"`
+	OS                 string                   `json:"os"`
+	Strategies         []string                 `json:"strategies"`
+	Default            string                   `json:"default"`
+	Available          bool                     `json:"available"`
+	ConfiguredStrategy string                   `json:"configured_strategy"`
+	EffectiveStrategy  string                   `json:"effective_strategy,omitempty"`
+	Enabled            bool                     `json:"enabled"`
+	ResolutionStatus   string                   `json:"resolution_status"`
+	FallbackReason     string                   `json:"fallback_reason,omitempty"`
+	StrategyStatuses   []sandbox.StrategyStatus `json:"strategy_statuses,omitempty"`
+	Container          sandbox.ContainerStatus  `json:"container"`
+	NamespaceSupported bool                     `json:"namespace_supported"`
+	NetworkSupported   bool                     `json:"network_supported"`
 }
 
-func sandboxReportStatus(available bool) string {
-	if available {
+func sandboxReportStatus(available bool, resolutionError string) string {
+	if available && resolutionError == "" {
 		return "ok"
 	}
 	return "warn"
+}
+
+func firstNonEmptyAgentString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type sandboxToggleRequest struct {
@@ -7105,12 +7134,18 @@ type sandboxToggleReport struct {
 	OS                 string   `json:"os"`
 	ConfiguredStrategy string   `json:"configured_strategy"`
 	EffectiveStrategy  string   `json:"effective_strategy,omitempty"`
+	ResolutionStatus   string   `json:"resolution_status"`
 	Enabled            bool     `json:"enabled"`
 	Available          bool     `json:"available"`
 	DefaultStrategy    string   `json:"default_strategy,omitempty"`
 	Strategies         []string `json:"strategies,omitempty"`
 	Path               string   `json:"path,omitempty"`
 	Error              string   `json:"error,omitempty"`
+	FallbackReason     string   `json:"fallback_reason,omitempty"`
+	NamespaceSupported bool     `json:"namespace_supported"`
+	NetworkSupported   bool     `json:"network_supported"`
+	InContainer        bool     `json:"in_container"`
+	ContainerMarkers   []string `json:"container_markers,omitempty"`
 }
 
 func (a *App) SandboxToggle(args []string) error {
@@ -7226,27 +7261,33 @@ func normalizeSandboxToggleAction(value string) (string, string, error) {
 func buildSandboxToggleReport(req sandboxToggleRequest, configured string) sandboxToggleReport {
 	status := sandbox.Detect()
 	configured = strings.TrimSpace(configured)
-	effective, err := sandbox.ResolveStrategy(configured)
+	resolution := sandbox.ResolveStrategyReportFor(configured, status)
 	report := sandboxToggleReport{
 		Kind:               "sandbox_toggle",
 		Action:             req.Action,
 		OS:                 status.OS,
 		ConfiguredStrategy: configured,
-		EffectiveStrategy:  effective,
-		Enabled:            effective != "",
+		EffectiveStrategy:  resolution.Effective,
+		ResolutionStatus:   resolution.Status,
+		Enabled:            resolution.Enabled,
 		Available:          status.Available,
 		DefaultStrategy:    status.Default,
 		Strategies:         status.Strategies,
 		Path:               req.Path,
+		FallbackReason:     firstNonEmptyAgentString(resolution.FallbackReason, status.FallbackReason),
+		NamespaceSupported: status.NamespaceSupported,
+		NetworkSupported:   status.NetworkSupported,
+		InContainer:        status.Container.InContainer,
+		ContainerMarkers:   status.Container.Markers,
 	}
 	switch {
-	case err != nil:
+	case resolution.Error != "":
 		report.Status = "unavailable"
-		report.Error = err.Error()
-	case effective != "":
+		report.Error = resolution.Error
+	case resolution.Enabled:
 		report.Status = "enabled"
 	default:
-		report.Status = "disabled"
+		report.Status = resolution.Status
 	}
 	return report
 }
@@ -7259,11 +7300,17 @@ func renderSandboxToggleReport(out io.Writer, report sandboxToggleReport) {
 	fmt.Fprintf(out, "  Effective        %s\n", emptyAsNone(report.EffectiveStrategy))
 	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
 	fmt.Fprintf(out, "  Available        %t\n", report.Available)
+	fmt.Fprintf(out, "  Namespace        %t\n", report.NamespaceSupported)
+	fmt.Fprintf(out, "  Network          %t\n", report.NetworkSupported)
+	fmt.Fprintf(out, "  Container        %t\n", report.InContainer)
 	if report.DefaultStrategy != "" {
 		fmt.Fprintf(out, "  Default          %s\n", report.DefaultStrategy)
 	}
 	if len(report.Strategies) > 0 {
 		fmt.Fprintf(out, "  Strategies       %s\n", strings.Join(report.Strategies, ", "))
+	}
+	if report.FallbackReason != "" {
+		fmt.Fprintf(out, "  Fallback         %s\n", report.FallbackReason)
 	}
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
@@ -20213,6 +20260,9 @@ func (a *App) Doctor(args []string) error {
 		FileChanged:        a.Config.Hooks.FileChanged,
 		SandboxDefault:     sandboxStatus.Default,
 		SandboxOK:          sandboxStatus.Available,
+		SandboxStrategies:  sandboxStatus.Strategies,
+		SandboxFallback:    sandboxStatus.FallbackReason,
+		SandboxInContainer: sandboxStatus.Container.InContainer,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
