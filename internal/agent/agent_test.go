@@ -430,6 +430,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
+	require.Contains(t, report.Commands, "permissions")
+	require.Contains(t, report.Commands, "plan")
+	require.Contains(t, report.Commands, "teleport")
+	require.Contains(t, report.Commands, "bridge")
+	require.Contains(t, report.Commands, "bridge-kick")
+	require.Contains(t, report.Commands, "cron")
+	require.Contains(t, report.Commands, "team")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "bug")
@@ -1193,7 +1200,7 @@ func TestGlobalToolRuleValidationContracts(t *testing.T) {
 		return RunCLI(context.Background(), []string{
 			"--config", configPath,
 			"--output-format", "json",
-			"--allowedTools", "teleport",
+			"--allowedTools", "not_a_tool",
 			"status",
 		}, config.FlagOverrides{})
 	})
@@ -1204,7 +1211,7 @@ func TestGlobalToolRuleValidationContracts(t *testing.T) {
 	var report cliErrorReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "invalid_tool_name", report.ErrorKind)
-	require.Equal(t, "teleport", report.ToolName)
+	require.Equal(t, "not_a_tool", report.ToolName)
 	require.Equal(t, "--allowed-tools", report.Argument)
 	require.Contains(t, report.Available, "web_fetch")
 	require.Equal(t, "web_fetch", report.ToolAliases["WebFetch"])
