@@ -148,6 +148,7 @@ func Specs() []Spec {
 		{Name: "/focus", Usage: "/focus [PATH...]", Description: "Show or add focused context paths."},
 		{Name: "/unfocus", Usage: "/unfocus [PATH...|--all]", Description: "Remove focused context paths."},
 		{Name: "/add-dir", Usage: "/add-dir [PATH...|remove PATH|clear]", Description: "Allow tools to access additional directories."},
+		{Name: "/validation", Usage: "/validation [add-dir] [PATH...]", Description: "Validate add-dir path candidates without changing config."},
 		{Name: "/workspace", Usage: "/workspace [path]", Description: "Show or change the current runtime workspace."},
 		{Name: "/cwd", Usage: "/cwd [path]", Description: "Alias for /workspace."},
 		{Name: "/output-style", Usage: "/output-style [list|show|set|clear]", Description: "Show or change the active output style."},
@@ -244,6 +245,7 @@ func AllCandidates(options CandidateOptions) []string {
 	}
 	for _, candidate := range []string{
 		"/add-dir ",
+		"/validation add-dir ",
 		"/allowed-tools add ",
 		"/allowed-tools clear",
 		"/allowed-tools list",

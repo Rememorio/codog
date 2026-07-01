@@ -318,6 +318,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "caches",
 		},
 		{
+			name:  "validation local help",
+			args:  []string{"--config", configPath, "validation", "--help", "--output-format", "json"},
+			topic: "validation",
+		},
+		{
 			name:  "context-noninteractive local help",
 			args:  []string{"--config", configPath, "context-noninteractive", "--help", "--output-format", "json"},
 			topic: "context-noninteractive",
@@ -490,6 +495,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "clear")
 	require.Contains(t, report.Commands, "context-noninteractive")
 	require.Contains(t, report.Commands, "conversation")
+	require.Contains(t, report.Commands, "validation")
 	require.Contains(t, report.Commands, "permissions")
 	require.Contains(t, report.Commands, "plan")
 	require.Contains(t, report.Commands, "teleport")
@@ -3770,6 +3776,17 @@ func TestAddDirCommandAndSlashUpdatesToolScope(t *testing.T) {
 	require.Contains(t, app.systemPrompt(), "<additional_directories>")
 	out.Reset()
 
+	require.NoError(t, app.Validation([]string{"add-dir", extra, filepath.Join(workspace, "missing"), "--json"}))
+	var validationReport pathscope.ValidationReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &validationReport))
+	require.Equal(t, "validation", validationReport.Kind)
+	require.Equal(t, "error", validationReport.Status)
+	require.Equal(t, 2, validationReport.Total)
+	require.Equal(t, 1, validationReport.ValidCount)
+	require.Equal(t, 1, validationReport.InvalidCount)
+	require.True(t, validationReport.Entries[0].AlreadyAllowed)
+	out.Reset()
+
 	input, _ := json.Marshal(map[string]string{"path": extraFile})
 	toolOut, err := app.Tools.Execute(context.Background(), "read_file", input, nil)
 	require.NoError(t, err)
@@ -3782,6 +3799,28 @@ func TestAddDirCommandAndSlashUpdatesToolScope(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "escapes workspace")
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/validation add-dir "+extra, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Add-dir Validation")
+	require.Contains(t, out.String(), "Valid            1")
+	require.Empty(t, errOut.String())
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": app.Config.ConfigHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "validation", "add-dir", extra}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &validationReport))
+	require.Equal(t, "validation", validationReport.Kind)
+	require.Equal(t, "ok", validationReport.Status)
 }
 
 func TestWorkspaceCommandAndSlashSwitchesRuntimeWorkspace(t *testing.T) {

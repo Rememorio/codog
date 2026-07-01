@@ -341,6 +341,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Unfocus(rest)
 	case "add-dir":
 		return app.AddDir(rest)
+	case "validation":
+		return app.Validation(rest)
 	case "workspace", "cwd":
 		return app.WorkspaceCommand(rest)
 	case "output-style":
@@ -7564,6 +7566,55 @@ func (a *App) AddDir(args []string) error {
 	}
 	pathscope.RenderText(a.Out, report)
 	return nil
+}
+
+func (a *App) Validation(args []string) error {
+	format, paths, err := parseValidationArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := pathscope.Validate(a.Workspace, a.Config.AdditionalDirs, paths)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	pathscope.RenderValidationText(a.Out, report)
+	return nil
+}
+
+func parseValidationArgs(args []string) (string, []string, error) {
+	format := "text"
+	var paths []string
+	actionSeen := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", nil, errors.New("validation output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		case !actionSeen && (arg == "add-dir" || arg == "adddir" || arg == "paths"):
+			actionSeen = true
+			continue
+		default:
+			actionSeen = true
+			paths = append(paths, arg)
+		}
+	}
+	if err := validateTextOrJSON(format, "validation"); err != nil {
+		return "", nil, err
+	}
+	return format, paths, nil
 }
 
 type addDirRequest struct {
@@ -15101,6 +15152,7 @@ func builtInCommandNames() []string {
 		"updater",
 		"upgrade",
 		"usage",
+		"validation",
 		"version",
 		"vim",
 		"voice",
@@ -18013,6 +18065,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/add-dir":
 		if err := a.AddDir(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/validation":
+		if err := a.Validation(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/workspace", "/cwd":
@@ -26445,7 +26501,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
-		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
+		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
 		return true
 	default:
@@ -26800,6 +26856,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--output-format text|json]",
 			"Search\n\nUsage:\n  codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--output-format text|json]\n\nSearches workspace files with grep-style output and JSON result metadata.\n",
 			[]string{"pattern", "matches", "count", "truncated"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "validation":
+		return localCommandHelpSpec(
+			"validation",
+			"validation",
+			"codog validation [add-dir] [PATH...] [--output-format text|json]",
+			"Validation\n\nUsage:\n  codog validation [add-dir] [PATH...] [--output-format text|json]\n\nValidates add-dir path candidates without mutating workspace configuration. With no paths, validates currently configured additional directories.\n",
+			[]string{"workspace", "entries", "valid_count", "invalid_count", "already_allowed"},
 			[]string{"ok", "error"},
 			false,
 		), true
@@ -27330,6 +27396,7 @@ Usage:
   %s [flags] focus [PATH...] [--json|--output-format text|json]
   %s [flags] unfocus [PATH...|--all] [--json|--output-format text|json]
   %s [flags] add-dir [PATH...|list|remove PATH|clear] [--json|--output-format text|json]
+  %s [flags] validation [add-dir] [PATH...] [--json|--output-format text|json]
   %s [flags] theme [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] color [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
