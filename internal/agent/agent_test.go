@@ -772,6 +772,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	thinkbackPlaySlash, ok := capabilityReportSlash(report, "/thinkback-play")
 	require.True(t, ok)
 	require.True(t, thinkbackPlaySlash.ResumeSupported)
+	reloadPluginsSlash, ok := capabilityReportSlash(report, "/reload-plugins")
+	require.True(t, ok)
+	require.True(t, reloadPluginsSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1369,6 +1372,9 @@ func risky(value any) {
 	_, err = planmode.Enter(workspace, "inspect before editing")
 	require.NoError(t, err)
 	terminalProfilePath := filepath.Join(workspace, ".zshrc")
+	pluginDir := filepath.Join(workspace, ".codog", "plugins", "resume-demo")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"id":"resume-demo","tools":[{"name":"resume_demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
 
 	oldWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -1978,6 +1984,18 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlugins))
 	require.Equal(t, "plugin", resumedPlugins.Kind)
 	require.Equal(t, "list", resumedPlugins.Action)
+
+	out, err = runResumedJSON("/reload-plugins")
+	require.NoError(t, err)
+	var resumedReloadPlugins reloadPluginsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedReloadPlugins))
+	require.Equal(t, "reload_plugins", resumedReloadPlugins.Kind)
+	require.True(t, resumedReloadPlugins.Reloaded)
+	require.Equal(t, 1, resumedReloadPlugins.Plugins)
+	require.Equal(t, 1, resumedReloadPlugins.PluginTools)
+	require.Contains(t, resumedReloadPlugins.PluginIDs, "resume-demo")
+	require.Contains(t, resumedReloadPlugins.EnabledPluginIDs, "resume-demo")
+	require.GreaterOrEqual(t, resumedReloadPlugins.ToolCountAfter, resumedReloadPlugins.ToolCountBefore)
 
 	out, err = runResumedJSON("/tasks")
 	require.NoError(t, err)

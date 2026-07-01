@@ -308,6 +308,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/reasoning":          true,
 	"/references":         true,
 	"/release-notes":      true,
+	"/reload-plugins":     true,
 	"/remote-env":         true,
 	"/remote-setup":       true,
 	"/rename":             true,

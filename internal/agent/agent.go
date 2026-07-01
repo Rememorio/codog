@@ -19877,6 +19877,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedAgentsSlash(resumeSlashArgs("agents", args, format), resumed, format)
 	case "/plugin", "/plugins", "/marketplace":
 		return a.runResumedMarketplaceSlash(resumeSlashArgs("plugins", args, format), format)
+	case "/reload-plugins":
+		return a.ReloadPlugins(resumeSlashArgs("reload-plugins", args, format))
 	case "/background", "/tasks", "/bashes":
 		return a.runResumedBackgroundSlash(args, resumed, format)
 	case "/cron":

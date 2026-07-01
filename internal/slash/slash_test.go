@@ -260,6 +260,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/think-back")
 	require.Contains(t, names, "/thinkback")
 	require.Contains(t, names, "/thinkback-play")
+	require.Contains(t, names, "/reload-plugins")
 	require.NotContains(t, names, "/commit")
 	require.NotContains(t, names, "/ultraplan")
 	require.NotContains(t, names, "/exit-plan")
