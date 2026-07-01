@@ -6897,7 +6897,7 @@ exit 1
 func TestMiscCompatibilityCommands(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer
-	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}, Workspace: workspace, Out: &out, Err: io.Discard}
 
 	require.NoError(t, app.ExitCompatibility([]string{"--json"}))
 	var exitReport simpleCompatibilityReport
@@ -6922,12 +6922,72 @@ func TestMiscCompatibilityCommands(t *testing.T) {
 	require.Contains(t, string(goodData), "Positive feedback from good-claude: nice")
 	out.Reset()
 
+	require.NoError(t, app.MovedToPluginCommand([]string{"legacy-tool", "--dry-run", "--json"}))
+	var dryRunReport simpleCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &dryRunReport))
+	require.Equal(t, "command_migration", dryRunReport.Kind)
+	require.Equal(t, "moved_to_plugin", dryRunReport.Action)
+	require.Equal(t, "legacy-tool", dryRunReport.PluginID)
+	require.True(t, dryRunReport.DryRun)
+	require.False(t, dryRunReport.Created)
+	require.False(t, dryRunReport.WorkspaceWillMutate)
+	require.Contains(t, dryRunReport.NextCommand, "legacy-tool:legacy-tool")
+	require.NoFileExists(t, dryRunReport.ManifestFile)
+	require.NoFileExists(t, dryRunReport.CommandFile)
+	out.Reset()
+
 	require.NoError(t, app.MovedToPluginCommand([]string{"legacy-tool", "--json"}))
 	var movedReport simpleCompatibilityReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &movedReport))
 	require.Equal(t, "command_migration", movedReport.Kind)
 	require.Equal(t, "moved_to_plugin", movedReport.Action)
-	require.Contains(t, movedReport.NextCommand, "install-remote")
+	require.Equal(t, "ok", movedReport.Status)
+	require.Equal(t, "legacy-tool", movedReport.PluginID)
+	require.True(t, movedReport.WorkspaceWillMutate)
+	require.True(t, movedReport.Created)
+	require.False(t, movedReport.DryRun)
+	require.Contains(t, movedReport.NextCommand, "commands show 'legacy-tool:legacy-tool'")
+	require.FileExists(t, movedReport.ManifestFile)
+	require.FileExists(t, movedReport.CommandFile)
+	require.Greater(t, movedReport.Bytes, 0)
+	validation, err := plugins.Validate(movedReport.PluginRoot)
+	require.NoError(t, err)
+	require.True(t, validation.Success)
+	commandData, err := os.ReadFile(movedReport.CommandFile)
+	require.NoError(t, err)
+	require.Contains(t, string(commandData), "Arguments: $ARGUMENTS")
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"list", "--json"}))
+	var commandsReport struct {
+		Commands []struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		} `json:"commands"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &commandsReport))
+	require.Contains(t, commandsReport.Commands, struct {
+		Name   string `json:"name"`
+		Source string `json:"source"`
+	}{Name: "legacy-tool:legacy-tool", Source: "plugin:legacy-tool"})
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"show", "legacy-tool:legacy-tool", "--json"}))
+	var commandReport struct {
+		Name       string `json:"name"`
+		Source     string `json:"source"`
+		PluginRoot string `json:"plugin_root"`
+		Body       string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &commandReport))
+	require.Equal(t, "legacy-tool:legacy-tool", commandReport.Name)
+	require.Equal(t, "plugin:legacy-tool", commandReport.Source)
+	require.NotEmpty(t, commandReport.PluginRoot)
+	require.Contains(t, commandReport.Body, "plugin-backed workflow")
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"run", "legacy-tool:legacy-tool", "file.go"}))
+	require.Contains(t, out.String(), "Arguments: file.go")
 }
 
 func TestAutofixPRCommandAndSlash(t *testing.T) {

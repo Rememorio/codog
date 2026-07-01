@@ -27667,6 +27667,13 @@ type simpleCompatibilityReport struct {
 	Bytes               int      `json:"bytes,omitempty"`
 	SessionID           string   `json:"session_id,omitempty"`
 	SessionMessages     int      `json:"session_messages,omitempty"`
+	PluginID            string   `json:"plugin_id,omitempty"`
+	PluginRoot          string   `json:"plugin_root,omitempty"`
+	ManifestFile        string   `json:"manifest_file,omitempty"`
+	CommandFile         string   `json:"command_file,omitempty"`
+	DryRun              bool     `json:"dry_run,omitempty"`
+	Created             bool     `json:"created,omitempty"`
+	Force               bool     `json:"force,omitempty"`
 }
 
 func (a *App) ExitCompatibility(args []string) error {
@@ -27723,31 +27730,232 @@ func (a *App) GoodClaude(args []string) error {
 }
 
 func (a *App) MovedToPluginCommand(args []string) error {
-	clean, format, err := stripJSONOnlyOutputFormat("createMovedToPluginCommand", args)
+	req, err := parseMovedToPluginArgs(args)
 	if err != nil {
 		return err
 	}
-	oldCommand := ""
-	if len(clean) > 0 {
-		oldCommand = clean[0]
+	if req.Command == "" {
+		report := simpleCompatibilityReport{
+			Kind:                "command_migration",
+			Action:              "moved_to_plugin",
+			Status:              "needs_command",
+			Command:             "createMovedToPluginCommand",
+			Workspace:           a.Workspace,
+			Message:             "Pass the archived command name to scaffold a local Codog plugin replacement.",
+			Args:                req.Args,
+			ProviderRequestMade: false,
+			WorkspaceWillMutate: false,
+			NextCommand:         "codog createMovedToPluginCommand COMMAND",
+			DryRun:              req.DryRun,
+			Force:               req.Force,
+		}
+		return renderSimpleCompatibility(a.Out, report, req.Format)
 	}
-	next := "codog marketplace browse"
-	if oldCommand != "" {
-		next = "codog marketplace install-remote " + shellQuote(oldCommand)
+	report, err := a.scaffoldMovedToPluginCommand(req)
+	if err != nil {
+		return err
+	}
+	return renderSimpleCompatibility(a.Out, report, req.Format)
+}
+
+type movedToPluginRequest struct {
+	Command string
+	Args    []string
+	Format  string
+	DryRun  bool
+	Force   bool
+}
+
+func parseMovedToPluginArgs(args []string) (movedToPluginRequest, error) {
+	req := movedToPluginRequest{Format: "text"}
+	commandParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("createMovedToPluginCommand output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--dry-run":
+			req.DryRun = true
+		case arg == "--force":
+			req.Force = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown createMovedToPluginCommand flag %q", arg)
+		default:
+			commandParts = append(commandParts, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "createMovedToPluginCommand"); err != nil {
+		return req, err
+	}
+	req.Args = append([]string(nil), commandParts...)
+	req.Command = strings.TrimSpace(strings.Join(commandParts, " "))
+	return req, nil
+}
+
+func (a *App) scaffoldMovedToPluginCommand(req movedToPluginRequest) (simpleCompatibilityReport, error) {
+	pluginID := movedPluginSlug(req.Command)
+	commandName := movedPluginSlug(req.Command)
+	pluginRoot := filepath.Join(plugins.Root(a.Workspace), pluginID)
+	manifestFile := filepath.Join(pluginRoot, "plugin.json")
+	commandFile := filepath.Join(pluginRoot, "commands", commandName+".md")
+	manifestData, commandData, err := movedPluginDraftFiles(req.Command, pluginID, commandName)
+	if err != nil {
+		return simpleCompatibilityReport{}, err
+	}
+	bytes := len(manifestData) + len(commandData)
+	created := false
+	status := "ok"
+	message := "Local plugin migration draft was created."
+	workspaceWillMutate := !req.DryRun
+	if req.DryRun {
+		message = "Local plugin migration draft was planned; no files were written."
+		workspaceWillMutate = false
+	} else if movedPluginDraftExists(manifestFile, commandFile) && !req.Force {
+		status = "exists"
+		message = "Local plugin migration draft already exists; use --force to overwrite it."
+		workspaceWillMutate = false
+	} else {
+		if err := os.MkdirAll(filepath.Dir(commandFile), 0o755); err != nil {
+			return simpleCompatibilityReport{}, err
+		}
+		if err := os.WriteFile(manifestFile, manifestData, 0o644); err != nil {
+			return simpleCompatibilityReport{}, err
+		}
+		if err := os.WriteFile(commandFile, commandData, 0o644); err != nil {
+			return simpleCompatibilityReport{}, err
+		}
+		result, err := plugins.Validate(pluginRoot)
+		if err != nil {
+			return simpleCompatibilityReport{}, err
+		}
+		if !result.Success {
+			return simpleCompatibilityReport{}, fmt.Errorf("generated plugin failed validation: %s", pluginValidationSummary(result))
+		}
+		created = true
 	}
 	report := simpleCompatibilityReport{
 		Kind:                "command_migration",
 		Action:              "moved_to_plugin",
-		Status:              "ok",
+		Status:              status,
 		Command:             "createMovedToPluginCommand",
 		Workspace:           a.Workspace,
-		Message:             "This compatibility entry reports that an archived command surface should be delivered as a Codog plugin or marketplace command.",
-		Args:                clean,
+		Message:             message,
+		Args:                req.Args,
 		ProviderRequestMade: false,
-		WorkspaceWillMutate: false,
-		NextCommand:         next,
+		WorkspaceWillMutate: workspaceWillMutate,
+		NextCommand:         "codog commands show " + shellQuote(pluginID+":"+commandName),
+		File:                commandFile,
+		Bytes:               bytes,
+		PluginID:            pluginID,
+		PluginRoot:          pluginRoot,
+		ManifestFile:        manifestFile,
+		CommandFile:         commandFile,
+		DryRun:              req.DryRun,
+		Created:             created,
+		Force:               req.Force,
 	}
-	return renderSimpleCompatibility(a.Out, report, format)
+	return report, nil
+}
+
+func movedPluginDraftExists(paths ...string) bool {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func movedPluginSlug(value string) string {
+	value = strings.TrimSpace(strings.TrimPrefix(value, "/"))
+	value = strings.TrimSuffix(value, ".md")
+	value = strings.ToLower(value)
+	var builder strings.Builder
+	lastDash := false
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z':
+			builder.WriteRune(char)
+			lastDash = false
+		case char >= '0' && char <= '9':
+			builder.WriteRune(char)
+			lastDash = false
+		case char == '-' || char == '_' || char == '.' || char == ':' || char == '/' || char == '\\' || char == ' ' || char == '\t' || char == '\n' || char == '\r':
+			if builder.Len() > 0 && !lastDash {
+				builder.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	out := strings.Trim(builder.String(), "-")
+	if out == "" {
+		return "moved-command"
+	}
+	return out
+}
+
+func movedPluginDraftFiles(command string, pluginID string, commandName string) ([]byte, []byte, error) {
+	displayName := strings.TrimSpace(command)
+	if displayName == "" {
+		displayName = commandName
+	}
+	manifest := struct {
+		ID          string   `json:"id"`
+		Name        string   `json:"name"`
+		Version     string   `json:"version"`
+		Description string   `json:"description"`
+		Commands    []string `json:"commands"`
+	}{
+		ID:          pluginID,
+		Name:        pluginID,
+		Version:     "0.1.0",
+		Description: fmt.Sprintf("Local migration draft for archived command %q.", displayName),
+		Commands:    []string{"./commands/" + commandName + ".md"},
+	}
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, nil, err
+	}
+	manifestData = append(manifestData, '\n')
+	description, _ := json.Marshal("Local migration draft for archived command " + displayName + ".")
+	argumentHint, _ := json.Marshal("[arguments]")
+	commandDoc := fmt.Sprintf(`---
+description: %s
+argument-hint: %s
+---
+
+# Migrated command: %s
+
+This command was scaffolded because the archived command is expected to live in a Codog plugin.
+
+Replace this body with the plugin-backed workflow for %s.
+
+Arguments: $ARGUMENTS
+`, string(description), string(argumentHint), displayName, displayName)
+	return manifestData, []byte(commandDoc), nil
+}
+
+func pluginValidationSummary(result plugins.ValidationResult) string {
+	if len(result.Errors) == 0 {
+		return "unknown validation error"
+	}
+	parts := make([]string, 0, len(result.Errors))
+	for _, item := range result.Errors {
+		if item.Path != "" {
+			parts = append(parts, item.Path+": "+item.Message)
+			continue
+		}
+		parts = append(parts, item.Message)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func renderSimpleCompatibility(out io.Writer, report simpleCompatibilityReport, format string) error {
@@ -27765,6 +27973,21 @@ func renderSimpleCompatibility(out io.Writer, report simpleCompatibilityReport, 
 	}
 	if report.File != "" {
 		fmt.Fprintf(out, "  File             %s\n", report.File)
+	}
+	if report.PluginID != "" {
+		fmt.Fprintf(out, "  Plugin           %s\n", report.PluginID)
+	}
+	if report.ManifestFile != "" {
+		fmt.Fprintf(out, "  Manifest         %s\n", report.ManifestFile)
+	}
+	if report.CommandFile != "" {
+		fmt.Fprintf(out, "  Command file     %s\n", report.CommandFile)
+	}
+	if report.DryRun {
+		fmt.Fprintln(out, "  Dry run          true")
+	}
+	if report.Created {
+		fmt.Fprintln(out, "  Created          true")
 	}
 	return nil
 }
@@ -31570,10 +31793,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"createMovedToPluginCommand",
 			"createMovedToPluginCommand",
-			"codog createMovedToPluginCommand [COMMAND] [--output-format text|json]",
-			"createMovedToPluginCommand\n\nUsage:\n  codog createMovedToPluginCommand [COMMAND] [--output-format text|json]\n\nCompatibility entrypoint for archived commands that moved into plugins. It reports the corresponding marketplace command to browse or install a plugin-based replacement.\n",
-			[]string{"message", "next_command", "args"},
-			[]string{"ok", "error"},
+			"codog createMovedToPluginCommand COMMAND [--dry-run] [--force] [--output-format text|json]",
+			"createMovedToPluginCommand\n\nUsage:\n  codog createMovedToPluginCommand COMMAND [--dry-run] [--force] [--output-format text|json]\n\nCompatibility entrypoint for archived commands that moved into plugins. It scaffolds a local Codog plugin migration draft under `.codog/plugins` and exposes the replacement as a plugin-backed slash command.\n",
+			[]string{"message", "plugin_id", "plugin_root", "manifest_file", "command_file", "next_command", "args"},
+			[]string{"ok", "exists", "needs_command", "error"},
 			false,
 		), true
 	case "good-claude":
