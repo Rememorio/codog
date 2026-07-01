@@ -41,6 +41,7 @@ import (
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/onboarding"
 	"github.com/Rememorio/codog/internal/outputstyle"
@@ -1249,6 +1250,11 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "ok", models.Status)
 	require.Equal(t, config.DefaultModel, models.DefaultModel)
 	require.NotEmpty(t, models.Aliases)
+	require.NotEmpty(t, models.Routes)
+	require.True(t, modelRouteExists(models.Routes, "openai/", modelrouting.ProviderOpenAI))
+	require.True(t, modelRouteExists(models.Routes, "local/", modelrouting.ProviderOpenAI))
+	require.True(t, modelRouteExists(models.Routes, "qwen/ or qwen-", modelrouting.ProviderDashScope))
+	require.True(t, modelRouteExists(models.Routes, "kimi/ or kimi-", modelrouting.ProviderDashScope))
 	require.False(t, models.RequiresCredentials)
 	require.False(t, models.RequiresProviderRequest)
 	require.True(t, models.LocalOnly)
@@ -2981,6 +2987,15 @@ func TestInvalidOutputFormatJSONContract(t *testing.T) {
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 	_, ok := capabilityReportTool(report, name)
 	return ok
+}
+
+func modelRouteExists(routes []modelRouteReport, prefix string, provider string) bool {
+	for _, route := range routes {
+		if route.Prefix == prefix && route.Provider == provider {
+			return true
+		}
+	}
+	return false
 }
 
 func capabilityReportTool(report capabilitiesReport, name string) (capabilityTool, bool) {

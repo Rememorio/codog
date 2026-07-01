@@ -10,11 +10,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/signing"
 )
 
 const (
-	DefaultBaseURL = "https://api.anthropic.com"
+	DefaultBaseURL = modelrouting.DefaultAnthropicBaseURL
 	DefaultModel   = "claude-sonnet-4-5"
 )
 
@@ -1479,6 +1480,11 @@ func joinPromptAppend(existing string, next string) string {
 }
 
 func applyEnv(cfg *Config) {
+	genericBaseURLSet := strings.TrimSpace(os.Getenv("CODOG_BASE_URL")) != ""
+	genericAPIKeySet := strings.TrimSpace(os.Getenv("CODOG_API_KEY")) != ""
+	genericAuthTokenSet := strings.TrimSpace(os.Getenv("CODOG_AUTH_TOKEN")) != ""
+	genericCredentialSet := genericAPIKeySet || genericAuthTokenSet
+
 	if value := os.Getenv("ANTHROPIC_API_KEY"); value != "" {
 		cfg.APIKey = value
 	}
@@ -1500,14 +1506,7 @@ func applyEnv(cfg *Config) {
 	if value := os.Getenv("CODOG_AUTH_TOKEN"); value != "" {
 		cfg.AuthToken = value
 	}
-	if strings.HasPrefix(strings.TrimSpace(cfg.Model), "openai/") {
-		if value := os.Getenv("OPENAI_API_KEY"); value != "" && cfg.APIKey == "" {
-			cfg.APIKey = value
-		}
-		if value := os.Getenv("OPENAI_BASE_URL"); value != "" {
-			cfg.BaseURL = value
-		}
-	}
+	applyRoutedProviderEnv(cfg, genericBaseURLSet, genericCredentialSet)
 	if value := os.Getenv("CODOG_ADVISOR_MODEL"); value != "" {
 		cfg.AdvisorModel = value
 	}
@@ -1592,6 +1591,38 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_ADDITIONAL_DIRS"); value != "" {
 		cfg.AdditionalDirs = splitPathList(value)
+	}
+}
+
+func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool) {
+	switch modelrouting.ProviderForModel(cfg.Model) {
+	case modelrouting.ProviderOpenAI:
+		if !genericCredentialSet {
+			cfg.AuthToken = ""
+			cfg.APIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+		}
+		if !genericBaseURLSet {
+			switch {
+			case strings.TrimSpace(os.Getenv("OLLAMA_HOST")) != "":
+				cfg.BaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("OLLAMA_HOST")), "/") + "/v1"
+			case strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")) != "":
+				cfg.BaseURL = strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
+			default:
+				cfg.BaseURL = modelrouting.DefaultOpenAIBaseURL
+			}
+		}
+	case modelrouting.ProviderDashScope:
+		if !genericCredentialSet {
+			cfg.AuthToken = ""
+			cfg.APIKey = strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
+		}
+		if !genericBaseURLSet {
+			if value := strings.TrimSpace(os.Getenv("DASHSCOPE_BASE_URL")); value != "" {
+				cfg.BaseURL = value
+			} else {
+				cfg.BaseURL = modelrouting.DefaultDashScopeBaseURL
+			}
+		}
 	}
 }
 

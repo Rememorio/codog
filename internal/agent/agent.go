@@ -56,6 +56,7 @@ import (
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/onboarding"
 	"github.com/Rememorio/codog/internal/outputstyle"
@@ -24868,12 +24869,23 @@ type modelAliasReport struct {
 	Model string `json:"model"`
 }
 
+type modelRouteReport struct {
+	Prefix         string `json:"prefix"`
+	Provider       string `json:"provider"`
+	WireProtocol   string `json:"wire_protocol"`
+	AuthEnv        string `json:"auth_env"`
+	BaseURLEnv     string `json:"base_url_env"`
+	DefaultBaseURL string `json:"default_base_url"`
+	Description    string `json:"description"`
+}
+
 type modelsReport struct {
 	Kind                    string             `json:"kind"`
 	Action                  string             `json:"action"`
 	Status                  string             `json:"status"`
 	DefaultModel            string             `json:"default_model"`
 	Aliases                 []modelAliasReport `json:"aliases"`
+	Routes                  []modelRouteReport `json:"routes"`
 	ConfiguredModel         string             `json:"configured_model"`
 	ResolvedConfiguredModel string             `json:"resolved_configured_model"`
 	ModelCommand            string             `json:"model_command"`
@@ -24935,6 +24947,7 @@ func (a *App) Models(args []string) error {
 		Status:                  "ok",
 		DefaultModel:            config.DefaultModel,
 		Aliases:                 modelAliases(),
+		Routes:                  modelRoutes(),
 		ConfiguredModel:         a.Config.Model,
 		ResolvedConfiguredModel: resolveModelAlias(a.Config.Model),
 		ModelCommand:            "codog --model MODEL prompt \"...\"",
@@ -25053,6 +25066,56 @@ func modelAliases() []modelAliasReport {
 	}
 }
 
+func modelRoutes() []modelRouteReport {
+	return []modelRouteReport{
+		{
+			Prefix:         "openai/",
+			Provider:       modelrouting.ProviderOpenAI,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "OPENAI_API_KEY",
+			BaseURLEnv:     "OPENAI_BASE_URL",
+			DefaultBaseURL: modelrouting.DefaultOpenAIBaseURL,
+			Description:    "Routes explicit OpenAI-compatible model names; the prefix is stripped for default OpenAI and local endpoints.",
+		},
+		{
+			Prefix:         "gpt-",
+			Provider:       modelrouting.ProviderOpenAI,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "OPENAI_API_KEY",
+			BaseURLEnv:     "OPENAI_BASE_URL",
+			DefaultBaseURL: modelrouting.DefaultOpenAIBaseURL,
+			Description:    "Routes bare GPT model names to the OpenAI-compatible backend.",
+		},
+		{
+			Prefix:         "local/",
+			Provider:       modelrouting.ProviderOpenAI,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "OPENAI_API_KEY",
+			BaseURLEnv:     "OPENAI_BASE_URL or OLLAMA_HOST",
+			DefaultBaseURL: modelrouting.DefaultOpenAIBaseURL,
+			Description:    "Forces OpenAI-compatible local routing while preserving slash-containing model IDs after the prefix.",
+		},
+		{
+			Prefix:         "qwen/ or qwen-",
+			Provider:       modelrouting.ProviderDashScope,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "DASHSCOPE_API_KEY",
+			BaseURLEnv:     "DASHSCOPE_BASE_URL",
+			DefaultBaseURL: modelrouting.DefaultDashScopeBaseURL,
+			Description:    "Routes Qwen models to Alibaba DashScope compatible mode.",
+		},
+		{
+			Prefix:         "kimi/ or kimi-",
+			Provider:       modelrouting.ProviderDashScope,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "DASHSCOPE_API_KEY",
+			BaseURLEnv:     "DASHSCOPE_BASE_URL",
+			DefaultBaseURL: modelrouting.DefaultDashScopeBaseURL,
+			Description:    "Routes Kimi models to Alibaba DashScope compatible mode.",
+		},
+	}
+}
+
 func resolveModelAlias(model string) string {
 	trimmed := strings.TrimSpace(model)
 	for _, alias := range modelAliases() {
@@ -25089,6 +25152,11 @@ func renderModelsReport(out io.Writer, report modelsReport, format string) error
 		aliasParts = append(aliasParts, alias.Name+" -> "+alias.Model)
 	}
 	fmt.Fprintf(out, "  Built-in aliases %s\n", strings.Join(aliasParts, ", "))
+	routeParts := make([]string, 0, len(report.Routes))
+	for _, route := range report.Routes {
+		routeParts = append(routeParts, route.Prefix+" -> "+route.Provider)
+	}
+	fmt.Fprintf(out, "  Routes           %s\n", strings.Join(routeParts, ", "))
 	fmt.Fprintf(out, "  Config model     %s", report.ConfiguredModel)
 	if report.ResolvedConfiguredModel != "" && report.ResolvedConfiguredModel != report.ConfiguredModel {
 		fmt.Fprintf(out, " -> %s", report.ResolvedConfiguredModel)
@@ -36015,7 +36083,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"models",
 			"codog models [help] [--output-format text|json]",
 			"Models\n\nUsage:\n  codog models [help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, and the current configured model without making a provider request.\n",
-			[]string{"default_model", "aliases", "configured_model", "resolved_configured_model", "requires_provider_request"},
+			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "requires_provider_request"},
 			[]string{"ok", "error"},
 			false,
 		)

@@ -167,6 +167,7 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 }
 
 func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OLLAMA_HOST")
 	t.Setenv("CODOG_MODEL", "openai/gpt-4o-mini")
 	t.Setenv("OPENAI_API_KEY", "openai-secret")
 	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")
@@ -176,6 +177,63 @@ func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
 	require.Equal(t, "openai/gpt-4o-mini", cfg.Model)
 	require.Equal(t, "openai-secret", cfg.APIKey)
 	require.Equal(t, "http://127.0.0.1:8080/v1", cfg.BaseURL)
+}
+
+func TestLoadOpenAIEnvironmentForGPTModelOverridesAnthropicEnv(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_BASE_URL", "OLLAMA_HOST")
+	t.Setenv("CODOG_MODEL", "gpt-4.1-mini")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "gpt-4.1-mini", cfg.Model)
+	require.Equal(t, "openai-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, "https://api.openai.com/v1", cfg.BaseURL)
+}
+
+func TestLoadDashScopeEnvironmentForQwenModel(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "DASHSCOPE_BASE_URL")
+	t.Setenv("CODOG_MODEL", "qwen-plus")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("DASHSCOPE_API_KEY", "dashscope-secret")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "qwen-plus", cfg.Model)
+	require.Equal(t, "dashscope-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1", cfg.BaseURL)
+}
+
+func TestLoadLocalModelUsesOllamaHost(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_BASE_URL")
+	t.Setenv("CODOG_MODEL", "local/Qwen/Qwen3.6-27B-FP8")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "local/Qwen/Qwen3.6-27B-FP8", cfg.Model)
+	require.Equal(t, "http://127.0.0.1:11434/v1", cfg.BaseURL)
+}
+
+func unsetEnv(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		name := name
+		previous, existed := os.LookupEnv(name)
+		require.NoError(t, os.Unsetenv(name))
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(name, previous)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
+	}
 }
 
 func TestLoadTemperatureConfigEnvAndFlags(t *testing.T) {

@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/modelrouting"
 )
 
 const anthropicVersion = "2023-06-01"
@@ -76,7 +78,7 @@ func (o RateLimitOptions) Report() RateLimitReport {
 }
 
 func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
-	if isOpenAICompatibleModel(req.Model) {
+	if modelrouting.IsOpenAICompatibleModel(req.Model) {
 		return c.streamOpenAICompatible(ctx, req, onText)
 	}
 	req.Stream = true
@@ -140,14 +142,6 @@ func (c *Client) newRequest(ctx context.Context, body []byte) (*http.Request, er
 	return httpReq, nil
 }
 
-func isOpenAICompatibleModel(model string) bool {
-	return strings.HasPrefix(strings.TrimSpace(model), "openai/")
-}
-
-func stripOpenAIModelPrefix(model string) string {
-	return strings.TrimPrefix(strings.TrimSpace(model), "openai/")
-}
-
 type openAIRequest struct {
 	Model         string          `json:"model"`
 	Messages      []openAIMessage `json:"messages"`
@@ -188,7 +182,7 @@ type openAIFunction struct {
 }
 
 func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
-	wireReq, err := openAIRequestFromAnthropic(req)
+	wireReq, err := openAIRequestFromAnthropic(req, c.BaseURL)
 	if err != nil {
 		return AssistantMessage{}, err
 	}
@@ -234,7 +228,7 @@ func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText
 	return AssistantMessage{}, lastErr
 }
 
-func openAIRequestFromAnthropic(req Request) (openAIRequest, error) {
+func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, error) {
 	messages := make([]openAIMessage, 0, len(req.Messages)+1)
 	if strings.TrimSpace(req.System) != "" {
 		messages = append(messages, openAIMessage{Role: "system", Content: strings.TrimSpace(req.System)})
@@ -258,7 +252,7 @@ func openAIRequestFromAnthropic(req Request) (openAIRequest, error) {
 		})
 	}
 	wire := openAIRequest{
-		Model:         stripOpenAIModelPrefix(req.Model),
+		Model:         modelrouting.WireModelForBaseURL(req.Model, baseURL),
 		Messages:      messages,
 		Tools:         tools,
 		Stream:        true,

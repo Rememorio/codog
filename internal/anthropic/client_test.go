@@ -99,6 +99,29 @@ func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 	require.Equal(t, 2, msg.Usage.OutputTokens)
 }
 
+func TestClientStreamsGPTModelThroughOpenAICompatibleRoute(t *testing.T) {
+	assertOpenAICompatibleRequestModel(t, "gpt-4.1-mini", "gpt-4.1-mini")
+}
+
+func TestClientStreamsLocalModelStripsRoutingPrefix(t *testing.T) {
+	assertOpenAICompatibleRequestModel(t, "local/Qwen/Qwen3.6-27B-FP8", "Qwen/Qwen3.6-27B-FP8")
+}
+
+func TestClientStreamsDashScopeNamespacedModelStripsRoutingPrefix(t *testing.T) {
+	assertOpenAICompatibleRequestModel(t, "qwen/qwen-max", "qwen-max")
+	assertOpenAICompatibleRequestModel(t, "kimi/kimi-k2.5", "kimi-k2.5")
+}
+
+func TestOpenAIWireModelPreservesNamespacedModelForCustomGateway(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "openai/gpt-4.1-mini",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, "https://openrouter.ai/api/v1")
+	require.NoError(t, err)
+	require.Equal(t, "openai/gpt-4.1-mini", wire.Model)
+}
+
 func TestClientStreamsOpenAICompatibleToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -156,6 +179,30 @@ func TestClientStreamsOpenAICompatibleToolCalls(t *testing.T) {
 	require.Equal(t, "call_1", msg.Blocks[0].ID)
 	require.Equal(t, "read_file", msg.Blocks[0].Name)
 	require.JSONEq(t, `{"path":"README.md"}`, string(msg.Blocks[0].Input))
+}
+
+func assertOpenAICompatibleRequestModel(t *testing.T, model string, expectedWireModel string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, expectedWireModel, body["model"])
+		w.Header().Set("content-type", "text/event-stream")
+		writeOpenAISSE(t, w, map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "ok"}}}})
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "provider-key", "")
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     model,
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Len(t, msg.Blocks, 1)
+	require.Equal(t, "ok", msg.Blocks[0].Text)
 }
 
 func TestClientRetriesRateLimitedRequests(t *testing.T) {
