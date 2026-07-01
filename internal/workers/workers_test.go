@@ -3,6 +3,7 @@ package workers
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -94,4 +95,143 @@ func TestWorkerTerminalEventsAreDedupedWithMaterialDifference(t *testing.T) {
 	require.Equal(t, "lane.failed", worker.Terminal.LaneEvent)
 	require.NotEqual(t, firstFingerprint, worker.Terminal.Fingerprint)
 	require.Greater(t, worker.Terminal.Sequence, firstSequence)
+}
+
+func TestStoreRecordsStartupNoEvidenceReport(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "config"))
+	worker, err := store.Create(t.TempDir(), nil, true)
+	require.NoError(t, err)
+
+	worker, err = store.Observe(worker.ID, "Do you trust the files in this folder?")
+	require.NoError(t, err)
+
+	worker, err = store.ObserveStartupTimeout(worker.ID, StartupEvidence{
+		PaneCommand:     "codog repl",
+		TransportHealth: "transport:healthy",
+		MCPHealth:       "mcp:healthy",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "failed", worker.Status)
+	require.Empty(t, worker.TaskStatus)
+	require.Equal(t, "startup_no_evidence: trust_required", worker.LastError)
+	require.NotNil(t, worker.StartupNoEvidence)
+	require.Equal(t, "worker.startup_no_evidence", worker.StartupNoEvidence.Kind)
+	require.Equal(t, StartupTrustRequired, worker.StartupNoEvidence.Classification)
+	require.Equal(t, "trust_prompt", worker.StartupNoEvidence.Evidence.LastLifecycleState)
+	require.Equal(t, "codog repl", worker.StartupNoEvidence.Evidence.PaneCommand)
+	require.True(t, worker.StartupNoEvidence.Evidence.TrustPromptDetected)
+
+	event := worker.Events[len(worker.Events)-1]
+	require.Equal(t, "worker.startup_no_evidence", event.Type)
+	require.Equal(t, "lane.blocked", event.LaneEvent)
+	require.Equal(t, StartupTrustRequired, event.Classification)
+	require.Equal(t, "trust_prompt", event.Evidence["last_lifecycle_state"])
+	require.Equal(t, "healthcheck", event.Provenance.Source)
+	require.NotEmpty(t, event.PayloadHash)
+
+	reloaded, err := store.Get(worker.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded.StartupNoEvidence)
+	require.Equal(t, StartupTrustRequired, reloaded.StartupNoEvidence.Classification)
+}
+
+func TestStoreStartupNoEvidenceUsesPromptSentTimestamp(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "config"))
+	worker, err := store.Create(t.TempDir(), nil, true)
+	require.NoError(t, err)
+	worker, err = store.SendPrompt(worker.ID, "run tests", nil, "")
+	require.NoError(t, err)
+	promptSentAt := worker.Events[len(worker.Events)-1].CreatedAt
+
+	worker, err = store.ObserveStartupTimeout(worker.ID, StartupEvidence{
+		TransportHealth: "transport:healthy",
+		MCPHealth:       "mcp:healthy",
+	})
+	require.NoError(t, err)
+	require.Equal(t, StartupPromptAcceptanceTimeout, worker.StartupNoEvidence.Classification)
+	require.NotNil(t, worker.StartupNoEvidence.Evidence.PromptSentAt)
+	require.True(t, promptSentAt.Equal(*worker.StartupNoEvidence.Evidence.PromptSentAt))
+	require.Equal(t, "pending", worker.StartupNoEvidence.Evidence.PromptAcceptanceState)
+}
+
+func TestClassifyStartupNoEvidence(t *testing.T) {
+	now := time.Now().UTC()
+	healthy := true
+	unhealthy := false
+	cases := []struct {
+		name     string
+		evidence StartupEvidence
+		want     string
+	}{
+		{
+			name: "transport dead",
+			evidence: StartupEvidence{
+				LastLifecycleState:    "spawning",
+				PromptAcceptanceState: "unknown",
+				TransportHealthy:      &unhealthy,
+				MCPHealthy:            &healthy,
+			},
+			want: StartupTransportDead,
+		},
+		{
+			name: "trust required",
+			evidence: StartupEvidence{
+				LastLifecycleState:    "trust_prompt",
+				PromptAcceptanceState: "unknown",
+				TrustPromptDetected:   true,
+				TransportHealthy:      &healthy,
+				MCPHealthy:            &healthy,
+			},
+			want: StartupTrustRequired,
+		},
+		{
+			name: "prompt acceptance timeout",
+			evidence: StartupEvidence{
+				LastLifecycleState:    "running",
+				PromptSentAt:          &now,
+				PromptAcceptanceState: "pending",
+				TransportHealthy:      &healthy,
+				MCPHealthy:            &healthy,
+			},
+			want: StartupPromptAcceptanceTimeout,
+		},
+		{
+			name: "prompt misdelivery",
+			evidence: StartupEvidence{
+				LastLifecycleState:    "ready_for_prompt",
+				PromptSentAt:          &now,
+				PromptAcceptanceState: "not_accepted",
+				TransportHealthy:      &healthy,
+				MCPHealthy:            &healthy,
+				ElapsedSeconds:        45,
+			},
+			want: StartupPromptMisdelivery,
+		},
+		{
+			name: "worker crashed",
+			evidence: StartupEvidence{
+				LastLifecycleState:    "spawning",
+				PromptAcceptanceState: "unknown",
+				TransportHealthy:      &healthy,
+				MCPHealthy:            &unhealthy,
+			},
+			want: StartupWorkerCrashed,
+		},
+		{
+			name: "unknown",
+			evidence: StartupEvidence{
+				LastLifecycleState:    "spawning",
+				PromptAcceptanceState: "unknown",
+				TransportHealthy:      &healthy,
+				MCPHealthy:            &healthy,
+			},
+			want: StartupUnknown,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ClassifyStartupNoEvidence(tc.evidence))
+		})
+	}
 }

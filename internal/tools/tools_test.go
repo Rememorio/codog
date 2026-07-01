@@ -694,7 +694,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 72)
+	require.Len(t, infos, 73)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -764,7 +764,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, PermissionDanger, info.Permission)
 	}
-	for _, name := range []string{"worker_list", "worker_get", "worker_observe", "worker_await_ready", "worker_observe_completion"} {
+	for _, name := range []string{"worker_list", "worker_get", "worker_observe", "worker_await_ready", "worker_observe_completion", "worker_startup_timeout"} {
 		info, ok = registry.Info(name)
 		require.True(t, ok)
 		require.Equal(t, PermissionReadOnly, info.Permission)
@@ -1081,6 +1081,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"WorkerRestartTool":            "worker_restart",
 		"WorkerSendPrompt":             "worker_send_prompt",
 		"WorkerSendPromptTool":         "worker_send_prompt",
+		"WorkerStartupTimeout":         "worker_startup_timeout",
+		"WorkerStartupTimeoutTool":     "worker_startup_timeout",
 		"WorkerTerminate":              "worker_terminate",
 		"WorkerTerminateTool":          "worker_terminate",
 	} {
@@ -2025,6 +2027,69 @@ func TestWorkerToolsManagePromptWorker(t *testing.T) {
 	terminateOut, err := WorkerTerminateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, terminateOut, `"status": "terminated"`)
+}
+
+func TestWorkerStartupTimeoutToolRecordsEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+
+	createOut, err := WorkerCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"cwd":"."}`))
+	require.NoError(t, err)
+	var created struct {
+		WorkerID string `json:"worker_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(createOut), &created))
+
+	_, err = WorkerObserveTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`","screen_text":"Do you trust this folder?"}`))
+	require.NoError(t, err)
+
+	input, err := json.Marshal(map[string]any{
+		"worker_id":             created.WorkerID,
+		"pane_command":          "codog repl",
+		"transport_healthy":     true,
+		"mcp_healthy":           true,
+		"elapsed_seconds":       42,
+		"trust_prompt_detected": true,
+	})
+	require.NoError(t, err)
+	out, err := WorkerStartupTimeoutTool{ConfigHome: configHome}.Execute(context.Background(), input)
+	require.NoError(t, err)
+
+	var result struct {
+		Status            string `json:"status"`
+		LastError         string `json:"last_error"`
+		StartupNoEvidence struct {
+			Classification string `json:"classification"`
+			Evidence       struct {
+				LastLifecycleState  string `json:"last_lifecycle_state"`
+				PaneCommand         string `json:"pane_command"`
+				TrustPromptDetected bool   `json:"trust_prompt_detected"`
+				TransportHealth     string `json:"transport_health"`
+				MCPHealth           string `json:"mcp_health"`
+			} `json:"evidence"`
+		} `json:"startup_no_evidence"`
+		Events []struct {
+			Type           string         `json:"type"`
+			LaneEvent      string         `json:"lane_event"`
+			Classification string         `json:"classification"`
+			Evidence       map[string]any `json:"evidence"`
+		} `json:"events"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	require.Equal(t, "failed", result.Status)
+	require.Equal(t, "startup_no_evidence: trust_required", result.LastError)
+	require.Equal(t, "trust_required", result.StartupNoEvidence.Classification)
+	require.Equal(t, "trust_prompt", result.StartupNoEvidence.Evidence.LastLifecycleState)
+	require.Equal(t, "codog repl", result.StartupNoEvidence.Evidence.PaneCommand)
+	require.True(t, result.StartupNoEvidence.Evidence.TrustPromptDetected)
+	require.Equal(t, "transport:healthy", result.StartupNoEvidence.Evidence.TransportHealth)
+	require.Equal(t, "mcp:healthy", result.StartupNoEvidence.Evidence.MCPHealth)
+	require.NotEmpty(t, result.Events)
+	event := result.Events[len(result.Events)-1]
+	require.Equal(t, "worker.startup_no_evidence", event.Type)
+	require.Equal(t, "lane.blocked", event.LaneEvent)
+	require.Equal(t, "trust_required", event.Classification)
+	require.Equal(t, "trust_prompt", event.Evidence["last_lifecycle_state"])
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

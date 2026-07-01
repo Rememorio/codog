@@ -266,6 +266,8 @@ var claudeToolAliases = map[string]string{
 	"workerrestarttool":            "worker_restart",
 	"workersendprompt":             "worker_send_prompt",
 	"workersendprompttool":         "worker_send_prompt",
+	"workerstartuptimeout":         "worker_startup_timeout",
+	"workerstartuptimeouttool":     "worker_startup_timeout",
 	"workerterminate":              "worker_terminate",
 	"workerterminatetool":          "worker_terminate",
 	"write":                        "write_file",
@@ -405,6 +407,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"WorkerRestartTool":            "worker_restart",
 	"WorkerSendPrompt":             "worker_send_prompt",
 	"WorkerSendPromptTool":         "worker_send_prompt",
+	"WorkerStartupTimeout":         "worker_startup_timeout",
+	"WorkerStartupTimeoutTool":     "worker_startup_timeout",
 	"WorkerTerminate":              "worker_terminate",
 	"WorkerTerminateTool":          "worker_terminate",
 	"Write":                        "write_file",
@@ -530,6 +534,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(WorkerRestartTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerTerminateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerObserveCompletionTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(WorkerStartupTimeoutTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -5262,6 +5267,100 @@ func (t WorkerObserveCompletionTool) Execute(_ context.Context, input json.RawMe
 	return pretty(worker), nil
 }
 
+type WorkerStartupTimeoutTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (WorkerStartupTimeoutTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "worker_startup_timeout",
+		Description: "Record a worker startup timeout with evidence and classify the likely failure mode.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"worker_id":               map[string]any{"type": "string"},
+				"last_lifecycle_state":    map[string]any{"type": "string"},
+				"last_lifecycle_at":       map[string]any{"type": "string", "description": "RFC3339 timestamp for the last lifecycle observation."},
+				"pane_command":            map[string]any{"type": "string"},
+				"pane_observed_at":        map[string]any{"type": "string", "description": "RFC3339 timestamp for the pane observation."},
+				"command_started_at":      map[string]any{"type": "string", "description": "RFC3339 timestamp for the worker command start."},
+				"prompt_sent_at":          map[string]any{"type": "string", "description": "RFC3339 timestamp for prompt delivery."},
+				"prompt_acceptance_state": map[string]any{"type": "string"},
+				"trust_prompt_detected":   map[string]any{"type": "boolean"},
+				"transport_healthy":       map[string]any{"type": "boolean"},
+				"transport_health":        map[string]any{"type": "string"},
+				"mcp_healthy":             map[string]any{"type": "boolean"},
+				"mcp_health":              map[string]any{"type": "string"},
+				"elapsed_seconds":         map[string]any{"type": "integer", "minimum": 0},
+			},
+			"required": []string{"worker_id"},
+		},
+	}
+}
+
+func (WorkerStartupTimeoutTool) Permission() Permission { return PermissionReadOnly }
+
+func (t WorkerStartupTimeoutTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		WorkerID              string `json:"worker_id"`
+		LastLifecycleState    string `json:"last_lifecycle_state"`
+		LastLifecycleAt       string `json:"last_lifecycle_at"`
+		PaneCommand           string `json:"pane_command"`
+		PaneObservedAt        string `json:"pane_observed_at"`
+		CommandStartedAt      string `json:"command_started_at"`
+		PromptSentAt          string `json:"prompt_sent_at"`
+		PromptAcceptanceState string `json:"prompt_acceptance_state"`
+		TrustPromptDetected   bool   `json:"trust_prompt_detected"`
+		TransportHealthy      *bool  `json:"transport_healthy"`
+		TransportHealth       string `json:"transport_health"`
+		MCPHealthy            *bool  `json:"mcp_healthy"`
+		MCPHealth             string `json:"mcp_health"`
+		ElapsedSeconds        int64  `json:"elapsed_seconds"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	if payload.ElapsedSeconds < 0 {
+		return "", errors.New("elapsed_seconds must be non-negative")
+	}
+	evidence := workers.StartupEvidence{
+		LastLifecycleState:    payload.LastLifecycleState,
+		PaneCommand:           payload.PaneCommand,
+		PromptAcceptanceState: payload.PromptAcceptanceState,
+		TrustPromptDetected:   payload.TrustPromptDetected,
+		TransportHealthy:      payload.TransportHealthy,
+		TransportHealth:       payload.TransportHealth,
+		MCPHealthy:            payload.MCPHealthy,
+		MCPHealth:             payload.MCPHealth,
+		ElapsedSeconds:        payload.ElapsedSeconds,
+	}
+	var err error
+	if evidence.LastLifecycleAt, err = parseOptionalWorkerTime(payload.LastLifecycleAt, "last_lifecycle_at"); err != nil {
+		return "", err
+	}
+	if evidence.PaneObservedAt, err = parseOptionalWorkerTime(payload.PaneObservedAt, "pane_observed_at"); err != nil {
+		return "", err
+	}
+	if evidence.CommandStartedAt, err = parseOptionalWorkerTime(payload.CommandStartedAt, "command_started_at"); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(payload.PromptSentAt) != "" {
+		promptSentAt, err := parseOptionalWorkerTime(payload.PromptSentAt, "prompt_sent_at")
+		if err != nil {
+			return "", err
+		}
+		evidence.PromptSentAt = &promptSentAt
+	}
+	worker, err := workerStore(t.ConfigHome, t.Workspace).ObserveStartupTimeout(payload.WorkerID, evidence)
+	if err != nil {
+		return "", err
+	}
+	worker = WorkerGetTool{Workspace: t.Workspace, ConfigHome: t.ConfigHome}.withTaskStatus(worker)
+	return pretty(worker), nil
+}
+
 func (t WorkerGetTool) withTaskStatus(worker workers.Worker) workers.Worker {
 	if strings.TrimSpace(worker.TaskID) == "" {
 		return worker
@@ -5304,6 +5403,18 @@ func parseWorkerID(input json.RawMessage) (string, error) {
 		return "", errors.New("worker_id is required")
 	}
 	return strings.TrimSpace(payload.WorkerID), nil
+}
+
+func parseOptionalWorkerTime(value string, field string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s must be RFC3339: %w", field, err)
+	}
+	return parsed.UTC(), nil
 }
 
 func validateWorkerReceipt(receipt *workers.TaskReceipt) error {

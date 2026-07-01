@@ -17970,6 +17970,7 @@ func codogCapabilityFeatures() []string {
 		"telemetry_preferences",
 		"updater",
 		"voice_listen",
+		"worker_startup_no_evidence",
 		"workspace_switch",
 		"workspace_tools",
 	})

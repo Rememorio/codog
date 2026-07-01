@@ -44,24 +44,26 @@ type Binding struct {
 }
 
 type Event struct {
-	Sequence          int64      `json:"sequence"`
-	Type              string     `json:"type"`
-	LaneEvent         string     `json:"lane_event"`
-	LaneID            string     `json:"lane_id,omitempty"`
-	SessionID         string     `json:"session_id,omitempty"`
-	TaskID            string     `json:"task_id,omitempty"`
-	Status            string     `json:"status,omitempty"`
-	Message           string     `json:"message,omitempty"`
-	FinishReason      string     `json:"finish_reason,omitempty"`
-	TokensOutput      int64      `json:"tokens_output,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	Provenance        Provenance `json:"provenance"`
-	Binding           Binding    `json:"binding,omitempty"`
-	Terminal          bool       `json:"terminal,omitempty"`
-	Fingerprint       string     `json:"fingerprint,omitempty"`
-	PayloadHash       string     `json:"payload_hash,omitempty"`
-	DuplicateOf       string     `json:"duplicate_of,omitempty"`
-	MateriallyDiffers bool       `json:"materially_differs,omitempty"`
+	Sequence          int64          `json:"sequence"`
+	Type              string         `json:"type"`
+	LaneEvent         string         `json:"lane_event"`
+	LaneID            string         `json:"lane_id,omitempty"`
+	SessionID         string         `json:"session_id,omitempty"`
+	TaskID            string         `json:"task_id,omitempty"`
+	Status            string         `json:"status,omitempty"`
+	Message           string         `json:"message,omitempty"`
+	Classification    string         `json:"classification,omitempty"`
+	Evidence          map[string]any `json:"evidence,omitempty"`
+	FinishReason      string         `json:"finish_reason,omitempty"`
+	TokensOutput      int64          `json:"tokens_output,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	Provenance        Provenance     `json:"provenance"`
+	Binding           Binding        `json:"binding,omitempty"`
+	Terminal          bool           `json:"terminal,omitempty"`
+	Fingerprint       string         `json:"fingerprint,omitempty"`
+	PayloadHash       string         `json:"payload_hash,omitempty"`
+	DuplicateOf       string         `json:"duplicate_of,omitempty"`
+	MateriallyDiffers bool           `json:"materially_differs,omitempty"`
 }
 
 type Projection struct {
@@ -172,7 +174,7 @@ func CanonicalLaneEvent(eventType string, status string, finishReason string) st
 		return LaneStarted
 	case "ready", "trust_resolved":
 		return LaneReady
-	case "trust_prompt", "blocked":
+	case "trust_prompt", "blocked", "worker.startup_no_evidence", "startup_no_evidence":
 		return LaneBlocked
 	case "prompt_misdelivery":
 		return LanePromptMisdelivery
@@ -234,12 +236,14 @@ func EventFingerprint(event Event) string {
 
 func PayloadHash(event Event) string {
 	payload := map[string]any{
-		"type":          strings.TrimSpace(event.Type),
-		"lane_event":    strings.TrimSpace(event.LaneEvent),
-		"status":        strings.TrimSpace(event.Status),
-		"message":       strings.TrimSpace(event.Message),
-		"finish_reason": strings.TrimSpace(event.FinishReason),
-		"tokens_output": event.TokensOutput,
+		"type":           strings.TrimSpace(event.Type),
+		"lane_event":     strings.TrimSpace(event.LaneEvent),
+		"status":         strings.TrimSpace(event.Status),
+		"message":        strings.TrimSpace(event.Message),
+		"classification": strings.TrimSpace(event.Classification),
+		"evidence":       event.Evidence,
+		"finish_reason":  strings.TrimSpace(event.FinishReason),
+		"tokens_output":  event.TokensOutput,
 	}
 	data, _ := json.Marshal(payload)
 	return shortHash(string(data))
