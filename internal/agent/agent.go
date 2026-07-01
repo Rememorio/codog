@@ -20158,7 +20158,7 @@ func (a *App) runResumedSkillsSlash(command string, args []string, format string
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "list", "show", "help":
+	case "list", "show", "help", "sources", "roots":
 		return a.Skills(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, action), format)
@@ -29416,6 +29416,8 @@ func (a *App) Skills(args []string) error {
 	switch action {
 	case "list":
 		return a.listSkills(rest)
+	case "sources", "roots":
+		return a.skillSources(rest)
 	case "help":
 		return renderCommandHelpTopic(a.Out, "skills", rest, "text")
 	case "show":
@@ -29745,6 +29747,34 @@ func (a *App) listSkills(args []string) error {
 			enabled = "enabled"
 		}
 		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", skill.Name, skill.Source, enabled, skill.Path)
+	}
+	return nil
+}
+
+func (a *App) skillSources(args []string) error {
+	format, err := parseSimpleOutputFormat("skills sources", args)
+	if err != nil {
+		return err
+	}
+	roots := skills.Sources(a.Config.ConfigHome, a.Workspace)
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":       "skills",
+			"action":     "sources",
+			"status":     "ok",
+			"root_count": len(roots),
+			"roots":      roots,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Skill Sources")
+	for _, root := range roots {
+		state := "missing"
+		if root.Exists {
+			state = "present"
+		}
+		fmt.Fprintf(a.Out, "  %-11s %-8s %s\n", root.Source, state, root.Path)
 	}
 	return nil
 }
@@ -35044,9 +35074,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skill|skills [list|show|invoke|add|install|uninstall|help]",
-			"Skills\n\nUsage:\n  codog skills [list|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. `add` is an alias for `install`. Run `codog skills help` for this local command reference.\n",
-			[]string{"skills", "name", "path", "body"},
+			"codog skill|skills [list|sources|show|invoke|add|install|uninstall|help]",
+			"Skills\n\nUsage:\n  codog skills [list|sources|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
+			[]string{"skills", "roots", "name", "path", "body"},
 			[]string{"ok", "error"},
 			true,
 		)
@@ -35054,7 +35084,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		if strings.EqualFold(strings.TrimSpace(topic), "skill") {
 			spec.Topic = "skill"
 			spec.Command = "skill"
-			spec.Usage = "codog skill [list|show|invoke|add|install|uninstall|help]"
+			spec.Usage = "codog skill [list|sources|show|invoke|add|install|uninstall|help]"
 			spec.Aliases = []string{"skills"}
 		}
 		return spec, true
@@ -35254,7 +35284,7 @@ Usage:
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID]
-  %s [flags] skill|skills [list|show|invoke|add|install|uninstall]
+  %s [flags] skill|skills [list|sources|show|invoke|add|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]

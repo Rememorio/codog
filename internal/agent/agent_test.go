@@ -2039,6 +2039,20 @@ func risky(value any) {
 	require.Equal(t, "list", resumedSkills.Action)
 	require.NotNil(t, resumedSkills.Skills)
 
+	out, err = runResumedJSON("/skills", "sources")
+	require.NoError(t, err)
+	var resumedSkillSources struct {
+		Kind   string                 `json:"kind"`
+		Action string                 `json:"action"`
+		Status string                 `json:"status"`
+		Roots  []skills.DiscoveryRoot `json:"roots"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkillSources))
+	require.Equal(t, "skills", resumedSkillSources.Kind)
+	require.Equal(t, "sources", resumedSkillSources.Action)
+	require.Equal(t, "ok", resumedSkillSources.Status)
+	require.NotEmpty(t, resumedSkillSources.Roots)
+
 	out, err = runResumedJSON("/commands", "list")
 	require.NoError(t, err)
 	var resumedCommands struct {
@@ -10761,6 +10775,24 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.Contains(t, out.String(), `"source": "bundled"`)
 	out.Reset()
 
+	require.NoError(t, app.Skills([]string{"sources", "--json"}))
+	var sourceReport struct {
+		Kind      string                 `json:"kind"`
+		Action    string                 `json:"action"`
+		Status    string                 `json:"status"`
+		RootCount int                    `json:"root_count"`
+		Roots     []skills.DiscoveryRoot `json:"roots"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &sourceReport))
+	require.Equal(t, "skills", sourceReport.Kind)
+	require.Equal(t, "sources", sourceReport.Action)
+	require.Equal(t, "ok", sourceReport.Status)
+	require.Equal(t, len(sourceReport.Roots), sourceReport.RootCount)
+	requireSkillSourceRoot(t, sourceReport.Roots, "user", filepath.Join(configHome, "skills"), true)
+	requireSkillSourceRoot(t, sourceReport.Roots, "claude", filepath.Join(workspace, ".claude", "skills"), true)
+	requireSkillSourceRoot(t, sourceReport.Roots, "workspace", filepath.Join(workspace, ".codog", "skills"), false)
+	out.Reset()
+
 	require.NoError(t, app.Skills([]string{"show", "review"}))
 	require.Equal(t, "Review skill body ${CLAUDE_SESSION_ID}\n", out.String())
 	out.Reset()
@@ -10788,6 +10820,18 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.Contains(t, loaded.Messages[0].Content[0].Text, "Review skill body skill-session")
 	require.Contains(t, loaded.Messages[0].Content[0].Text, "User request: auth flow")
 	require.Contains(t, errOut.String(), "session: skill-session")
+}
+
+func requireSkillSourceRoot(t *testing.T, roots []skills.DiscoveryRoot, source string, path string, exists bool) {
+	t.Helper()
+	for _, root := range roots {
+		if root.Source == source && root.Path == path {
+			require.Equal(t, exists, root.Exists)
+			require.NotEmpty(t, root.Label)
+			return
+		}
+	}
+	require.Failf(t, "skill source root not found", "source=%s path=%s roots=%v", source, path, roots)
 }
 
 func TestSkillsInstallAndUninstallCommands(t *testing.T) {
@@ -10903,7 +10947,9 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &help))
 	require.Equal(t, "skills", help.Topic)
 	require.Equal(t, "skills", help.Command)
+	require.Contains(t, help.Usage, "sources")
 	require.Contains(t, help.Usage, "help")
+	require.Contains(t, help.Help, "roots")
 	require.Contains(t, help.Help, "codog skills help")
 }
 

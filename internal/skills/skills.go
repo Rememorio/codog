@@ -39,6 +39,15 @@ type Skill struct {
 	Source                 string   `json:"source"`
 }
 
+type DiscoveryRoot struct {
+	Source     string `json:"source"`
+	Label      string `json:"label"`
+	Path       string `json:"path"`
+	Exists     bool   `json:"exists"`
+	PluginID   string `json:"plugin_id,omitempty"`
+	PluginRoot string `json:"plugin_root,omitempty"`
+}
+
 type InstallReport struct {
 	Kind   string `json:"kind"`
 	Action string `json:"action"`
@@ -329,6 +338,67 @@ func Bundled() []Skill {
 		out = append(out, ParseDocument(name, "builtin://skills/"+name+".md", "bundled", bundledSkillDocuments[name]))
 	}
 	return out
+}
+
+func Sources(configHome, workspace string) []DiscoveryRoot {
+	out := []DiscoveryRoot{{
+		Source: "bundled",
+		Label:  "Bundled skills",
+		Path:   "builtin://skills",
+		Exists: true,
+	}}
+	for _, root := range roots(configHome, workspace) {
+		out = append(out, discoveryRoot(root))
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
+			return out[i].Path < out[j].Path
+		}
+		return sourceRank(out[i].Source) < sourceRank(out[j].Source)
+	})
+	return out
+}
+
+func discoveryRoot(root root) DiscoveryRoot {
+	exists := false
+	if root.path != "" {
+		if _, err := os.Stat(root.path); err == nil {
+			exists = true
+		}
+	}
+	return DiscoveryRoot{
+		Source:     root.source,
+		Label:      sourceLabel(root.source),
+		Path:       root.path,
+		Exists:     exists,
+		PluginID:   pluginIDFromSource(root.source),
+		PluginRoot: root.pluginRoot,
+	}
+}
+
+func sourceLabel(source string) string {
+	switch {
+	case source == "bundled":
+		return "Bundled skills"
+	case source == "user":
+		return "User skills"
+	case source == "workspace":
+		return "Workspace skills"
+	case source == "claude":
+		return "Claude-compatible workspace skills"
+	case strings.HasPrefix(source, "plugin:"):
+		return "Plugin skills"
+	default:
+		return source
+	}
+}
+
+func pluginIDFromSource(source string) string {
+	id, ok := strings.CutPrefix(source, "plugin:")
+	if !ok {
+		return ""
+	}
+	return id
 }
 
 func roots(configHome, workspace string) []root {

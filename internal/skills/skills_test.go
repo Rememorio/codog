@@ -73,6 +73,17 @@ Summarize ${CLAUDE_SKILL_DIR} ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA}`), 0o6
 
 	_, err = Find(configHome, workspace, "missing")
 	require.True(t, errors.Is(err, ErrNotFound))
+
+	sources := Sources(configHome, workspace)
+	requireSource(t, sources, "bundled", "builtin://skills", true)
+	requireSource(t, sources, "user", filepath.Join(configHome, "skills"), true)
+	requireSource(t, sources, "workspace", filepath.Join(workspace, ".codog", "skills"), true)
+	requireSource(t, sources, "claude", filepath.Join(workspace, ".claude", "skills"), true)
+	pluginSourceRoot := sourceByPath(sources, filepath.Join(workspace, ".codog", "plugins", "demo", "skills"))
+	require.Equal(t, "plugin:demo", pluginSourceRoot.Source)
+	require.Equal(t, "demo", pluginSourceRoot.PluginID)
+	require.Equal(t, filepath.Join(workspace, ".codog", "plugins", "demo"), pluginSourceRoot.PluginRoot)
+	require.True(t, pluginSourceRoot.Exists)
 }
 
 func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
@@ -230,4 +241,25 @@ func skillNames(all []Skill) []string {
 		names = append(names, skill.Name)
 	}
 	return names
+}
+
+func requireSource(t *testing.T, roots []DiscoveryRoot, source string, path string, exists bool) {
+	t.Helper()
+	for _, root := range roots {
+		if root.Source == source && root.Path == path {
+			require.Equal(t, exists, root.Exists)
+			require.NotEmpty(t, root.Label)
+			return
+		}
+	}
+	require.Failf(t, "source root not found", "source=%s path=%s roots=%v", source, path, roots)
+}
+
+func sourceByPath(roots []DiscoveryRoot, path string) DiscoveryRoot {
+	for _, root := range roots {
+		if root.Path == path {
+			return root
+		}
+	}
+	return DiscoveryRoot{}
 }
