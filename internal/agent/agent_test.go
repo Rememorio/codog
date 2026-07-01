@@ -675,6 +675,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "reasoning")
 	require.Contains(t, report.Commands, "reset")
 	require.Contains(t, report.Commands, "settings")
+	require.Contains(t, report.Commands, "skill")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Commands, "workspace")
@@ -749,6 +750,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	hooksSlash, ok := capabilityReportSlash(report, "/hooks")
 	require.True(t, ok)
 	require.True(t, hooksSlash.ResumeSupported)
+	skillSlash, ok := capabilityReportSlash(report, "/skill")
+	require.True(t, ok)
+	require.True(t, skillSlash.ResumeSupported)
 	resetSlash, ok := capabilityReportSlash(report, "/reset")
 	require.True(t, ok)
 	require.True(t, resetSlash.ResumeSupported)
@@ -840,6 +844,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
 	require.True(t, capabilityReportHasSlash(report, "/settings"))
+	require.True(t, capabilityReportHasSlash(report, "/skill"))
 	require.True(t, capabilityReportHasSlash(report, "/workspace"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
@@ -864,6 +869,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("PluginTrustWarning"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ValidatePlugin"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
+	require.True(t, commandAcceptsGlobalOutputFormat("skill"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ultrareviewEnabled"))
 	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
@@ -2026,6 +2032,13 @@ func risky(value any) {
 	require.Equal(t, "list", resumedSkills.Action)
 	require.NotNil(t, resumedSkills.Skills)
 
+	out, err = runResumedJSON("/skill", "list")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkills))
+	require.Equal(t, "skills", resumedSkills.Kind)
+	require.Equal(t, "list", resumedSkills.Action)
+	require.NotNil(t, resumedSkills.Skills)
+
 	out, err = runResumedJSON("/commands", "list")
 	require.NoError(t, err)
 	var resumedCommands struct {
@@ -2555,6 +2568,10 @@ func risky(value any) {
 		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
+		{Command: "/skills", Args: []string{"install", "main.go"}, Report: "/skills install"},
+		{Command: "/skills", Args: []string{"add", "main.go"}, Report: "/skills add"},
+		{Command: "/skills", Args: []string{"invoke", "debug"}, Report: "/skills invoke"},
+		{Command: "/skill", Args: []string{"uninstall", "debug"}, Report: "/skill uninstall"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
 		{Command: "/sandbox-toggle", Args: []string{"detect"}, Report: "/sandbox-toggle detect"},
 		{Command: "/sandbox-toggle", Args: []string{"off"}, Report: "/sandbox-toggle off"},
@@ -10797,6 +10814,13 @@ func TestSkillsInstallAndUninstallCommands(t *testing.T) {
 	require.FileExists(t, filepath.Join(configHome, "skills", "review.md"))
 	out.Reset()
 
+	require.NoError(t, app.Skills([]string{"add", "--project", "--name", "review-copy", sourceFile, "--json"}))
+	require.Contains(t, out.String(), `"action": "install"`)
+	require.Contains(t, out.String(), `"name": "review-copy"`)
+	require.Contains(t, out.String(), `"target": "workspace"`)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "skills", "review-copy.md"))
+	out.Reset()
+
 	require.NoError(t, app.Skills([]string{"install", "--claude", "--name", "team:audit-copy", sourceDir}))
 	require.Contains(t, out.String(), "Skill Installed")
 	require.FileExists(t, filepath.Join(workspace, ".claude", "skills", "team", "audit-copy", "SKILL.md"))
@@ -10812,7 +10836,12 @@ func TestSkillsInstallAndUninstallCommands(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(workspace, ".codog", "skills", "review.md"))
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/skills uninstall team:audit-copy --claude", &session.Session{ID: "session"}))
+	require.NoError(t, app.Skills([]string{"uninstall", "review-copy", "--project", "--json"}))
+	require.Contains(t, out.String(), `"removed": true`)
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "skills", "review-copy.md"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/skill uninstall team:audit-copy --claude", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Skill Uninstalled")
 	require.NoDirExists(t, filepath.Join(workspace, ".claude", "skills", "team", "audit-copy"))
 }
@@ -10823,9 +10852,22 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	data, err := json.Marshal(map[string]string{"config_home": configHome})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	sourceFile := filepath.Join(t.TempDir(), "review.md")
+	require.NoError(t, os.WriteFile(sourceFile, []byte("Review body"), 0o644))
 
 	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "add"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skill", "add", sourceFile}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var install skills.InstallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &install))
+	require.Equal(t, "skills", install.Kind)
+	require.Equal(t, "install", install.Action)
+	require.Equal(t, "review", install.Name)
+	require.FileExists(t, filepath.Join(configHome, "skills", "review.md"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "enable"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	var exitErr *ExitError
@@ -10835,15 +10877,16 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	var report actionErrorReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "skills", report.Kind)
-	require.Equal(t, "add", report.Action)
+	require.Equal(t, "enable", report.Action)
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, "unsupported_skills_action", report.ErrorKind)
 	require.Contains(t, report.Message, "unsupported skills action")
 	require.Contains(t, report.Hint, "codog skills list")
+	require.Contains(t, report.Hint, "codog skills add")
 	require.Contains(t, report.Hint, "codog skills help")
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "add"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "enable"}, config.FlagOverrides{})
 	})
 	require.Empty(t, out)
 	require.Error(t, err)

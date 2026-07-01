@@ -457,7 +457,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Keybindings(rest)
 	case "notifications":
 		return app.Notifications(rest)
-	case "skills":
+	case "skill", "skills":
 		return app.Skills(rest)
 	case "commands":
 		return app.Commands(rest)
@@ -19249,6 +19249,7 @@ func builtInCommandNames() []string {
 		"setupGitHubActions",
 		"sessions",
 		"share",
+		"skill",
 		"skills",
 		"speak",
 		"stash",
@@ -19937,8 +19938,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedSandboxToggleSlash(resumeSlashArgs("sandbox-toggle", args, format), format)
 	case "/mcp":
 		return a.MCP(ctx, resumeSlashArgs("mcp", args, format))
+	case "/skill":
+		return a.runResumedSkillsSlash("/skill", resumeSlashArgs("skills", args, format), format)
 	case "/skills":
-		return a.Skills(resumeSlashArgs("skills", args, format))
+		return a.runResumedSkillsSlash("/skills", resumeSlashArgs("skills", args, format), format)
 	case "/commands":
 		return a.Commands(resumeSlashArgs("commands", args, format))
 	case "/templates":
@@ -20146,6 +20149,19 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 			command += " " + action
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func (a *App) runResumedSkillsSlash(command string, args []string, format string) error {
+	action := "list"
+	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 && !strings.HasPrefix(strings.TrimSpace(meaningful[0]), "-") {
+		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+	}
+	switch action {
+	case "list", "show", "help":
+		return a.Skills(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, action), format)
 	}
 }
 
@@ -23884,7 +23900,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Todos(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/skills":
+	case "/skill", "/skills":
 		if err := a.Skills(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -29455,7 +29471,7 @@ func (a *App) Skills(args []string) error {
 			return nil
 		}
 		fmt.Fprintln(a.Out, rendered)
-	case "install":
+	case "install", "add":
 		req, err := parseSkillInstallArgs(rest)
 		if err != nil {
 			return err
@@ -29540,7 +29556,7 @@ func renderSkillNotFound(out io.Writer, action string, subject string, format st
 		Status:    "error",
 		ErrorKind: "skill_not_found",
 		Message:   message,
-		Hint:      "Run `codog skills list` to see available skills, or `codog skills install <path>` to install one.",
+		Hint:      "Run `codog skills list` to see available skills, or `codog skills add <path>` / `codog skills install <path>` to install one.",
 	}, format)
 }
 
@@ -29555,7 +29571,7 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list`, `codog skills show NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
+		Hint:      "Supported: `codog skills list`, `codog skills show NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills add SOURCE`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
 	}, format)
 }
 
@@ -34090,7 +34106,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
-		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -35024,16 +35040,24 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Usage = "codog setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--output-format text|json]"
 		spec.Text = "Setup GitHub Actions\n\nUsage:\n  codog setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--output-format text|json]\n\nCompatibility entrypoint for `codog install-github-app`; creates Claude Code GitHub Actions workflow files for issue comments and pull request review automation.\n"
 		return spec, true
-	case "skills":
-		return localCommandHelpSpec(
+	case "skill", "skills":
+		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skills [list|show|invoke|install|uninstall|help]",
-			"Skills\n\nUsage:\n  codog skills [list|show|invoke|install|uninstall|help]\n\nLists, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. Run `codog skills help` for this local command reference.\n",
+			"codog skill|skills [list|show|invoke|add|install|uninstall|help]",
+			"Skills\n\nUsage:\n  codog skills [list|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. `add` is an alias for `install`. Run `codog skills help` for this local command reference.\n",
 			[]string{"skills", "name", "path", "body"},
 			[]string{"ok", "error"},
 			true,
-		), true
+		)
+		spec.Aliases = []string{"skill"}
+		if strings.EqualFold(strings.TrimSpace(topic), "skill") {
+			spec.Topic = "skill"
+			spec.Command = "skill"
+			spec.Usage = "codog skill [list|show|invoke|add|install|uninstall|help]"
+			spec.Aliases = []string{"skills"}
+		}
+		return spec, true
 	case "commands":
 		return localCommandHelpSpec(
 			"commands",
@@ -35230,7 +35254,7 @@ Usage:
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID]
-  %s [flags] skills [list|show|invoke|install|uninstall]
+  %s [flags] skill|skills [list|show|invoke|add|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
