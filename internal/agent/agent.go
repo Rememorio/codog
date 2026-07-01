@@ -221,14 +221,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		fmt.Fprintf(os.Stderr, "mock Anthropic-compatible server listening on %s\n", addr)
 		return http.ListenAndServe(addr, mockanthropic.Server{Text: "mock response from codog"}.Handler())
 	}
-	if command == "self-test" {
-		report, err := harness.Run(ctx)
-		if err != nil {
-			return err
+	if command == "self-test" || command == "mock-parity" || command == "parity" {
+		defaultFormat := "text"
+		if command == "self-test" {
+			defaultFormat = "json"
 		}
-		data, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(os.Stdout, string(data))
-		return nil
+		return runMockParityCommand(ctx, os.Stdout, rest, requestedOutputFormat(originalArgs), defaultFormat)
 	}
 	if command == "init" {
 		workspace, err := os.Getwd()
@@ -516,6 +514,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AntTrace(ctx, rest)
 	case "mock-limits":
 		return app.MockLimits(rest)
+	case "mock-parity", "parity", "self-test":
+		return app.MockParity(ctx, rest)
 	case "plan":
 		return app.Plan(rest)
 	case "ultraplan":
@@ -19420,6 +19420,7 @@ func builtInCommandNames() []string {
 		"metrics",
 		"mobile",
 		"mock-limits",
+		"mock-parity",
 		"mock-server",
 		"model",
 		"models",
@@ -19432,6 +19433,7 @@ func builtInCommandNames() []string {
 		"OAuthFlowStep",
 		"onboarding",
 		"output-style",
+		"parity",
 		"passes",
 		"perf-issue",
 		"permissions",
@@ -34013,6 +34015,93 @@ func (a *App) MockLimits(args []string) error {
 	return nil
 }
 
+func (a *App) MockParity(ctx context.Context, args []string) error {
+	return runMockParityCommand(ctx, a.Out, args, "", "text")
+}
+
+func runMockParityCommand(ctx context.Context, out io.Writer, args []string, fallbackFormat string, defaultFormat string) error {
+	format, err := parseMockParityArgs(args, fallbackFormat, defaultFormat)
+	if err != nil {
+		return err
+	}
+	report, err := harness.Run(ctx)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+	} else {
+		renderMockParityText(out, report)
+	}
+	if !report.OK {
+		return fmt.Errorf("mock parity harness failed: %d/%d scenarios passed", report.Passed, report.Total)
+	}
+	return nil
+}
+
+func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat string) (string, error) {
+	format := strings.TrimSpace(fallbackFormat)
+	if format == "" {
+		format = strings.TrimSpace(defaultFormat)
+	}
+	if format == "" {
+		format = "text"
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", errors.New("mock-parity output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.EqualFold(arg, "run") || strings.EqualFold(arg, "check"):
+		default:
+			return "", fmt.Errorf("unknown mock-parity argument %q", arg)
+		}
+	}
+	normalized, err := normalizeOutputFormat("mock-parity", format, []string{"text", "json"})
+	if err != nil {
+		return "", err
+	}
+	return normalized, nil
+}
+
+func renderMockParityText(out io.Writer, report harness.Report) {
+	status := "ok"
+	if !report.OK {
+		status = "error"
+	}
+	fmt.Fprintln(out, "Mock Parity Harness")
+	fmt.Fprintf(out, "  Status        %s\n", status)
+	fmt.Fprintf(out, "  Scenarios     %d/%d passed\n", report.Passed, report.Total)
+	fmt.Fprintf(out, "  Tool calls    %d\n", report.ToolCalls)
+	fmt.Fprintf(out, "  Messages      %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Tokens        %d\n", report.UsageSummary.TotalTokens)
+	fmt.Fprintf(out, "  Cost          %.6f\n", report.EstimatedCost)
+	if len(report.Scenarios) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "  Cases")
+	for _, scenario := range report.Scenarios {
+		caseStatus := "ok"
+		if !scenario.OK {
+			caseStatus = "error"
+		}
+		if scenario.Error != "" {
+			fmt.Fprintf(out, "    - %s: %s (%s)\n", scenario.Name, caseStatus, scenario.Error)
+		} else {
+			fmt.Fprintf(out, "    - %s: %s\n", scenario.Name, caseStatus)
+		}
+	}
+}
+
 func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
 	req := mockLimitsRequest{Action: "show", Format: "text", Addr: ":8089", Failures: 2, RetryAfterMS: 1000, Text: "mock response after rate limits"}
 	var rest []string
@@ -35569,10 +35658,10 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
-		"search", "security-review", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
@@ -36344,6 +36433,19 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ready", "serving", "error"},
 			false,
 		), true
+	case "mock-parity", "parity", "self-test":
+		spec := localCommandHelpSpec(
+			"mock-parity",
+			"mock-parity",
+			"codog mock-parity [run|check] [--output-format text|json]",
+			"Mock Parity\n\nUsage:\n  codog mock-parity [run|check] [--output-format text|json]\n  codog parity [same flags]\n  codog self-test [same flags]\n\nRuns the deterministic mock provider parity harness against the local agent loop. It exercises streaming, tool calls, permission prompts, plugin tools, auto-compaction, and usage/cost accounting without contacting a real provider.\n",
+			[]string{"ok", "passed", "total", "scenarios", "usage_summary", "estimated_cost"},
+			[]string{"ok", "error"},
+			false,
+		)
+		spec.Aliases = []string{"parity", "self-test"}
+		spec.Related = []string{"codog capabilities", "codog mock-limits"}
+		return spec, true
 	case "reset-limits":
 		return localCommandHelpSpec(
 			"reset-limits",
@@ -36850,6 +36952,7 @@ Usage:
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
   %s [flags] ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--json|--output-format text|json]
+  %s [flags] mock-parity [run|check] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
@@ -36864,7 +36967,7 @@ Usage:
   %s [flags] test|build|lint [--timeout-ms N] [ARGS...]
   %s [flags] symbols|diagnostics|map|references|definition|hover|teleport|completion|format [ARGS...] [--json]
   %s mock-server :8089
-  %s self-test
+  %s self-test [--json|--output-format text|json]
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
   %s system-prompt [--json|--output-format text|json]
   %s debug-tool-call TOOL JSON [--json|--output-format text|json]

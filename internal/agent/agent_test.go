@@ -37,6 +37,7 @@ import (
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -61,6 +62,7 @@ import (
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/updater"
+	"github.com/Rememorio/codog/internal/usage"
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/stretchr/testify/require"
 )
@@ -1184,6 +1186,48 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.False(t, exitErr.Silent)
 	require.Contains(t, err.Error(), "command_not_found")
 	require.Contains(t, err.Error(), "codog prompt")
+}
+
+func TestMockParityCommandAndHelp(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"mock-parity", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report harness.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.True(t, report.OK)
+	require.Equal(t, report.Total, report.Passed)
+	require.GreaterOrEqual(t, report.Total, 12)
+	require.NotEmpty(t, report.Scenarios)
+	require.Greater(t, report.UsageSummary.TotalTokens, 0)
+
+	var text bytes.Buffer
+	renderMockParityText(&text, harness.Report{
+		OK:            true,
+		Passed:        1,
+		Total:         1,
+		ToolCalls:     2,
+		MessageCount:  3,
+		UsageSummary:  usage.Summary{TotalTokens: 42},
+		EstimatedCost: 0.001,
+		Scenarios:     []harness.ScenarioReport{{Name: "streaming_text", OK: true}},
+	})
+	require.Contains(t, text.String(), "Mock Parity Harness")
+	require.Contains(t, text.String(), "1/1 passed")
+	require.Contains(t, text.String(), "streaming_text: ok")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"mock-parity", "--help", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var help helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &help))
+	require.Equal(t, "mock-parity", help.Topic)
+	require.Contains(t, help.Aliases, "parity")
+	require.Contains(t, help.Aliases, "self-test")
+	require.NotNil(t, help.RequiresProviderRequest)
+	require.False(t, *help.RequiresProviderRequest)
+	require.True(t, commandAcceptsGlobalOutputFormat("mock-parity"))
 }
 
 func TestDirectSlashCLIContracts(t *testing.T) {

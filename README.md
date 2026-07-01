@@ -7,10 +7,6 @@ easy to inspect, and conservative about local changes. Codog packages the core
 agent loop, provider streaming, workspace tools, permissions, and durable
 session state into a single Go binary.
 
-> **Status:** pre-1.0. The core prompt, tool, session, and configuration paths
-> are usable today. Some advanced compatibility surfaces are still shallow and
-> may return structured local reports before they become full integrations.
-
 ## Why Codog Exists
 
 Modern coding agents are useful, but their behavior can be hard to audit. Codog
@@ -89,10 +85,6 @@ build you are running.
 | Extensibility | Slash commands, prompt templates, skills, hooks, MCP client/server pieces, plugins, and marketplace metadata. |
 | Operations | Doctor/status reports, background tasks, scheduled prompts, recovery ledgers, updater checks, and policy reports. |
 | Integrations | Editor/ACP bridge state, remote-control surfaces, OAuth profiles, GitHub workflow helpers, local agents, and worktree scaffolding. |
-
-Advanced compatibility commands are intentionally structured even when the
-backing integration is incomplete. That keeps scripts and tests stable while the
-implementation catches up behind the same command shape.
 
 ## Configuration
 
