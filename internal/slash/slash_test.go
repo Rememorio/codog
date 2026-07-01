@@ -50,6 +50,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/think-back")
 	require.Contains(t, out.String(), "/thinkback")
 	require.Contains(t, out.String(), "/thinkback-play")
+	require.Contains(t, out.String(), "/ant-trace")
 	require.Contains(t, out.String(), "/rate-limit")
 	require.Contains(t, out.String(), "/rate-limit-options")
 	require.Contains(t, out.String(), "/mock-limits")
@@ -156,6 +157,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 
 func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, Candidates("/ac"), "/acp")
+	require.Contains(t, Candidates("/an"), "/ant-trace --no-request")
 	require.Contains(t, Candidates("/au"), "/autofix-pr")
 
 	candidates := Candidates("/co")

@@ -28,6 +28,7 @@ import (
 	"github.com/Rememorio/codog/internal/acpserver"
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/anttrace"
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
@@ -450,6 +451,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RateLimitOptions(rest)
 	case "reset-limits":
 		return app.ResetLimits(rest)
+	case "ant-trace":
+		return app.AntTrace(ctx, rest)
 	case "mock-limits":
 		return app.MockLimits(rest)
 	case "plan":
@@ -15304,6 +15307,7 @@ func builtInCommandNames() []string {
 		"agents",
 		"allowed-tools",
 		"android",
+		"ant-trace",
 		"api",
 		"api-key",
 		"app",
@@ -18541,6 +18545,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/rate-limit-options":
 		if err := a.RateLimitOptions(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/ant-trace":
+		if err := a.AntTrace(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/mock-limits":
@@ -25467,6 +25475,18 @@ type resetLimitsRequest struct {
 	Path   string
 }
 
+type antTraceRequest struct {
+	Format    string
+	Message   string
+	Model     string
+	BaseURL   string
+	Provider  string
+	TimeoutMS int
+	NoRequest bool
+	Write     bool
+	Output    string
+}
+
 type mockLimitsRequest struct {
 	Action       string
 	Format       string
@@ -25577,6 +25597,170 @@ func (a *App) RateLimitOptions(args []string) error {
 	}
 	renderRateLimitOptionsReport(a.Out, report)
 	return nil
+}
+
+func (a *App) AntTrace(ctx context.Context, args []string) error {
+	req, err := parseAntTraceArgs(args)
+	if err != nil {
+		return err
+	}
+	model := firstNonEmpty(req.Model, a.Config.Model)
+	baseURL := firstNonEmpty(req.BaseURL, a.Config.BaseURL)
+	client := a.Client
+	if client == nil || strings.TrimSpace(req.BaseURL) != "" {
+		client = anthropic.NewWithRateLimit(baseURL, a.Config.APIKey, a.Config.AuthToken, anthropicRateLimitOptions(a.Config.RateLimit))
+	}
+	if baseURL == "" && client != nil {
+		baseURL = client.BaseURL
+	}
+	rateLimit := anthropicRateLimitOptions(a.Config.RateLimit).Report()
+	if client != nil {
+		rateLimit = client.RateLimit.Report()
+	}
+	report := anttrace.Run(ctx, anttrace.Options{
+		Provider:       req.Provider,
+		Model:          model,
+		BaseURL:        baseURL,
+		AuthConfigured: antTraceAuthConfigured(a.Config, client),
+		RateLimit:      rateLimit,
+		Message:        req.Message,
+		Timeout:        time.Duration(req.TimeoutMS) * time.Millisecond,
+		NoRequest:      req.NoRequest,
+		Client:         client,
+	})
+	if req.Write || strings.TrimSpace(req.Output) != "" {
+		path := a.antTraceOutputPath(req.Output, time.Now().UTC())
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := session.ValidateExportOutputPath(path); err != nil {
+			return err
+		}
+		data := []byte(anttrace.RenderMarkdown(report))
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return err
+		}
+		report.File = path
+		report.Bytes = len(data)
+	}
+	if req.Format == "json" {
+		return anttrace.RenderJSON(a.Out, report)
+	}
+	anttrace.RenderText(a.Out, report)
+	return nil
+}
+
+func antTraceAuthConfigured(cfg config.Config, client *anthropic.Client) bool {
+	if strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.AuthToken) != "" {
+		return true
+	}
+	if client == nil {
+		return false
+	}
+	return strings.TrimSpace(client.APIKey) != "" || strings.TrimSpace(client.AuthToken) != ""
+}
+
+func parseAntTraceArgs(args []string) (antTraceRequest, error) {
+	req := antTraceRequest{Format: "text", TimeoutMS: 15000}
+	messageParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--no-request" || arg == "--skip-request":
+			req.NoRequest = true
+		case arg == "--write":
+			req.Write = true
+		case arg == "--message":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace message is required")
+			}
+			req.Message = args[index]
+		case strings.HasPrefix(arg, "--message="):
+			req.Message = strings.TrimPrefix(arg, "--message=")
+		case arg == "--timeout-ms":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace timeout is required")
+			}
+			value, err := parsePositiveInt(args[index], "ant-trace timeout")
+			if err != nil {
+				return req, err
+			}
+			req.TimeoutMS = value
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--timeout-ms="), "ant-trace timeout")
+			if err != nil {
+				return req, err
+			}
+			req.TimeoutMS = value
+		case arg == "--model":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace model is required")
+			}
+			req.Model = args[index]
+		case strings.HasPrefix(arg, "--model="):
+			req.Model = strings.TrimPrefix(arg, "--model=")
+		case arg == "--base-url":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace base URL is required")
+			}
+			req.BaseURL = args[index]
+		case strings.HasPrefix(arg, "--base-url="):
+			req.BaseURL = strings.TrimPrefix(arg, "--base-url=")
+		case arg == "--provider":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace provider is required")
+			}
+			req.Provider = args[index]
+		case strings.HasPrefix(arg, "--provider="):
+			req.Provider = strings.TrimPrefix(arg, "--provider=")
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ant-trace output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown ant-trace argument %q", arg)
+		default:
+			messageParts = append(messageParts, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "ant-trace"); err != nil {
+		return req, err
+	}
+	if strings.TrimSpace(req.Message) == "" && len(messageParts) > 0 {
+		req.Message = strings.Join(messageParts, " ")
+	}
+	return req, nil
+}
+
+func (a *App) antTraceOutputPath(output string, createdAt time.Time) string {
+	filename := fmt.Sprintf("ant-trace-%s-%d.md", createdAt.Format("20060102T150405Z"), createdAt.UnixNano())
+	if strings.TrimSpace(output) == "" {
+		return filepath.Join(a.Workspace, ".codog", "traces", filename)
+	}
+	path := a.resolveOutputPath(output)
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return path
+	}
+	return filepath.Join(path, filename)
 }
 
 func (a *App) MockLimits(args []string) error {
@@ -27117,7 +27301,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "ant-trace", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
@@ -27710,6 +27894,20 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "ant-trace":
+		return commandHelpSpec{
+			Topic:                   "ant-trace",
+			Command:                 "ant-trace",
+			Usage:                   "codog ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--output-format text|json]",
+			Text:                    "Anthropic Trace\n\nUsage:\n  codog ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--output-format text|json]\n\nDiagnoses the configured Anthropic-compatible provider. With `--no-request`, it only reports local provider configuration, credential presence, and retry settings. Without `--no-request`, it sends a small streaming request and records elapsed time, stream events, usage, text preview, and provider errors.\n",
+			LocalOnly:               false,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: true,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        true,
+			OutputFields:            []string{"provider", "model", "base_url", "auth_configured", "request_sent", "elapsed_ms", "stream_events", "usage", "rate_limit", "error"},
+			StatusValues:            []string{"ok", "skipped", "error"},
+		}, true
 	case "rate-limit-options":
 		return localCommandHelpSpec(
 			"rate-limit-options",
@@ -28097,6 +28295,7 @@ Usage:
   %s [flags] rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
+  %s [flags] ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]

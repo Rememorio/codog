@@ -24,6 +24,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/anttrace"
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
@@ -396,6 +397,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "rate-limit",
 		},
 		{
+			name:  "ant-trace provider help",
+			args:  []string{"--config", configPath, "ant-trace", "--help", "--output-format", "json"},
+			topic: "ant-trace",
+		},
+		{
 			name:  "budget local help",
 			args:  []string{"--config", configPath, "budget", "--help", "--output-format", "json"},
 			topic: "budget",
@@ -508,6 +514,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "claude-test", report.Model)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "ant-trace")
 	require.Contains(t, report.Commands, "api")
 	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "caches")
@@ -567,6 +574,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, 3, report.MCP.LocalPromptCount)
 	require.Greater(t, report.MCP.ExposedToolCount, 10)
 	require.True(t, capabilityReportHasTool(report, "read_file"))
+	require.True(t, capabilityReportHasSlash(report, "/ant-trace"))
 	require.True(t, capabilityReportHasSlash(report, "/bug"))
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
 	require.True(t, capabilityReportHasSlash(report, "/checkpoint"))
@@ -577,6 +585,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/workspace"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
@@ -4360,6 +4369,81 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"kind": "mock_limits"`)
 	require.Contains(t, cliOut, `"failures": 1`)
 	require.Empty(t, errOut.String())
+}
+
+func TestAntTraceCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	var providerRequest json.RawMessage
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "trace ok",
+		OnRequest: func(raw json.RawMessage) {
+			providerRequest = raw
+		},
+	}.Handler())
+	defer server.Close()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: t.TempDir(),
+			Model:      "claude-test",
+			BaseURL:    server.URL,
+			APIKey:     "test-key",
+			RateLimit: config.RateLimitConfig{
+				MaxRetries:       1,
+				InitialBackoffMS: 1,
+				MaxBackoffMS:     2,
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.AntTrace(context.Background(), []string{"--message", "trace me", "--json"}))
+	var report anttrace.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ant_trace", report.Kind)
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.AuthConfigured)
+	require.True(t, report.RequestSent)
+	require.Equal(t, server.URL, report.BaseURL)
+	require.Equal(t, "trace ok", report.TextPreview)
+	require.Equal(t, 2, report.StreamEvents)
+	require.Equal(t, 10, report.Usage.InputTokens)
+	require.Equal(t, 5, report.Usage.OutputTokens)
+	require.Equal(t, 1, report.RateLimit.MaxRetries)
+	require.NotEmpty(t, providerRequest)
+	var request map[string]any
+	require.NoError(t, json.Unmarshal(providerRequest, &request))
+	require.Equal(t, "claude-test", request["model"])
+	require.Equal(t, float64(64), request["max_tokens"])
+	out.Reset()
+
+	require.NoError(t, app.AntTrace(context.Background(), []string{"--no-request", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "skipped", report.Status)
+	require.False(t, report.RequestSent)
+	out.Reset()
+
+	require.NoError(t, app.AntTrace(context.Background(), []string{"--write", "--message", "trace me"}))
+	require.Contains(t, out.String(), "Anthropic Trace")
+	require.Contains(t, out.String(), "File")
+	traceFiles, err := filepath.Glob(filepath.Join(workspace, ".codog", "traces", "*.md"))
+	require.NoError(t, err)
+	require.Len(t, traceFiles, 1)
+	traceData, err := os.ReadFile(traceFiles[0])
+	require.NoError(t, err)
+	require.Contains(t, string(traceData), "# Codog Anthropic Trace")
+	require.Contains(t, string(traceData), "trace ok")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/ant-trace --no-request --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "skipped", report.Status)
+	require.Empty(t, errOut.String())
+	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 }
 
 func TestResetLimitsCommandAndSlash(t *testing.T) {
