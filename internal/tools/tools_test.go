@@ -151,6 +151,18 @@ func TestBashToolReportsTimeoutAndTruncatesOutput(t *testing.T) {
 	require.Len(t, timeoutPayload.StructuredContent, 1)
 	require.Equal(t, "command.timeout", timeoutPayload.StructuredContent[0]["event"])
 
+	out, err = BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"# pytest\nsleep 1","timeout_ms":20}`))
+	require.NoError(t, err)
+	var testTimeoutPayload struct {
+		ReturnCodeInterpretation string           `json:"returnCodeInterpretation"`
+		StructuredContent        []map[string]any `json:"structuredContent"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &testTimeoutPayload))
+	require.Equal(t, "test.hung", testTimeoutPayload.ReturnCodeInterpretation)
+	require.Len(t, testTimeoutPayload.StructuredContent, 1)
+	require.Equal(t, "test.hung", testTimeoutPayload.StructuredContent[0]["event"])
+	require.Equal(t, "test_hang", testTimeoutPayload.StructuredContent[0]["failureClass"])
+
 	configHome := t.TempDir()
 	out, err = BashTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"yes x | head -c 20000"}`))
 	require.NoError(t, err)

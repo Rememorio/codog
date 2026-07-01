@@ -2176,7 +2176,7 @@ func bashReturnCodeInterpretation(exitCode int, interrupted bool, command string
 
 func isBashTestCommand(command string) bool {
 	normalized := strings.ToLower(strings.Join(strings.Fields(command), " "))
-	for _, needle := range []string{"cargo test", "cargo nextest", "npm test", "pnpm test", "yarn test", "pytest", "go test"} {
+	for _, needle := range []string{"cargo test", "cargo nextest", "npm test", "npm run test", "pnpm test", "yarn test", "bun test", "deno test", "vitest", "pytest", "go test"} {
 		if strings.Contains(normalized, needle) {
 			return true
 		}

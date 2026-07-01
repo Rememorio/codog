@@ -18107,6 +18107,7 @@ func codogCapabilityFeatures() []string {
 		"bash_persisted_output",
 		"bash_output_truncation",
 		"bash_sandbox_request_status",
+		"bash_test_hang_timeout_event",
 		"background_tasks",
 		"broad_cwd_guard",
 		"bubble_tea_tui",
