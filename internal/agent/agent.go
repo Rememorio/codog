@@ -21010,6 +21010,9 @@ func (a *App) PromptWithOutput(ctx context.Context, input string, overrides conf
 	if err != nil {
 		return err
 	}
+	if err := a.ensureSessionIdentity(sess, "prompt", input); err != nil {
+		return err
+	}
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
 		return err
 	}
@@ -21162,6 +21165,9 @@ func (a *App) BTW(ctx context.Context, args []string, overrides config.FlagOverr
 	}
 	side, err := a.btwSideSession(source)
 	if err != nil {
+		return err
+	}
+	if err := a.ensureSessionIdentity(side, "btw", req.Question); err != nil {
 		return err
 	}
 	if err := a.runSessionTurn(ctx, "btw", side, req.Question, "completed"); err != nil {
@@ -21331,6 +21337,9 @@ func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Ses
 }
 
 func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *session.Session, input string, successStatus string, opts turnOptions) error {
+	if err := a.ensureSessionIdentity(sess, mode, input); err != nil {
+		return err
+	}
 	if a.promptHistoryEnabled() {
 		if err := a.Sessions.AppendInput(sess.ID, input); err != nil {
 			return err
@@ -21480,6 +21489,9 @@ func (a *App) REPL(ctx context.Context, overrides config.FlagOverrides) error {
 	}
 	sess, err := a.openSession(overrides)
 	if err != nil {
+		return err
+	}
+	if err := a.ensureSessionIdentity(sess, "repl", ""); err != nil {
 		return err
 	}
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
@@ -22376,6 +22388,10 @@ func (a *App) handleClearSlash(ctx context.Context, args []string, sess *session
 	}
 	next, err := a.Sessions.Open("")
 	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if err := a.ensureSessionIdentity(next, "repl", ""); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 		return
 	}
@@ -27324,7 +27340,11 @@ func (a *App) ClearCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	sess, err := a.Sessions.Create("")
+	sess, err := a.Sessions.CreateWithIdentity("", session.SessionIdentity{
+		Workspace: a.Workspace,
+		Worktree:  a.Workspace,
+		Purpose:   "clear",
+	})
 	if err != nil {
 		return err
 	}
@@ -29436,7 +29456,11 @@ func (a *App) breakCacheSession(id string) (*session.Session, bool, error) {
 	if id == "latest" {
 		latest, err := a.Sessions.LatestID()
 		if errors.Is(err, session.ErrNoSessions) {
-			created, createErr := a.Sessions.Create("")
+			created, createErr := a.Sessions.CreateWithIdentity("", session.SessionIdentity{
+				Workspace: a.Workspace,
+				Worktree:  a.Workspace,
+				Purpose:   "break-cache",
+			})
 			return created, true, createErr
 		}
 		if err != nil {
@@ -29449,7 +29473,11 @@ func (a *App) breakCacheSession(id string) (*session.Session, bool, error) {
 		return nil, false, err
 	}
 	if !exists {
-		created, createErr := a.Sessions.Create(id)
+		created, createErr := a.Sessions.CreateWithIdentity(id, session.SessionIdentity{
+			Workspace: a.Workspace,
+			Worktree:  a.Workspace,
+			Purpose:   "break-cache",
+		})
 		return created, true, createErr
 	}
 	opened, err := a.Sessions.Open(id)
@@ -31280,9 +31308,10 @@ func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, so
 	if sess == nil {
 		return nil
 	}
-	data, err := json.Marshal(map[string]string{
+	data, err := json.Marshal(map[string]any{
 		"source":     source,
 		"session_id": sess.ID,
+		"identity":   sess.Identity,
 	})
 	if err != nil {
 		return err
@@ -31290,6 +31319,40 @@ func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, so
 	runner := a.lifecycleHookRunner()
 	runner.SessionID = sess.ID
 	return runner.SessionStart(ctx, string(data))
+}
+
+func (a *App) ensureSessionIdentity(sess *session.Session, purpose string, input string) error {
+	if sess == nil || a.Sessions == nil {
+		return nil
+	}
+	update := session.SessionIdentity{
+		Workspace: a.Workspace,
+		Worktree:  a.Workspace,
+		Purpose:   strings.TrimSpace(purpose),
+	}
+	if title := sessionTitleFromInput(input); title != "" {
+		update.Title = title
+	}
+	identity, err := a.Sessions.UpdateIdentity(sess.ID, update)
+	if err != nil {
+		return err
+	}
+	sess.Identity = identity
+	return nil
+}
+
+func sessionTitleFromInput(input string) string {
+	words := strings.Fields(input)
+	if len(words) == 0 {
+		return ""
+	}
+	title := strings.Join(words, " ")
+	const maxTitleRunes = 80
+	runes := []rune(title)
+	if len(runes) <= maxTitleRunes {
+		return title
+	}
+	return string(runes[:maxTitleRunes])
 }
 
 func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reason string) error {

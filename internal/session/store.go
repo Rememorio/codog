@@ -19,6 +19,7 @@ type Record struct {
 	Type            string             `json:"type"`
 	Time            time.Time          `json:"time"`
 	Message         *anthropic.Message `json:"message,omitempty"`
+	Identity        *SessionIdentity   `json:"identity,omitempty"`
 	Usage           *anthropic.Usage   `json:"usage,omitempty"`
 	Input           string             `json:"input,omitempty"`
 	SessionID       string             `json:"session_id,omitempty"`
@@ -30,6 +31,20 @@ type Session struct {
 	ID       string
 	Messages []anthropic.Message
 	Path     string
+	Identity SessionIdentity
+}
+
+type SessionIdentity struct {
+	Title        string                `json:"title,omitempty"`
+	Workspace    string                `json:"workspace,omitempty"`
+	Worktree     string                `json:"worktree,omitempty"`
+	Purpose      string                `json:"purpose,omitempty"`
+	Placeholders []IdentityPlaceholder `json:"placeholders,omitempty"`
+}
+
+type IdentityPlaceholder struct {
+	Field  string `json:"field"`
+	Reason string `json:"reason"`
 }
 
 type PromptEntry struct {
@@ -136,14 +151,24 @@ func (s *Store) Open(id string) (*Session, error) {
 		id = latest
 	}
 	path := s.pathFor(id)
-	messages, err := s.readMessages(path)
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		return s.createAtPath(id, path, SessionIdentity{})
+	}
+	messages, identity, err := s.readSession(path, id)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Messages: messages, Path: path}, nil
+	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
 }
 
 func (s *Store) Create(id string) (*Session, error) {
+	return s.CreateWithIdentity(id, SessionIdentity{})
+}
+
+func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Session, error) {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -160,6 +185,10 @@ func (s *Store) Create(id string) (*Session, error) {
 		return nil, fmt.Errorf("session %q already exists", id)
 	}
 	path := filepath.Join(s.Dir, id+".jsonl")
+	return s.createAtPath(id, path, identity)
+}
+
+func (s *Store) createAtPath(id string, path string, identity SessionIdentity) (*Session, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
@@ -172,7 +201,16 @@ func (s *Store) Create(id string) (*Session, error) {
 	}); err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Path: path}, nil
+	resolved := normalizeSessionIdentity(id, s.Workspace, identity)
+	if err := writeRecord(file, Record{
+		Type:      "session_identity",
+		Time:      time.Now().UTC(),
+		SessionID: id,
+		Identity:  &resolved,
+	}); err != nil {
+		return nil, err
+	}
+	return &Session{ID: id, Path: path, Identity: resolved}, nil
 }
 
 func (s *Store) Append(id string, msg anthropic.Message) error {
@@ -332,6 +370,14 @@ func (s *Store) Rename(oldID string, newID string) (RenameResult, error) {
 		if records[index].SessionID == "" || records[index].SessionID == oldID {
 			records[index].SessionID = newID
 		}
+		if records[index].Identity != nil {
+			identity := *records[index].Identity
+			if strings.TrimSpace(identity.Title) == "" || identity.Title == oldID {
+				identity.Title = newID
+			}
+			identity = normalizeSessionIdentity(newID, s.Workspace, identity)
+			records[index].Identity = &identity
+		}
 		if records[index].Message != nil {
 			messageCount++
 		}
@@ -386,6 +432,22 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 	}); err != nil {
 		return nil, err
 	}
+	purpose := "fork"
+	if strings.TrimSpace(branchName) != "" {
+		purpose = "fork:" + branchName
+	}
+	identity := normalizeSessionIdentity(forkID, s.Workspace, SessionIdentity{
+		Title:   forkID,
+		Purpose: purpose,
+	})
+	if err := writeRecord(file, Record{
+		Type:      "session_identity",
+		Time:      time.Now().UTC(),
+		SessionID: forkID,
+		Identity:  &identity,
+	}); err != nil {
+		return nil, err
+	}
 	for _, msg := range source.Messages {
 		next := msg
 		if err := writeRecord(file, Record{
@@ -397,7 +459,7 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 			return nil, err
 		}
 	}
-	return &Session{ID: forkID, Messages: append([]anthropic.Message(nil), source.Messages...), Path: path}, nil
+	return &Session{ID: forkID, Messages: append([]anthropic.Message(nil), source.Messages...), Path: path, Identity: identity}, nil
 }
 
 func (s *Store) List() ([]Session, error) {
@@ -423,11 +485,11 @@ func (s *Store) List() ([]Session, error) {
 				continue
 			}
 			path := filepath.Join(dir, entry.Name())
-			messages, err := s.readMessages(path)
+			messages, identity, err := s.readSession(path, id)
 			if err != nil {
 				return nil, err
 			}
-			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages})
+			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity})
 			seen[id] = struct{}{}
 		}
 	}
@@ -500,6 +562,66 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 		}
 	}
 	return entries, nil
+}
+
+func (s *Store) Identity(id string) (SessionIdentity, error) {
+	if strings.TrimSpace(id) == "" {
+		return SessionIdentity{}, errors.New("session id is required")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return SessionIdentity{}, err
+		}
+		id = latest
+	}
+	records, err := s.readRecords(s.pathFor(id))
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	return identityFromRecords(id, s.Workspace, records), nil
+}
+
+func (s *Store) UpdateIdentity(id string, update SessionIdentity) (SessionIdentity, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return SessionIdentity{}, errors.New("session id is required")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return SessionIdentity{}, err
+		}
+		id = latest
+	}
+	path := s.pathFor(id)
+	records, err := s.readRecords(path)
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	current := identityFromRecords(id, s.Workspace, records)
+	next := mergeSessionIdentity(current, update)
+	next = normalizeSessionIdentity(id, s.Workspace, next)
+	if reflect.DeepEqual(current, next) {
+		return current, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return SessionIdentity{}, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return SessionIdentity{}, err
+	}
+	defer file.Close()
+	if err := writeRecord(file, Record{
+		Type:      "session_identity",
+		Time:      time.Now().UTC(),
+		SessionID: id,
+		Identity:  &next,
+	}); err != nil {
+		return SessionIdentity{}, err
+	}
+	return next, nil
 }
 
 func (s *Store) Usage(id string) ([]UsageEntry, error) {
@@ -624,9 +746,12 @@ func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 	if remainingMessages < 0 {
 		remainingMessages = 0
 	}
-	var kept []Record
+	kept := preservedSessionRecords(records)
 	seenMessages := 0
 	for _, record := range records {
+		if isSessionMetadataRecord(record.Type) {
+			continue
+		}
 		if seenMessages >= remainingMessages {
 			break
 		}
@@ -691,8 +816,12 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 	if path == "" {
 		path = s.pathFor(sess.ID)
 	}
-	metadata := s.messageRecordMetadata(path)
-	records := make([]Record, 0, len(messages))
+	existingRecords, err := s.readRecords(path)
+	if err != nil {
+		return ReplaceResult{}, err
+	}
+	metadata := messageRecordMetadata(existingRecords)
+	records := preservedSessionRecords(existingRecords)
 	searchFrom := 0
 	for _, msg := range messages {
 		next := msg
@@ -735,6 +864,10 @@ func (s *Store) messageRecordMetadata(path string) map[int]messageRecordInfo {
 	if err != nil {
 		return nil
 	}
+	return messageRecordMetadata(records)
+}
+
+func messageRecordMetadata(records []Record) map[int]messageRecordInfo {
 	metadata := map[int]messageRecordInfo{}
 	messageIndex := -1
 	for _, record := range records {
@@ -750,6 +883,25 @@ func (s *Store) messageRecordMetadata(path string) map[int]messageRecordInfo {
 		metadata[messageIndex] = messageRecordInfo{Time: record.Time, Usage: usage}
 	}
 	return metadata
+}
+
+func preservedSessionRecords(records []Record) []Record {
+	preserved := make([]Record, 0, len(records))
+	for _, record := range records {
+		if isSessionMetadataRecord(record.Type) {
+			preserved = append(preserved, record)
+		}
+	}
+	return preserved
+}
+
+func isSessionMetadataRecord(recordType string) bool {
+	switch recordType {
+	case "session", "fork", "session_identity":
+		return true
+	default:
+		return false
+	}
 }
 
 func findMessageIndex(messages []anthropic.Message, target anthropic.Message, start int) int {
@@ -789,6 +941,20 @@ func validateSessionID(id string) error {
 	return nil
 }
 
+func (s *Store) readSession(path string, id string) ([]anthropic.Message, SessionIdentity, error) {
+	records, err := s.readRecords(path)
+	if err != nil {
+		return nil, SessionIdentity{}, err
+	}
+	var messages []anthropic.Message
+	for _, record := range records {
+		if record.Message != nil {
+			messages = append(messages, *record.Message)
+		}
+	}
+	return messages, identityFromRecords(id, s.Workspace, records), nil
+}
+
 func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 	records, err := s.readRecords(path)
 	if err != nil {
@@ -801,6 +967,71 @@ func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 		}
 	}
 	return messages, nil
+}
+
+func identityFromRecords(id string, workspace string, records []Record) SessionIdentity {
+	var identity SessionIdentity
+	for _, record := range records {
+		if record.Type != "session_identity" || record.Identity == nil {
+			continue
+		}
+		identity = *record.Identity
+	}
+	return normalizeSessionIdentity(id, workspace, identity)
+}
+
+func mergeSessionIdentity(base SessionIdentity, update SessionIdentity) SessionIdentity {
+	if strings.TrimSpace(update.Title) != "" {
+		base.Title = strings.TrimSpace(update.Title)
+	}
+	if strings.TrimSpace(update.Workspace) != "" {
+		base.Workspace = strings.TrimSpace(update.Workspace)
+	}
+	if strings.TrimSpace(update.Worktree) != "" {
+		base.Worktree = strings.TrimSpace(update.Worktree)
+	}
+	if strings.TrimSpace(update.Purpose) != "" {
+		base.Purpose = strings.TrimSpace(update.Purpose)
+	}
+	return base
+}
+
+func normalizeSessionIdentity(id string, workspace string, identity SessionIdentity) SessionIdentity {
+	identity.Title = strings.TrimSpace(identity.Title)
+	if identity.Title == "" {
+		identity.Title = strings.TrimSpace(id)
+	}
+	identity.Workspace = canonicalWorkspace(firstSessionIdentityValue(identity.Workspace, workspace))
+	identity.Worktree = canonicalWorkspace(firstSessionIdentityValue(identity.Worktree, identity.Workspace))
+	identity.Purpose = strings.TrimSpace(identity.Purpose)
+	identity.Placeholders = sessionIdentityPlaceholders(identity)
+	return identity
+}
+
+func firstSessionIdentityValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func sessionIdentityPlaceholders(identity SessionIdentity) []IdentityPlaceholder {
+	placeholders := []IdentityPlaceholder{}
+	if strings.TrimSpace(identity.Title) == "" {
+		placeholders = append(placeholders, IdentityPlaceholder{Field: "title", Reason: "session_id_empty"})
+	}
+	if strings.TrimSpace(identity.Workspace) == "" {
+		placeholders = append(placeholders, IdentityPlaceholder{Field: "workspace", Reason: "workspace_not_configured"})
+	}
+	if strings.TrimSpace(identity.Worktree) == "" {
+		placeholders = append(placeholders, IdentityPlaceholder{Field: "worktree", Reason: "workspace_not_configured"})
+	}
+	if strings.TrimSpace(identity.Purpose) == "" {
+		placeholders = append(placeholders, IdentityPlaceholder{Field: "purpose", Reason: "purpose_not_provided"})
+	}
+	return placeholders
 }
 
 func (s *Store) readRecords(path string) ([]Record, error) {

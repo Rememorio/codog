@@ -23,6 +23,7 @@ const (
 
 type ExportedSession struct {
 	ID       string              `json:"id"`
+	Identity SessionIdentity     `json:"identity"`
 	Messages []anthropic.Message `json:"messages"`
 }
 
@@ -42,7 +43,7 @@ func (s *Store) Export(id string, format string) ([]byte, *Session, error) {
 	case ExportMarkdown:
 		return []byte(RenderMarkdown(sess)), sess, nil
 	case ExportJSON:
-		data, err := json.MarshalIndent(ExportedSession{ID: sess.ID, Messages: sess.Messages}, "", "  ")
+		data, err := json.MarshalIndent(ExportedSession{ID: sess.ID, Identity: sess.Identity, Messages: sess.Messages}, "", "  ")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -80,6 +81,15 @@ func RenderMarkdown(sess *Session) string {
 	fmt.Fprintln(&out, "# Conversation Export")
 	fmt.Fprintln(&out)
 	fmt.Fprintf(&out, "- **Session**: `%s`\n", sess.ID)
+	if strings.TrimSpace(sess.Identity.Title) != "" {
+		fmt.Fprintf(&out, "- **Title**: %s\n", sess.Identity.Title)
+	}
+	if strings.TrimSpace(sess.Identity.Workspace) != "" {
+		fmt.Fprintf(&out, "- **Workspace**: `%s`\n", sess.Identity.Workspace)
+	}
+	if strings.TrimSpace(sess.Identity.Purpose) != "" {
+		fmt.Fprintf(&out, "- **Purpose**: `%s`\n", sess.Identity.Purpose)
+	}
 	fmt.Fprintf(&out, "- **Messages**: %d\n", len(sess.Messages))
 	for index, msg := range sess.Messages {
 		fmt.Fprintln(&out)
@@ -114,8 +124,18 @@ func RenderHTML(sess *Session) string {
 	fmt.Fprintln(&out, "<body>")
 	fmt.Fprintln(&out, "<main>")
 	fmt.Fprintln(&out, "<header>")
-	fmt.Fprintln(&out, "<h1>Conversation Export</h1>")
+	title := strings.TrimSpace(sess.Identity.Title)
+	if title == "" {
+		title = "Conversation Export"
+	}
+	fmt.Fprintf(&out, "<h1>%s</h1>\n", html.EscapeString(title))
 	fmt.Fprintf(&out, `<div class="meta">Session %s - %d messages</div>`+"\n", html.EscapeString(sess.ID), len(sess.Messages))
+	if strings.TrimSpace(sess.Identity.Workspace) != "" {
+		fmt.Fprintf(&out, `<div class="meta">Workspace %s</div>`+"\n", html.EscapeString(sess.Identity.Workspace))
+	}
+	if strings.TrimSpace(sess.Identity.Purpose) != "" {
+		fmt.Fprintf(&out, `<div class="meta">Purpose %s</div>`+"\n", html.EscapeString(sess.Identity.Purpose))
+	}
 	fmt.Fprintln(&out, "</header>")
 	for index, msg := range sess.Messages {
 		fmt.Fprintln(&out, `<section class="message">`)

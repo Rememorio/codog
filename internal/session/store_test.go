@@ -97,6 +97,91 @@ func TestCreateEmptySession(t *testing.T) {
 	require.Contains(t, err.Error(), "already exists")
 }
 
+func TestOpenCreatesSessionIdentityWithTypedPlaceholders(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := NewWorkspaceStore(configHome, workspace)
+	canonical, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+
+	created, err := store.Open("")
+	require.NoError(t, err)
+	require.NotEmpty(t, created.ID)
+	require.Equal(t, created.ID, created.Identity.Title)
+	require.Equal(t, canonical, created.Identity.Workspace)
+	require.Equal(t, canonical, created.Identity.Worktree)
+	require.Empty(t, created.Identity.Purpose)
+	require.Contains(t, created.Identity.Placeholders, IdentityPlaceholder{Field: "purpose", Reason: "purpose_not_provided"})
+
+	data, err := os.ReadFile(created.Path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"type":"session"`)
+	require.Contains(t, string(data), `"type":"session_identity"`)
+	require.NotContains(t, string(data), "unknown")
+
+	opened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, created.Identity, opened.Identity)
+}
+
+func TestUpdateIdentityEnrichesTypedPlaceholders(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.Open("identity-session")
+	require.NoError(t, err)
+	require.Contains(t, created.Identity.Placeholders, IdentityPlaceholder{Field: "purpose", Reason: "purpose_not_provided"})
+
+	identity, err := store.UpdateIdentity(created.ID, SessionIdentity{Title: "Summarize repository", Purpose: "prompt"})
+	require.NoError(t, err)
+	require.Equal(t, "Summarize repository", identity.Title)
+	require.Equal(t, "prompt", identity.Purpose)
+	require.Empty(t, identity.Placeholders)
+
+	opened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, identity, opened.Identity)
+	data, err := os.ReadFile(opened.Path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"purpose":"prompt"`)
+	require.NotContains(t, string(data), "unknown")
+}
+
+func TestReplaceMessagesPreservesSessionIdentity(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.Open("identity-preserve")
+	require.NoError(t, err)
+	identity, err := store.UpdateIdentity(created.ID, SessionIdentity{Title: "Review auth flow", Purpose: "prompt"})
+	require.NoError(t, err)
+	require.NoError(t, store.Append(created.ID, anthropic.TextMessage("user", "review auth")))
+	opened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+
+	result, err := store.ReplaceMessages(opened, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.RemovedMessages)
+	reopened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Empty(t, reopened.Messages)
+	require.Equal(t, identity, reopened.Identity)
+}
+
+func TestRewindToZeroPreservesSessionIdentity(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.Open("identity-rewind")
+	require.NoError(t, err)
+	identity, err := store.UpdateIdentity(created.ID, SessionIdentity{Title: "Investigate flaky test", Purpose: "prompt"})
+	require.NoError(t, err)
+	require.NoError(t, store.Append(created.ID, anthropic.TextMessage("user", "investigate flaky test")))
+
+	result, err := store.Rewind(created.ID, 1)
+	require.NoError(t, err)
+	require.Equal(t, 0, result.RemainingMessages)
+	reopened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Empty(t, reopened.Messages)
+	require.Equal(t, identity, reopened.Identity)
+}
+
 func TestForkExistsAndDeleteSession(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "before fork"}}}))
