@@ -1033,6 +1033,46 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "claude-json", setModel.Model)
 	require.NotEmpty(t, setModel.Previous)
 
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/max-tokens"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var directMaxTokens maxTokensReport
+	require.NoError(t, json.Unmarshal([]byte(out), &directMaxTokens))
+	require.Equal(t, "max_tokens", directMaxTokens.Kind)
+	require.Equal(t, "show", directMaxTokens.Action)
+	require.True(t, commandAcceptsGlobalOutputFormat("max-tokens"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "max-turns", "11", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var setMaxTurns maxTurnsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &setMaxTurns))
+	require.Equal(t, "max_turns", setMaxTurns.Kind)
+	require.Equal(t, "set", setMaxTurns.Action)
+	require.Equal(t, 11, setMaxTurns.MaxTurns)
+	require.NotNil(t, setMaxTurns.PreviousMaxTurns)
+	require.True(t, commandAcceptsGlobalOutputFormat("max-turns"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/permissions"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var directPermissions permissionsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &directPermissions))
+	require.Equal(t, "permissions", directPermissions.Kind)
+	require.Equal(t, "show", directPermissions.Action)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/allowed-tools"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var directAllowedTools allowedToolsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &directAllowedTools))
+	require.Equal(t, "allowed_tools", directAllowedTools.Kind)
+	require.Equal(t, "list", directAllowedTools.Action)
+
 	for _, command := range []string{"/version", "/sandbox", "/diff"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
@@ -1125,6 +1165,16 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		"auto_compact_messages": 2,
 		"model":                 "claude-test",
 		"api_key":               "test-key",
+		"max_tokens":            1000,
+		"max_turns":             3,
+		"permission_mode":       "workspace-write",
+		"permission_rules": map[string]any{
+			"allow": []string{"read_file"},
+		},
+		"temperature": 0.4,
+		"rate_limit": map[string]any{
+			"max_retries": 4,
+		},
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
@@ -1285,6 +1335,112 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &settingsPaths))
 	require.Equal(t, configPaths.Paths, settingsPaths.Paths)
 
+	out, err = runResumedJSON("/api")
+	require.NoError(t, err)
+	var resumedAPI apiReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAPI))
+	require.Equal(t, "api", resumedAPI.Kind)
+	require.Equal(t, "routes", resumedAPI.Action)
+
+	out, err = runResumedJSON("/api-key")
+	require.NoError(t, err)
+	var resumedAPIKey apiKeyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAPIKey))
+	require.Equal(t, "api_key", resumedAPIKey.Kind)
+	require.Equal(t, "status", resumedAPIKey.Action)
+	require.True(t, resumedAPIKey.Configured)
+	require.NotContains(t, out, "test-key")
+
+	out, err = runResumedJSON("/providers")
+	require.NoError(t, err)
+	var resumedProviders providersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedProviders))
+	require.Equal(t, "providers", resumedProviders.Kind)
+	require.Equal(t, "status", resumedProviders.Action)
+	require.Equal(t, "claude-test", resumedProviders.Active.Model)
+
+	out, err = runResumedJSON("/profile", "list")
+	require.NoError(t, err)
+	var resumedProfile profileReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedProfile))
+	require.Equal(t, "profile", resumedProfile.Kind)
+	require.Equal(t, "list", resumedProfile.Action)
+
+	out, err = runResumedJSON("/budget")
+	require.NoError(t, err)
+	var resumedBudget budgetReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBudget))
+	require.Equal(t, "budget", resumedBudget.Kind)
+	require.Equal(t, "show", resumedBudget.Action)
+	require.Equal(t, 1000, resumedBudget.MaxTokens)
+	require.Equal(t, 3, resumedBudget.MaxTurns)
+
+	out, err = runResumedJSON("/max-tokens")
+	require.NoError(t, err)
+	var resumedMaxTokens maxTokensReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMaxTokens))
+	require.Equal(t, "max_tokens", resumedMaxTokens.Kind)
+	require.Equal(t, "show", resumedMaxTokens.Action)
+	require.Equal(t, 1000, resumedMaxTokens.MaxTokens)
+
+	out, err = runResumedJSON("/max-tokens", "4096")
+	require.NoError(t, err)
+	var requestedMaxTokens maxTokensReport
+	require.NoError(t, json.Unmarshal([]byte(out), &requestedMaxTokens))
+	require.Equal(t, "show", requestedMaxTokens.Action)
+	require.Equal(t, 1000, requestedMaxTokens.MaxTokens)
+	require.NotNil(t, requestedMaxTokens.RequestedMaxTokens)
+	require.Equal(t, 4096, *requestedMaxTokens.RequestedMaxTokens)
+
+	out, err = runResumedJSON("/max-turns", "9")
+	require.NoError(t, err)
+	var requestedMaxTurns maxTurnsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &requestedMaxTurns))
+	require.Equal(t, "show", requestedMaxTurns.Action)
+	require.Equal(t, 3, requestedMaxTurns.MaxTurns)
+	require.NotNil(t, requestedMaxTurns.RequestedMaxTurns)
+	require.Equal(t, 9, *requestedMaxTurns.RequestedMaxTurns)
+
+	out, err = runResumedJSON("/temperature")
+	require.NoError(t, err)
+	var resumedTemperature temperatureReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTemperature))
+	require.Equal(t, "temperature", resumedTemperature.Kind)
+	require.Equal(t, "status", resumedTemperature.Action)
+	require.True(t, resumedTemperature.Configured)
+
+	out, err = runResumedJSON("/rate-limit")
+	require.NoError(t, err)
+	var resumedRateLimit rateLimitReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRateLimit))
+	require.Equal(t, "rate_limit", resumedRateLimit.Kind)
+	require.Equal(t, "show", resumedRateLimit.Action)
+	require.Equal(t, 4, resumedRateLimit.MaxRetries)
+
+	out, err = runResumedJSON("/rate-limit-options")
+	require.NoError(t, err)
+	var resumedRateLimitOptions rateLimitOptionsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRateLimitOptions))
+	require.Equal(t, "rate_limit_options", resumedRateLimitOptions.Kind)
+	require.Equal(t, 4, resumedRateLimitOptions.MaxRetries)
+
+	out, err = runResumedJSON("/permissions")
+	require.NoError(t, err)
+	var resumedPermissions permissionsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPermissions))
+	require.Equal(t, "permissions", resumedPermissions.Kind)
+	require.Equal(t, "show", resumedPermissions.Action)
+	require.Equal(t, "workspace-write", resumedPermissions.PermissionMode)
+	require.Equal(t, []string{"read_file"}, resumedPermissions.PermissionRules.Allow)
+
+	out, err = runResumedJSON("/allowed-tools")
+	require.NoError(t, err)
+	var resumedAllowedTools allowedToolsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAllowedTools))
+	require.Equal(t, "allowed_tools", resumedAllowedTools.Kind)
+	require.Equal(t, "list", resumedAllowedTools.Action)
+	require.Equal(t, []string{"read_file"}, resumedAllowedTools.Rules)
+
 	out, err = runResumedJSON("/project")
 	require.NoError(t, err)
 	var resumedProject projectReport
@@ -1415,6 +1571,14 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		Args    []string
 		Report  string
 	}{
+		{Command: "/api-key", Args: []string{"set", "secret"}, Report: "/api-key set"},
+		{Command: "/providers", Args: []string{"set", "anthropic"}, Report: "/providers set"},
+		{Command: "/profile", Args: []string{"set", "work"}, Report: "/profile set"},
+		{Command: "/budget", Args: []string{"set", "--max-tokens", "2000"}, Report: "/budget set"},
+		{Command: "/temperature", Args: []string{"set", "0.2"}, Report: "/temperature set"},
+		{Command: "/rate-limit", Args: []string{"set", "--max-retries", "2"}, Report: "/rate-limit set"},
+		{Command: "/permissions", Args: []string{"read-only"}, Report: "/permissions set"},
+		{Command: "/allowed-tools", Args: []string{"add", "bash"}, Report: "/allowed-tools add"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},

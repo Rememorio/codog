@@ -17666,6 +17666,30 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return renderVersion(a.Out, a.Workspace, resumeSlashArgs("version", args, format))
 	case "/config", "/settings":
 		return a.ConfigCommand(resumeSlashArgs("config", args, format))
+	case "/api":
+		return a.API(resumeSlashArgs("api", args, format))
+	case "/api-key":
+		return a.runResumedAPIKeySlash(resumeSlashArgs("api-key", args, format), format)
+	case "/providers":
+		return a.runResumedProvidersSlash(resumeSlashArgs("providers", args, format), format)
+	case "/profile":
+		return a.runResumedProfileSlash(resumeSlashArgs("profile", args, format), format)
+	case "/budget":
+		return a.runResumedBudgetSlash(resumeSlashArgs("budget", args, format), format)
+	case "/max-tokens":
+		return a.ResumedMaxTokens(resumeSlashArgs("max-tokens", args, format))
+	case "/max-turns":
+		return a.ResumedMaxTurns(resumeSlashArgs("max-turns", args, format))
+	case "/temperature":
+		return a.runResumedTemperatureSlash(resumeSlashArgs("temperature", args, format), format)
+	case "/rate-limit":
+		return a.runResumedRateLimitSlash(resumeSlashArgs("rate-limit", args, format), format)
+	case "/rate-limit-options":
+		return a.RateLimitOptions(resumeSlashArgs("rate-limit-options", args, format))
+	case "/permissions":
+		return a.runResumedPermissionsSlash(resumeSlashArgs("permissions", args, format), format)
+	case "/allowed-tools":
+		return a.runResumedAllowedToolsSlash(resumeSlashArgs("allowed-tools", args, format), format)
 	case "/init":
 		return a.Init(resumeSlashArgs("init", args, format))
 	case "/memory":
@@ -17834,6 +17858,106 @@ func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 	}
 }
 
+func (a *App) runResumedAPIKeySlash(args []string, format string) error {
+	req, err := parseAPIKeyArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/api-key", req.Action), format)
+	}
+	return a.APIKey(args)
+}
+
+func (a *App) runResumedProvidersSlash(args []string, format string) error {
+	req, err := parseProviderCommandArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action == "set" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/providers", req.Action), format)
+	}
+	return a.Providers(args)
+}
+
+func (a *App) runResumedProfileSlash(args []string, format string) error {
+	req, err := parseProfileArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "show", "list":
+		return a.Profile(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/profile", req.Action), format)
+	}
+}
+
+func (a *App) runResumedBudgetSlash(args []string, format string) error {
+	req, err := parseBudgetArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/budget", req.Action), format)
+	}
+	return a.Budget(args)
+}
+
+func (a *App) runResumedTemperatureSlash(args []string, format string) error {
+	req, err := parseTemperatureArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/temperature", req.Action), format)
+	}
+	return a.Temperature(args)
+}
+
+func (a *App) runResumedRateLimitSlash(args []string, format string) error {
+	req, err := parseRateLimitArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/rate-limit", req.Action), format)
+	}
+	return a.RateLimit(args)
+}
+
+func (a *App) runResumedPermissionsSlash(args []string, format string) error {
+	req, err := parsePermissionsArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/permissions", req.Action), format)
+	}
+	return a.Permissions(args)
+}
+
+func (a *App) runResumedAllowedToolsSlash(args []string, format string) error {
+	req, err := parseAllowedToolsArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "show":
+		return a.AllowedTools(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/allowed-tools", req.Action), format)
+	}
+}
+
+func resumedSlashCommandLabel(base string, action string) string {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return base
+	}
+	return base + " " + action
+}
+
 func directSlashCommandName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "/exit_plan_mode":
@@ -17864,7 +17988,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -21797,20 +21921,106 @@ func renderBudgetReport(out io.Writer, report budgetReport) {
 	}
 }
 
+type maxTokensRequest struct {
+	Format string
+	Value  *int
+}
+
+type maxTokensReport struct {
+	Kind               string `json:"kind"`
+	Action             string `json:"action"`
+	Status             string `json:"status"`
+	MaxTokens          int    `json:"max_tokens"`
+	PreviousMaxTokens  *int   `json:"previous_max_tokens,omitempty"`
+	RequestedMaxTokens *int   `json:"requested_max_tokens,omitempty"`
+}
+
 func (a *App) MaxTokens(args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintf(a.Out, "max_tokens=%d\n", a.Config.MaxTokens)
+	req, err := parseMaxTokensArgs(args)
+	if err != nil {
+		return err
+	}
+	action := "show"
+	var previous *int
+	if req.Value != nil {
+		action = "set"
+		value := a.Config.MaxTokens
+		previous = &value
+		a.Config.MaxTokens = *req.Value
+	}
+	report := maxTokensReport{
+		Kind:              "max_tokens",
+		Action:            action,
+		Status:            "ok",
+		MaxTokens:         a.Config.MaxTokens,
+		PreviousMaxTokens: previous,
+	}
+	return renderMaxTokensReport(a.Out, report, req.Format)
+}
+
+func (a *App) ResumedMaxTokens(args []string) error {
+	req, err := parseMaxTokensArgs(args)
+	if err != nil {
+		return err
+	}
+	report := maxTokensReport{
+		Kind:               "max_tokens",
+		Action:             "show",
+		Status:             "ok",
+		MaxTokens:          a.Config.MaxTokens,
+		RequestedMaxTokens: req.Value,
+	}
+	return renderMaxTokensReport(a.Out, report, req.Format)
+}
+
+func parseMaxTokensArgs(args []string) (maxTokensRequest, error) {
+	req := maxTokensRequest{Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("max-tokens output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown max-tokens flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "max-tokens"); err != nil {
+		return req, err
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog max-tokens [count] [--output-format text|json]")
+	}
+	if len(positionals) == 1 {
+		value, err := parsePositiveInt(positionals[0], "max_tokens")
+		if err != nil {
+			return req, err
+		}
+		req.Value = &value
+	}
+	return req, nil
+}
+
+func renderMaxTokensReport(out io.Writer, report maxTokensReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return nil
 	}
-	if len(args) != 1 {
-		return errors.New("usage: codog max-tokens [count]")
+	fmt.Fprintf(out, "max_tokens=%d\n", report.MaxTokens)
+	if report.RequestedMaxTokens != nil {
+		fmt.Fprintf(out, "requested_max_tokens=%d\n", *report.RequestedMaxTokens)
 	}
-	value, err := strconv.Atoi(args[0])
-	if err != nil || value <= 0 {
-		return errors.New("max_tokens must be a positive integer")
-	}
-	a.Config.MaxTokens = value
-	fmt.Fprintf(a.Out, "max_tokens=%d\n", a.Config.MaxTokens)
 	return nil
 }
 
@@ -22022,20 +22232,106 @@ func formatFloatValue(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
+type maxTurnsRequest struct {
+	Format string
+	Value  *int
+}
+
+type maxTurnsReport struct {
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	MaxTurns          int    `json:"max_turns"`
+	PreviousMaxTurns  *int   `json:"previous_max_turns,omitempty"`
+	RequestedMaxTurns *int   `json:"requested_max_turns,omitempty"`
+}
+
 func (a *App) MaxTurns(args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintf(a.Out, "max_turns=%d\n", a.Config.MaxTurns)
+	req, err := parseMaxTurnsArgs(args)
+	if err != nil {
+		return err
+	}
+	action := "show"
+	var previous *int
+	if req.Value != nil {
+		action = "set"
+		value := a.Config.MaxTurns
+		previous = &value
+		a.Config.MaxTurns = *req.Value
+	}
+	report := maxTurnsReport{
+		Kind:             "max_turns",
+		Action:           action,
+		Status:           "ok",
+		MaxTurns:         a.Config.MaxTurns,
+		PreviousMaxTurns: previous,
+	}
+	return renderMaxTurnsReport(a.Out, report, req.Format)
+}
+
+func (a *App) ResumedMaxTurns(args []string) error {
+	req, err := parseMaxTurnsArgs(args)
+	if err != nil {
+		return err
+	}
+	report := maxTurnsReport{
+		Kind:              "max_turns",
+		Action:            "show",
+		Status:            "ok",
+		MaxTurns:          a.Config.MaxTurns,
+		RequestedMaxTurns: req.Value,
+	}
+	return renderMaxTurnsReport(a.Out, report, req.Format)
+}
+
+func parseMaxTurnsArgs(args []string) (maxTurnsRequest, error) {
+	req := maxTurnsRequest{Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("max-turns output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown max-turns flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "max-turns"); err != nil {
+		return req, err
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog max-turns [count] [--output-format text|json]")
+	}
+	if len(positionals) == 1 {
+		value, err := parsePositiveInt(positionals[0], "max_turns")
+		if err != nil {
+			return req, err
+		}
+		req.Value = &value
+	}
+	return req, nil
+}
+
+func renderMaxTurnsReport(out io.Writer, report maxTurnsReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return nil
 	}
-	if len(args) != 1 {
-		return errors.New("usage: codog max-turns [count]")
+	fmt.Fprintf(out, "max_turns=%d\n", report.MaxTurns)
+	if report.RequestedMaxTurns != nil {
+		fmt.Fprintf(out, "requested_max_turns=%d\n", *report.RequestedMaxTurns)
 	}
-	value, err := strconv.Atoi(args[0])
-	if err != nil || value <= 0 {
-		return errors.New("max_turns must be a positive integer")
-	}
-	a.Config.MaxTurns = value
-	fmt.Fprintf(a.Out, "max_turns=%d\n", a.Config.MaxTurns)
 	return nil
 }
 
@@ -22221,27 +22517,128 @@ func renderDebugToolCallReport(out io.Writer, report debugToolCallReport) {
 	}
 }
 
+type permissionsRequest struct {
+	Action string
+	Format string
+	Mode   string
+}
+
+type permissionsReport struct {
+	Kind            string                 `json:"kind"`
+	Action          string                 `json:"action"`
+	Status          string                 `json:"status"`
+	PermissionMode  string                 `json:"permission_mode"`
+	PermissionRules config.PermissionRules `json:"permission_rules"`
+	PreviousMode    string                 `json:"previous_mode,omitempty"`
+}
+
 func (a *App) Permissions(args []string) error {
-	if len(args) == 0 || args[0] == "show" {
-		data, _ := json.MarshalIndent(map[string]any{
-			"permission_mode":  a.Config.PermissionMode,
-			"permission_rules": a.Config.PermissionRules,
-		}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+	req, err := parsePermissionsArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := a.Config.PermissionMode
+	if req.Action == "set" {
+		a.Config.PermissionMode = req.Mode
+	}
+	report := permissionsReport{
+		Kind:            "permissions",
+		Action:          req.Action,
+		Status:          "ok",
+		PermissionMode:  a.Config.PermissionMode,
+		PermissionRules: a.Config.PermissionRules,
+	}
+	if req.Action == "set" {
+		report.PreviousMode = previous
+	}
+	return renderPermissionsReport(a.Out, report, req.Format)
+}
+
+func parsePermissionsArgs(args []string) (permissionsRequest, error) {
+	req := permissionsRequest{Action: "show"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("permissions output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown permissions flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) == 0 {
+		req.Format = firstNonEmpty(req.Format, "json")
+		if err := validateTextOrJSON(req.Format, "permissions"); err != nil {
+			return req, err
+		}
+		return req, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(positionals[0])) {
+	case "show", "status", "list":
+		if len(positionals) > 1 {
+			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
+		}
+		req.Action = "show"
+	case "mode", "set":
+		if len(positionals) < 2 {
+			return req, errors.New("usage: codog permissions [read-only|workspace-write|danger-full-access|prompt|allow]")
+		}
+		if len(positionals) > 2 {
+			return req, fmt.Errorf("unexpected permissions argument %q", positionals[2])
+		}
+		req.Action = "set"
+		req.Mode = positionals[1]
+	default:
+		if len(positionals) > 1 {
+			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
+		}
+		req.Action = "set"
+		req.Mode = positionals[0]
+	}
+	if req.Action == "set" && !validPermissionMode(req.Mode) {
+		return req, fmt.Errorf("unknown permission mode: %s", req.Mode)
+	}
+	if req.Format == "" {
+		if req.Action == "show" {
+			req.Format = "json"
+		} else {
+			req.Format = "text"
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "permissions"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func renderPermissionsReport(out io.Writer, report permissionsReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return nil
 	}
-	mode := args[0]
-	if args[0] == "mode" || args[0] == "set" {
-		if len(args) < 2 {
-			return errors.New("usage: codog permissions [read-only|workspace-write|danger-full-access|prompt|allow]")
-		}
-		mode = args[1]
+	if report.Action == "set" {
+		fmt.Fprintf(out, "permission_mode=%s\n", report.PermissionMode)
+		return nil
 	}
-	if !validPermissionMode(mode) {
-		return fmt.Errorf("unknown permission mode: %s", mode)
+	fmt.Fprintln(out, "Permissions")
+	fmt.Fprintf(out, "  Mode             %s\n", report.PermissionMode)
+	if len(report.PermissionRules.Allow) > 0 {
+		fmt.Fprintf(out, "  Allow rules      %s\n", strings.Join(report.PermissionRules.Allow, ", "))
 	}
-	a.Config.PermissionMode = mode
-	fmt.Fprintf(a.Out, "permission_mode=%s\n", a.Config.PermissionMode)
+	if len(report.PermissionRules.Deny) > 0 {
+		fmt.Fprintf(out, "  Deny rules       %s\n", strings.Join(report.PermissionRules.Deny, ", "))
+	}
 	return nil
 }
 
@@ -22270,32 +22667,113 @@ func (a *App) handlePermissionsSlash(args []string) {
 	fmt.Fprintf(a.Err, "permission_mode=%s\n", a.Config.PermissionMode)
 }
 
+type allowedToolsRequest struct {
+	Action string
+	Format string
+	Tools  []string
+}
+
+type allowedToolsReport struct {
+	Kind   string   `json:"kind"`
+	Action string   `json:"action"`
+	Status string   `json:"status"`
+	Count  int      `json:"count"`
+	Rules  []string `json:"rules"`
+}
+
 func (a *App) AllowedTools(args []string) error {
-	action := "list"
-	if len(args) > 0 {
-		action = strings.ToLower(args[0])
+	req, err := parseAllowedToolsArgs(args)
+	if err != nil {
+		return err
 	}
-	switch action {
+	switch req.Action {
 	case "list", "show":
 	case "add":
-		if len(args) < 2 {
-			return errors.New("usage: codog allowed-tools add TOOL [TOOL...]")
-		}
-		if err := a.validateToolRuleValues("allowed-tools add", args[1:]); err != nil {
+		if err := a.validateToolRuleValues("allowed-tools add", req.Tools); err != nil {
 			return err
 		}
-		a.Config.PermissionRules.Allow = addRuleValues(a.Config.PermissionRules.Allow, args[1:])
-	case "remove", "rm", "delete":
-		if len(args) < 2 {
-			return errors.New("usage: codog allowed-tools remove TOOL [TOOL...]")
-		}
-		a.Config.PermissionRules.Allow = removeRuleValues(a.Config.PermissionRules.Allow, args[1:])
+		a.Config.PermissionRules.Allow = addRuleValues(a.Config.PermissionRules.Allow, req.Tools)
+	case "remove":
+		a.Config.PermissionRules.Allow = removeRuleValues(a.Config.PermissionRules.Allow, req.Tools)
 	case "clear":
 		a.Config.PermissionRules.Allow = nil
 	default:
-		return fmt.Errorf("unknown allowed-tools action: %s", args[0])
+		return fmt.Errorf("unknown allowed-tools action: %s", req.Action)
 	}
-	renderAllowedTools(a.Out, a.Config.PermissionRules.Allow)
+	report := allowedToolsReport{
+		Kind:   "allowed_tools",
+		Action: req.Action,
+		Status: "ok",
+		Count:  len(a.Config.PermissionRules.Allow),
+		Rules:  append([]string(nil), a.Config.PermissionRules.Allow...),
+	}
+	return renderAllowedToolsReport(a.Out, report, req.Format)
+}
+
+func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
+	req := allowedToolsRequest{Action: "list", Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("allowed-tools output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown allowed-tools flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "allowed-tools"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(positionals[0])) {
+	case "list", "show":
+		req.Action = strings.ToLower(strings.TrimSpace(positionals[0]))
+		if len(positionals) > 1 {
+			return req, fmt.Errorf("unexpected allowed-tools argument %q", positionals[1])
+		}
+	case "add":
+		req.Action = "add"
+		req.Tools = append([]string(nil), positionals[1:]...)
+		if len(req.Tools) == 0 {
+			return req, errors.New("usage: codog allowed-tools add TOOL [TOOL...]")
+		}
+	case "remove", "rm", "delete":
+		req.Action = "remove"
+		req.Tools = append([]string(nil), positionals[1:]...)
+		if len(req.Tools) == 0 {
+			return req, errors.New("usage: codog allowed-tools remove TOOL [TOOL...]")
+		}
+	case "clear":
+		req.Action = "clear"
+		if len(positionals) > 1 {
+			return req, fmt.Errorf("unexpected allowed-tools argument %q", positionals[1])
+		}
+	default:
+		return req, fmt.Errorf("unknown allowed-tools action: %s", positionals[0])
+	}
+	return req, nil
+}
+
+func renderAllowedToolsReport(out io.Writer, report allowedToolsReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	renderAllowedTools(out, report.Rules)
 	return nil
 }
 
@@ -29896,11 +30374,11 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
-		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace",
+		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
@@ -30498,6 +30976,26 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"max_tokens", "max_turns", "previous", "path"},
 			[]string{"ok", "error"},
 			true,
+		), true
+	case "max-tokens":
+		return localCommandHelpSpec(
+			"max-tokens",
+			"max-tokens",
+			"codog max-tokens [N] [--output-format text|json]",
+			"Max Tokens\n\nUsage:\n  codog max-tokens [N] [--output-format text|json]\n\nShows or changes the runtime max output token limit for the current process. Use `codog budget set --max-tokens N` to persist the preference.\n",
+			[]string{"max_tokens", "previous_max_tokens", "requested_max_tokens"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "max-turns":
+		return localCommandHelpSpec(
+			"max-turns",
+			"max-turns",
+			"codog max-turns [N] [--output-format text|json]",
+			"Max Turns\n\nUsage:\n  codog max-turns [N] [--output-format text|json]\n\nShows or changes the runtime model/tool loop limit for the current process. Use `codog budget set --max-turns N` to persist the preference.\n",
+			[]string{"max_turns", "previous_max_turns", "requested_max_turns"},
+			[]string{"ok", "error"},
+			false,
 		), true
 	case "rate-limit":
 		return localCommandHelpSpec(
