@@ -128,6 +128,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderVersion(os.Stdout, workspace, args[1:])
 		case "--acp", "-acp":
+			if acpHelpRequested(args[1:]) {
+				return renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(args[1:]), requestedOutputFormat(originalArgs))
+			}
 			if !acpServeRequested(args[1:]) {
 				return renderACPStatus(os.Stdout, args[1:])
 			}
@@ -140,6 +143,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if acpArgs, ok, err := parseACPGlobalInvocation(args); ok || err != nil {
 		if err != nil {
 			return err
+		}
+		if acpHelpRequested(acpArgs) {
+			return renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(acpArgs), requestedOutputFormat(originalArgs))
 		}
 		if acpServeRequested(acpArgs) {
 			args = append([]string{"acp"}, acpArgs...)
@@ -161,8 +167,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return renderVersion(os.Stdout, workspace, rest)
 	}
-	if command == "acp" && !acpServeRequested(rest) {
-		return renderACPStatus(os.Stdout, rest)
+	if command == "acp" {
+		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+			return err
+		}
+		if !acpServeRequested(rest) {
+			return renderACPStatus(os.Stdout, rest)
+		}
 	}
 	if command == "config" || command == "settings" {
 		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
@@ -16909,11 +16920,12 @@ type acpStatusReport struct {
 }
 
 type acpProtocol struct {
-	Name              string  `json:"name"`
-	JSONRPC           bool    `json:"json_rpc"`
-	Daemon            bool    `json:"daemon"`
-	Endpoint          *string `json:"endpoint"`
-	ServeStartsDaemon bool    `json:"serve_starts_daemon"`
+	Name              string   `json:"name"`
+	JSONRPC           bool     `json:"json_rpc"`
+	Daemon            bool     `json:"daemon"`
+	Endpoint          *string  `json:"endpoint"`
+	ServeStartsDaemon bool     `json:"serve_starts_daemon"`
+	Methods           []string `json:"methods"`
 }
 
 type acpContracts struct {
@@ -16938,6 +16950,21 @@ type acpRequest struct {
 	Serve       bool
 	Unsupported []string
 }
+
+var acpJSONRPCMethods = []string{
+	"initialize",
+	"status",
+	"session/new",
+	"session/list",
+	"session/get",
+	"session/history",
+	"session/rename",
+	"session/delete",
+	"prompt",
+	"shutdown",
+}
+
+var acpSlashAliases = []string{"acp", "--acp", "-acp", "serve", "start", "stdio"}
 
 func renderACPStatus(out io.Writer, args []string) error {
 	req, err := parseACPRequest(args)
@@ -16972,12 +16999,13 @@ func renderACPStatus(out io.Writer, args []string) error {
 	fmt.Fprintln(out, "  Supported        true")
 	fmt.Fprintln(out, "  Serve            codog acp serve")
 	fmt.Fprintln(out, "  Protocol         stdio JSON-RPC")
-	fmt.Fprintln(out, "  Surface          initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, prompt, shutdown")
+	fmt.Fprintln(out, "  Surface          "+strings.Join(acpJSONRPCMethods, ", "))
 	fmt.Fprintln(out, "  Message          "+report.Message)
 	return nil
 }
 
 func buildACPStatusReport() acpStatusReport {
+	methods := append([]string(nil), acpJSONRPCMethods...)
 	return acpStatusReport{
 		SchemaVersion: "1.0",
 		Kind:          "acp",
@@ -16992,6 +17020,7 @@ func buildACPStatusReport() acpStatusReport {
 			Daemon:            false,
 			Endpoint:          stringPtr("stdio"),
 			ServeStartsDaemon: true,
+			Methods:           methods,
 		},
 		Contracts: acpContracts{
 			BlockingGates: []string{
@@ -17003,7 +17032,7 @@ func buildACPStatusReport() acpStatusReport {
 			StableStatusSurface:       "codog acp --output-format json",
 			UnsupportedInvocationKind: "unsupported_acp_invocation",
 		},
-		Aliases: []string{"acp", "--acp", "-acp", "serve", "start", "stdio"},
+		Aliases: append([]string(nil), acpSlashAliases...),
 	}
 }
 
@@ -17079,6 +17108,15 @@ func parseACPRequest(args []string) (acpRequest, error) {
 func acpServeRequested(args []string) bool {
 	for _, arg := range args {
 		if isACPServeAlias(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func acpHelpRequested(args []string) bool {
+	for _, arg := range args {
+		if isHelpFlag(arg) {
 			return true
 		}
 	}
@@ -34044,7 +34082,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
@@ -34079,14 +34117,21 @@ type helpReport struct {
 	Command                 string   `json:"command,omitempty"`
 	Usage                   string   `json:"usage"`
 	Help                    string   `json:"help"`
+	Aliases                 []string `json:"aliases,omitempty"`
+	Formats                 []string `json:"formats,omitempty"`
+	Related                 []string `json:"related,omitempty"`
 	LocalOnly               *bool    `json:"local_only,omitempty"`
 	RequiresCredentials     *bool    `json:"requires_credentials,omitempty"`
 	RequiresProviderRequest *bool    `json:"requires_provider_request,omitempty"`
 	RequiresSessionResume   *bool    `json:"requires_session_resume,omitempty"`
 	MutatesWorkspace        *bool    `json:"mutates_workspace,omitempty"`
+	ServeStartsDaemon       *bool    `json:"serve_starts_daemon,omitempty"`
 	OutputFields            []string `json:"output_fields,omitempty"`
 	StatusValues            []string `json:"status_values,omitempty"`
 	CheckNames              []string `json:"check_names,omitempty"`
+	ProtocolFields          []string `json:"protocol_fields,omitempty"`
+	ContractFields          []string `json:"contract_fields,omitempty"`
+	ProtocolMethods         []string `json:"protocol_methods,omitempty"`
 }
 
 func renderHelpCommand(out io.Writer, args []string) error {
@@ -34153,14 +34198,21 @@ type commandHelpSpec struct {
 	Command                 string
 	Usage                   string
 	Text                    string
+	Aliases                 []string
+	Formats                 []string
+	Related                 []string
 	LocalOnly               bool
 	RequiresCredentials     bool
 	RequiresProviderRequest bool
 	RequiresSessionResume   bool
 	MutatesWorkspace        bool
+	ServeStartsDaemon       *bool
 	OutputFields            []string
 	StatusValues            []string
 	CheckNames              []string
+	ProtocolFields          []string
+	ContractFields          []string
+	ProtocolMethods         []string
 }
 
 func localCommandHelpSpec(topic, command, usage, text string, fields, statuses []string, mutates bool) commandHelpSpec {
@@ -34206,19 +34258,27 @@ func renderCommandHelpRequest(out io.Writer, command string, args []string, fall
 	if _, ok := commandHelpSpecFor(command); !ok {
 		return false, nil
 	}
-	helpArgs := make([]string, 0, len(args))
 	helpRequested := false
 	for _, arg := range args {
 		if isHelpFlag(arg) {
 			helpRequested = true
-			continue
 		}
-		helpArgs = append(helpArgs, arg)
 	}
 	if !helpRequested {
 		return false, nil
 	}
-	return true, renderCommandHelpTopic(out, command, helpArgs, fallbackFormat)
+	return true, renderCommandHelpTopic(out, command, commandHelpArgsWithoutHelp(args), fallbackFormat)
+}
+
+func commandHelpArgsWithoutHelp(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if isHelpFlag(arg) {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func renderCommandHelpTopic(out io.Writer, topic string, args []string, fallbackFormat string) error {
@@ -34274,14 +34334,21 @@ func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) e
 			Command:                 spec.Command,
 			Usage:                   spec.Usage,
 			Help:                    spec.Text,
+			Aliases:                 append([]string(nil), spec.Aliases...),
+			Formats:                 append([]string(nil), spec.Formats...),
+			Related:                 append([]string(nil), spec.Related...),
 			LocalOnly:               boolPtr(spec.LocalOnly),
 			RequiresCredentials:     boolPtr(spec.RequiresCredentials),
 			RequiresProviderRequest: boolPtr(spec.RequiresProviderRequest),
 			RequiresSessionResume:   boolPtr(spec.RequiresSessionResume),
 			MutatesWorkspace:        boolPtr(spec.MutatesWorkspace),
+			ServeStartsDaemon:       spec.ServeStartsDaemon,
 			OutputFields:            append([]string(nil), spec.OutputFields...),
 			StatusValues:            append([]string(nil), spec.StatusValues...),
 			CheckNames:              append([]string(nil), spec.CheckNames...),
+			ProtocolFields:          append([]string(nil), spec.ProtocolFields...),
+			ContractFields:          append([]string(nil), spec.ContractFields...),
+			ProtocolMethods:         append([]string(nil), spec.ProtocolMethods...),
 		}, "", "  ")
 		fmt.Fprintln(out, string(data))
 		return nil
@@ -34339,6 +34406,27 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "acp":
+		return commandHelpSpec{
+			Topic:                   "acp",
+			Command:                 "acp",
+			Usage:                   "codog acp [serve|start|stdio] [--output-format text|json]",
+			Text:                    "ACP / Zed\n\nUsage:\n  codog acp [serve|start|stdio] [--output-format text|json]\n  codog --acp [serve]\n  codog -acp [serve]\n\nShows or starts the editor-facing ACP/Zed bridge. Without a serve alias it reports the local launch contract; with `serve`, `start`, or `stdio` it starts a stdio JSON-RPC server for initialize, status, session, prompt, and shutdown requests.\n",
+			Aliases:                 append([]string(nil), acpSlashAliases...),
+			Formats:                 []string{"text", "json"},
+			Related:                 []string{"/acp", "codog acp --output-format json", "codog acp serve"},
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			ServeStartsDaemon:       boolPtr(true),
+			OutputFields:            []string{"schema_version", "kind", "action", "status", "supported", "launch_command", "protocol", "contracts", "aliases"},
+			StatusValues:            []string{"ok", "error"},
+			ProtocolFields:          []string{"name", "json_rpc", "daemon", "endpoint", "serve_starts_daemon", "methods"},
+			ContractFields:          []string{"blocking_gates", "stable_status_surface", "unsupported_invocation_kind"},
+			ProtocolMethods:         append([]string(nil), acpJSONRPCMethods...),
+		}, true
 	case "setup":
 		return localCommandHelpSpec(
 			"setup",

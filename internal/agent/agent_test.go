@@ -174,6 +174,21 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.StatusValues, "error")
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"acp", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "acp", report.Topic)
+	require.Equal(t, "acp", report.Command)
+	require.Contains(t, report.Help, "stdio JSON-RPC")
+	require.Contains(t, report.Aliases, "--acp")
+	require.Contains(t, report.Formats, "json")
+	require.Contains(t, report.OutputFields, "protocol")
+	require.Contains(t, report.ProtocolFields, "methods")
+	require.Contains(t, report.ContractFields, "unsupported_invocation_kind")
+	require.Contains(t, report.ProtocolMethods, "session/list")
+	require.NotNil(t, report.ServeStartsDaemon)
+	require.True(t, *report.ServeStartsDaemon)
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"reasoning", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "reasoning", report.Topic)
@@ -2884,6 +2899,10 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.False(t, report.Protocol.Daemon)
 	require.NotNil(t, report.Protocol.Endpoint)
 	require.True(t, report.Protocol.ServeStartsDaemon)
+	require.Contains(t, report.Protocol.Methods, "initialize")
+	require.Contains(t, report.Protocol.Methods, "session/list")
+	require.Contains(t, report.Protocol.Methods, "prompt")
+	require.Contains(t, report.Protocol.Methods, "shutdown")
 	require.Equal(t, "unsupported_acp_invocation", report.Contracts.UnsupportedInvocationKind)
 	require.Contains(t, report.Contracts.BlockingGates, "prompt")
 	require.Contains(t, report.Aliases, "--acp")
@@ -2906,6 +2925,35 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Equal(t, "error", unsupported.Status)
 	require.False(t, unsupported.Supported)
 	require.Equal(t, []string{"bogus", "--json"}, unsupported.Invocation)
+
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"acp", "--help", "--output-format", "json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var help helpReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &help))
+	require.Equal(t, "help", help.Kind)
+	require.Equal(t, "acp", help.Command)
+	require.Contains(t, help.ProtocolMethods, "session/history")
+	require.Contains(t, help.Aliases, "-acp")
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "acp", "--help"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &help))
+	require.Equal(t, "help", help.Kind)
+	require.Equal(t, "acp", help.Command)
+	require.Contains(t, help.ProtocolFields, "serve_starts_daemon")
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--acp", "--help", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &help))
+	require.Equal(t, "help", help.Kind)
+	require.Equal(t, "acp", help.Command)
+	require.Contains(t, help.Aliases, "--acp")
 }
 
 func TestACPServeExposesSessionQueries(t *testing.T) {
