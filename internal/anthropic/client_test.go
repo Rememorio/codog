@@ -560,6 +560,10 @@ func TestOpenAICompatibleAssistantThinkingHistoryForDeepSeekV4(t *testing.T) {
 	require.Len(t, wire.Messages, 1)
 	require.Equal(t, "prior answer", wire.Messages[0].Content)
 	require.Equal(t, "prior reasoning", wire.Messages[0].ReasoningContent)
+	require.Equal(t, map[string]string{"type": "enabled"}, wire.Thinking)
+	data, err := json.Marshal(wire)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"thinking":{"type":"enabled"}`)
 }
 
 func TestOpenAICompatibleAssistantThinkingHistoryOmittedForRegularModels(t *testing.T) {
@@ -578,6 +582,7 @@ func TestOpenAICompatibleAssistantThinkingHistoryOmittedForRegularModels(t *test
 	require.Len(t, wire.Messages, 1)
 	require.Equal(t, "prior answer", wire.Messages[0].Content)
 	require.Empty(t, wire.Messages[0].ReasoningContent)
+	require.Nil(t, wire.Thinking)
 }
 
 func TestOpenAICompatibleToolResultsOmitIsErrorForKimiModels(t *testing.T) {

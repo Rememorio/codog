@@ -240,15 +240,16 @@ func (c *Client) newRequest(ctx context.Context, body []byte) (*http.Request, er
 }
 
 type openAIRequest struct {
-	Model               string          `json:"model"`
-	Messages            []openAIMessage `json:"messages"`
-	Tools               []openAITool    `json:"tools,omitempty"`
-	Stream              bool            `json:"stream"`
-	StreamOptions       map[string]bool `json:"stream_options,omitempty"`
-	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
-	MaxTokens           int             `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64        `json:"temperature,omitempty"`
+	Model               string            `json:"model"`
+	Messages            []openAIMessage   `json:"messages"`
+	Tools               []openAITool      `json:"tools,omitempty"`
+	Stream              bool              `json:"stream"`
+	StreamOptions       map[string]bool   `json:"stream_options,omitempty"`
+	Thinking            map[string]string `json:"thinking,omitempty"`
+	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
+	MaxTokens           int               `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int               `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64          `json:"temperature,omitempty"`
 }
 
 type openAIMessage struct {
@@ -373,6 +374,9 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 	}
 	if modelrouting.ProviderForModel(req.Model) == modelrouting.ProviderOpenAI && modelrouting.IsReasoningModel(wireModel) {
 		wire.ReasoningEffort = providerReasoningEffort(req.ReasoningEffort)
+	}
+	if modelrouting.RequiresReasoningContentHistory(wireModel) {
+		wire.Thinking = map[string]string{"type": "enabled"}
 	}
 	return wire, nil
 }
