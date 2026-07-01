@@ -13931,12 +13931,17 @@ func (a *App) InstallGitHubAppStep(command string, args []string) error {
 	if err != nil {
 		return err
 	}
+	command = installGitHubAppStepCommand(command)
+	dryRun := true
+	if command == "CreatingStep" {
+		dryRun = req.DryRun
+	}
 	setupReport, err := githubsetup.Setup(githubsetup.Options{
 		Workspace:  a.Workspace,
 		SecretName: req.SecretName,
 		Workflows:  req.Workflows,
 		Force:      req.Force,
-		DryRun:     true,
+		DryRun:     dryRun,
 	})
 	if err != nil {
 		return err
@@ -14010,7 +14015,7 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		Warnings:              append([]string(nil), setupReport.Warnings...),
 		NextCommand:           installGitHubAppNextCommand(req),
 		ProviderRequestMade:   false,
-		WorkspaceWillMutate:   false,
+		WorkspaceWillMutate:   command == "CreatingStep" && !setupReport.DryRun,
 		InstallCommandMutates: true,
 	}
 	switch command {
@@ -14059,9 +14064,30 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 			report.Messages = append(report.Messages, "No selected workflow files exist yet.")
 		}
 	case "CreatingStep":
-		report.Status = "planned"
-		report.Messages = append(report.Messages, "Workflow creation is planned only; this compatibility step does not mutate the workspace.")
-		report.Messages = append(report.Messages, "Run the next command to write workflow files.")
+		if setupReport.DryRun {
+			report.Status = "planned"
+			report.Messages = append(report.Messages, "Workflow creation is ready; no files were written because dry-run mode is enabled.")
+			report.Messages = append(report.Messages, "Run the next command to write workflow files.")
+			break
+		}
+		report.NextCommand = ""
+		changed := 0
+		for _, workflow := range setupReport.Workflows {
+			switch {
+			case workflow.Created:
+				changed++
+				report.Messages = append(report.Messages, fmt.Sprintf("Created workflow file: %s", workflow.Path))
+			case workflow.Overwritten:
+				changed++
+				report.Messages = append(report.Messages, fmt.Sprintf("Overwrote workflow file: %s", workflow.Path))
+			}
+		}
+		if changed == 0 {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, "No workflow files were written.")
+		} else {
+			report.Messages = append(report.Messages, "Workflow creation completed.")
+		}
 	case "InstallAppStep":
 		report.Messages = append(report.Messages, "Install or authorize the GitHub App by following the setup documentation.")
 		report.Messages = append(report.Messages, setupReport.DocsURL)
@@ -30210,7 +30236,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			command,
 			command,
 			fmt.Sprintf("codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]", command),
-			fmt.Sprintf("%s\n\nUsage:\n  codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code GitHub App setup step named `%s`. It performs a non-mutating local dry-run check, reports repository detection, credential readiness, existing workflow files, GitHub CLI availability, warnings, and the concrete `codog install-github-app` command to apply the setup.\n", command, command, command),
+			fmt.Sprintf("%s\n\nUsage:\n  codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code GitHub App setup step named `%s`. Most steps perform a non-mutating local check; `CreatingStep` writes selected workflow files unless `--dry-run` is passed. Reports include repository detection, credential readiness, existing workflow files, GitHub CLI availability, warnings, and the concrete `codog install-github-app` command when a separate apply step is needed.\n", command, command, command),
 			[]string{"step", "workspace", "repo", "secret_name", "api_key_configured", "github_cli_available", "workflows", "warnings", "next_command"},
 			[]string{"ok", "warn", "planned", "ready", "error"},
 			false,

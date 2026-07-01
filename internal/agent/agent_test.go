@@ -6135,9 +6135,33 @@ func TestInstallGitHubAppStepCompatibilityCommands(t *testing.T) {
 	var creatingReport installGitHubAppStepReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &creatingReport))
 	require.Equal(t, "CreatingStep", creatingReport.Step)
-	require.Equal(t, "planned", creatingReport.Status)
-	require.Contains(t, creatingReport.NextCommand, "--secret-name")
-	require.False(t, fileExists(filepath.Join(workspace, ".github", "workflows", "claude-code-review.yml")))
+	require.Equal(t, "ok", creatingReport.Status)
+	require.True(t, creatingReport.WorkspaceWillMutate)
+	require.Empty(t, creatingReport.NextCommand)
+	require.Len(t, creatingReport.Workflows, 1)
+	require.True(t, creatingReport.Workflows[0].Created)
+	reviewPath := filepath.Join(workspace, ".github", "workflows", "claude-code-review.yml")
+	reviewData, err := os.ReadFile(reviewPath)
+	require.NoError(t, err)
+	require.Contains(t, string(reviewData), "${{ secrets.CLAUDE_KEY }}")
+	require.Contains(t, creatingReport.Messages, "Workflow creation completed.")
+	out.Reset()
+
+	dryWorkspace := t.TempDir()
+	dryApp := &App{
+		Config:    config.Config{APIKey: "test-key"},
+		Workspace: dryWorkspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, dryApp.InstallGitHubAppStep("CreatingStep", []string{"--workflow", "review", "--dry-run", "--json"}))
+	var dryReport installGitHubAppStepReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &dryReport))
+	require.Equal(t, "planned", dryReport.Status)
+	require.False(t, dryReport.WorkspaceWillMutate)
+	require.Contains(t, dryReport.NextCommand, "codog install-github-app")
+	require.NotContains(t, dryReport.NextCommand, "--dry-run")
+	require.False(t, fileExists(filepath.Join(dryWorkspace, ".github", "workflows", "claude-code-review.yml")))
 	out.Reset()
 
 	configHome := t.TempDir()
