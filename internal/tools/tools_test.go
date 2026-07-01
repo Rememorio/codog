@@ -268,7 +268,7 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Nil(t, filesReport.Content)
 	require.Nil(t, filesReport.NumLines)
 	require.Nil(t, filesReport.NumMatches)
-	require.Equal(t, 100, filesReport.AppliedLimit)
+	require.Equal(t, 250, filesReport.AppliedLimit)
 	require.Equal(t, 0, filesReport.AppliedOffset)
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
@@ -276,6 +276,28 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Contains(t, out, `"output_mode": "files_with_matches"`)
 	require.Contains(t, out, "a.go")
 	require.NotContains(t, out, "b.py")
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","head_limit":0}`), nil)
+	require.NoError(t, err)
+	var unlimitedFilesReport struct {
+		Filenames    []string `json:"filenames"`
+		AppliedLimit *int     `json:"appliedLimit"`
+		Truncated    bool     `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &unlimitedFilesReport))
+	require.Equal(t, []string{"a.go", "b.py"}, unlimitedFilesReport.Filenames)
+	require.Nil(t, unlimitedFilesReport.AppliedLimit)
+	require.False(t, unlimitedFilesReport.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","limit":1}`), nil)
+	require.NoError(t, err)
+	var legacyLimitFilesReport struct {
+		Filenames    []string `json:"filenames"`
+		AppliedLimit int      `json:"appliedLimit"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &legacyLimitFilesReport))
+	require.Equal(t, []string{"a.go"}, legacyLimitFilesReport.Filenames)
+	require.Equal(t, 1, legacyLimitFilesReport.AppliedLimit)
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"count","-i":true}`), nil)
 	require.NoError(t, err)

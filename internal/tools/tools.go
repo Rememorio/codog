@@ -2598,7 +2598,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		IgnoreCase     bool   `json:"ignore_case"`
 		Type           string `json:"type"`
 		Limit          int    `json:"limit"`
-		HeadLimit      int    `json:"head_limit"`
+		HeadLimit      *int   `json:"head_limit"`
 		Offset         int    `json:"offset"`
 		Multiline      bool   `json:"multiline"`
 	}
@@ -2637,13 +2637,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if mode != "content" && mode != "files_with_matches" && mode != "count" {
 		return "", fmt.Errorf("unsupported grep output_mode %q", payload.OutputMode)
 	}
-	limit := payload.HeadLimit
-	if limit <= 0 {
-		limit = payload.Limit
-	}
-	if limit <= 0 {
-		limit = 100
-	}
+	limit, unlimited := grepLimit(payload.HeadLimit, payload.Limit)
 	offset := max(payload.Offset, 0)
 	contextLines := max(payload.Context, 0)
 	if contextLines == 0 {
@@ -2677,13 +2671,13 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		if walkErr != nil {
 			return walkErr
 		}
-		if mode == "content" && len(matches) >= limit {
+		if mode == "content" && !unlimited && len(matches) >= limit {
 			return filepath.SkipAll
 		}
-		if mode == "files_with_matches" && len(files) >= limit {
+		if mode == "files_with_matches" && !unlimited && len(files) >= limit {
 			return filepath.SkipAll
 		}
-		if mode == "count" && len(counts) >= offset+limit && limit > 0 {
+		if mode == "count" && !unlimited && len(counts) >= offset+limit && limit > 0 {
 			return filepath.SkipAll
 		}
 		if entry.IsDir() {
@@ -2758,7 +2752,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 						matches = append(matches, match)
 					}
 					seen++
-					if len(matches) >= limit {
+					if !unlimited && len(matches) >= limit {
 						return filepath.SkipAll
 					}
 				}
@@ -2806,7 +2800,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 						matches = append(matches, match)
 					}
 					seen++
-					if len(matches) >= limit {
+					if !unlimited && len(matches) >= limit {
 						return filepath.SkipAll
 					}
 				}
@@ -2830,9 +2824,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"content":       nil,
 			"numLines":      nil,
 			"numMatches":    nil,
-			"appliedLimit":  limit,
+			"appliedLimit":  grepAppliedLimit(limit, unlimited),
 			"appliedOffset": offset,
-			"truncated":     len(files) >= limit,
+			"truncated":     !unlimited && len(files) >= limit,
 			"offset":        offset,
 		}), nil
 	case "count":
@@ -2848,9 +2842,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"content":       nil,
 			"numLines":      nil,
 			"numMatches":    totalMatches,
-			"appliedLimit":  limit,
+			"appliedLimit":  grepAppliedLimit(limit, unlimited),
 			"appliedOffset": offset,
-			"truncated":     len(counts) >= offset+limit,
+			"truncated":     !unlimited && len(counts) >= offset+limit,
 			"offset":        offset,
 		}), nil
 	default:
@@ -2863,12 +2857,32 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"numFiles":      len(contentFilenames),
 			"content":       strings.Join(contentLines, "\n"),
 			"numLines":      len(contentLines),
-			"appliedLimit":  limit,
+			"appliedLimit":  grepAppliedLimit(limit, unlimited),
 			"appliedOffset": offset,
-			"truncated":     len(matches) >= limit,
+			"truncated":     !unlimited && len(matches) >= limit,
 			"offset":        offset,
 		}), nil
 	}
+}
+
+func grepLimit(headLimit *int, legacyLimit int) (int, bool) {
+	if headLimit != nil {
+		if *headLimit <= 0 {
+			return 0, true
+		}
+		return *headLimit, false
+	}
+	if legacyLimit > 0 {
+		return legacyLimit, false
+	}
+	return 250, false
+}
+
+func grepAppliedLimit(limit int, unlimited bool) any {
+	if unlimited {
+		return nil
+	}
+	return limit
 }
 
 type grepContextLine struct {
