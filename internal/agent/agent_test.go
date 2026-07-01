@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
+	"github.com/Rememorio/codog/internal/perfissue"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
@@ -409,6 +410,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "metrics",
 		},
 		{
+			name:  "perf-issue local help",
+			args:  []string{"--config", configPath, "perf-issue", "--help", "--output-format", "json"},
+			topic: "perf-issue",
+		},
+		{
 			name:  "reset local help",
 			args:  []string{"--config", configPath, "reset", "--help", "--output-format", "json"},
 			topic: "reset",
@@ -523,6 +529,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "checkpoint")
 	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "metrics")
+	require.Contains(t, report.Commands, "perf-issue")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rc")
 	require.Contains(t, report.Commands, "rate-limit")
@@ -4074,6 +4081,29 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("metrics"))
 	out.Reset()
 
+	require.NoError(t, app.PerfIssue([]string{"--token-threshold", "40", "--tool-threshold", "1", "--json"}))
+	var perf perfissue.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &perf))
+	require.Equal(t, "perf_issue", perf.Kind)
+	require.Equal(t, "warn", perf.Status)
+	require.Equal(t, 71, perf.TotalTokens)
+	require.Contains(t, perfSignalKinds(perf.Signals), "high_token_usage")
+	require.Contains(t, perfSignalKinds(perf.Signals), "high_tool_use")
+	require.True(t, commandAcceptsGlobalOutputFormat("perf-issue"))
+	out.Reset()
+
+	require.NoError(t, app.PerfIssue([]string{"--write", "--token-threshold=40", "--tool-threshold=1"}))
+	require.Contains(t, out.String(), "Performance Issue")
+	require.Contains(t, out.String(), "File")
+	perfFiles, err := filepath.Glob(filepath.Join(workspace, ".codog", "perf", "*.md"))
+	require.NoError(t, err)
+	require.Len(t, perfFiles, 1)
+	perfData, err := os.ReadFile(perfFiles[0])
+	require.NoError(t, err)
+	require.Contains(t, string(perfData), "# Codog Performance Issue")
+	require.Contains(t, string(perfData), "high_token_usage")
+	out.Reset()
+
 	require.NoError(t, app.Summary([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), `"kind": "summary"`)
 	require.Contains(t, out.String(), `"session_id": "usage-session"`)
@@ -4119,6 +4149,11 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Current session")
 	require.Contains(t, out.String(), "ID               usage-session")
 	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=0")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/perf-issue --token-threshold 40 --tool-threshold 1", sess))
+	require.Contains(t, out.String(), "Performance Issue")
+	require.Contains(t, out.String(), "high_token_usage")
 	out.Reset()
 
 	require.NoError(t, app.Insights([]string{"--json"}))
@@ -9254,6 +9289,14 @@ func makeAgentPluginZip(t *testing.T, files map[string]string) []byte {
 	}
 	require.NoError(t, writer.Close())
 	return buf.Bytes()
+}
+
+func perfSignalKinds(signals []perfissue.Signal) []string {
+	kinds := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		kinds = append(kinds, signal.Kind)
+	}
+	return kinds
 }
 
 func TestVoiceCommandHelperProcess(t *testing.T) {

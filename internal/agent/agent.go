@@ -57,6 +57,7 @@ import (
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
+	"github.com/Rememorio/codog/internal/perfissue"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/projectinit"
@@ -426,6 +427,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "metrics":
 		return app.Metrics(rest, overrides)
+	case "perf-issue":
+		return app.PerfIssue(rest)
 	case "insights":
 		return app.Insights(rest)
 	case "think-back", "thinkback", "thinkback-play":
@@ -15397,6 +15400,7 @@ func builtInCommandNames() []string {
 		"oauth-refresh",
 		"output-style",
 		"passes",
+		"perf-issue",
 		"permissions",
 		"plan",
 		"plugin",
@@ -18513,6 +18517,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/insights":
 		if err := a.Insights(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/perf-issue":
+		if err := a.PerfIssue(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/think-back", "/thinkback", "/thinkback-play":
@@ -24987,6 +24995,15 @@ type insightsRequest struct {
 	Limit  int
 }
 
+type perfIssueRequest struct {
+	Format         string
+	Limit          int
+	Output         string
+	Write          bool
+	TokenThreshold int
+	ToolThreshold  int
+}
+
 func (a *App) Insights(args []string) error {
 	if a.Sessions == nil {
 		return errors.New("session store is not configured")
@@ -25045,6 +25062,141 @@ func parseInsightsArgs(args []string) (insightsRequest, error) {
 		return req, err
 	}
 	return req, nil
+}
+
+func (a *App) PerfIssue(args []string) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parsePerfIssueArgs(args)
+	if err != nil {
+		return err
+	}
+	summary, err := insights.Build(a.Sessions, insights.Options{Limit: req.Limit})
+	if err != nil {
+		return err
+	}
+	report := perfissue.Build(summary, perfissue.Options{
+		Workspace:      a.Workspace,
+		Limit:          req.Limit,
+		TokenThreshold: req.TokenThreshold,
+		ToolThreshold:  req.ToolThreshold,
+	})
+	if req.Write || strings.TrimSpace(req.Output) != "" {
+		path := a.perfIssueOutputPath(req.Output, time.Now().UTC())
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := session.ValidateExportOutputPath(path); err != nil {
+			return err
+		}
+		data := []byte(perfissue.RenderMarkdown(report))
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return err
+		}
+		report.File = path
+		report.Bytes = len(data)
+	}
+	if req.Format == "json" {
+		return perfissue.RenderJSON(a.Out, report)
+	}
+	perfissue.RenderText(a.Out, report)
+	return nil
+}
+
+func parsePerfIssueArgs(args []string) (perfIssueRequest, error) {
+	req := perfIssueRequest{Format: "text", Limit: 5}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("perf-issue output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("perf-issue limit is required")
+			}
+			limit, err := parsePositiveInt(args[index], "perf-issue limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "perf-issue limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case arg == "--token-threshold":
+			index++
+			if index >= len(args) {
+				return req, errors.New("perf-issue token threshold is required")
+			}
+			value, err := parsePositiveInt(args[index], "perf-issue token threshold")
+			if err != nil {
+				return req, err
+			}
+			req.TokenThreshold = value
+		case strings.HasPrefix(arg, "--token-threshold="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--token-threshold="), "perf-issue token threshold")
+			if err != nil {
+				return req, err
+			}
+			req.TokenThreshold = value
+		case arg == "--tool-threshold":
+			index++
+			if index >= len(args) {
+				return req, errors.New("perf-issue tool threshold is required")
+			}
+			value, err := parsePositiveInt(args[index], "perf-issue tool threshold")
+			if err != nil {
+				return req, err
+			}
+			req.ToolThreshold = value
+		case strings.HasPrefix(arg, "--tool-threshold="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--tool-threshold="), "perf-issue tool threshold")
+			if err != nil {
+				return req, err
+			}
+			req.ToolThreshold = value
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, errors.New("perf-issue output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--write":
+			req.Write = true
+		default:
+			return req, fmt.Errorf("unknown perf-issue argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "perf-issue"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func (a *App) perfIssueOutputPath(output string, createdAt time.Time) string {
+	filename := fmt.Sprintf("perf-issue-%s-%d.md", createdAt.Format("20060102T150405Z"), createdAt.UnixNano())
+	if strings.TrimSpace(output) == "" {
+		return filepath.Join(a.Workspace, ".codog", "perf", filename)
+	}
+	path := a.resolveOutputPath(output)
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return path
+	}
+	return filepath.Join(path, filename)
 }
 
 type thinkBackRequest struct {
@@ -26829,7 +26981,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
-		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
@@ -27377,6 +27529,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "perf-issue":
+		return localCommandHelpSpec(
+			"perf-issue",
+			"perf-issue",
+			"codog perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--write|--output PATH] [--output-format text|json]",
+			"Performance Issue\n\nUsage:\n  codog perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--write|--output PATH] [--output-format text|json]\n\nBuilds a local performance diagnosis bundle from saved JSONL sessions, token usage, prompt cache statistics, and tool counts. Use `--write` or `--output PATH` to save a Markdown report.\n",
+			[]string{"workspace", "signals", "insights", "total_tokens", "file"},
+			[]string{"ok", "warn", "empty", "error"},
+			true,
+		), true
 	case "tokens":
 		return localCommandHelpSpec(
 			"tokens",
@@ -27773,6 +27935,7 @@ Usage:
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] metrics [--session ID|--resume ID|latest] [--limit N] [--json|--output-format text|json]
+  %s [flags] perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] insights [--limit N] [--json|--output-format text|json]
   %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
