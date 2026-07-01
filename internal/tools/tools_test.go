@@ -77,7 +77,7 @@ esac
 `), 0o755))
 	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
 
-	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":1000}`))
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":3000}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ps:-NoProfile -NonInteractive -Command Write-Output ok`)
 	var foreground struct {
@@ -992,7 +992,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 79)
+	require.Len(t, infos, 81)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -1080,6 +1080,12 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
 	info, ok = registry.Info("task_get")
+	require.True(t, ok)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	info, ok = registry.Info("task_heartbeat")
+	require.True(t, ok)
+	require.Equal(t, PermissionDanger, info.Permission)
+	info, ok = registry.Info("task_lane_board")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
 	_, ok = registry.Info("task_output")
@@ -1397,6 +1403,10 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"TaskCreateTool":               "task_create",
 		"TaskGet":                      "task_get",
 		"TaskGetTool":                  "task_get",
+		"TaskHeartbeat":                "task_heartbeat",
+		"TaskHeartbeatTool":            "task_heartbeat",
+		"TaskLaneBoard":                "task_lane_board",
+		"TaskLaneBoardTool":            "task_lane_board",
 		"TaskList":                     "task_list",
 		"TaskListTool":                 "task_list",
 		"TaskOutput":                   "task_output",
@@ -2451,6 +2461,46 @@ printf 'codog:%s\n' "$*"
 	_, err = TaskCreateTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"command":"printf ok","prompt":"check auth"}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot both be provided")
+}
+
+func TestTaskHeartbeatAndLaneBoardTools(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	createOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"sleep 5","kind":"agent","session_id":"session-1"}`))
+	require.NoError(t, err)
+	var task background.Task
+	require.NoError(t, json.Unmarshal([]byte(createOut), &task))
+	t.Cleanup(func() {
+		_, _ = background.NewStore(configHome).Stop(task.ID)
+	})
+
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	heartbeatOut, err := TaskHeartbeatTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","status":"running","transport_alive":true,"observed_at":"`+observedAt.Format(time.RFC3339)+`"}`))
+	require.NoError(t, err)
+	var heartbeatView struct {
+		TaskID    string                   `json:"task_id"`
+		Heartbeat background.LaneHeartbeat `json:"heartbeat"`
+		Task      background.Task          `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(heartbeatOut), &heartbeatView))
+	require.Equal(t, task.ID, heartbeatView.TaskID)
+	require.Equal(t, observedAt, heartbeatView.Heartbeat.ObservedAt)
+	require.True(t, heartbeatView.Heartbeat.TransportAlive)
+	require.Equal(t, "running", heartbeatView.Heartbeat.Status)
+	require.NotNil(t, heartbeatView.Task.Heartbeat)
+
+	boardOut, err := TaskLaneBoardTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"stalled_after_seconds":3600}`))
+	require.NoError(t, err)
+	var board background.LaneBoard
+	require.NoError(t, json.Unmarshal([]byte(boardOut), &board))
+	require.Len(t, board.Active, 1)
+	require.Equal(t, task.ID, board.Active[0].TaskID)
+	require.Equal(t, background.LaneFreshnessHealthy, board.Active[0].Freshness)
+	require.Empty(t, board.Blocked)
+	require.Empty(t, board.Finished)
 }
 
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {

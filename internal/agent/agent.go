@@ -3454,10 +3454,34 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
 		return nil
 	}
-	if len(args) < 2 && args[0] != "prune" && args[0] != "supervise" {
-		return errors.New("usage: codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep] | supervise")
+	if len(args) < 2 && args[0] != "board" && args[0] != "lane-board" && args[0] != "lanes" && args[0] != "prune" && args[0] != "supervise" {
+		return errors.New("usage: codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | board [stalled-after-seconds] | heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep] | supervise")
 	}
 	switch args[0] {
+	case "board", "lane-board", "lanes":
+		stalledAfter, err := parseBackgroundBoardArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		board, err := store.LaneBoard(stalledAfter)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(board, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "heartbeat":
+		id, heartbeat, err := parseBackgroundHeartbeatArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		task, err := store.UpdateHeartbeat(id, heartbeat)
+		if err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(task, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	case "status":
 		task, err := store.Status(args[1])
 		if err != nil {
@@ -3617,6 +3641,88 @@ func ensureRestartPolicy(policy *background.RestartPolicy) *background.RestartPo
 		return policy
 	}
 	return &background.RestartPolicy{Enabled: true, Mode: "on-failure"}
+}
+
+func parseBackgroundBoardArgs(args []string) (time.Duration, error) {
+	if len(args) == 0 {
+		return 30 * time.Second, nil
+	}
+	if len(args) > 1 {
+		return 0, errors.New("usage: codog background board [stalled-after-seconds]")
+	}
+	value := strings.TrimSpace(args[0])
+	value = strings.TrimPrefix(value, "--stalled-after-seconds=")
+	value = strings.TrimPrefix(value, "--stalled-after-secs=")
+	seconds, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	if seconds <= 0 {
+		return 0, errors.New("stalled-after-seconds must be positive")
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
+
+func parseBackgroundHeartbeatArgs(args []string) (string, background.LaneHeartbeat, error) {
+	if len(args) == 0 {
+		return "", background.LaneHeartbeat{}, errors.New("usage: codog background heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339]")
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" {
+		return "", background.LaneHeartbeat{}, errors.New("task id is required")
+	}
+	heartbeat := background.LaneHeartbeat{TransportAlive: true}
+	args = args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--status":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --status")
+			}
+			heartbeat.Status = args[i]
+		case strings.HasPrefix(arg, "--status="):
+			heartbeat.Status = strings.TrimPrefix(arg, "--status=")
+		case arg == "--transport-alive":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --transport-alive")
+			}
+			parsed, err := strconv.ParseBool(args[i])
+			if err != nil {
+				return "", heartbeat, err
+			}
+			heartbeat.TransportAlive = parsed
+		case strings.HasPrefix(arg, "--transport-alive="):
+			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--transport-alive="))
+			if err != nil {
+				return "", heartbeat, err
+			}
+			heartbeat.TransportAlive = parsed
+		case arg == "--dead":
+			heartbeat.TransportAlive = false
+		case arg == "--observed-at":
+			i++
+			if i >= len(args) {
+				return "", heartbeat, errors.New("missing value for --observed-at")
+			}
+			observedAt, err := time.Parse(time.RFC3339, args[i])
+			if err != nil {
+				return "", heartbeat, err
+			}
+			heartbeat.ObservedAt = observedAt
+		case strings.HasPrefix(arg, "--observed-at="):
+			observedAt, err := time.Parse(time.RFC3339, strings.TrimPrefix(arg, "--observed-at="))
+			if err != nil {
+				return "", heartbeat, err
+			}
+			heartbeat.ObservedAt = observedAt
+		default:
+			return "", heartbeat, fmt.Errorf("unknown heartbeat argument %q", arg)
+		}
+	}
+	return id, heartbeat, nil
 }
 
 func parseBackgroundPruneArgs(args []string) (background.PruneOptions, error) {
@@ -18163,6 +18269,8 @@ func codogCapabilityFeatures() []string {
 		"task_id_alias_schemas",
 		"task_create_prompt_contract",
 		"task_get_list_compat_fields",
+		"task_lane_board",
+		"task_lane_heartbeat",
 		"task_metadata_persistence",
 		"task_output_runtime_fields",
 		"tool_search_select_query",
@@ -19112,7 +19220,7 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "status", "logs":
+	case "", "list", "status", "logs", "board", "lane-board", "lanes":
 		return a.BackgroundWithOverrides(args, overrides)
 	default:
 		command := "/tasks"
@@ -33623,8 +33731,8 @@ Usage:
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
   %s system-prompt [--json|--output-format text|json]
   %s debug-tool-call TOOL JSON [--json|--output-format text|json]
-  %s background run "command" | background list [session-id] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
-  %s tasks|bashes list|status|stop|restart|logs|watch ID
+  %s background run "command" | background list [session-id] | background board [stalled-after-seconds] | background heartbeat ID [--status STATUS] [--transport-alive true|false] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
+  %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]

@@ -1734,6 +1734,14 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTasks))
 	require.Empty(t, resumedTasks)
 
+	out, err = runResumedJSON("/tasks", "board")
+	require.NoError(t, err)
+	var resumedTaskBoard background.LaneBoard
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskBoard))
+	require.Empty(t, resumedTaskBoard.Active)
+	require.Empty(t, resumedTaskBoard.Blocked)
+	require.Empty(t, resumedTaskBoard.Finished)
+
 	out, err = runResumedJSON("/metrics")
 	require.NoError(t, err)
 	var resumedMetrics metricsReport
@@ -4777,7 +4785,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
-	require.Contains(t, out.String(), "Tools            79")
+	require.Contains(t, out.String(), "Tools            81")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
@@ -10171,6 +10179,39 @@ func TestBackgroundRunAttachesSessionFromOverrides(t *testing.T) {
 
 	require.NoError(t, app.BackgroundWithOverrides([]string{"list"}, config.FlagOverrides{SessionID: "session-1"}))
 	require.Contains(t, out.String(), `"session_id": "session-1"`)
+}
+
+func TestBackgroundHeartbeatAndBoardCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := background.NewStore(configHome)
+	task, err := store.RunWithOptions("sleep 5", workspace, background.RunOptions{Kind: "agent", SessionID: "session-1"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = store.Stop(task.ID) })
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewStore(configHome),
+		Workspace: workspace,
+		Out:       &out,
+	}
+
+	observedAt := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, app.BackgroundWithOverrides([]string{"heartbeat", task.ID, "--status", "running", "--observed-at", observedAt.Format(time.RFC3339)}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"heartbeat": {`)
+	require.Contains(t, out.String(), `"transport_alive": true`)
+	out.Reset()
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"board", "3600"}, config.FlagOverrides{}))
+	var board background.LaneBoard
+	require.NoError(t, json.Unmarshal(out.Bytes(), &board))
+	require.Len(t, board.Active, 1)
+	require.Equal(t, task.ID, board.Active[0].TaskID)
+	require.Equal(t, background.LaneFreshnessHealthy, board.Active[0].Freshness)
 }
 
 func TestBackgroundRunEmitsNotificationHook(t *testing.T) {

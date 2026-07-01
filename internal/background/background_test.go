@@ -161,6 +161,96 @@ func TestUpdateAppendsTaskMessage(t *testing.T) {
 	require.Equal(t, "first update", task.Messages[0].Message)
 }
 
+func TestLaneBoardGroupsTasksAndReportsFreshness(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, store.save(Task{
+		ID:        "active",
+		Kind:      "agent",
+		Prompt:    "active prompt",
+		PID:       os.Getpid(),
+		Status:    "running",
+		StartedAt: now.Add(-time.Minute),
+		LogPath:   filepath.Join(store.Dir, "active.log"),
+		Heartbeat: &LaneHeartbeat{
+			ObservedAt:     now.Add(-10 * time.Second),
+			TransportAlive: true,
+			Status:         "running",
+		},
+	}))
+	require.NoError(t, store.save(Task{
+		ID:        "blocked",
+		Status:    "blocked",
+		StartedAt: now.Add(-2 * time.Minute),
+		LogPath:   filepath.Join(store.Dir, "blocked.log"),
+		Heartbeat: &LaneHeartbeat{
+			ObservedAt:     now.Add(-2 * time.Minute),
+			TransportAlive: true,
+			Status:         "waiting",
+		},
+	}))
+	require.NoError(t, store.save(Task{
+		ID:        "failed",
+		Status:    "failed",
+		StartedAt: now.Add(-3 * time.Minute),
+		LogPath:   filepath.Join(store.Dir, "failed.log"),
+		Heartbeat: &LaneHeartbeat{
+			ObservedAt:     now.Add(-5 * time.Second),
+			TransportAlive: false,
+			Status:         "lost",
+		},
+	}))
+	require.NoError(t, store.save(Task{
+		ID:        "completed",
+		Status:    "completed",
+		StartedAt: now.Add(-4 * time.Minute),
+		LogPath:   filepath.Join(store.Dir, "completed.log"),
+	}))
+
+	board, err := store.LaneBoardAt(now, 30*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, now, board.GeneratedAt)
+	require.Len(t, board.Active, 1)
+	require.Equal(t, "active", board.Active[0].TaskID)
+	require.Equal(t, LaneFreshnessHealthy, board.Active[0].Freshness)
+	require.Equal(t, "active prompt", board.Active[0].Prompt)
+	require.Len(t, board.Blocked, 1)
+	require.Equal(t, "blocked", board.Blocked[0].TaskID)
+	require.Equal(t, LaneFreshnessStalled, board.Blocked[0].Freshness)
+	require.Len(t, board.Finished, 2)
+	require.Equal(t, "failed", board.Finished[0].TaskID)
+	require.Equal(t, LaneFreshnessTransportDead, board.Finished[0].Freshness)
+	require.Equal(t, "completed", board.Finished[1].TaskID)
+	require.Equal(t, LaneFreshnessUnknown, board.Finished[1].Freshness)
+}
+
+func TestUpdateHeartbeatPersistsTaskHeartbeat(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, store.save(Task{
+		ID:        "task",
+		Status:    "running",
+		StartedAt: now.Add(-time.Minute),
+		LogPath:   filepath.Join(store.Dir, "task.log"),
+	}))
+
+	task, err := store.UpdateHeartbeat("task", LaneHeartbeat{
+		ObservedAt:     now,
+		TransportAlive: true,
+		Status:         " running ",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, task.Heartbeat)
+	require.Equal(t, now, task.Heartbeat.ObservedAt)
+	require.True(t, task.Heartbeat.TransportAlive)
+	require.Equal(t, "running", task.Heartbeat.Status)
+
+	persisted, err := store.Get("task")
+	require.NoError(t, err)
+	require.NotNil(t, persisted.Heartbeat)
+	require.Equal(t, "running", persisted.Heartbeat.Status)
+}
+
 func TestPruneRemovesOldCompletedTasksAndKeepsRunning(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	now := time.Now().UTC()

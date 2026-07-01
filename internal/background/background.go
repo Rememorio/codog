@@ -35,11 +35,45 @@ type Task struct {
 	RestartedFrom string          `json:"restarted_from,omitempty"`
 	RestartedBy   string          `json:"restarted_by,omitempty"`
 	Messages      []TaskMessage   `json:"messages,omitempty"`
+	Heartbeat     *LaneHeartbeat  `json:"heartbeat,omitempty"`
 }
 
 type TaskMessage struct {
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type LaneFreshness string
+
+const (
+	LaneFreshnessHealthy       LaneFreshness = "healthy"
+	LaneFreshnessStalled       LaneFreshness = "stalled"
+	LaneFreshnessTransportDead LaneFreshness = "transport_dead"
+	LaneFreshnessUnknown       LaneFreshness = "unknown"
+)
+
+type LaneHeartbeat struct {
+	ObservedAt     time.Time `json:"observed_at"`
+	TransportAlive bool      `json:"transport_alive"`
+	Status         string    `json:"status,omitempty"`
+}
+
+type LaneBoardEntry struct {
+	TaskID    string         `json:"task_id"`
+	Prompt    string         `json:"prompt,omitempty"`
+	Command   string         `json:"command,omitempty"`
+	Kind      string         `json:"kind,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	Status    string         `json:"status"`
+	Heartbeat *LaneHeartbeat `json:"heartbeat,omitempty"`
+	Freshness LaneFreshness  `json:"freshness"`
+}
+
+type LaneBoard struct {
+	GeneratedAt time.Time        `json:"generated_at"`
+	Active      []LaneBoardEntry `json:"active"`
+	Blocked     []LaneBoardEntry `json:"blocked"`
+	Finished    []LaneBoardEntry `json:"finished"`
 }
 
 type WatchEvent struct {
@@ -379,6 +413,60 @@ func (s Store) Update(id string, message string) (Task, error) {
 	return task, nil
 }
 
+func (s Store) UpdateHeartbeat(id string, heartbeat LaneHeartbeat) (Task, error) {
+	task, err := s.Status(id)
+	if err != nil {
+		return Task{}, err
+	}
+	if heartbeat.ObservedAt.IsZero() {
+		heartbeat.ObservedAt = time.Now().UTC()
+	} else {
+		heartbeat.ObservedAt = heartbeat.ObservedAt.UTC()
+	}
+	heartbeat.Status = strings.TrimSpace(heartbeat.Status)
+	task.Heartbeat = &heartbeat
+	if err := s.save(task); err != nil {
+		return Task{}, err
+	}
+	return task, nil
+}
+
+func (s Store) LaneBoard(stalledAfter time.Duration) (LaneBoard, error) {
+	now := time.Now().UTC()
+	return s.LaneBoardAt(now, stalledAfter)
+}
+
+func (s Store) LaneBoardAt(now time.Time, stalledAfter time.Duration) (LaneBoard, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if stalledAfter <= 0 {
+		stalledAfter = 30 * time.Second
+	}
+	tasks, err := s.List()
+	if err != nil {
+		return LaneBoard{}, err
+	}
+	board := LaneBoard{
+		GeneratedAt: now.UTC(),
+		Active:      []LaneBoardEntry{},
+		Blocked:     []LaneBoardEntry{},
+		Finished:    []LaneBoardEntry{},
+	}
+	for _, task := range tasks {
+		entry := laneBoardEntry(task, board.GeneratedAt, stalledAfter)
+		switch taskLaneBucket(task.Status) {
+		case "active":
+			board.Active = append(board.Active, entry)
+		case "blocked":
+			board.Blocked = append(board.Blocked, entry)
+		default:
+			board.Finished = append(board.Finished, entry)
+		}
+	}
+	return board, nil
+}
+
 func (s Store) List() ([]Task, error) {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
@@ -402,6 +490,46 @@ func (s Store) List() ([]Task, error) {
 		return tasks[i].StartedAt.After(tasks[j].StartedAt)
 	})
 	return tasks, nil
+}
+
+func laneBoardEntry(task Task, now time.Time, stalledAfter time.Duration) LaneBoardEntry {
+	return LaneBoardEntry{
+		TaskID:    task.ID,
+		Prompt:    task.Prompt,
+		Command:   task.Command,
+		Kind:      task.Kind,
+		SessionID: task.SessionID,
+		Status:    task.Status,
+		Heartbeat: task.Heartbeat,
+		Freshness: taskFreshness(task.Heartbeat, now, stalledAfter),
+	}
+}
+
+func taskFreshness(heartbeat *LaneHeartbeat, now time.Time, stalledAfter time.Duration) LaneFreshness {
+	if heartbeat == nil || heartbeat.ObservedAt.IsZero() {
+		return LaneFreshnessUnknown
+	}
+	if !heartbeat.TransportAlive {
+		return LaneFreshnessTransportDead
+	}
+	if stalledAfter <= 0 {
+		stalledAfter = 30 * time.Second
+	}
+	if now.Sub(heartbeat.ObservedAt) > stalledAfter {
+		return LaneFreshnessStalled
+	}
+	return LaneFreshnessHealthy
+}
+
+func taskLaneBucket(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "created", "starting", "pending":
+		return "active"
+	case "blocked", "waiting":
+		return "blocked"
+	default:
+		return "finished"
+	}
 }
 
 func (s Store) Get(id string) (Task, error) {
@@ -613,7 +741,39 @@ func (s Store) save(task Task) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.Dir, task.ID+".json"), data, 0o644)
+	tmp, err := os.CreateTemp(s.Dir, "."+task.ID+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	keepTemp := true
+	defer func() {
+		if keepTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	target := filepath.Join(s.Dir, task.ID+".json")
+	if err := os.Rename(tmpPath, target); err != nil {
+		if removeErr := os.Remove(target); removeErr != nil && !os.IsNotExist(removeErr) {
+			return err
+		}
+		if renameErr := os.Rename(tmpPath, target); renameErr != nil {
+			return renameErr
+		}
+	}
+	keepTemp = false
+	return nil
 }
 
 func (s Store) remove(task Task) error {

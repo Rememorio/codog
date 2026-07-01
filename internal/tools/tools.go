@@ -234,6 +234,10 @@ var claudeToolAliases = map[string]string{
 	"taskcreatetool":               "task_create",
 	"taskget":                      "task_get",
 	"taskgettool":                  "task_get",
+	"taskheartbeat":                "task_heartbeat",
+	"taskheartbeattool":            "task_heartbeat",
+	"tasklaneboard":                "task_lane_board",
+	"tasklaneboardtool":            "task_lane_board",
 	"tasklist":                     "task_list",
 	"tasklisttool":                 "task_list",
 	"taskoutput":                   "task_output",
@@ -389,6 +393,10 @@ var claudeToolAliasDisplay = map[string]string{
 	"TaskCreateTool":               "task_create",
 	"TaskGet":                      "task_get",
 	"TaskGetTool":                  "task_get",
+	"TaskHeartbeat":                "task_heartbeat",
+	"TaskHeartbeatTool":            "task_heartbeat",
+	"TaskLaneBoard":                "task_lane_board",
+	"TaskLaneBoardTool":            "task_lane_board",
 	"TaskList":                     "task_list",
 	"TaskListTool":                 "task_list",
 	"TaskOutput":                   "task_output",
@@ -576,6 +584,8 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskUpdateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(TaskHeartbeatTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(TaskLaneBoardTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskStopTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskSuperviseTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -6891,6 +6901,123 @@ func (t TaskUpdateTool) Execute(_ context.Context, input json.RawMessage) (strin
 		"message_count": len(task.Messages),
 		"last_message":  last,
 	}), nil
+}
+
+type TaskHeartbeatTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskHeartbeatTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_heartbeat",
+		Description: "Record a heartbeat for a background task and return updated task metadata.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":              map[string]any{"type": "string"},
+				"task_id":         map[string]any{"type": "string"},
+				"taskId":          map[string]any{"type": "string"},
+				"status":          map[string]any{"type": "string"},
+				"transport_alive": map[string]any{"type": "boolean"},
+				"observed_at":     map[string]any{"type": "string", "format": "date-time"},
+			},
+			"anyOf":                taskIDRequirement(),
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskHeartbeatTool) Permission() Permission { return PermissionDanger }
+
+func (t TaskHeartbeatTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		TaskID         string     `json:"task_id"`
+		TaskId         string     `json:"taskId"`
+		ID             string     `json:"id"`
+		Status         string     `json:"status"`
+		TransportAlive *bool      `json:"transport_alive"`
+		ObservedAt     *time.Time `json:"observed_at"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	id := firstNonEmpty(payload.TaskID, payload.TaskId, payload.ID)
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("task_id is required")
+	}
+	transportAlive := true
+	if payload.TransportAlive != nil {
+		transportAlive = *payload.TransportAlive
+	}
+	observedAt := time.Time{}
+	if payload.ObservedAt != nil {
+		observedAt = *payload.ObservedAt
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).UpdateHeartbeat(id, background.LaneHeartbeat{
+		ObservedAt:     observedAt,
+		TransportAlive: transportAlive,
+		Status:         payload.Status,
+	})
+	if err != nil {
+		return "", err
+	}
+	return pretty(taskCompatibilityFields(task)), nil
+}
+
+type TaskLaneBoardTool struct {
+	Workspace  string
+	ConfigHome string
+}
+
+func (TaskLaneBoardTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "task_lane_board",
+		Description: "Group background tasks into active, blocked, and finished lanes with heartbeat freshness.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"stalled_after_seconds": map[string]any{"type": "integer", "minimum": 1},
+				"stalled_after_secs":    map[string]any{"type": "integer", "minimum": 1},
+				"stalled_after_ms":      map[string]any{"type": "integer", "minimum": 1},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (TaskLaneBoardTool) Permission() Permission { return PermissionReadOnly }
+
+func (t TaskLaneBoardTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		StalledAfterSeconds int `json:"stalled_after_seconds"`
+		StalledAfterSecs    int `json:"stalled_after_secs"`
+		StalledAfterMS      int `json:"stalled_after_ms"`
+	}
+	if len(input) != 0 && string(input) != "null" {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	stalledAfter := taskLaneBoardStalledAfter(payload.StalledAfterSeconds, payload.StalledAfterSecs, payload.StalledAfterMS)
+	board, err := taskStore(t.ConfigHome, t.Workspace).LaneBoard(stalledAfter)
+	if err != nil {
+		return "", err
+	}
+	return pretty(board), nil
+}
+
+func taskLaneBoardStalledAfter(seconds int, secs int, ms int) time.Duration {
+	if ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	if seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return 30 * time.Second
 }
 
 type TaskStopTool struct {
