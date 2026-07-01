@@ -10947,6 +10947,12 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	workspace := t.TempDir()
 	demoDir := filepath.Join(workspace, ".codog", "plugins", "demo")
 	require.NoError(t, os.MkdirAll(demoDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "commands"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "skills", "review"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "hooks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "commands", "fix.md"), []byte("# Fix\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "skills", "review", "SKILL.md"), []byte("# Review\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "hooks", "post.sh"), []byte("#!/bin/sh\n"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "plugin.json"), []byte(`{
 		"id":"demo",
 		"name":"demo",
@@ -10956,7 +10962,7 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 		"commands":["commands/fix.md"],
 		"skills":["skills/review/SKILL.md"],
 		"hooks":["hooks/post.sh"],
-		"mcp_servers":{"demo":{"command":"demo-mcp"}}
+		"mcp_servers":{"demo":{"command":"demo-mcp","args":["--stdio"],"env":["DEMO_TOKEN=secret"]}}
 	}`), 0o644))
 	badDir := filepath.Join(workspace, ".codog", "plugins", "bad")
 	require.NoError(t, os.MkdirAll(badDir, 0o755))
@@ -11022,6 +11028,42 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	require.Equal(t, "bogus", unknownAction.ParsedArgs.Action)
 	require.Equal(t, "unknown_plugins_action", unknownAction.ParsedArgs.ErrorKind)
 	require.Contains(t, unknownAction.ParsedArgs.Error, "unknown plugins action")
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("pluginDetailsHelpers", []string{"show", "demo", "--json"}))
+	var detailsReport pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &detailsReport))
+	require.Equal(t, "details", detailsReport.Action)
+	require.Equal(t, "ok", detailsReport.Status)
+	require.NotNil(t, detailsReport.SelectedPlugin)
+	require.Equal(t, "demo", detailsReport.SelectedPlugin.ID)
+	require.NotNil(t, detailsReport.PluginDetails)
+	require.Equal(t, "demo", detailsReport.PluginDetails.ID)
+	require.Equal(t, filepath.Join(demoDir, "plugin.json"), detailsReport.PluginDetails.ManifestFile)
+	require.Equal(t, filepath.Join(workspace, ".codog", "plugin-data", "demo"), detailsReport.PluginDetails.DataDir)
+	require.Len(t, detailsReport.PluginDetails.Tools, 1)
+	require.Equal(t, "demo_tool", detailsReport.PluginDetails.Tools[0].Name)
+	require.True(t, detailsReport.PluginDetails.Tools[0].Executable)
+	require.Contains(t, detailsReport.PluginDetails.Tools[0].Risks, "tool demo_tool executes a local command")
+	require.Len(t, detailsReport.PluginDetails.Commands, 1)
+	require.True(t, detailsReport.PluginDetails.Commands[0].Exists)
+	require.Len(t, detailsReport.PluginDetails.Skills, 1)
+	require.True(t, detailsReport.PluginDetails.Skills[0].Exists)
+	require.Len(t, detailsReport.PluginDetails.Hooks, 1)
+	require.True(t, detailsReport.PluginDetails.Hooks[0].Exists)
+	require.Len(t, detailsReport.PluginDetails.MCPServers, 1)
+	require.Equal(t, "demo", detailsReport.PluginDetails.MCPServers[0].Name)
+	require.Equal(t, []string{"--stdio"}, detailsReport.PluginDetails.MCPServers[0].Args)
+	require.Equal(t, []string{"DEMO_TOKEN"}, detailsReport.PluginDetails.MCPServers[0].EnvKeys)
+	require.NotNil(t, detailsReport.PluginDetails.Validation)
+	require.True(t, detailsReport.PluginDetails.Validation.Success)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("pluginDetailsHelpers", []string{"missing", "--json"}))
+	var missingDetails pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &missingDetails))
+	require.Equal(t, "error", missingDetails.Status)
+	require.Contains(t, missingDetails.DetailError, "missing")
 	out.Reset()
 
 	require.NoError(t, app.PluginCompatibility("usePagination", []string{"--page", "2", "--per-page", "1", "--json"}))

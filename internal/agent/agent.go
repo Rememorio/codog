@@ -4532,6 +4532,50 @@ type pluginCompatibilityParsedArgs struct {
 	Error          string   `json:"error,omitempty"`
 }
 
+type pluginCompatibilityPathDetail struct {
+	Spec   string `json:"spec"`
+	Path   string `json:"path,omitempty"`
+	Exists bool   `json:"exists"`
+	IsDir  bool   `json:"is_dir,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type pluginCompatibilityToolDetail struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Command     string   `json:"command,omitempty"`
+	Args        []string `json:"args,omitempty"`
+	Permission  string   `json:"permission,omitempty"`
+	Executable  bool     `json:"executable"`
+	Risks       []string `json:"risks,omitempty"`
+}
+
+type pluginCompatibilityMCPServerDetail struct {
+	Name    string   `json:"name"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	EnvKeys []string `json:"env_keys,omitempty"`
+}
+
+type pluginCompatibilityDetails struct {
+	ID           string                               `json:"id"`
+	Name         string                               `json:"name,omitempty"`
+	Version      string                               `json:"version,omitempty"`
+	Description  string                               `json:"description,omitempty"`
+	Root         string                               `json:"root"`
+	DataDir      string                               `json:"data_dir"`
+	ManifestFile string                               `json:"manifest_file"`
+	Enabled      bool                                 `json:"enabled"`
+	Tools        []pluginCompatibilityToolDetail      `json:"tools,omitempty"`
+	Commands     []pluginCompatibilityPathDetail      `json:"commands,omitempty"`
+	Skills       []pluginCompatibilityPathDetail      `json:"skills,omitempty"`
+	Agents       []pluginCompatibilityPathDetail      `json:"agents,omitempty"`
+	Hooks        []pluginCompatibilityPathDetail      `json:"hooks,omitempty"`
+	MCPServers   []pluginCompatibilityMCPServerDetail `json:"mcp_servers,omitempty"`
+	Risks        []string                             `json:"risks,omitempty"`
+	Validation   *pluginCompatibilityValidation       `json:"validation,omitempty"`
+}
+
 type pluginCompatibilityReport struct {
 	Kind             string                          `json:"kind"`
 	Action           string                          `json:"action"`
@@ -4542,6 +4586,7 @@ type pluginCompatibilityReport struct {
 	Summary          pluginCompatibilitySummary      `json:"summary"`
 	Plugins          []pluginCompatibilityItem       `json:"plugins,omitempty"`
 	SelectedPlugin   *pluginCompatibilityItem        `json:"selected_plugin,omitempty"`
+	PluginDetails    *pluginCompatibilityDetails     `json:"plugin_details,omitempty"`
 	Validation       []pluginCompatibilityValidation `json:"validation,omitempty"`
 	TrustWarnings    []string                        `json:"trust_warnings,omitempty"`
 	Options          []string                        `json:"options,omitempty"`
@@ -4550,6 +4595,7 @@ type pluginCompatibilityReport struct {
 	ParsedArgs       *pluginCompatibilityParsedArgs  `json:"parsed_args,omitempty"`
 	Pagination       *pluginCompatibilityPagination  `json:"pagination,omitempty"`
 	LoadError        string                          `json:"load_error,omitempty"`
+	DetailError      string                          `json:"detail_error,omitempty"`
 	Message          string                          `json:"message,omitempty"`
 }
 
@@ -4706,6 +4752,21 @@ func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibi
 		report.Message = "Plugin command arguments were parsed into a normalized action and remaining arguments."
 	case "pluginDetailsHelpers":
 		report.Message = "Plugin detail helpers resolved installed plugin metadata."
+		target := pluginCompatibilityDetailTarget(req.Args, report.SelectedPlugin)
+		if target != "" {
+			manifest := selectPluginManifest(manifests, target)
+			if manifest == nil {
+				report.Status = "error"
+				report.DetailError = fmt.Sprintf("plugin %q is not installed", target)
+				report.Message = "Plugin detail helpers could not resolve the requested plugin."
+			} else {
+				details := pluginCompatibilityDetailsForManifest(*manifest)
+				report.PluginDetails = &details
+				if report.SelectedPlugin == nil {
+					report.SelectedPlugin = selectPluginCompatibilityItem(items, details.ID)
+				}
+			}
+		}
 	case "usePagination":
 		report.Message = "Plugin list pagination was applied."
 	}
@@ -4939,15 +5000,60 @@ func pluginCompatibilityItems(manifests []plugins.Manifest) []pluginCompatibilit
 	return items
 }
 
+func pluginCompatibilityDetailsForManifest(manifest plugins.Manifest) pluginCompatibilityDetails {
+	details := pluginCompatibilityDetails{
+		ID:           manifest.ID,
+		Name:         manifest.Name,
+		Version:      manifest.Version,
+		Description:  manifest.Description,
+		Root:         manifest.Root,
+		DataDir:      plugins.DataDirForManifest(manifest),
+		ManifestFile: manifest.Path,
+		Enabled:      manifest.Enabled,
+		Tools:        pluginToolDetails(manifest.Tools),
+		Commands:     pluginPathDetails(manifest.Root, manifest.Commands),
+		Skills:       pluginPathDetails(manifest.Root, manifest.Skills),
+		Agents:       pluginPathDetails(manifest.Root, manifest.Agents),
+		Hooks:        pluginPathDetails(manifest.Root, manifest.Hooks),
+		MCPServers:   pluginMCPServerDetails(manifest.MCPServers),
+		Risks:        pluginManifestRisks(manifest),
+	}
+	validation := pluginCompatibilityValidationForSource(manifest.ID, manifest.Root)
+	details.Validation = &validation
+	return details
+}
+
+func pluginToolDetails(tools []plugins.ToolManifest) []pluginCompatibilityToolDetail {
+	out := make([]pluginCompatibilityToolDetail, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, pluginCompatibilityToolDetail{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Command:     tool.Command,
+			Args:        append([]string(nil), tool.Args...),
+			Permission:  tool.Permission,
+			Executable:  strings.TrimSpace(tool.Command) != "",
+			Risks:       pluginToolRisks(tool),
+		})
+	}
+	return out
+}
+
+func pluginToolRisks(tool plugins.ToolManifest) []string {
+	risks := []string{}
+	if strings.TrimSpace(tool.Command) != "" {
+		risks = append(risks, fmt.Sprintf("tool %s executes a local command", tool.Name))
+	}
+	if strings.EqualFold(tool.Permission, "workspace-write") || strings.EqualFold(tool.Permission, "danger-full-access") || strings.EqualFold(tool.Permission, "allow") {
+		risks = append(risks, fmt.Sprintf("tool %s requests %s permission", tool.Name, tool.Permission))
+	}
+	return risks
+}
+
 func pluginManifestRisks(manifest plugins.Manifest) []string {
 	risks := []string{}
 	for _, tool := range manifest.Tools {
-		if strings.TrimSpace(tool.Command) != "" {
-			risks = append(risks, fmt.Sprintf("tool %s executes a local command", tool.Name))
-		}
-		if strings.EqualFold(tool.Permission, "workspace-write") || strings.EqualFold(tool.Permission, "danger-full-access") || strings.EqualFold(tool.Permission, "allow") {
-			risks = append(risks, fmt.Sprintf("tool %s requests %s permission", tool.Name, tool.Permission))
-		}
+		risks = append(risks, pluginToolRisks(tool)...)
 	}
 	if len(manifest.Hooks) > 0 {
 		risks = append(risks, fmt.Sprintf("%d hook definition(s)", len(manifest.Hooks)))
@@ -4959,6 +5065,68 @@ func pluginManifestRisks(manifest plugins.Manifest) []string {
 		risks = append(risks, fmt.Sprintf("%d agent definition(s)", len(manifest.Agents)))
 	}
 	return risks
+}
+
+func pluginPathDetails(root string, specs []string) []pluginCompatibilityPathDetail {
+	out := make([]pluginCompatibilityPathDetail, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, pluginPathDetail(root, spec))
+	}
+	return out
+}
+
+func pluginPathDetail(root string, spec string) pluginCompatibilityPathDetail {
+	detail := pluginCompatibilityPathDetail{Spec: spec}
+	path, err := plugins.ResolveContentPath(root, spec)
+	if err != nil {
+		detail.Error = err.Error()
+		return detail
+	}
+	detail.Path = path
+	info, err := os.Stat(path)
+	if err == nil {
+		detail.Exists = true
+		detail.IsDir = info.IsDir()
+		return detail
+	}
+	if !os.IsNotExist(err) {
+		detail.Error = err.Error()
+	}
+	return detail
+}
+
+func pluginMCPServerDetails(servers map[string]config.MCPServerConfig) []pluginCompatibilityMCPServerDetail {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]pluginCompatibilityMCPServerDetail, 0, len(names))
+	for _, name := range names {
+		server := servers[name]
+		out = append(out, pluginCompatibilityMCPServerDetail{
+			Name:    name,
+			Command: server.Command,
+			Args:    append([]string(nil), server.Args...),
+			EnvKeys: mcpEnvKeys(server.Env),
+		})
+	}
+	return out
+}
+
+func mcpEnvKeys(env []string) []string {
+	keys := make([]string, 0, len(env))
+	for _, value := range env {
+		key := strings.TrimSpace(value)
+		if index := strings.Index(key, "="); index >= 0 {
+			key = key[:index]
+		}
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func pluginTrustWarnings(manifests []plugins.Manifest) []string {
@@ -4984,25 +5152,30 @@ func validateInstalledPlugins(workspace string) []pluginCompatibilityValidation 
 			continue
 		}
 		source := filepath.Join(root, entry.Name())
-		result, err := plugins.Validate(source)
-		item := pluginCompatibilityValidation{ID: entry.Name(), Source: source}
-		if err != nil {
-			item.Success = false
-			item.Errors = []plugins.ValidationMessage{{Path: "file", Message: err.Error(), Code: "validation_failed"}}
-		} else {
-			item.Success = result.Success
-			item.Errors = result.Errors
-			item.Warnings = result.Warnings
-			if result.Manifest != nil && result.Manifest.ID != "" {
-				item.ID = result.Manifest.ID
-			}
-		}
+		item := pluginCompatibilityValidationForSource(entry.Name(), source)
 		if !item.Success || len(item.Warnings) > 0 {
 			out = append(out, item)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func pluginCompatibilityValidationForSource(id string, source string) pluginCompatibilityValidation {
+	result, err := plugins.Validate(source)
+	item := pluginCompatibilityValidation{ID: id, Source: source}
+	if err != nil {
+		item.Success = false
+		item.Errors = []plugins.ValidationMessage{{Path: "file", Message: err.Error(), Code: "validation_failed"}}
+		return item
+	}
+	item.Success = result.Success
+	item.Errors = result.Errors
+	item.Warnings = result.Warnings
+	if result.Manifest != nil && result.Manifest.ID != "" {
+		item.ID = result.Manifest.ID
+	}
+	return item
 }
 
 func selectPluginCompatibilityItem(items []pluginCompatibilityItem, id string) *pluginCompatibilityItem {
@@ -5017,6 +5190,41 @@ func selectPluginCompatibilityItem(items []pluginCompatibilityItem, id string) *
 		}
 	}
 	return nil
+}
+
+func selectPluginManifest(manifests []plugins.Manifest, id string) *plugins.Manifest {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if id == "" {
+		return nil
+	}
+	for index := range manifests {
+		manifest := manifests[index]
+		if strings.EqualFold(manifest.ID, id) || strings.EqualFold(manifest.Name, id) || strings.EqualFold(filepath.Base(manifest.Root), id) {
+			selected := manifest
+			return &selected
+		}
+	}
+	return nil
+}
+
+func pluginCompatibilityDetailTarget(args []string, selected *pluginCompatibilityItem) string {
+	if selected != nil {
+		return selected.ID
+	}
+	for index, arg := range args {
+		value := strings.TrimSpace(arg)
+		if value == "" || strings.HasPrefix(value, "-") {
+			continue
+		}
+		if index == 0 {
+			action := normalizePluginAction(value)
+			if metadata := pluginActionMetadata(action); metadata.known {
+				continue
+			}
+		}
+		return value
+	}
+	return ""
 }
 
 func paginatePluginItems(items []pluginCompatibilityItem, page int, perPage int) ([]pluginCompatibilityItem, pluginCompatibilityPagination) {
@@ -5065,6 +5273,33 @@ func renderPluginCompatibilityReport(out io.Writer, report pluginCompatibilityRe
 	}
 	if report.Pagination != nil {
 		fmt.Fprintf(out, "  Page             %d/%d\n", report.Pagination.Page, report.Pagination.TotalPages)
+	}
+	if report.DetailError != "" {
+		fmt.Fprintf(out, "  Detail error     %s\n", report.DetailError)
+	}
+	if report.PluginDetails != nil {
+		details := report.PluginDetails
+		fmt.Fprintf(out, "  Detail plugin    %s enabled=%t\n", details.ID, details.Enabled)
+		fmt.Fprintf(out, "  Manifest file    %s\n", details.ManifestFile)
+		fmt.Fprintf(out, "  Data dir         %s\n", details.DataDir)
+		for _, tool := range details.Tools {
+			fmt.Fprintf(out, "  Tool             %s executable=%t permission=%s\n", tool.Name, tool.Executable, tool.Permission)
+		}
+		for _, command := range details.Commands {
+			fmt.Fprintf(out, "  Command file     %s exists=%t\n", command.Spec, command.Exists)
+		}
+		for _, skill := range details.Skills {
+			fmt.Fprintf(out, "  Skill file       %s exists=%t\n", skill.Spec, skill.Exists)
+		}
+		for _, hook := range details.Hooks {
+			fmt.Fprintf(out, "  Hook file        %s exists=%t\n", hook.Spec, hook.Exists)
+		}
+		for _, server := range details.MCPServers {
+			fmt.Fprintf(out, "  MCP server       %s command=%s\n", server.Name, server.Command)
+		}
+		if details.Validation != nil {
+			fmt.Fprintf(out, "  Validation       success=%t errors=%d warnings=%d\n", details.Validation.Success, len(details.Validation.Errors), len(details.Validation.Warnings))
+		}
 	}
 	for _, item := range report.Plugins {
 		fmt.Fprintf(out, "  Plugin           %s enabled=%t tools=%d commands=%d skills=%d\n", item.ID, item.Enabled, item.Tools, item.Commands, item.Skills)
