@@ -7395,6 +7395,12 @@ if [ "$1" = "secret" ] && [ "$2" = "list" ]; then
 JSON
   exit 0
 fi
+if [ "$1" = "api" ] && [ "$2" = "repos/acme/widgets/actions/permissions" ]; then
+  cat <<'JSON'
+{"enabled":true,"allowed_actions":"all"}
+JSON
+  exit 0
+fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 `), 0o755))
@@ -7435,6 +7441,22 @@ exit 1
 			require.Contains(t, githubReport.GitHubCheck.RepoCommand, "view")
 			require.Contains(t, githubReport.Messages, "GitHub CLI authentication is active.")
 			require.Contains(t, githubReport.Messages, "Repository acme/widgets is accessible through gh.")
+			out.Reset()
+
+			require.NoError(t, secretApp.InstallGitHubAppStep("InstallAppStep", []string{"--json"}))
+			var installReport installGitHubAppStepReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &installReport))
+			require.Equal(t, "InstallAppStep", installReport.Step)
+			require.Equal(t, "ok", installReport.Status)
+			require.True(t, installReport.ProviderRequestMade)
+			require.NotNil(t, installReport.ActionsCheck)
+			require.True(t, installReport.ActionsCheck.Attempted)
+			require.True(t, installReport.ActionsCheck.Available)
+			require.True(t, installReport.ActionsCheck.Enabled)
+			require.Equal(t, "all", installReport.ActionsCheck.AllowedActions)
+			require.Contains(t, installReport.ActionsCheck.Command, "repos/acme/widgets/actions/permissions")
+			require.Contains(t, installReport.Messages, "GitHub Actions is enabled for acme/widgets.")
+			require.Contains(t, installReport.Messages, "Allowed actions policy: all.")
 			out.Reset()
 		}
 	}

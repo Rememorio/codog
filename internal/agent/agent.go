@@ -14220,6 +14220,7 @@ type installGitHubAppStepReport struct {
 	ExistingWorkflows     []string                   `json:"existing_workflows,omitempty"`
 	SecretCheck           *installGitHubSecretCheck  `json:"secret_check,omitempty"`
 	GitHubCheck           *installGitHubCLICheck     `json:"github_check,omitempty"`
+	ActionsCheck          *installGitHubActionsCheck `json:"actions_check,omitempty"`
 	Instructions          []string                   `json:"instructions,omitempty"`
 	Messages              []string                   `json:"messages,omitempty"`
 	Warnings              []string                   `json:"warnings,omitempty"`
@@ -14249,6 +14250,16 @@ type installGitHubCLICheck struct {
 	RepoCommand    []string `json:"repo_command,omitempty"`
 	AuthError      string   `json:"auth_error,omitempty"`
 	RepoError      string   `json:"repo_error,omitempty"`
+}
+
+type installGitHubActionsCheck struct {
+	Attempted      bool     `json:"attempted"`
+	Available      bool     `json:"available"`
+	Enabled        bool     `json:"enabled"`
+	Repo           string   `json:"repo,omitempty"`
+	AllowedActions string   `json:"allowed_actions,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	Error          string   `json:"error,omitempty"`
 }
 
 type installSlackAppRequest struct {
@@ -14771,6 +14782,33 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 	case "InstallAppStep":
 		report.Messages = append(report.Messages, "Install or authorize the GitHub App by following the setup documentation.")
 		report.Messages = append(report.Messages, setupReport.DocsURL)
+		actionsCheck := installGitHubActionsCheck{Available: ghErr == nil, Repo: setupReport.Repo}
+		if ghErr != nil {
+			report.Status = "warn"
+			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available; GitHub Actions permissions cannot be checked locally.")
+		} else if setupReport.Repo == "" {
+			report.Status = "warn"
+			report.Warnings = append(report.Warnings, "No GitHub origin remote was detected; GitHub Actions permissions cannot be checked locally.")
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			actionsCheck = checkGitHubActionsPermissions(ctx, ghPath, setupReport.Repo)
+			report.ProviderRequestMade = actionsCheck.Attempted
+			switch {
+			case actionsCheck.Error != "":
+				report.Status = "warn"
+				report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub Actions permissions: %s", actionsCheck.Error))
+			case actionsCheck.Enabled:
+				report.Messages = append(report.Messages, fmt.Sprintf("GitHub Actions is enabled for %s.", setupReport.Repo))
+				if actionsCheck.AllowedActions != "" {
+					report.Messages = append(report.Messages, fmt.Sprintf("Allowed actions policy: %s.", actionsCheck.AllowedActions))
+				}
+			default:
+				report.Status = "warn"
+				report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub Actions is disabled for %s.", setupReport.Repo))
+			}
+			cancel()
+		}
+		report.ActionsCheck = &actionsCheck
 	case "OAuthFlowStep":
 		report.Messages = append(report.Messages, "If your organization uses OAuth or OIDC, complete provider authorization before enabling workflow automation.")
 	case "SuccessStep":
@@ -14868,6 +14906,33 @@ func checkGitHubCLI(ctx context.Context, ghPath string, repo string) installGitH
 		return check
 	}
 	check.RepoAccessible = true
+	return check
+}
+
+func checkGitHubActionsPermissions(ctx context.Context, ghPath string, repo string) installGitHubActionsCheck {
+	args := []string{"api", fmt.Sprintf("repos/%s/actions/permissions", repo)}
+	check := installGitHubActionsCheck{
+		Attempted: true,
+		Available: true,
+		Repo:      repo,
+		Command:   append([]string{ghPath}, args...),
+	}
+	cmd := exec.CommandContext(ctx, ghPath, args...)
+	data, err := cmd.CombinedOutput()
+	if err != nil {
+		check.Error = commandOutputErrorMessage(err, data)
+		return check
+	}
+	var payload struct {
+		Enabled        bool   `json:"enabled"`
+		AllowedActions string `json:"allowed_actions"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		check.Error = fmt.Sprintf("failed to parse gh actions permissions output: %v", err)
+		return check
+	}
+	check.Enabled = payload.Enabled
+	check.AllowedActions = payload.AllowedActions
 	return check
 }
 
@@ -15025,6 +15090,15 @@ func renderInstallGitHubAppStepReport(out io.Writer, report installGitHubAppStep
 		fmt.Fprintf(out, "  Secret exists    %t\n", report.SecretCheck.Exists)
 		if report.SecretCheck.Error != "" {
 			fmt.Fprintf(out, "  Secret error     %s\n", report.SecretCheck.Error)
+		}
+	}
+	if report.ActionsCheck != nil {
+		fmt.Fprintf(out, "  Actions enabled  %t\n", report.ActionsCheck.Enabled)
+		if report.ActionsCheck.AllowedActions != "" {
+			fmt.Fprintf(out, "  Actions policy   %s\n", report.ActionsCheck.AllowedActions)
+		}
+		if report.ActionsCheck.Error != "" {
+			fmt.Fprintf(out, "  Actions error    %s\n", report.ActionsCheck.Error)
 		}
 	}
 	for _, workflow := range report.Workflows {
