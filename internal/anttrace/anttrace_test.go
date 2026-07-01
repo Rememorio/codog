@@ -12,11 +12,15 @@ import (
 )
 
 type fakeStreamer struct {
-	message anthropic.AssistantMessage
-	err     error
+	message  anthropic.AssistantMessage
+	err      error
+	requests *[]anthropic.Request
 }
 
-func (f fakeStreamer) Stream(_ context.Context, _ anthropic.Request, onText func(string)) (anthropic.AssistantMessage, error) {
+func (f fakeStreamer) Stream(_ context.Context, req anthropic.Request, onText func(string)) (anthropic.AssistantMessage, error) {
+	if f.requests != nil {
+		*f.requests = append(*f.requests, req)
+	}
 	onText("trace ")
 	onText("ok")
 	return f.message, f.err
@@ -41,12 +45,14 @@ func TestRunSkippedRequest(t *testing.T) {
 }
 
 func TestRunStreamsAndRenders(t *testing.T) {
+	var requests []anthropic.Request
 	report := Run(context.Background(), Options{
-		Model:          "openai/gpt-test",
-		AuthConfigured: true,
+		Model:           "openai/o4-mini",
+		AuthConfigured:  true,
+		ReasoningEffort: "medium",
 		Client: fakeStreamer{message: anthropic.AssistantMessage{
 			Usage: anthropic.Usage{InputTokens: 11, OutputTokens: 7},
-		}},
+		}, requests: &requests},
 		RateLimit: anthropic.RateLimitReport{MaxRetries: 3, InitialBackoffMS: 100, MaxBackoffMS: 2000, RetryableStatuses: []int{429}},
 	})
 
@@ -57,6 +63,8 @@ func TestRunStreamsAndRenders(t *testing.T) {
 	require.Equal(t, "trace ok", report.TextPreview)
 	require.Equal(t, 11, report.Usage.InputTokens)
 	require.Equal(t, 7, report.Usage.OutputTokens)
+	require.Len(t, requests, 1)
+	require.Equal(t, "medium", requests[0].ReasoningEffort)
 
 	var text bytes.Buffer
 	RenderText(&text, report)

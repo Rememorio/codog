@@ -16,16 +16,17 @@ type Streamer interface {
 }
 
 type Options struct {
-	Provider       string
-	Model          string
-	BaseURL        string
-	AuthConfigured bool
-	RateLimit      anthropic.RateLimitReport
-	Message        string
-	Timeout        time.Duration
-	NoRequest      bool
-	Client         Streamer
-	CreatedAt      time.Time
+	Provider        string
+	Model           string
+	BaseURL         string
+	AuthConfigured  bool
+	RateLimit       anthropic.RateLimitReport
+	Message         string
+	ReasoningEffort string
+	Timeout         time.Duration
+	NoRequest       bool
+	Client          Streamer
+	CreatedAt       time.Time
 }
 
 type Report struct {
@@ -92,8 +93,9 @@ func Run(ctx context.Context, options Options) Report {
 	var chunks []string
 	previewLen := 0
 	message, err := options.Client.Stream(requestCtx, anthropic.Request{
-		Model:     options.Model,
-		MaxTokens: 64,
+		Model:           options.Model,
+		MaxTokens:       64,
+		ReasoningEffort: options.ReasoningEffort,
 		Messages: []anthropic.Message{
 			anthropic.TextMessage("user", options.Message),
 		},

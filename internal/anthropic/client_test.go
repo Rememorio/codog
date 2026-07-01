@@ -404,6 +404,44 @@ func TestOpenAICompatibleReasoningModelStripsTemperature(t *testing.T) {
 	require.Zero(t, wire.MaxCompletionTokens)
 }
 
+func TestOpenAICompatibleReasoningModelIncludesReasoningEffort(t *testing.T) {
+	temperature := 0.7
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:           "openai/o4-mini",
+		MaxTokens:       64,
+		Temperature:     &temperature,
+		ReasoningEffort: "high",
+		Messages:        []Message{TextMessage("user", "hi")},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Equal(t, "o4-mini", wire.Model)
+	require.Nil(t, wire.Temperature)
+	require.Equal(t, "high", wire.ReasoningEffort)
+	data, err := json.Marshal(wire)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"reasoning_effort":"high"`)
+}
+
+func TestOpenAICompatibleOmitReasoningEffortForAutoOrNonReasoningModels(t *testing.T) {
+	auto, err := openAIRequestFromAnthropic(Request{
+		Model:           "openai/o4-mini",
+		MaxTokens:       64,
+		ReasoningEffort: "auto",
+		Messages:        []Message{TextMessage("user", "hi")},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Empty(t, auto.ReasoningEffort)
+
+	nonReasoning, err := openAIRequestFromAnthropic(Request{
+		Model:           "openai/gpt-4.1-mini",
+		MaxTokens:       64,
+		ReasoningEffort: "high",
+		Messages:        []Message{TextMessage("user", "hi")},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Empty(t, nonReasoning.ReasoningEffort)
+}
+
 func TestOpenAICompatibleGPT5UsesMaxCompletionTokens(t *testing.T) {
 	temperature := 0.7
 	wire, err := openAIRequestFromAnthropic(Request{

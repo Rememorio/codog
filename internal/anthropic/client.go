@@ -244,6 +244,7 @@ type openAIRequest struct {
 	Tools               []openAITool    `json:"tools,omitempty"`
 	Stream              bool            `json:"stream"`
 	StreamOptions       map[string]bool `json:"stream_options,omitempty"`
+	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
 	MaxTokens           int             `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 	Temperature         *float64        `json:"temperature,omitempty"`
@@ -368,7 +369,19 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 	if !modelrouting.IsReasoningModel(wireModel) {
 		wire.Temperature = req.Temperature
 	}
+	if modelrouting.ProviderForModel(req.Model) == modelrouting.ProviderOpenAI && modelrouting.IsReasoningModel(wireModel) {
+		wire.ReasoningEffort = providerReasoningEffort(req.ReasoningEffort)
+	}
 	return wire, nil
+}
+
+func providerReasoningEffort(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
 }
 
 func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, error) {

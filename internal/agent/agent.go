@@ -23911,11 +23911,12 @@ func (a *App) hookPromptRunner(cfg config.Config) hooks.PromptRunner {
 		}
 		var streamed strings.Builder
 		assistant, err := a.Client.Stream(ctx, anthropic.Request{
-			Model:       model,
-			MaxTokens:   maxTokens,
-			Temperature: cfg.Temperature,
-			System:      "You are executing a Codog hook. Evaluate the hook prompt and return a concise result for the calling process.",
-			Messages:    []anthropic.Message{anthropic.TextMessage("user", prompt)},
+			Model:           model,
+			MaxTokens:       maxTokens,
+			Temperature:     cfg.Temperature,
+			ReasoningEffort: cfg.ReasoningEffort,
+			System:          "You are executing a Codog hook. Evaluate the hook prompt and return a concise result for the calling process.",
+			Messages:        []anthropic.Message{anthropic.TextMessage("user", prompt)},
 		}, func(delta string) {
 			streamed.WriteString(delta)
 		})
@@ -33964,15 +33965,16 @@ func (a *App) AntTrace(ctx context.Context, args []string) error {
 		rateLimit = client.RateLimit.Report()
 	}
 	report := anttrace.Run(ctx, anttrace.Options{
-		Provider:       req.Provider,
-		Model:          model,
-		BaseURL:        baseURL,
-		AuthConfigured: antTraceAuthConfigured(a.Config, client),
-		RateLimit:      rateLimit,
-		Message:        req.Message,
-		Timeout:        time.Duration(req.TimeoutMS) * time.Millisecond,
-		NoRequest:      req.NoRequest,
-		Client:         client,
+		Provider:        req.Provider,
+		Model:           model,
+		BaseURL:         baseURL,
+		AuthConfigured:  antTraceAuthConfigured(a.Config, client),
+		RateLimit:       rateLimit,
+		Message:         req.Message,
+		ReasoningEffort: a.Config.ReasoningEffort,
+		Timeout:         time.Duration(req.TimeoutMS) * time.Millisecond,
+		NoRequest:       req.NoRequest,
+		Client:          client,
 	})
 	if req.Write || strings.TrimSpace(req.Output) != "" {
 		path := a.antTraceOutputPath(req.Output, time.Now().UTC())

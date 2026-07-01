@@ -73,6 +73,7 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 			Model:               "mock",
 			MaxTokens:           128,
 			Temperature:         &temperature,
+			ReasoningEffort:     "high",
 			MaxTurns:            4,
 			AutoCompactMessages: 20,
 		},
@@ -93,6 +94,7 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 	}, result.MessageUsages)
 	require.NotNil(t, client.requests[0].Temperature)
 	require.InDelta(t, 0.3, *client.requests[0].Temperature, 0.0001)
+	require.Equal(t, "high", client.requests[0].ReasoningEffort)
 }
 
 func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
