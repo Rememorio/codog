@@ -4627,7 +4627,7 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 	} else if mode == "insert" || mode == "replace" {
 		return "", errors.New("new_source is required for insert and replace edits")
 	}
-	index, err := resolveNotebookEditIndex(path, payload.CellIndex, payload.CellID, payload.EditMode)
+	index, err := codeintel.ResolveNotebookEditIndex(path, payload.CellIndex, payload.CellID, payload.EditMode)
 	if err != nil {
 		return "", err
 	}
@@ -4641,68 +4641,6 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	return pretty(result), nil
-}
-
-func resolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode string) (int, error) {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		mode = "replace"
-	}
-	if cellIndex != nil {
-		if *cellIndex < 0 {
-			return 0, errors.New("cell_index must be non-negative")
-		}
-		return *cellIndex, nil
-	}
-	rawCells, err := notebookCellsFromPath(path)
-	if err != nil {
-		return 0, err
-	}
-	cellID = strings.TrimSpace(cellID)
-	if cellID == "" {
-		if mode == "insert" {
-			return len(rawCells), nil
-		}
-		if len(rawCells) == 0 {
-			return 0, errors.New("Notebook has no cells to edit")
-		}
-		return len(rawCells) - 1, nil
-	}
-	if index, err := strconv.Atoi(cellID); err == nil && index >= 0 {
-		if mode == "insert" {
-			return index + 1, nil
-		}
-		return index, nil
-	}
-	for index, raw := range rawCells {
-		cell, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if stringValue(cell["id"]) == cellID {
-			if mode == "insert" {
-				return index + 1, nil
-			}
-			return index, nil
-		}
-	}
-	return 0, fmt.Errorf("cell_id %q not found", cellID)
-}
-
-func notebookCellsFromPath(path string) ([]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var notebook map[string]any
-	if err := json.Unmarshal(data, &notebook); err != nil {
-		return nil, err
-	}
-	rawCells, ok := notebook["cells"].([]any)
-	if !ok {
-		return nil, errors.New("notebook cells array not found")
-	}
-	return rawCells, nil
 }
 
 type LSPTool struct {

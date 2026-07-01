@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -604,6 +605,56 @@ type NotebookEditResult struct {
 func EditNotebookCell(path string, index int, cellType string, source string) error {
 	_, err := EditNotebook(path, NotebookEditOptions{Index: index, CellType: cellType, Source: source, Mode: "replace"})
 	return err
+}
+
+func ResolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode string) (int, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "replace"
+	}
+	if cellIndex != nil {
+		if *cellIndex < 0 {
+			return 0, errors.New("cell_index must be non-negative")
+		}
+		return *cellIndex, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var notebook map[string]any
+	if err := json.Unmarshal(data, &notebook); err != nil {
+		return 0, err
+	}
+	cells, err := notebookCells(notebook)
+	if err != nil {
+		return 0, err
+	}
+	cellID = strings.TrimSpace(cellID)
+	if cellID == "" {
+		if mode == "insert" {
+			return len(cells), nil
+		}
+		if len(cells) == 0 {
+			return 0, errors.New("Notebook has no cells to edit")
+		}
+		return len(cells) - 1, nil
+	}
+	if index, err := strconv.Atoi(cellID); err == nil && index >= 0 {
+		if mode == "insert" {
+			return index + 1, nil
+		}
+		return index, nil
+	}
+	for index, cell := range cells {
+		if notebookCellID(cell) == cellID {
+			if mode == "insert" {
+				return index + 1, nil
+			}
+			return index, nil
+		}
+	}
+	return 0, fmt.Errorf("cell_id %q not found", cellID)
 }
 
 func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult, error) {

@@ -22585,16 +22585,263 @@ func (a *App) CodeIntel(args []string) error {
 		return a.CodeIntelLSP(args[1:])
 	}
 	if args[0] == "notebook-edit" {
-		if len(args) < 5 {
-			return errors.New("usage: codog code-intel notebook-edit NOTEBOOK INDEX CELL_TYPE SOURCE")
-		}
-		index, err := strconv.Atoi(args[2])
+		req, err := parseCodeIntelNotebookEditArgs(args[1:])
 		if err != nil {
 			return err
 		}
-		return codeintel.EditNotebookCell(args[1], index, args[3], strings.Join(args[4:], " "))
+		path, err := a.resolveCodeIntelNotebookPath(req.NotebookPath)
+		if err != nil {
+			return err
+		}
+		index, err := codeintel.ResolveNotebookEditIndex(path, req.CellIndex, req.CellID, req.Mode)
+		if err != nil {
+			return err
+		}
+		result, err := codeintel.EditNotebook(path, codeintel.NotebookEditOptions{
+			Index:    index,
+			CellType: req.CellType,
+			Source:   req.Source,
+			Mode:     req.Mode,
+		})
+		if err != nil {
+			return err
+		}
+		result.Path = displayCodeIntelNotebookPath(a.Workspace, result.Path)
+		report := codeIntelNotebookEditReport{
+			Kind:   "notebook_edit",
+			Action: "edit",
+			Status: "ok",
+			Result: result,
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderCodeIntelNotebookEdit(a.Out, report)
+		return nil
 	}
 	return fmt.Errorf("unknown code-intel command %q", args[0])
+}
+
+type codeIntelNotebookEditRequest struct {
+	Format       string
+	NotebookPath string
+	Mode         string
+	CellIndex    *int
+	CellID       string
+	CellType     string
+	Source       string
+	SourceSet    bool
+}
+
+type codeIntelNotebookEditReport struct {
+	Kind   string                       `json:"kind"`
+	Action string                       `json:"action"`
+	Status string                       `json:"status"`
+	Result codeintel.NotebookEditResult `json:"result"`
+}
+
+func parseCodeIntelNotebookEditArgs(args []string) (codeIntelNotebookEditRequest, error) {
+	format, rest, err := parseCodeIntelOutputArgs("notebook-edit", args)
+	if err != nil {
+		return codeIntelNotebookEditRequest{}, err
+	}
+	req := codeIntelNotebookEditRequest{Format: format, Mode: "replace"}
+	positionals := []string{}
+	for index := 0; index < len(rest); index++ {
+		arg := rest[index]
+		switch {
+		case arg == "--mode" || arg == "--edit-mode":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-edit mode is required")
+			}
+			req.Mode = rest[index]
+		case strings.HasPrefix(arg, "--mode="):
+			req.Mode = strings.TrimPrefix(arg, "--mode=")
+		case strings.HasPrefix(arg, "--edit-mode="):
+			req.Mode = strings.TrimPrefix(arg, "--edit-mode=")
+		case arg == "--cell-index" || arg == "--index":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-edit cell index is required")
+			}
+			parsed, err := parseNonNegativeInt(rest[index], "notebook-edit cell index")
+			if err != nil {
+				return req, err
+			}
+			req.CellIndex = &parsed
+		case strings.HasPrefix(arg, "--cell-index="):
+			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--cell-index="), "notebook-edit cell index")
+			if err != nil {
+				return req, err
+			}
+			req.CellIndex = &parsed
+		case strings.HasPrefix(arg, "--index="):
+			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--index="), "notebook-edit cell index")
+			if err != nil {
+				return req, err
+			}
+			req.CellIndex = &parsed
+		case arg == "--cell-id":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-edit cell id is required")
+			}
+			req.CellID = rest[index]
+		case strings.HasPrefix(arg, "--cell-id="):
+			req.CellID = strings.TrimPrefix(arg, "--cell-id=")
+		case arg == "--cell-type" || arg == "--type":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-edit cell type is required")
+			}
+			req.CellType = rest[index]
+		case strings.HasPrefix(arg, "--cell-type="):
+			req.CellType = strings.TrimPrefix(arg, "--cell-type=")
+		case strings.HasPrefix(arg, "--type="):
+			req.CellType = strings.TrimPrefix(arg, "--type=")
+		case arg == "--source" || arg == "--new-source" || arg == "--new_source":
+			index++
+			if index >= len(rest) {
+				return req, errors.New("notebook-edit source is required")
+			}
+			req.Source = rest[index]
+			req.SourceSet = true
+		case strings.HasPrefix(arg, "--source="):
+			req.Source = strings.TrimPrefix(arg, "--source=")
+			req.SourceSet = true
+		case strings.HasPrefix(arg, "--new-source="):
+			req.Source = strings.TrimPrefix(arg, "--new-source=")
+			req.SourceSet = true
+		case strings.HasPrefix(arg, "--new_source="):
+			req.Source = strings.TrimPrefix(arg, "--new_source=")
+			req.SourceSet = true
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if strings.TrimSpace(req.Mode) == "" {
+		req.Mode = "replace"
+	}
+	req.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
+	if req.CellIndex != nil && strings.TrimSpace(req.CellID) != "" {
+		return req, errors.New("notebook-edit accepts either cell_index or cell_id, not both")
+	}
+	if len(positionals) >= 4 && req.CellIndex == nil && req.CellID == "" && req.CellType == "" && !req.SourceSet {
+		parsed, err := parseNonNegativeInt(positionals[1], "notebook-edit cell index")
+		if err != nil {
+			return req, err
+		}
+		req.NotebookPath = positionals[0]
+		req.CellIndex = &parsed
+		req.CellType = positionals[2]
+		req.Source = strings.Join(positionals[3:], " ")
+		req.SourceSet = true
+		return validateCodeIntelNotebookEditRequest(req)
+	}
+	if len(positionals) == 0 {
+		return req, errors.New("usage: codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json]")
+	}
+	req.NotebookPath = positionals[0]
+	if len(positionals) > 1 && !req.SourceSet {
+		req.Source = strings.Join(positionals[1:], " ")
+		req.SourceSet = true
+	}
+	return validateCodeIntelNotebookEditRequest(req)
+}
+
+func validateCodeIntelNotebookEditRequest(req codeIntelNotebookEditRequest) (codeIntelNotebookEditRequest, error) {
+	switch req.Mode {
+	case "", "replace":
+		req.Mode = "replace"
+	case "insert", "delete":
+	default:
+		return req, fmt.Errorf("unknown notebook edit mode %q", req.Mode)
+	}
+	if strings.TrimSpace(req.NotebookPath) == "" {
+		return req, errors.New("notebook-edit notebook path is required")
+	}
+	if (req.Mode == "insert" || req.Mode == "replace") && !req.SourceSet {
+		return req, errors.New("new_source is required for insert and replace edits")
+	}
+	return req, nil
+}
+
+func parseNonNegativeInt(value string, label string) (int, error) {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", label)
+	}
+	return parsed, nil
+}
+
+func (a *App) resolveCodeIntelNotebookPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("notebook path is required")
+	}
+	workspace := strings.TrimSpace(a.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workspace, path)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", err
+	}
+	if resolvedWorkspace, err := filepath.EvalSymlinks(absWorkspace); err == nil {
+		absWorkspace = resolvedWorkspace
+	}
+	if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolvedPath
+	}
+	rel, err := filepath.Rel(absWorkspace, absPath)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("notebook path escapes workspace: %s", path)
+	}
+	return filepath.Clean(absPath), nil
+}
+
+func displayCodeIntelNotebookPath(workspace string, path string) string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return path
+	}
+	rel, err := filepath.Rel(workspace, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return path
+	}
+	return filepath.ToSlash(rel)
+}
+
+func renderCodeIntelNotebookEdit(out io.Writer, report codeIntelNotebookEditReport) {
+	result := report.Result
+	fmt.Fprintln(out, "Notebook Edit")
+	fmt.Fprintf(out, "  Path             %s\n", result.Path)
+	fmt.Fprintf(out, "  Mode             %s\n", result.Mode)
+	fmt.Fprintf(out, "  Index            %d\n", result.Index)
+	if result.CellID != "" {
+		fmt.Fprintf(out, "  Cell id          %s\n", result.CellID)
+	}
+	if result.CellType != "" {
+		fmt.Fprintf(out, "  Cell type        %s\n", result.CellType)
+	}
+	if result.Language != "" {
+		fmt.Fprintf(out, "  Language         %s\n", result.Language)
+	}
+	fmt.Fprintf(out, "  Cell count       %d\n", result.CellCount)
+	fmt.Fprintf(out, "  Source lines     %d\n", result.SourceLines)
 }
 
 func (a *App) CodeIntelLSP(args []string) error {
@@ -35501,8 +35748,9 @@ Usage:
   %s plugin|plugins|marketplace list|show|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
-  %s sandbox | code-intel symbols|diagnostics|completion|format|lsp
+  %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-edit|lsp
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
+  %s code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
