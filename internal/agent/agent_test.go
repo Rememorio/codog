@@ -35,6 +35,7 @@ import (
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/mocklimits"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
@@ -440,6 +441,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "rate-limit-options",
 		},
 		{
+			name:  "mock-limits local help",
+			args:  []string{"--config", configPath, "mock-limits", "--help", "--output-format", "json"},
+			topic: "mock-limits",
+		},
+		{
 			name:  "reset-limits local help",
 			args:  []string{"--config", configPath, "reset-limits", "--help", "--output-format", "json"},
 			topic: "reset-limits",
@@ -529,6 +535,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "checkpoint")
 	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "metrics")
+	require.Contains(t, report.Commands, "mock-limits")
 	require.Contains(t, report.Commands, "perf-issue")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rc")
@@ -4322,6 +4329,36 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Rate Limit Options")
 	require.Contains(t, out.String(), "Max retries      4")
 	require.Contains(t, out.String(), "429,500,502,503,504")
+	out.Reset()
+
+	require.NoError(t, app.MockLimits([]string{"--json", "--addr", ":9099", "--failures", "3", "--retry-after-ms", "1500"}))
+	var mockReport mocklimits.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &mockReport))
+	require.Equal(t, "mock_limits", mockReport.Kind)
+	require.Equal(t, "ready", mockReport.Status)
+	require.Equal(t, "http://127.0.0.1:9099", mockReport.BaseURL)
+	require.Equal(t, 3, mockReport.Failures)
+	require.Equal(t, 1500, mockReport.RetryAfterMS)
+	require.True(t, commandAcceptsGlobalOutputFormat("mock-limits"))
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/mock-limits --addr :9098 --failures 2", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Mock Limits")
+	require.Contains(t, out.String(), "127.0.0.1:9098")
+	require.Contains(t, out.String(), "Failures         2")
+	out.Reset()
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mock-limits", "--addr", ":9097", "--failures", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "mock_limits"`)
+	require.Contains(t, cliOut, `"failures": 1`)
 	require.Empty(t, errOut.String())
 }
 

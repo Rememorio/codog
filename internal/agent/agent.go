@@ -54,6 +54,7 @@ import (
 	"github.com/Rememorio/codog/internal/mcpserver"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/mocklimits"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
@@ -449,6 +450,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RateLimitOptions(rest)
 	case "reset-limits":
 		return app.ResetLimits(rest)
+	case "mock-limits":
+		return app.MockLimits(rest)
 	case "plan":
 		return app.Plan(rest)
 	case "ultraplan":
@@ -15392,6 +15395,7 @@ func builtInCommandNames() []string {
 		"memory",
 		"metrics",
 		"mobile",
+		"mock-limits",
 		"mock-server",
 		"model",
 		"node",
@@ -18537,6 +18541,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/rate-limit-options":
 		if err := a.RateLimitOptions(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/mock-limits":
+		if err := a.MockLimits(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/reset-limits":
@@ -25459,6 +25467,15 @@ type resetLimitsRequest struct {
 	Path   string
 }
 
+type mockLimitsRequest struct {
+	Action       string
+	Format       string
+	Addr         string
+	Failures     int
+	RetryAfterMS int
+	Text         string
+}
+
 type rateLimitReport struct {
 	Kind              string                  `json:"kind"`
 	Action            string                  `json:"action"`
@@ -25560,6 +25577,130 @@ func (a *App) RateLimitOptions(args []string) error {
 	}
 	renderRateLimitOptionsReport(a.Out, report)
 	return nil
+}
+
+func (a *App) MockLimits(args []string) error {
+	req, err := parseMockLimitsArgs(args)
+	if err != nil {
+		return err
+	}
+	options := mocklimits.Options{
+		Addr:         req.Addr,
+		Failures:     req.Failures,
+		RetryAfterMS: req.RetryAfterMS,
+		Text:         req.Text,
+	}
+	report := mocklimits.BuildReport(req.Action, options)
+	if req.Action == "serve" {
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			mocklimits.RenderText(a.Out, report)
+		}
+		return http.ListenAndServe(report.Addr, mocklimits.Handler(options))
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	mocklimits.RenderText(a.Out, report)
+	return nil
+}
+
+func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
+	req := mockLimitsRequest{Action: "show", Format: "text", Addr: ":8089", Failures: 2, RetryAfterMS: 1000, Text: "mock response after rate limits"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mock-limits output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--addr":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mock-limits address is required")
+			}
+			req.Addr = args[index]
+		case strings.HasPrefix(arg, "--addr="):
+			req.Addr = strings.TrimPrefix(arg, "--addr=")
+		case arg == "--failures":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mock-limits failures is required")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Failures = value
+		case strings.HasPrefix(arg, "--failures="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--failures="))
+			if err != nil {
+				return req, err
+			}
+			req.Failures = value
+		case arg == "--retry-after-ms":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mock-limits retry-after is required")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.RetryAfterMS = value
+		case strings.HasPrefix(arg, "--retry-after-ms="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--retry-after-ms="))
+			if err != nil {
+				return req, err
+			}
+			req.RetryAfterMS = value
+		case arg == "--text":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mock-limits text is required")
+			}
+			req.Text = args[index]
+		case strings.HasPrefix(arg, "--text="):
+			req.Text = strings.TrimPrefix(arg, "--text=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "mock-limits"); err != nil {
+		return req, err
+	}
+	for _, arg := range rest {
+		normalized := strings.ToLower(strings.TrimSpace(arg))
+		switch {
+		case normalized == "show" || normalized == "status" || normalized == "plan":
+			req.Action = "show"
+		case normalized == "serve" || normalized == "server" || normalized == "start":
+			req.Action = "serve"
+		case strings.HasPrefix(arg, ":") || strings.Contains(arg, ":"):
+			req.Action = "serve"
+			req.Addr = arg
+		default:
+			return req, fmt.Errorf("unknown mock-limits argument %q", arg)
+		}
+	}
+	if req.Failures < 0 {
+		return req, errors.New("mock-limits failures must be non-negative")
+	}
+	if req.RetryAfterMS < 0 {
+		return req, errors.New("mock-limits retry-after must be non-negative")
+	}
+	return req, nil
 }
 
 func parseRateLimitArgs(args []string) (rateLimitRequest, error) {
@@ -26981,7 +27122,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
-		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
@@ -27579,6 +27720,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "mock-limits":
+		return localCommandHelpSpec(
+			"mock-limits",
+			"mock-limits",
+			"codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]",
+			"Mock Limits\n\nUsage:\n  codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]\n\nShows or starts an Anthropic-compatible local mock server that returns HTTP 429 for the first N requests and then streams a normal response. Use it to test provider retry and backoff behavior with `codog rate-limit` settings.\n",
+			[]string{"addr", "base_url", "failures", "retry_after_ms", "endpoint"},
+			[]string{"ready", "serving", "error"},
+			false,
+		), true
 	case "reset-limits":
 		return localCommandHelpSpec(
 			"reset-limits",
@@ -27946,6 +28097,7 @@ Usage:
   %s [flags] rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
+  %s [flags] mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]

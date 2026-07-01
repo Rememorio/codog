@@ -14,8 +14,12 @@ type Server struct {
 	Turns     []Turn
 	OnRequest func(json.RawMessage)
 
+	RateLimitFailures int
+	RetryAfter        string
+
 	mu      sync.Mutex
 	request int
+	attempt int
 }
 
 type Turn struct {
@@ -45,6 +49,13 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	if s.OnRequest != nil {
 		data, _ := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
 		s.OnRequest(json.RawMessage(append([]byte(nil), data...)))
+	}
+	if s.shouldRateLimit() {
+		if strings.TrimSpace(s.RetryAfter) != "" {
+			w.Header().Set("retry-after", strings.TrimSpace(s.RetryAfter))
+		}
+		http.Error(w, "mock rate limit", http.StatusTooManyRequests)
+		return
 	}
 	w.Header().Set("content-type", "text/event-stream")
 	turn := s.nextTurn()
@@ -93,6 +104,13 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
 	})
 	writeEvent(w, map[string]any{"type": "message_stop"})
+}
+
+func (s *Server) shouldRateLimit() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attempt++
+	return s.RateLimitFailures > 0 && s.attempt <= s.RateLimitFailures
 }
 
 func (s *Server) nextTurn() Turn {
