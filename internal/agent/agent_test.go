@@ -2655,6 +2655,7 @@ func risky(value any) {
 		{Command: "/telemetry", Args: []string{"on"}, Report: "/telemetry on"},
 		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
+		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/skills", Args: []string{"install", "main.go"}, Report: "/skills install"},
 		{Command: "/skills", Args: []string{"add", "main.go"}, Report: "/skills add"},
@@ -12045,6 +12046,75 @@ func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {
 	require.Equal(t, "show", errorReport.Action)
 	require.Equal(t, "missing_argument", errorReport.ErrorKind)
 	require.Contains(t, errorReport.Hint, "codog agents show")
+}
+
+func TestAgentsCreateCommandCreatesWorkspaceDefinition(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"create", "Review Bot", "--json"}, config.FlagOverrides{}))
+	var createReport agentCreateReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &createReport))
+	require.Equal(t, "agents", createReport.Kind)
+	require.Equal(t, "create", createReport.Action)
+	require.Equal(t, "ok", createReport.Status)
+	require.Equal(t, "created", createReport.Result)
+	require.Equal(t, "review-bot", createReport.Name)
+	require.Equal(t, "json", createReport.Format)
+	require.Equal(t, filepath.Join(workspace, ".codog", "agents", "review-bot.json"), createReport.Path)
+	require.Equal(t, "review-bot", createReport.Agent.Name)
+	require.Equal(t, "workspace", createReport.Agent.Source)
+	require.FileExists(t, createReport.Path)
+
+	data, err := os.ReadFile(createReport.Path)
+	require.NoError(t, err)
+	var fileDef agentdefs.Definition
+	require.NoError(t, json.Unmarshal(data, &fileDef))
+	require.Equal(t, "review-bot", fileDef.Name)
+	require.Contains(t, fileDef.Description, "Focused local subagent")
+	require.Contains(t, fileDef.Prompt, "report verification results")
+
+	out.Reset()
+	require.NoError(t, app.AgentsWithOverrides([]string{"show", "review-bot", "--json"}, config.FlagOverrides{}))
+	var showReport agentShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "review-bot", showReport.Agent.Name)
+	require.Equal(t, createReport.Path, showReport.Agent.Path)
+
+	out.Reset()
+	require.ErrorContains(t, app.AgentsWithOverrides([]string{"create", "review-bot", "--json"}, config.FlagOverrides{}), "agent_already_exists")
+	var errorReport actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "agents", errorReport.Kind)
+	require.Equal(t, "create", errorReport.Action)
+	require.Equal(t, "agent_already_exists", errorReport.ErrorKind)
+
+	out.Reset()
+	require.ErrorContains(t, app.AgentsWithOverrides([]string{"create", "$$$", "--json"}, config.FlagOverrides{}), "invalid_agent_name")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "invalid_agent_name", errorReport.ErrorKind)
+
+	out.Reset()
+	require.ErrorContains(t, app.AgentsWithOverrides([]string{"create", "--json"}, config.FlagOverrides{}), "missing_argument")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "missing_argument", errorReport.ErrorKind)
+	require.Contains(t, errorReport.Hint, "codog agents create")
+
+	out.Reset()
+	require.Error(t, app.AgentsWithOverrides([]string{"create", "helper", "extra", "--json"}, config.FlagOverrides{}))
+	var cliReport cliErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &cliReport))
+	require.Equal(t, "unexpected_extra_args", cliReport.ErrorKind)
+	require.Equal(t, "agents create", cliReport.Command)
+	require.Equal(t, []string{"extra"}, cliReport.Args)
+	require.Contains(t, cliReport.Hint, "codog agents create")
+
+	out.Reset()
+	require.NoError(t, app.AgentsWithOverrides([]string{"create", "/Upper_Path.Agent"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), "created upper_path.agent")
+	require.FileExists(t, filepath.Join(workspace, ".codog", "agents", "upper_path.agent.json"))
 }
 
 func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {

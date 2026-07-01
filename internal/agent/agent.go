@@ -4496,6 +4496,18 @@ type agentShowReport struct {
 	Agent  agentdefs.Definition `json:"agent"`
 }
 
+type agentCreateReport struct {
+	Kind    string               `json:"kind"`
+	Action  string               `json:"action"`
+	Status  string               `json:"status"`
+	Result  string               `json:"result"`
+	Name    string               `json:"name"`
+	Path    string               `json:"path"`
+	Format  string               `json:"format"`
+	Agent   agentdefs.Definition `json:"agent"`
+	Message string               `json:"message,omitempty"`
+}
+
 func (a *App) listAgents(format string, filter string) error {
 	defs, err := agentdefs.Load(a.Workspace)
 	if err != nil {
@@ -4550,6 +4562,105 @@ func (a *App) showAgent(name string, format string) error {
 		Message:   fmt.Sprintf("agent %q was not found", name),
 		Hint:      "Run `codog agents list` to see available agents.",
 	}, format)
+}
+
+func (a *App) createAgent(rawName string, format string) error {
+	name, ok := sanitizeAgentName(rawName)
+	if !ok {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "create",
+			Status:    "error",
+			ErrorKind: "invalid_agent_name",
+			Message:   "agent name must contain at least one alphanumeric character",
+			Hint:      "Use `codog agents create NAME` with a simple alphanumeric, dash, underscore, or dot name.",
+		}, format)
+	}
+	root := filepath.Join(a.Workspace, ".codog", "agents")
+	path := filepath.Join(root, name+".json")
+	if _, err := os.Stat(path); err == nil {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "agents",
+			Action:    "create",
+			Status:    "error",
+			ErrorKind: "agent_already_exists",
+			Message:   fmt.Sprintf("agent %q already exists at %s", name, path),
+			Hint:      fmt.Sprintf("Run `codog agents show %s` to inspect the existing definition.", name),
+		}, format)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	def := agentdefs.Definition{
+		Name:        name,
+		Description: "Focused local subagent for scoped Codog tasks.",
+		Prompt:      "Handle the assigned task as a focused Codog subagent. State assumptions, make concrete progress, and report verification results.",
+	}
+	data, err := json.MarshalIndent(def, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	def.Path = path
+	def.Source = "workspace"
+	report := agentCreateReport{
+		Kind:    "agents",
+		Action:  "create",
+		Status:  "ok",
+		Result:  "created",
+		Name:    name,
+		Path:    path,
+		Format:  "json",
+		Agent:   def,
+		Message: fmt.Sprintf("Created local agent definition %q.", name),
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderAgentCreateReport(a.Out, report)
+	return nil
+}
+
+func sanitizeAgentName(candidate string) (string, bool) {
+	trimmed := strings.TrimSpace(candidate)
+	trimmed = strings.TrimLeft(trimmed, "/$")
+	if trimmed == "" {
+		return "", false
+	}
+	var builder strings.Builder
+	lastSeparator := false
+	for _, ch := range trimmed {
+		switch {
+		case ch >= 'A' && ch <= 'Z':
+			builder.WriteRune(ch + ('a' - 'A'))
+			lastSeparator = false
+		case (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.':
+			builder.WriteRune(ch)
+			lastSeparator = false
+		case ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '/' || ch == '\\':
+			if builder.Len() > 0 && !lastSeparator {
+				builder.WriteByte('-')
+				lastSeparator = true
+			}
+		}
+	}
+	name := strings.Trim(builder.String(), "-_.")
+	return name, name != ""
+}
+
+func renderAgentCreateReport(out io.Writer, report agentCreateReport) {
+	fmt.Fprintln(out, "Agents")
+	fmt.Fprintf(out, "  Result           %s %s\n", report.Result, report.Name)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
+	fmt.Fprintf(out, "  Format           %s\n", report.Format)
+	fmt.Fprintf(out, "  Next             codog agents show %s\n", report.Name)
 }
 
 func filterAgentDefinitions(defs []agentdefs.Definition, filter string) []agentdefs.Definition {
@@ -4607,6 +4718,26 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		return a.showAgent(args[1], format)
 	}
+	if args[0] == "create" {
+		if len(args) < 2 {
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "agents",
+				Action:    "create",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "agents create requires a name",
+				Hint:      "Usage: codog agents create NAME.",
+			}, format)
+		}
+		if len(args) > 2 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "agents create",
+				Args:    append([]string(nil), args[2:]...),
+				Usage:   "codog agents create NAME [--json|--output-format text|json]",
+			}, format)
+		}
+		return a.createAgent(args[1], format)
+	}
 	if args[0] == "worktrees" {
 		allocations, err := worktree.List(a.Workspace)
 		if err != nil {
@@ -4641,7 +4772,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			Status:    "error",
 			ErrorKind: "unknown_agents_subcommand",
 			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
-			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents run NAME PROMPT`, or `codog agents worktrees`.",
+			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, or `codog agents worktrees`.",
 		}, format)
 	}
 	req, err := parseAgentRunArgs(args[1:])
@@ -36444,7 +36575,7 @@ Usage:
   %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
-  %s agents list [FILTER] | agents show|info|describe NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
+  %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
