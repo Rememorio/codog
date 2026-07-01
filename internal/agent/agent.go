@@ -30972,11 +30972,12 @@ func (a *App) mcpShow(args []string, format string) error {
 		return fmt.Errorf("unknown MCP server %q", name)
 	}
 	data, _ := json.MarshalIndent(map[string]any{
-		"kind":   "mcp",
-		"action": "show",
-		"status": "ok",
-		"name":   name,
-		"server": server,
+		"kind":      "mcp",
+		"action":    "show",
+		"status":    "ok",
+		"name":      name,
+		"signature": mcp.ServerSignature(server),
+		"server":    server,
 	}, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil

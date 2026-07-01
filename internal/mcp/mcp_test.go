@@ -103,6 +103,16 @@ func TestToolNameNormalizationMatchesMCPCompatibility(t *testing.T) {
 	require.Equal(t, "mcp__claude_ai_Example_Server__weather_tool", ToolName("claude.ai Example Server", "weather tool"))
 }
 
+func TestServerSignatureMatchesStdioCompatibility(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: `uv\x`,
+		Args:    []string{"mcp|server", "--stdio"},
+		Env:     []string{"TOKEN=secret"},
+	}
+	require.Equal(t, `stdio:[uv\\x|mcp\|server|--stdio]`, ServerSignature(server))
+	require.NotContains(t, ServerSignature(server), "secret")
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_FAIL_STDERR") == "1" {
 		fmt.Fprintln(os.Stderr, "mcp boot failed")

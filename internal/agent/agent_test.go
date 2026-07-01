@@ -37,6 +37,7 @@ import (
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
@@ -9915,6 +9916,7 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Equal(t, 1, listReport.ServerCount)
 	require.Equal(t, "test", listReport.Servers[0].Name)
 	require.Equal(t, "ok", listReport.Servers[0].Status)
+	require.Equal(t, mcp.ServerSignature(server), listReport.Servers[0].Signature)
 	out.Reset()
 
 	require.ErrorContains(t, app.MCP(context.Background(), []string{"list", "extra"}), "usage: codog mcp list")
@@ -10187,6 +10189,7 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.NoError(t, app.MCP(context.Background(), []string{"show", "demo"}))
 	require.Contains(t, out.String(), `"action": "show"`)
 	require.Contains(t, out.String(), `"command": "demo-server"`)
+	require.Contains(t, out.String(), `"signature": "stdio:[demo-server|arg1|arg2]"`)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"remove", "demo"}))

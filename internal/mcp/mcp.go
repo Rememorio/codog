@@ -23,6 +23,7 @@ type ServerStatus struct {
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
 	Command         string          `json:"command,omitempty"`
+	Signature       string          `json:"signature,omitempty"`
 	ResolvedPath    string          `json:"resolved_path,omitempty"`
 	ProtocolVersion string          `json:"protocol_version,omitempty"`
 	ServerInfo      json.RawMessage `json:"server_info,omitempty"`
@@ -148,6 +149,22 @@ func ToolName(serverName, toolName string) string {
 	return ToolPrefix(serverName) + NormalizeNameForTooling(toolName)
 }
 
+func ServerSignature(server config.MCPServerConfig) string {
+	parts := []string{server.Command}
+	parts = append(parts, server.Args...)
+	return "stdio:" + renderCommandSignature(parts)
+}
+
+func renderCommandSignature(parts []string) string {
+	escaped := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ReplaceAll(part, `\`, `\\`)
+		part = strings.ReplaceAll(part, "|", `\|`)
+		escaped = append(escaped, part)
+	}
+	return "[" + strings.Join(escaped, "|") + "]"
+}
+
 func collapseUnderscores(value string) string {
 	var builder strings.Builder
 	lastUnderscore := false
@@ -208,7 +225,7 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 }
 
 func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
-	status := ServerStatus{Name: name, Command: server.Command}
+	status := ServerStatus{Name: name, Command: server.Command, Signature: ServerSignature(server)}
 	if strings.TrimSpace(server.Command) == "" {
 		status.Status = "missing_command"
 		status.Error = "missing command"
