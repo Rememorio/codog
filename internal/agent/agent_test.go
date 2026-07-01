@@ -304,6 +304,26 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "mcp",
 		},
 		{
+			name:  "mcp addCommand local help",
+			args:  []string{"--config", configPath, "addCommand", "--help", "--output-format", "json"},
+			topic: "addCommand",
+		},
+		{
+			name:  "plugin helper local help",
+			args:  []string{"--config", configPath, "PluginErrors", "--help", "--output-format", "json"},
+			topic: "PluginErrors",
+		},
+		{
+			name:  "review helper local help",
+			args:  []string{"--config", configPath, "ultrareviewEnabled", "--help", "--output-format", "json"},
+			topic: "ultrareviewEnabled",
+		},
+		{
+			name:  "good claude local help",
+			args:  []string{"--config", configPath, "good-claude", "--help", "--output-format", "json"},
+			topic: "good-claude",
+		},
+		{
 			name:  "setupGitHubActions local help",
 			args:  []string{"--config", configPath, "setupGitHubActions", "--help", "--output-format", "json"},
 			topic: "setupGitHubActions",
@@ -531,6 +551,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "claude-test", report.Model)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "addCommand")
 	require.Contains(t, report.Commands, "ant-trace")
 	require.Contains(t, report.Commands, "api")
 	require.Contains(t, report.Commands, "ApiKeyStep")
@@ -544,6 +565,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "extra-usage-noninteractive")
 	require.Contains(t, report.Commands, "ExistingWorkflowStep")
 	require.Contains(t, report.Commands, "ErrorStep")
+	require.Contains(t, report.Commands, "exit")
 	require.Contains(t, report.Commands, "autofix-pr")
 	require.Contains(t, report.Commands, "InstallAppStep")
 	require.Contains(t, report.Commands, "resume")
@@ -551,6 +573,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "clear")
 	require.Contains(t, report.Commands, "context-noninteractive")
 	require.Contains(t, report.Commands, "conversation")
+	require.Contains(t, report.Commands, "createMovedToPluginCommand")
 	require.Contains(t, report.Commands, "validation")
 	require.Contains(t, report.Commands, "reviewRemote")
 	require.Contains(t, report.Commands, "permissions")
@@ -566,6 +589,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "bug")
 	require.Contains(t, report.Commands, "checkpoint")
 	require.Contains(t, report.Commands, "generateSessionName")
+	require.Contains(t, report.Commands, "good-claude")
 	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "metrics")
 	require.Contains(t, report.Commands, "mock-limits")
@@ -576,8 +600,15 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "DiscoverPlugins")
 	require.Contains(t, report.Commands, "ManageMarketplaces")
 	require.Contains(t, report.Commands, "ManagePlugins")
+	require.Contains(t, report.Commands, "PluginErrors")
+	require.Contains(t, report.Commands, "PluginOptionsDialog")
+	require.Contains(t, report.Commands, "PluginOptionsFlow")
 	require.Contains(t, report.Commands, "PluginSettings")
+	require.Contains(t, report.Commands, "PluginTrustWarning")
+	require.Contains(t, report.Commands, "UnifiedInstalledCell")
 	require.Contains(t, report.Commands, "ValidatePlugin")
+	require.Contains(t, report.Commands, "parseArgs")
+	require.Contains(t, report.Commands, "pluginDetailsHelpers")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rc")
 	require.Contains(t, report.Commands, "rate-limit")
@@ -590,6 +621,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "OAuthFlowStep")
 	require.Contains(t, report.Commands, "SuccessStep")
 	require.Contains(t, report.Commands, "WarningsStep")
+	require.Contains(t, report.Commands, "usePagination")
+	require.Contains(t, report.Commands, "ultrareviewCommand")
+	require.Contains(t, report.Commands, "ultrareviewEnabled")
+	require.Contains(t, report.Commands, "UltrareviewOverageDialog")
+	require.Contains(t, report.Commands, "xaaIdpCommand")
 	require.Contains(t, report.Commands, "cwd")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_reset")
@@ -624,6 +660,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/workspace"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
+	require.True(t, commandAcceptsGlobalOutputFormat("addCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ApiKeyStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
@@ -631,6 +668,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("CreatingStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ExistingWorkflowStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
+	require.True(t, commandAcceptsGlobalOutputFormat("good-claude"))
 	require.True(t, commandAcceptsGlobalOutputFormat("SuccessStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("onboarding"))
 	require.True(t, commandAcceptsGlobalOutputFormat("AddMarketplace"))
@@ -638,9 +676,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("DiscoverPlugins"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ManageMarketplaces"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ManagePlugins"))
+	require.True(t, commandAcceptsGlobalOutputFormat("PluginErrors"))
 	require.True(t, commandAcceptsGlobalOutputFormat("PluginSettings"))
+	require.True(t, commandAcceptsGlobalOutputFormat("PluginTrustWarning"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ValidatePlugin"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ultrareviewEnabled"))
+	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
@@ -5591,6 +5633,31 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"kind": "review"`)
 	require.Contains(t, cliOut, `"rule": "pipe-to-shell"`)
 
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "ultrareviewCommand", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "review"`)
+	require.Contains(t, cliOut, `"rule": "pipe-to-shell"`)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var enabledReport reviewCompatibilityReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &enabledReport))
+	require.True(t, enabledReport.Enabled)
+	require.Equal(t, "enabled", enabledReport.Action)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "UltrareviewOverageDialog", "--limit", "201"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var overageReport reviewCompatibilityReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &overageReport))
+	require.Equal(t, "overage", overageReport.Action)
+	require.True(t, overageReport.Overage)
+
 	require.True(t, app.handleSlash(context.Background(), "/review", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Review")
 	require.Contains(t, out.String(), "Security findings")
@@ -5671,6 +5738,35 @@ exit 1
 	require.Contains(t, out.String(), "Remote Review")
 	require.Contains(t, out.String(), "PR Comments")
 	require.Empty(t, errOut.String())
+}
+
+func TestMiscCompatibilityCommands(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+
+	require.NoError(t, app.ExitCompatibility([]string{"--json"}))
+	var exitReport simpleCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &exitReport))
+	require.Equal(t, "exit", exitReport.Kind)
+	require.Equal(t, "ok", exitReport.Status)
+	require.False(t, exitReport.ProviderRequestMade)
+	out.Reset()
+
+	require.NoError(t, app.GoodClaude([]string{"nice", "--json"}))
+	var goodReport simpleCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &goodReport))
+	require.Equal(t, "feedback", goodReport.Kind)
+	require.Equal(t, "good_claude", goodReport.Action)
+	require.Contains(t, goodReport.NextCommand, "codog feedback")
+	out.Reset()
+
+	require.NoError(t, app.MovedToPluginCommand([]string{"legacy-tool", "--json"}))
+	var movedReport simpleCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &movedReport))
+	require.Equal(t, "command_migration", movedReport.Kind)
+	require.Equal(t, "moved_to_plugin", movedReport.Action)
+	require.Contains(t, movedReport.NextCommand, "install-remote")
 }
 
 func TestAutofixPRCommandAndSlash(t *testing.T) {
@@ -6981,6 +7077,14 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), `"tool_count": 1`)
 	out.Reset()
 
+	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"--json"}))
+	var xaaReport xaaIDPReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &xaaReport))
+	require.Equal(t, "mcp_compatibility", xaaReport.Kind)
+	require.Equal(t, "xaa_idp", xaaReport.Action)
+	require.Contains(t, xaaReport.ConfiguredServers, "test")
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/mcp tools test", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), `"name": "echo"`)
 	out.Reset()
@@ -7007,6 +7111,27 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 
 	require.NoError(t, app.MCP(context.Background(), []string{"prompt", "test", "review", `{"topic":"hooks"}`}))
 	require.Contains(t, out.String(), "Review hooks")
+}
+
+func TestMCPAddCommandCompatibility(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "addCommand", "demo", "echo", "ok", "--env", "A=B"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "mcp"`)
+	require.Contains(t, out, `"action": "add"`)
+	require.Contains(t, out, `"name": "demo"`)
+	stored, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"mcp_servers"`)
+	require.Contains(t, string(stored), `"demo"`)
+	require.Contains(t, string(stored), `"A=B"`)
 }
 
 func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
@@ -9505,6 +9630,69 @@ func TestMarketplaceCompatibilityCommands(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &settings))
 	require.Equal(t, "settings", settings.Action)
 	require.Len(t, settings.Sources, 1)
+}
+
+func TestPluginCompatibilityHelperCommands(t *testing.T) {
+	workspace := t.TempDir()
+	demoDir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(demoDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "plugin.json"), []byte(`{
+		"id":"demo",
+		"name":"demo",
+		"version":"0.1.0",
+		"description":"Demo plugin",
+		"tools":[{"name":"demo_tool","command":"echo ok","permission":"workspace-write"}],
+		"commands":["commands/fix.md"],
+		"skills":["skills/review/SKILL.md"],
+		"hooks":["hooks/post.sh"],
+		"mcp_servers":{"demo":{"command":"demo-mcp"}}
+	}`), 0o644))
+	badDir := filepath.Join(workspace, ".codog", "plugins", "bad")
+	require.NoError(t, os.MkdirAll(badDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(badDir, "plugin.json"), []byte(`{
+		"id":"bad",
+		"name":"bad",
+		"tools":[{"name":"bad_tool","command":"echo bad","permission":"root"}]
+	}`), 0o644))
+
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+	require.NoError(t, app.PluginCompatibility("PluginTrustWarning", []string{"--json"}))
+	var trust pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &trust))
+	require.Equal(t, "plugin_compatibility", trust.Kind)
+	require.Equal(t, "trust_warning", trust.Action)
+	require.Equal(t, "warn", trust.Status)
+	require.GreaterOrEqual(t, trust.Summary.TrustItems, 1)
+	require.NotEmpty(t, trust.TrustWarnings)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("PluginErrors", []string{"--json"}))
+	var errorsReport pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorsReport))
+	require.Equal(t, "errors", errorsReport.Action)
+	require.Equal(t, "error", errorsReport.Status)
+	require.GreaterOrEqual(t, errorsReport.Summary.Errors, 1)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"show", "demo", "--json"}))
+	var parseReport pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &parseReport))
+	require.Equal(t, "parse_args", parseReport.Action)
+	require.Equal(t, "show", parseReport.NormalizedAction)
+	require.NotNil(t, parseReport.SelectedPlugin)
+	require.Equal(t, "demo", parseReport.SelectedPlugin.ID)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("usePagination", []string{"--page", "2", "--per-page", "1", "--json"}))
+	var pageReport pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &pageReport))
+	require.Equal(t, "pagination", pageReport.Action)
+	require.NotNil(t, pageReport.Pagination)
+	require.Equal(t, 2, pageReport.Pagination.Page)
+	require.Equal(t, 1, pageReport.Pagination.PerPage)
+	require.Equal(t, 2, pageReport.Pagination.Total)
+	require.Len(t, pageReport.Plugins, 1)
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {

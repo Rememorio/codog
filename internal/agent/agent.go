@@ -487,6 +487,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ReleaseNotes(rest)
 	case "review", "ultrareview":
 		return app.Review(rest)
+	case "ultrareviewCommand":
+		return app.Review(rest)
+	case "ultrareviewEnabled", "UltrareviewOverageDialog":
+		return app.ReviewCompatibility(command, rest)
 	case "reviewRemote", "review-remote":
 		return app.ReviewRemote(ctx, rest)
 	case "feedback", "bug":
@@ -533,6 +537,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AgentsWithOverrides(rest, overrides)
 	case "reload-plugins":
 		return app.ReloadPlugins(rest)
+	case "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow", "PluginTrustWarning", "UnifiedInstalledCell", "parseArgs", "pluginDetailsHelpers", "usePagination":
+		return app.PluginCompatibility(command, rest)
 	case "AddMarketplace":
 		return app.Marketplace(append([]string{"sources", "add"}, rest...))
 	case "ManageMarketplaces":
@@ -555,8 +561,18 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OAuth(rest)
 	case "oauth-refresh":
 		return app.OAuthRefresh(rest)
+	case "addCommand":
+		return app.MCP(ctx, append([]string{"add"}, rest...))
+	case "xaaIdpCommand":
+		return app.XAAIDPCommand(ctx, rest)
 	case "providers":
 		return app.Providers(rest)
+	case "createMovedToPluginCommand":
+		return app.MovedToPluginCommand(rest)
+	case "exit":
+		return app.ExitCompatibility(rest)
+	case "good-claude":
+		return app.GoodClaude(rest)
 	case "brief":
 		return app.Brief(rest)
 	case "status":
@@ -4448,6 +4464,478 @@ func renderPluginValidation(out io.Writer, source string, result plugins.Validat
 		return &ExitError{Code: 1, Err: errors.New("plugin validation failed"), Silent: true}
 	}
 	return nil
+}
+
+type pluginCompatibilityRequest struct {
+	Format  string
+	Page    int
+	PerPage int
+	Args    []string
+}
+
+type pluginCompatibilitySummary struct {
+	Total      int `json:"total"`
+	Enabled    int `json:"enabled"`
+	Disabled   int `json:"disabled"`
+	Errors     int `json:"errors"`
+	Warnings   int `json:"warnings"`
+	TrustItems int `json:"trust_items"`
+}
+
+type pluginCompatibilityItem struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Path        string   `json:"path,omitempty"`
+	Tools       int      `json:"tools"`
+	Commands    int      `json:"commands"`
+	Skills      int      `json:"skills"`
+	Agents      int      `json:"agents"`
+	Hooks       int      `json:"hooks"`
+	MCPServers  int      `json:"mcp_servers"`
+	Risks       []string `json:"risks,omitempty"`
+}
+
+type pluginCompatibilityValidation struct {
+	ID       string                      `json:"id,omitempty"`
+	Source   string                      `json:"source"`
+	Success  bool                        `json:"success"`
+	Errors   []plugins.ValidationMessage `json:"errors,omitempty"`
+	Warnings []plugins.ValidationMessage `json:"warnings,omitempty"`
+}
+
+type pluginCompatibilityPagination struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+	Start      int `json:"start"`
+	End        int `json:"end"`
+}
+
+type pluginCompatibilityReport struct {
+	Kind             string                          `json:"kind"`
+	Action           string                          `json:"action"`
+	Status           string                          `json:"status"`
+	Command          string                          `json:"command"`
+	Workspace        string                          `json:"workspace"`
+	PluginRoot       string                          `json:"plugin_root"`
+	Summary          pluginCompatibilitySummary      `json:"summary"`
+	Plugins          []pluginCompatibilityItem       `json:"plugins,omitempty"`
+	SelectedPlugin   *pluginCompatibilityItem        `json:"selected_plugin,omitempty"`
+	Validation       []pluginCompatibilityValidation `json:"validation,omitempty"`
+	TrustWarnings    []string                        `json:"trust_warnings,omitempty"`
+	Options          []string                        `json:"options,omitempty"`
+	Args             []string                        `json:"args,omitempty"`
+	NormalizedAction string                          `json:"normalized_action,omitempty"`
+	Pagination       *pluginCompatibilityPagination  `json:"pagination,omitempty"`
+	LoadError        string                          `json:"load_error,omitempty"`
+	Message          string                          `json:"message,omitempty"`
+}
+
+func (a *App) PluginCompatibility(command string, args []string) error {
+	req, err := parsePluginCompatibilityArgs(command, args)
+	if err != nil {
+		return err
+	}
+	report := a.buildPluginCompatibilityReport(command, req)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderPluginCompatibilityReport(a.Out, report)
+	return nil
+}
+
+func parsePluginCompatibilityArgs(command string, args []string) (pluginCompatibilityRequest, error) {
+	clean, format, err := stripJSONOnlyOutputFormat(command, args)
+	if err != nil {
+		return pluginCompatibilityRequest{}, err
+	}
+	req := pluginCompatibilityRequest{Format: format, Page: 1, PerPage: 20}
+	for index := 0; index < len(clean); index++ {
+		arg := clean[index]
+		switch {
+		case arg == "--page":
+			index++
+			if index >= len(clean) {
+				return req, errors.New("plugin page is required")
+			}
+			value, err := strconv.Atoi(clean[index])
+			if err != nil {
+				return req, err
+			}
+			req.Page = value
+		case strings.HasPrefix(arg, "--page="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--page="))
+			if err != nil {
+				return req, err
+			}
+			req.Page = value
+		case arg == "--per-page" || arg == "--limit":
+			index++
+			if index >= len(clean) {
+				return req, errors.New("plugin page size is required")
+			}
+			value, err := strconv.Atoi(clean[index])
+			if err != nil {
+				return req, err
+			}
+			req.PerPage = value
+		case strings.HasPrefix(arg, "--per-page="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--per-page="))
+			if err != nil {
+				return req, err
+			}
+			req.PerPage = value
+		case strings.HasPrefix(arg, "--limit="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.PerPage = value
+		default:
+			req.Args = append(req.Args, arg)
+		}
+	}
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PerPage < 1 {
+		req.PerPage = 20
+	}
+	return req, nil
+}
+
+func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibilityRequest) pluginCompatibilityReport {
+	root := plugins.Root(a.Workspace)
+	manifests, loadErr := plugins.Load(a.Workspace)
+	items := pluginCompatibilityItems(manifests)
+	validation := validateInstalledPlugins(a.Workspace)
+	trustWarnings := pluginTrustWarnings(manifests)
+	report := pluginCompatibilityReport{
+		Kind:       "plugin_compatibility",
+		Action:     pluginCompatibilityAction(command),
+		Status:     "ok",
+		Command:    command,
+		Workspace:  a.Workspace,
+		PluginRoot: root,
+		Summary: pluginCompatibilitySummary{
+			Total:      len(items),
+			TrustItems: len(trustWarnings),
+		},
+		Plugins:       items,
+		Validation:    validation,
+		TrustWarnings: trustWarnings,
+		Options:       pluginCompatibilityOptions(),
+		Args:          append([]string(nil), req.Args...),
+	}
+	if loadErr != nil {
+		report.Status = "error"
+		report.LoadError = loadErr.Error()
+	}
+	for _, item := range items {
+		if item.Enabled {
+			report.Summary.Enabled++
+		} else {
+			report.Summary.Disabled++
+		}
+	}
+	for _, item := range validation {
+		report.Summary.Errors += len(item.Errors)
+		report.Summary.Warnings += len(item.Warnings)
+	}
+	if report.Summary.Errors > 0 && command == "PluginErrors" {
+		report.Status = "error"
+	}
+	if report.Summary.TrustItems > 0 && command == "PluginTrustWarning" {
+		report.Status = "warn"
+	}
+	if len(req.Args) > 0 {
+		report.NormalizedAction = normalizePluginAction(req.Args[0])
+		if selected := selectPluginCompatibilityItem(items, req.Args[0]); selected != nil {
+			report.SelectedPlugin = selected
+		}
+		if len(req.Args) > 1 && report.SelectedPlugin == nil {
+			if selected := selectPluginCompatibilityItem(items, req.Args[1]); selected != nil {
+				report.SelectedPlugin = selected
+			}
+		}
+	}
+	switch command {
+	case "PluginErrors":
+		report.Message = "Installed plugin manifests were validated."
+	case "PluginOptionsDialog", "PluginOptionsFlow":
+		report.Message = "Plugin management options are available through `codog marketplace` and `codog plugins`."
+	case "PluginTrustWarning":
+		report.Message = "Plugins can register executable tools, hooks, commands, agents, skills, and MCP servers; review trust warnings before enabling unknown plugins."
+	case "UnifiedInstalledCell":
+		report.Message = "Installed plugins are summarized in a compact compatibility view."
+	case "parseArgs":
+		report.Message = "Plugin command arguments were parsed into a normalized action and remaining arguments."
+	case "pluginDetailsHelpers":
+		report.Message = "Plugin detail helpers resolved installed plugin metadata."
+	case "usePagination":
+		report.Message = "Plugin list pagination was applied."
+	}
+	if command == "UnifiedInstalledCell" || command == "usePagination" {
+		pageItems, pagination := paginatePluginItems(items, req.Page, req.PerPage)
+		report.Plugins = pageItems
+		report.Pagination = &pagination
+	}
+	return report
+}
+
+func pluginCompatibilityAction(command string) string {
+	switch command {
+	case "PluginErrors":
+		return "errors"
+	case "PluginOptionsDialog":
+		return "options_dialog"
+	case "PluginOptionsFlow":
+		return "options_flow"
+	case "PluginTrustWarning":
+		return "trust_warning"
+	case "UnifiedInstalledCell":
+		return "installed_cell"
+	case "parseArgs":
+		return "parse_args"
+	case "pluginDetailsHelpers":
+		return "details"
+	case "usePagination":
+		return "pagination"
+	default:
+		return "show"
+	}
+}
+
+func pluginCompatibilityCommand(topic string) string {
+	switch strings.ToLower(strings.TrimSpace(topic)) {
+	case "pluginerrors":
+		return "PluginErrors"
+	case "pluginoptionsdialog":
+		return "PluginOptionsDialog"
+	case "pluginoptionsflow":
+		return "PluginOptionsFlow"
+	case "plugintrustwarning":
+		return "PluginTrustWarning"
+	case "unifiedinstalledcell":
+		return "UnifiedInstalledCell"
+	case "parseargs":
+		return "parseArgs"
+	case "plugindetailshelpers":
+		return "pluginDetailsHelpers"
+	case "usepagination":
+		return "usePagination"
+	default:
+		return strings.TrimSpace(topic)
+	}
+}
+
+func pluginCompatibilityOptions() []string {
+	return []string{
+		"codog plugins list",
+		"codog plugins show ID",
+		"codog plugins validate PATH",
+		"codog marketplace sources",
+		"codog marketplace browse",
+		"codog marketplace install PATH",
+		"codog marketplace install-remote ID",
+		"codog marketplace enable ID",
+		"codog marketplace disable ID",
+		"codog marketplace remove ID",
+	}
+}
+
+func normalizePluginAction(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "list", "ls":
+		return "list"
+	case "show", "details", "detail":
+		return "show"
+	case "install", "add":
+		return "install"
+	case "remove", "rm", "delete", "uninstall":
+		return "remove"
+	case "enable", "on":
+		return "enable"
+	case "disable", "off":
+		return "disable"
+	case "validate", "check":
+		return "validate"
+	case "remote", "browse", "discover":
+		return "remote"
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+func pluginCompatibilityItems(manifests []plugins.Manifest) []pluginCompatibilityItem {
+	items := make([]pluginCompatibilityItem, 0, len(manifests))
+	for _, manifest := range manifests {
+		items = append(items, pluginCompatibilityItem{
+			ID:          manifest.ID,
+			Name:        manifest.Name,
+			Version:     manifest.Version,
+			Description: manifest.Description,
+			Enabled:     manifest.Enabled,
+			Path:        manifest.Path,
+			Tools:       len(manifest.Tools),
+			Commands:    len(manifest.Commands),
+			Skills:      len(manifest.Skills),
+			Agents:      len(manifest.Agents),
+			Hooks:       len(manifest.Hooks),
+			MCPServers:  len(manifest.MCPServers),
+			Risks:       pluginManifestRisks(manifest),
+		})
+	}
+	return items
+}
+
+func pluginManifestRisks(manifest plugins.Manifest) []string {
+	risks := []string{}
+	for _, tool := range manifest.Tools {
+		if strings.TrimSpace(tool.Command) != "" {
+			risks = append(risks, fmt.Sprintf("tool %s executes a local command", tool.Name))
+		}
+		if strings.EqualFold(tool.Permission, "workspace-write") || strings.EqualFold(tool.Permission, "danger-full-access") || strings.EqualFold(tool.Permission, "allow") {
+			risks = append(risks, fmt.Sprintf("tool %s requests %s permission", tool.Name, tool.Permission))
+		}
+	}
+	if len(manifest.Hooks) > 0 {
+		risks = append(risks, fmt.Sprintf("%d hook definition(s)", len(manifest.Hooks)))
+	}
+	if len(manifest.MCPServers) > 0 {
+		risks = append(risks, fmt.Sprintf("%d MCP server definition(s)", len(manifest.MCPServers)))
+	}
+	if len(manifest.Agents) > 0 {
+		risks = append(risks, fmt.Sprintf("%d agent definition(s)", len(manifest.Agents)))
+	}
+	return risks
+}
+
+func pluginTrustWarnings(manifests []plugins.Manifest) []string {
+	warnings := []string{}
+	for _, manifest := range manifests {
+		for _, risk := range pluginManifestRisks(manifest) {
+			warnings = append(warnings, fmt.Sprintf("%s: %s", manifest.ID, risk))
+		}
+	}
+	sort.Strings(warnings)
+	return warnings
+}
+
+func validateInstalledPlugins(workspace string) []pluginCompatibilityValidation {
+	root := plugins.Root(workspace)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return []pluginCompatibilityValidation{}
+	}
+	out := []pluginCompatibilityValidation{}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		source := filepath.Join(root, entry.Name())
+		result, err := plugins.Validate(source)
+		item := pluginCompatibilityValidation{ID: entry.Name(), Source: source}
+		if err != nil {
+			item.Success = false
+			item.Errors = []plugins.ValidationMessage{{Path: "file", Message: err.Error(), Code: "validation_failed"}}
+		} else {
+			item.Success = result.Success
+			item.Errors = result.Errors
+			item.Warnings = result.Warnings
+			if result.Manifest != nil && result.Manifest.ID != "" {
+				item.ID = result.Manifest.ID
+			}
+		}
+		if !item.Success || len(item.Warnings) > 0 {
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func selectPluginCompatibilityItem(items []pluginCompatibilityItem, id string) *pluginCompatibilityItem {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if id == "" {
+		return nil
+	}
+	for _, item := range items {
+		if strings.EqualFold(item.ID, id) || strings.EqualFold(item.Name, id) {
+			selected := item
+			return &selected
+		}
+	}
+	return nil
+}
+
+func paginatePluginItems(items []pluginCompatibilityItem, page int, perPage int) ([]pluginCompatibilityItem, pluginCompatibilityPagination) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 20
+	}
+	total := len(items)
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + perPage - 1) / perPage
+	}
+	start := (page - 1) * perPage
+	if start > total {
+		start = total
+	}
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	return append([]pluginCompatibilityItem(nil), items[start:end]...), pluginCompatibilityPagination{
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: totalPages,
+		Start:      start,
+		End:        end,
+	}
+}
+
+func renderPluginCompatibilityReport(out io.Writer, report pluginCompatibilityReport) {
+	fmt.Fprintln(out, "Plugin Compatibility")
+	fmt.Fprintf(out, "  Command          %s\n", report.Command)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Plugin root      %s\n", report.PluginRoot)
+	fmt.Fprintf(out, "  Installed        %d\n", report.Summary.Total)
+	fmt.Fprintf(out, "  Enabled          %d\n", report.Summary.Enabled)
+	fmt.Fprintf(out, "  Disabled         %d\n", report.Summary.Disabled)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	if report.LoadError != "" {
+		fmt.Fprintf(out, "  Load error       %s\n", report.LoadError)
+	}
+	if report.Pagination != nil {
+		fmt.Fprintf(out, "  Page             %d/%d\n", report.Pagination.Page, report.Pagination.TotalPages)
+	}
+	for _, item := range report.Plugins {
+		fmt.Fprintf(out, "  Plugin           %s enabled=%t tools=%d commands=%d skills=%d\n", item.ID, item.Enabled, item.Tools, item.Commands, item.Skills)
+	}
+	for _, warning := range report.TrustWarnings {
+		fmt.Fprintf(out, "  Trust warning    %s\n", warning)
+	}
+	for _, item := range report.Validation {
+		for _, validationErr := range item.Errors {
+			fmt.Fprintf(out, "  Error            %s %s: %s\n", item.ID, validationErr.Path, validationErr.Message)
+		}
+		for _, warning := range item.Warnings {
+			fmt.Fprintf(out, "  Warning          %s %s: %s\n", item.ID, warning.Path, warning.Message)
+		}
+	}
 }
 
 func (a *App) marketplaceSourcesCommand(args []string, format string) error {
@@ -12097,6 +12585,98 @@ func (a *App) Review(args []string) error {
 	return nil
 }
 
+type reviewCompatibilityReport struct {
+	Kind                string `json:"kind"`
+	Action              string `json:"action"`
+	Status              string `json:"status"`
+	Command             string `json:"command"`
+	Workspace           string `json:"workspace"`
+	Enabled             bool   `json:"enabled"`
+	LocalReviewCommand  string `json:"local_review_command"`
+	RemoteReviewCommand string `json:"remote_review_command"`
+	DefaultLimit        int    `json:"default_limit"`
+	RequestedLimit      int    `json:"requested_limit,omitempty"`
+	Overage             bool   `json:"overage,omitempty"`
+	ProviderRequestMade bool   `json:"provider_request_made"`
+	WorkspaceWillMutate bool   `json:"workspace_will_mutate"`
+	Message             string `json:"message"`
+}
+
+func (a *App) ReviewCompatibility(command string, args []string) error {
+	clean, format, err := stripJSONOnlyOutputFormat(command, args)
+	if err != nil {
+		return err
+	}
+	req, err := parseReviewArgs(append(clean, "--output-format", "json"))
+	if err != nil {
+		req = reviewRequest{Format: "json", Limit: 200}
+	}
+	report := reviewCompatibilityReport{
+		Kind:                "review_compatibility",
+		Action:              reviewCompatibilityAction(command),
+		Status:              "ok",
+		Command:             command,
+		Workspace:           a.Workspace,
+		Enabled:             true,
+		LocalReviewCommand:  "codog ultrareview",
+		RemoteReviewCommand: "codog reviewRemote",
+		DefaultLimit:        200,
+		RequestedLimit:      req.Limit,
+		ProviderRequestMade: false,
+		WorkspaceWillMutate: false,
+	}
+	switch command {
+	case "ultrareviewEnabled":
+		report.Message = "Ultra review compatibility is enabled through the local `codog ultrareview` review command."
+	case "UltrareviewOverageDialog":
+		report.Overage = req.Limit > report.DefaultLimit
+		if report.Overage {
+			report.Status = "warn"
+			report.Message = "Requested review limit is above the default threshold; narrow the diff or lower --limit for faster review."
+		} else {
+			report.Message = "Requested review limit is within the default threshold."
+		}
+	default:
+		report.Message = "Review compatibility report generated."
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Review Compatibility")
+	fmt.Fprintf(a.Out, "  Command          %s\n", report.Command)
+	fmt.Fprintf(a.Out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(a.Out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(a.Out, "  Local command    %s\n", report.LocalReviewCommand)
+	fmt.Fprintf(a.Out, "  Message          %s\n", report.Message)
+	return nil
+}
+
+func reviewCompatibilityAction(command string) string {
+	switch command {
+	case "ultrareviewEnabled":
+		return "enabled"
+	case "UltrareviewOverageDialog":
+		return "overage"
+	default:
+		return "show"
+	}
+}
+
+func reviewCompatibilityCommand(topic string) string {
+	switch strings.ToLower(strings.TrimSpace(topic)) {
+	case "ultrareviewcommand":
+		return "ultrareviewCommand"
+	case "ultrareviewenabled":
+		return "ultrareviewEnabled"
+	case "ultrareviewoveragedialog":
+		return "UltrareviewOverageDialog"
+	default:
+		return strings.TrimSpace(topic)
+	}
+}
+
 func (a *App) ReviewRemote(ctx context.Context, args []string) error {
 	req, err := parseReviewRemoteArgs(args)
 	if err != nil {
@@ -16059,6 +16639,7 @@ func builtInCommandNames() []string {
 	return sortedUniqueStrings([]string{
 		"AddMarketplace",
 		"acp",
+		"addCommand",
 		"add-dir",
 		"advisor",
 		"agents",
@@ -16108,6 +16689,7 @@ func builtInCommandNames() []string {
 		"conversation",
 		"copy",
 		"cost",
+		"createMovedToPluginCommand",
 		"CreatingStep",
 		"cron",
 		"cwd",
@@ -16124,6 +16706,7 @@ func builtInCommandNames() []string {
 		"enterprise",
 		"env",
 		"ErrorStep",
+		"exit",
 		"exit-plan",
 		"ExistingWorkflowStep",
 		"export",
@@ -16137,6 +16720,7 @@ func builtInCommandNames() []string {
 		"format",
 		"generateSessionName",
 		"git",
+		"good-claude",
 		"heapdump",
 		"help",
 		"history",
@@ -16184,8 +16768,13 @@ func builtInCommandNames() []string {
 		"permissions",
 		"plan",
 		"plugin",
+		"PluginErrors",
+		"PluginOptionsDialog",
+		"PluginOptionsFlow",
 		"PluginSettings",
+		"PluginTrustWarning",
 		"plugins",
+		"pluginDetailsHelpers",
 		"pr",
 		"pr-comments",
 		"pr_comments",
@@ -16195,6 +16784,7 @@ func builtInCommandNames() []string {
 		"prompt",
 		"prompt-history",
 		"providers",
+		"parseArgs",
 		"python",
 		"rate-limit",
 		"rate-limit-options",
@@ -16256,13 +16846,18 @@ func builtInCommandNames() []string {
 		"todos",
 		"tokens",
 		"tui",
+		"UltrareviewOverageDialog",
 		"ultraplan",
 		"ultrareview",
+		"ultrareviewCommand",
+		"ultrareviewEnabled",
 		"undo",
+		"UnifiedInstalledCell",
 		"unfocus",
 		"updater",
 		"upgrade",
 		"usage",
+		"usePagination",
 		"ValidatePlugin",
 		"validation",
 		"version",
@@ -16271,6 +16866,7 @@ func builtInCommandNames() []string {
 		"web-setup",
 		"workspace",
 		"WarningsStep",
+		"xaaIdpCommand",
 	})
 }
 
@@ -25257,6 +25853,54 @@ func (a *App) mcpRemove(args []string) error {
 	return nil
 }
 
+type xaaIDPReport struct {
+	Kind               string   `json:"kind"`
+	Action             string   `json:"action"`
+	Status             string   `json:"status"`
+	Command            string   `json:"command"`
+	ConfiguredServers  []string `json:"configured_servers"`
+	ConfigHome         string   `json:"config_home,omitempty"`
+	ProviderConfigured bool     `json:"provider_configured"`
+	Message            string   `json:"message"`
+	Usage              string   `json:"usage"`
+}
+
+func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
+	clean, format, err := stripJSONOnlyOutputFormat("xaaIdpCommand", args)
+	if err != nil {
+		return err
+	}
+	if len(clean) > 0 {
+		mcpArgs := append([]string{"auth"}, clean...)
+		if format == "json" {
+			mcpArgs = append(mcpArgs, "--json")
+		}
+		return a.MCP(ctx, mcpArgs)
+	}
+	report := xaaIDPReport{
+		Kind:               "mcp_compatibility",
+		Action:             "xaa_idp",
+		Status:             "ok",
+		Command:            "xaaIdpCommand",
+		ConfiguredServers:  sortedMCPServerNames(a.Config.MCPServers),
+		ConfigHome:         a.Config.ConfigHome,
+		ProviderConfigured: a.Config.OAuthProfile != "" || a.Config.AuthToken != "",
+		Message:            "XAA IdP compatibility is exposed through `codog mcp auth SERVER` and Codog OAuth provider commands.",
+		Usage:              "codog xaaIdpCommand [SERVER] [--json]",
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "XAA IdP Compatibility")
+	fmt.Fprintf(a.Out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(a.Out, "  MCP servers      %d\n", len(report.ConfiguredServers))
+	fmt.Fprintf(a.Out, "  OAuth configured %t\n", report.ProviderConfigured)
+	fmt.Fprintf(a.Out, "  Message          %s\n", report.Message)
+	return nil
+}
+
 type mcpAddRequest struct {
 	Name    string
 	Command string
@@ -25323,6 +25967,102 @@ func validateMCPServerName(name string) error {
 			continue
 		}
 		return fmt.Errorf("invalid MCP server name %q", name)
+	}
+	return nil
+}
+
+type simpleCompatibilityReport struct {
+	Kind                string   `json:"kind"`
+	Action              string   `json:"action"`
+	Status              string   `json:"status"`
+	Command             string   `json:"command"`
+	Workspace           string   `json:"workspace,omitempty"`
+	Message             string   `json:"message"`
+	Args                []string `json:"args,omitempty"`
+	ProviderRequestMade bool     `json:"provider_request_made"`
+	WorkspaceWillMutate bool     `json:"workspace_will_mutate"`
+	NextCommand         string   `json:"next_command,omitempty"`
+}
+
+func (a *App) ExitCompatibility(args []string) error {
+	clean, format, err := stripJSONOnlyOutputFormat("exit", args)
+	if err != nil {
+		return err
+	}
+	report := simpleCompatibilityReport{
+		Kind:                "exit",
+		Action:              "exit",
+		Status:              "ok",
+		Command:             "exit",
+		Workspace:           a.Workspace,
+		Message:             "Exit requested. In the REPL, `/exit` closes the interactive session; as a CLI command this reports success and exits with status 0.",
+		Args:                clean,
+		ProviderRequestMade: false,
+		WorkspaceWillMutate: false,
+	}
+	return renderSimpleCompatibility(a.Out, report, format)
+}
+
+func (a *App) GoodClaude(args []string) error {
+	clean, format, err := stripJSONOnlyOutputFormat("good-claude", args)
+	if err != nil {
+		return err
+	}
+	report := simpleCompatibilityReport{
+		Kind:                "feedback",
+		Action:              "good_claude",
+		Status:              "ok",
+		Command:             "good-claude",
+		Workspace:           a.Workspace,
+		Message:             "Positive feedback was recorded as a local compatibility acknowledgement. Use `codog feedback MESSAGE` for a persisted feedback draft.",
+		Args:                clean,
+		ProviderRequestMade: false,
+		WorkspaceWillMutate: false,
+		NextCommand:         "codog feedback \"good claude\"",
+	}
+	return renderSimpleCompatibility(a.Out, report, format)
+}
+
+func (a *App) MovedToPluginCommand(args []string) error {
+	clean, format, err := stripJSONOnlyOutputFormat("createMovedToPluginCommand", args)
+	if err != nil {
+		return err
+	}
+	oldCommand := ""
+	if len(clean) > 0 {
+		oldCommand = clean[0]
+	}
+	next := "codog marketplace browse"
+	if oldCommand != "" {
+		next = "codog marketplace install-remote " + shellQuote(oldCommand)
+	}
+	report := simpleCompatibilityReport{
+		Kind:                "command_migration",
+		Action:              "moved_to_plugin",
+		Status:              "ok",
+		Command:             "createMovedToPluginCommand",
+		Workspace:           a.Workspace,
+		Message:             "This compatibility entry reports that an archived command surface should be delivered as a Codog plugin or marketplace command.",
+		Args:                clean,
+		ProviderRequestMade: false,
+		WorkspaceWillMutate: false,
+		NextCommand:         next,
+	}
+	return renderSimpleCompatibility(a.Out, report, format)
+}
+
+func renderSimpleCompatibility(out io.Writer, report simpleCompatibilityReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Compatibility")
+	fmt.Fprintf(out, "  Command          %s\n", report.Command)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	if report.NextCommand != "" {
+		fmt.Fprintf(out, "  Next             %s\n", report.NextCommand)
 	}
 	return nil
 }
@@ -28336,18 +29076,18 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "addmarketplace", "advisor", "agents", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
-		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "creatingstep", "cron", "ctx_viz", "discoverplugins",
-		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "existingworkflowstep",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "heapdump", "hooks", "installappstep", "language",
+	case "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
+		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
-		"pluginsettings", "pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"ultrareview", "usage", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind":
+		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
 	default:
 		return false
@@ -29042,6 +29782,17 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "plugintrustwarning", "unifiedinstalledcell", "parseargs", "plugindetailshelpers", "usepagination":
+		command := pluginCompatibilityCommand(topic)
+		return localCommandHelpSpec(
+			command,
+			command,
+			fmt.Sprintf("codog %s [PLUGIN|ACTION] [--page N] [--per-page N] [--output-format text|json]", command),
+			fmt.Sprintf("%s\n\nUsage:\n  codog %s [PLUGIN|ACTION] [--page N] [--per-page N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code plugin helper `%s`. It inspects installed Codog plugins, validates plugin manifests, reports trust warnings for executable plugin surfaces, normalizes plugin command arguments, and can paginate installed plugin summaries.\n", command, command, command),
+			[]string{"summary", "plugins", "selected_plugin", "validation", "trust_warnings", "pagination", "normalized_action"},
+			[]string{"ok", "warn", "error"},
+			false,
+		), true
 	case "mcp":
 		return localCommandHelpSpec(
 			"mcp",
@@ -29051,6 +29802,67 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,
+		), true
+	case "addcommand":
+		return localCommandHelpSpec(
+			"addCommand",
+			"addCommand",
+			"codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--output-format text|json]",
+			"addCommand\n\nUsage:\n  codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--output-format text|json]\n\nCompatibility entrypoint for the archived MCP add command. It delegates to `codog mcp add` and persists the MCP stdio server configuration in Codog config.\n",
+			[]string{"name", "path", "server"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "xaaidpcommand":
+		return localCommandHelpSpec(
+			"xaaIdpCommand",
+			"xaaIdpCommand",
+			"codog xaaIdpCommand [SERVER] [--output-format text|json]",
+			"xaaIdpCommand\n\nUsage:\n  codog xaaIdpCommand [SERVER] [--output-format text|json]\n\nCompatibility entrypoint for archived MCP XAA IdP authentication. With a server name it delegates to `codog mcp auth SERVER`; without one it reports configured MCP servers and OAuth readiness.\n",
+			[]string{"configured_servers", "provider_configured", "usage"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog":
+		command := reviewCompatibilityCommand(topic)
+		return localCommandHelpSpec(
+			command,
+			command,
+			fmt.Sprintf("codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]", command),
+			fmt.Sprintf("%s\n\nUsage:\n  codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code ultra review helpers. `ultrareviewCommand` delegates to local review; the other helpers report availability and overage status without making provider requests or mutating the workspace.\n", command, command),
+			[]string{"enabled", "local_review_command", "requested_limit", "overage", "message"},
+			[]string{"ok", "warn", "error"},
+			false,
+		), true
+	case "createmovedtoplugincommand":
+		return localCommandHelpSpec(
+			"createMovedToPluginCommand",
+			"createMovedToPluginCommand",
+			"codog createMovedToPluginCommand [COMMAND] [--output-format text|json]",
+			"createMovedToPluginCommand\n\nUsage:\n  codog createMovedToPluginCommand [COMMAND] [--output-format text|json]\n\nCompatibility entrypoint for archived commands that moved into plugins. It reports the corresponding marketplace command to browse or install a plugin-based replacement.\n",
+			[]string{"message", "next_command", "args"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "good-claude":
+		return localCommandHelpSpec(
+			"good-claude",
+			"good-claude",
+			"codog good-claude [MESSAGE] [--output-format text|json]",
+			"good-claude\n\nUsage:\n  codog good-claude [MESSAGE] [--output-format text|json]\n\nCompatibility entrypoint for positive feedback. It returns a local acknowledgement and points to `codog feedback` for persisted feedback drafts.\n",
+			[]string{"message", "next_command", "args"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "exit":
+		return localCommandHelpSpec(
+			"exit",
+			"exit",
+			"codog exit [--output-format text|json]",
+			"Exit\n\nUsage:\n  codog exit [--output-format text|json]\n\nCompatibility entrypoint for the REPL exit command. In a non-interactive CLI invocation it reports success and exits with status 0.\n",
+			[]string{"message", "args"},
+			[]string{"ok"},
+			false,
 		), true
 	case "reviewremote", "review-remote":
 		return localCommandHelpSpec(
