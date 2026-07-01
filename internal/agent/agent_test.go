@@ -428,6 +428,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "claude-test", report.Model)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "resume")
+	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "bug")
@@ -1243,8 +1245,6 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
 
 	cases := [][]string{
-		{"session", "bogus"},
-		{"session", "nuke"},
 		{"cost", "breakdown"},
 		{"clear", "--force"},
 		{"memory", "reset"},
@@ -1826,6 +1826,61 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 
 	require.NoError(t, app.SessionsCommand([]string{"delete", forked.ID}))
 	require.Contains(t, out.String(), `"deleted": true`)
+}
+
+func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "hello back")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Executable: "codog"}
+
+	require.NoError(t, app.ResumeCommand([]string{"source", "--json"}))
+	var report resumeCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "resume", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "source", report.RequestedSession)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 2, report.MessageCount)
+	require.Contains(t, report.ContinueCommands[0], "--resume 'source' repl")
+	out.Reset()
+
+	require.NoError(t, app.ResumeCommand([]string{"latest"}))
+	require.Contains(t, out.String(), "Resume Session")
+	require.Contains(t, out.String(), "Session ID        source")
+	require.Contains(t, out.String(), "Messages          2")
+}
+
+func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "session", "exists", "source"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"exists": true`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "resume", "source", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report resumeCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 1, report.MessageCount)
 }
 
 func TestBackfillSessionsCommandAndSlash(t *testing.T) {

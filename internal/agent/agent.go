@@ -315,8 +315,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BTW(ctx, rest, overrides, nil)
 	case "config":
 		return app.ConfigCommand(rest)
-	case "sessions":
+	case "session", "sessions":
 		return app.SessionsCommand(rest)
+	case "resume":
+		return app.ResumeCommand(rest)
 	case "backfill-sessions":
 		return app.BackfillSessions(rest)
 	case "rename":
@@ -14843,6 +14845,7 @@ func builtInCommandNames() []string {
 		"repl",
 		"reset",
 		"reset-limits",
+		"resume",
 		"review",
 		"rewind",
 		"rc",
@@ -14852,6 +14855,7 @@ func builtInCommandNames() []string {
 		"search",
 		"security-review",
 		"self-test",
+		"session",
 		"settings",
 		"setup",
 		"sessions",
@@ -15423,9 +15427,6 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	slashName := "/" + lower
 	hint := fmt.Sprintf("Run `codog repl` and use `%s` there.", slashName)
 	switch lower {
-	case "session":
-		interactive = len(meaningful) > 0
-		hint = "Run `codog repl` and use `/session`, or use `codog sessions ...` for saved session management."
 	case "clear", "fork":
 		interactive = len(meaningful) > 0
 	case "cost", "usage", "stats":
@@ -22450,6 +22451,76 @@ func (a *App) SessionsCommand(args []string) error {
 		return fmt.Errorf("unknown sessions command %q", args[0])
 	}
 	return nil
+}
+
+type resumeCommandReport struct {
+	Kind             string   `json:"kind"`
+	Action           string   `json:"action"`
+	Status           string   `json:"status"`
+	RequestedSession string   `json:"requested_session"`
+	SessionID        string   `json:"session_id"`
+	MessageCount     int      `json:"message_count"`
+	Path             string   `json:"path"`
+	ContinueCommands []string `json:"continue_commands"`
+}
+
+func (a *App) ResumeCommand(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("resume", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) > 1 {
+		return errors.New("usage: codog resume [ID|latest] [--json|--output-format text|json]")
+	}
+	requested := "latest"
+	if len(remaining) == 1 {
+		requested = strings.TrimSpace(remaining[0])
+	}
+	if requested == "" {
+		return errors.New("usage: codog resume [ID|latest] [--json|--output-format text|json]")
+	}
+	sess, err := a.Sessions.Open(requested)
+	if err != nil {
+		return err
+	}
+	exe := strings.TrimSpace(a.Executable)
+	if exe == "" {
+		exe = "codog"
+	}
+	report := resumeCommandReport{
+		Kind:             "resume",
+		Action:           "show",
+		Status:           "ok",
+		RequestedSession: requested,
+		SessionID:        sess.ID,
+		MessageCount:     len(sess.Messages),
+		Path:             sess.Path,
+		ContinueCommands: []string{
+			strings.Join([]string{shellQuote(exe), "--resume", shellQuote(sess.ID), "repl"}, " "),
+			strings.Join([]string{shellQuote(exe), "--resume", shellQuote(sess.ID), "prompt", shellQuote("...")}, " "),
+		},
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderResumeCommand(a.Out, report)
+	return nil
+}
+
+func renderResumeCommand(out io.Writer, report resumeCommandReport) {
+	fmt.Fprintln(out, "Resume Session")
+	fmt.Fprintf(out, "  Session ID        %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Requested         %s\n", report.RequestedSession)
+	fmt.Fprintf(out, "  Messages          %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Path              %s\n", report.Path)
+	if len(report.ContinueCommands) > 0 {
+		fmt.Fprintln(out, "  Continue")
+		for _, command := range report.ContinueCommands {
+			fmt.Fprintf(out, "    %s\n", command)
+		}
+	}
 }
 
 func (a *App) BackfillSessions(args []string) error {
