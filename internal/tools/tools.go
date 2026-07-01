@@ -115,6 +115,8 @@ type RegistryOptions struct {
 
 var claudeToolAliases = map[string]string{
 	"agenttool":                    "agent",
+	"applypatch":                   "apply_patch",
+	"applypatchtool":               "apply_patch",
 	"approvaltoken":                "approval_token",
 	"approvaltokentool":            "approval_token",
 	"askuserquestion":              "ask_user_question",
@@ -301,6 +303,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"Agent":                        "agent",
 	"AgentOutputTool":              "task_output",
 	"AgentTool":                    "agent",
+	"ApplyPatch":                   "apply_patch",
+	"ApplyPatchTool":               "apply_patch",
 	"ApprovalToken":                "approval_token",
 	"ApprovalTokenTool":            "approval_token",
 	"AskUserQuestion":              "ask_user_question",
@@ -540,6 +544,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(WriteFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(ApplyPatchTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(LSTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -3306,6 +3311,468 @@ func addUndoFields(result map[string]any, available bool, id string) {
 	if id != "" {
 		result["undo_id"] = id
 	}
+}
+
+type ApplyPatchTool struct {
+	Workspace      string
+	AdditionalDirs []string
+}
+
+func (ApplyPatchTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "apply_patch",
+		Description: "Apply a unified diff patch to one or more text files inside the workspace.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"patch": map[string]any{
+					"type":        "string",
+					"description": "Unified diff text with ---/+++ file headers and @@ hunks.",
+				},
+				"content": map[string]any{
+					"type":        "string",
+					"description": "Alias for patch.",
+				},
+			},
+			"anyOf": []map[string]any{
+				{"required": []string{"patch"}},
+				{"required": []string{"content"}},
+			},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (ApplyPatchTool) Permission() Permission { return PermissionWorkspace }
+
+func (t ApplyPatchTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Patch   string `json:"patch"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	patch := firstNonEmpty(payload.Patch, payload.Content)
+	if strings.TrimSpace(patch) == "" {
+		return "", errors.New("patch is required")
+	}
+	if int64(len(patch)) > maxFileToolBytes {
+		return "", fmt.Errorf("patch exceeds maximum file tool size of %d bytes", maxFileToolBytes)
+	}
+	filePatches, err := parseUnifiedPatch(patch)
+	if err != nil {
+		return "", err
+	}
+	changes := make([]applyPatchChange, 0, len(filePatches))
+	for _, filePatch := range filePatches {
+		change, err := t.planApplyPatchChange(filePatch)
+		if err != nil {
+			return "", err
+		}
+		changes = append(changes, change)
+	}
+	results := []map[string]any{}
+	for _, change := range changes {
+		undoID := ""
+		if change.UndoAvailable {
+			record, err := undo.Push(t.Workspace, "apply_patch", change.Path, change.Existed, change.Original)
+			if err != nil {
+				return "", err
+			}
+			undoID = record.ID
+		}
+		switch change.Operation {
+		case "delete":
+			if err := os.Remove(change.Path); err != nil {
+				return "", err
+			}
+		default:
+			if err := os.MkdirAll(filepath.Dir(change.Path), 0o755); err != nil {
+				return "", err
+			}
+			if err := os.WriteFile(change.Path, []byte(change.Next), 0o644); err != nil {
+				return "", err
+			}
+		}
+		result := map[string]any{
+			"path":      displayPath(t.Workspace, change.Path),
+			"operation": change.Operation,
+			"hunks":     len(change.FilePatch.Hunks),
+			"added":     change.Added,
+			"removed":   change.Removed,
+			"bytes":     len([]byte(change.Next)),
+		}
+		addUndoFields(result, change.UndoAvailable, undoID)
+		results = append(results, result)
+	}
+	return pretty(map[string]any{
+		"kind":          "apply_patch",
+		"files_changed": len(results),
+		"files":         results,
+	}), nil
+}
+
+func (t ApplyPatchTool) planApplyPatchChange(filePatch unifiedFilePatch) (applyPatchChange, error) {
+	operation := "update"
+	target := filePatch.NewPath
+	allowMissing := false
+	switch {
+	case filePatch.IsCreate():
+		operation = "create"
+		allowMissing = true
+	case filePatch.IsDelete():
+		operation = "delete"
+		target = filePatch.OldPath
+	}
+	path, err := safePathInScope(t.Workspace, t.AdditionalDirs, target, allowMissing)
+	if err != nil {
+		return applyPatchChange{}, err
+	}
+	existed, original, undoAvailable, err := fileUndoSnapshot(path)
+	if err != nil {
+		return applyPatchChange{}, err
+	}
+	if operation == "create" && existed {
+		return applyPatchChange{}, fmt.Errorf("cannot create existing file %s", displayPath(t.Workspace, path))
+	}
+	if operation != "create" && !existed {
+		return applyPatchChange{}, fmt.Errorf("file does not exist: %s", displayPath(t.Workspace, path))
+	}
+	current := ""
+	if operation != "create" {
+		data, truncated, err := readFileLimited(path, maxFileToolBytes)
+		if err != nil {
+			return applyPatchChange{}, err
+		}
+		if truncated {
+			return applyPatchChange{}, fmt.Errorf("file exceeds maximum editable size of %d bytes", maxFileToolBytes)
+		}
+		if bytes.Contains(data[:min(len(data), 8192)], []byte{0}) {
+			return applyPatchChange{}, errors.New("file appears to be binary")
+		}
+		current = string(data)
+	}
+	next, added, removed, err := applyUnifiedFilePatch(current, filePatch)
+	if err != nil {
+		return applyPatchChange{}, err
+	}
+	if operation == "delete" && strings.TrimSpace(next) != "" {
+		return applyPatchChange{}, fmt.Errorf("delete patch for %s leaves content behind", displayPath(t.Workspace, path))
+	}
+	return applyPatchChange{
+		Path:          path,
+		Operation:     operation,
+		Existed:       existed,
+		Original:      original,
+		Next:          next,
+		UndoAvailable: undoAvailable,
+		Added:         added,
+		Removed:       removed,
+		FilePatch:     filePatch,
+	}, nil
+}
+
+type applyPatchChange struct {
+	Path          string
+	Operation     string
+	Existed       bool
+	Original      []byte
+	Next          string
+	UndoAvailable bool
+	Added         int
+	Removed       int
+	FilePatch     unifiedFilePatch
+}
+
+type unifiedFilePatch struct {
+	OldPath string
+	NewPath string
+	Hunks   []unifiedHunk
+}
+
+func (p unifiedFilePatch) IsCreate() bool {
+	return p.OldPath == "/dev/null"
+}
+
+func (p unifiedFilePatch) IsDelete() bool {
+	return p.NewPath == "/dev/null"
+}
+
+type unifiedHunk struct {
+	OldStart int
+	OldCount int
+	NewStart int
+	NewCount int
+	Lines    []string
+}
+
+var unifiedHunkHeaderPattern = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@`)
+
+func parseUnifiedPatch(patch string) ([]unifiedFilePatch, error) {
+	lines := splitPatchText(patch)
+	patches := []unifiedFilePatch{}
+	for index := 0; index < len(lines); {
+		line := lines[index]
+		if !strings.HasPrefix(line, "--- ") {
+			index++
+			continue
+		}
+		if index+1 >= len(lines) || !strings.HasPrefix(lines[index+1], "+++ ") {
+			return nil, fmt.Errorf("patch file header at line %d is missing +++ header", index+1)
+		}
+		filePatch := unifiedFilePatch{
+			OldPath: parseUnifiedPathHeader(strings.TrimPrefix(line, "--- ")),
+			NewPath: parseUnifiedPathHeader(strings.TrimPrefix(lines[index+1], "+++ ")),
+		}
+		if filePatch.OldPath == "" || filePatch.NewPath == "" {
+			return nil, fmt.Errorf("patch file header at line %d has empty path", index+1)
+		}
+		index += 2
+		for index < len(lines) {
+			if strings.HasPrefix(lines[index], "--- ") {
+				break
+			}
+			if !strings.HasPrefix(lines[index], "@@ ") {
+				if strings.TrimSpace(lines[index]) == "" || strings.HasPrefix(lines[index], "diff --git ") || strings.HasPrefix(lines[index], "index ") {
+					index++
+					continue
+				}
+				return nil, fmt.Errorf("unexpected patch line %d: %s", index+1, lines[index])
+			}
+			hunk, nextIndex, err := parseUnifiedHunk(lines, index)
+			if err != nil {
+				return nil, err
+			}
+			filePatch.Hunks = append(filePatch.Hunks, hunk)
+			index = nextIndex
+		}
+		if len(filePatch.Hunks) == 0 {
+			return nil, fmt.Errorf("patch for %s has no hunks", filePatch.TargetPath())
+		}
+		patches = append(patches, filePatch)
+	}
+	if len(patches) == 0 {
+		return nil, errors.New("patch contains no unified diff file sections")
+	}
+	return patches, nil
+}
+
+func (p unifiedFilePatch) TargetPath() string {
+	if p.IsDelete() {
+		return p.OldPath
+	}
+	return p.NewPath
+}
+
+func splitPatchText(patch string) []string {
+	patch = strings.ReplaceAll(patch, "\r\n", "\n")
+	patch = strings.ReplaceAll(patch, "\r", "\n")
+	lines := strings.Split(patch, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func parseUnifiedPathHeader(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if tab := strings.IndexByte(value, '\t'); tab >= 0 {
+		value = value[:tab]
+	}
+	value = strings.Trim(value, `"`)
+	if value == "/dev/null" {
+		return value
+	}
+	if strings.HasPrefix(value, "a/") || strings.HasPrefix(value, "b/") {
+		value = value[2:]
+	}
+	return filepath.Clean(filepath.FromSlash(value))
+}
+
+func parseUnifiedHunk(lines []string, start int) (unifiedHunk, int, error) {
+	match := unifiedHunkHeaderPattern.FindStringSubmatch(lines[start])
+	if match == nil {
+		return unifiedHunk{}, start, fmt.Errorf("invalid hunk header at line %d", start+1)
+	}
+	oldStart, _ := strconv.Atoi(match[1])
+	oldCount := parseUnifiedHunkCount(match[2])
+	newStart, _ := strconv.Atoi(match[3])
+	newCount := parseUnifiedHunkCount(match[4])
+	hunk := unifiedHunk{OldStart: oldStart, OldCount: oldCount, NewStart: newStart, NewCount: newCount}
+	index := start + 1
+	oldSeen := 0
+	newSeen := 0
+	for index < len(lines) {
+		line := lines[index]
+		if oldSeen >= oldCount && newSeen >= newCount {
+			if strings.HasPrefix(line, `\`) {
+				hunk.Lines = append(hunk.Lines, line)
+				index++
+				continue
+			}
+			break
+		}
+		if line == "" {
+			return unifiedHunk{}, index, fmt.Errorf("invalid empty hunk line at line %d", index+1)
+		}
+		switch line[0] {
+		case ' ':
+			if oldSeen >= oldCount || newSeen >= newCount {
+				return unifiedHunk{}, index, fmt.Errorf("hunk line count exceeded at line %d", index+1)
+			}
+			oldSeen++
+			newSeen++
+			hunk.Lines = append(hunk.Lines, line)
+		case '-':
+			if oldSeen >= oldCount {
+				return unifiedHunk{}, index, fmt.Errorf("hunk old line count exceeded at line %d", index+1)
+			}
+			oldSeen++
+			hunk.Lines = append(hunk.Lines, line)
+		case '+':
+			if newSeen >= newCount {
+				return unifiedHunk{}, index, fmt.Errorf("hunk new line count exceeded at line %d", index+1)
+			}
+			newSeen++
+			hunk.Lines = append(hunk.Lines, line)
+		case '\\':
+			hunk.Lines = append(hunk.Lines, line)
+		default:
+			return unifiedHunk{}, index, fmt.Errorf("invalid hunk line prefix at line %d", index+1)
+		}
+		index++
+	}
+	if len(hunk.Lines) == 0 {
+		return unifiedHunk{}, index, fmt.Errorf("hunk at line %d has no lines", start+1)
+	}
+	if oldSeen != oldCount || newSeen != newCount {
+		return unifiedHunk{}, index, fmt.Errorf("hunk at line %d ended before declared line counts", start+1)
+	}
+	return hunk, index, nil
+}
+
+func parseUnifiedHunkCount(value string) int {
+	if value == "" {
+		return 1
+	}
+	count, _ := strconv.Atoi(value)
+	return count
+}
+
+func applyUnifiedFilePatch(content string, filePatch unifiedFilePatch) (string, int, int, error) {
+	lines := splitLinesKeepEnd(content)
+	added := 0
+	removed := 0
+	offset := 0
+	for _, hunk := range filePatch.Hunks {
+		oldLines, newLines, hunkAdded, hunkRemoved := hunkLineSets(hunk)
+		index := hunk.OldStart - 1 + offset
+		if hunk.OldStart == 0 {
+			index = 0
+		}
+		if index < 0 {
+			index = 0
+		}
+		if !lineWindowMatches(lines, index, oldLines) {
+			found := findUniqueLineWindow(lines, oldLines)
+			if found < 0 {
+				return "", 0, 0, fmt.Errorf("hunk starting at original line %d did not match", hunk.OldStart)
+			}
+			index = found
+		}
+		next := make([]string, 0, len(lines)-len(oldLines)+len(newLines))
+		next = append(next, lines[:index]...)
+		next = append(next, newLines...)
+		next = append(next, lines[index+len(oldLines):]...)
+		lines = next
+		offset += len(newLines) - len(oldLines)
+		added += hunkAdded
+		removed += hunkRemoved
+	}
+	return strings.Join(lines, ""), added, removed, nil
+}
+
+func splitLinesKeepEnd(content string) []string {
+	if content == "" {
+		return nil
+	}
+	lines := strings.SplitAfter(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func hunkLineSets(hunk unifiedHunk) ([]string, []string, int, int) {
+	oldLines := []string{}
+	newLines := []string{}
+	added := 0
+	removed := 0
+	lastOld := -1
+	lastNew := -1
+	lastPrefix := byte(0)
+	for _, line := range hunk.Lines {
+		if strings.HasPrefix(line, `\`) {
+			if (lastPrefix == ' ' || lastPrefix == '-') && lastOld >= 0 {
+				oldLines[lastOld] = strings.TrimSuffix(oldLines[lastOld], "\n")
+			}
+			if (lastPrefix == ' ' || lastPrefix == '+') && lastNew >= 0 {
+				newLines[lastNew] = strings.TrimSuffix(newLines[lastNew], "\n")
+			}
+			continue
+		}
+		text := line[1:] + "\n"
+		lastPrefix = line[0]
+		switch line[0] {
+		case ' ':
+			oldLines = append(oldLines, text)
+			newLines = append(newLines, text)
+			lastOld = len(oldLines) - 1
+			lastNew = len(newLines) - 1
+		case '-':
+			oldLines = append(oldLines, text)
+			lastOld = len(oldLines) - 1
+			removed++
+		case '+':
+			newLines = append(newLines, text)
+			lastNew = len(newLines) - 1
+			added++
+		}
+	}
+	return oldLines, newLines, added, removed
+}
+
+func lineWindowMatches(lines []string, start int, window []string) bool {
+	if start < 0 || start+len(window) > len(lines) {
+		return false
+	}
+	for index := range window {
+		if lines[start+index] != window[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func findUniqueLineWindow(lines []string, window []string) int {
+	if len(window) == 0 {
+		return len(lines)
+	}
+	found := -1
+	for index := 0; index+len(window) <= len(lines); index++ {
+		if !lineWindowMatches(lines, index, window) {
+			continue
+		}
+		if found >= 0 {
+			return -1
+		}
+		found = index
+	}
+	return found
 }
 
 func pathOrFilePathRequirement() []map[string]any {

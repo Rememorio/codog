@@ -20,8 +20,8 @@ workflows.
 - Single Go binary for one-shot prompts, REPL sessions, and a Bubble Tea TUI.
 - Anthropic Messages streaming, Anthropic-compatible endpoints, and
   OpenAI-compatible chat streaming.
-- Permission-gated workspace tools for shell, read, write, edit, grep, glob,
-  git inspection, notebooks, and LSP/code intelligence.
+- Permission-gated workspace tools for shell, read, write, edit, patch, grep,
+  glob, git inspection, notebooks, and LSP/code intelligence.
 - JSONL sessions with resume, fork, rename, rewind, export, summaries, usage,
   token, and cost metadata.
 - Project and user configuration layers, including `.codog` and compatible

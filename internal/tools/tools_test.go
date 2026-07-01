@@ -848,6 +848,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "read_file", CanonicalToolName("read_file"))
 	require.Equal(t, "write_file", CanonicalToolName("Write"))
 	require.Equal(t, "multi_edit", CanonicalToolName("MultiEdit"))
+	require.Equal(t, "apply_patch", CanonicalToolName("ApplyPatch"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutput"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutputTool"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
@@ -855,6 +856,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	aliases := ClaudeToolAliases()
 	require.Equal(t, "web_fetch", aliases["WebFetch"])
 	require.Equal(t, "read_file", aliases["FileReadTool"])
+	require.Equal(t, "apply_patch", aliases["ApplyPatchTool"])
 	aliases["WebFetch"] = "changed"
 	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
 }
@@ -992,7 +994,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 81)
+	require.Len(t, infos, 82)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -1010,6 +1012,10 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("Read")
 	require.True(t, ok)
 	require.Equal(t, "read_file", info.Name)
+	info, ok = registry.Info("ApplyPatch")
+	require.True(t, ok)
+	require.Equal(t, "apply_patch", info.Name)
+	require.Equal(t, PermissionWorkspace, info.Permission)
 	info, ok = registry.Info("LS")
 	require.True(t, ok)
 	require.Equal(t, "ls", info.Name)
@@ -1198,6 +1204,7 @@ func TestUpdateBuiltinScopeRefreshesCompleteBuiltinRegistry(t *testing.T) {
 		"tool_search",
 		"agent",
 		"task_create",
+		"apply_patch",
 		"ask_user_question",
 	} {
 		require.True(t, registry.Has(name), "missing %s", name)
@@ -1527,6 +1534,122 @@ func TestFileToolsRecordUndoSnapshots(t *testing.T) {
 	data, err = os.ReadFile(filepath.Join(workspace, "notes.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "alpha beta alpha\n", string(data))
+}
+
+func TestApplyPatchToolAppliesUnifiedDiffAndRecordsUndo(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\nbeta\nomega\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "remove.txt"), []byte("gone\n"), 0o644))
+
+	patch := strings.Join([]string{
+		"--- a/notes.txt",
+		"+++ b/notes.txt",
+		"@@ -1,3 +1,3 @@",
+		" alpha",
+		"-beta",
+		"+gamma",
+		" omega",
+		"--- /dev/null",
+		"+++ b/new.txt",
+		"@@ -0,0 +1,2 @@",
+		"+new",
+		"+file",
+		"--- a/remove.txt",
+		"+++ /dev/null",
+		"@@ -1 +0,0 @@",
+		"-gone",
+	}, "\n")
+	input, err := json.Marshal(map[string]string{"patch": patch})
+	require.NoError(t, err)
+
+	out, err := registry.Execute(context.Background(), "ApplyPatch", input, nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "apply_patch"`)
+	require.Contains(t, out, `"files_changed": 3`)
+	require.Contains(t, out, `"operation": "update"`)
+	require.Contains(t, out, `"operation": "create"`)
+	require.Contains(t, out, `"operation": "delete"`)
+	require.Contains(t, out, `"undo_id":`)
+
+	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "alpha\ngamma\nomega\n", string(data))
+	data, err = os.ReadFile(filepath.Join(workspace, "new.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "new\nfile\n", string(data))
+	require.NoFileExists(t, filepath.Join(workspace, "remove.txt"))
+
+	report, err := undo.RestoreLast(workspace)
+	require.NoError(t, err)
+	require.True(t, report.Restored)
+	data, err = os.ReadFile(filepath.Join(workspace, "remove.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "gone\n", string(data))
+}
+
+func TestApplyPatchToolRejectsEscapingPathWithoutChangingWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+	outside := filepath.Join(filepath.Dir(workspace), "outside.txt")
+
+	patch := strings.Join([]string{
+		"--- /dev/null",
+		"+++ " + filepath.ToSlash(outside),
+		"@@ -0,0 +1 @@",
+		"+nope",
+	}, "\n")
+	input, err := json.Marshal(map[string]string{"patch": patch})
+	require.NoError(t, err)
+
+	_, err = registry.Execute(context.Background(), "apply_patch", input, nil)
+	require.Error(t, err)
+	require.NoFileExists(t, outside)
+}
+
+func TestApplyPatchToolHandlesHunkLinesThatLookLikeHeaders(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("-- heading\nkeep\n"), 0o644))
+
+	patch := strings.Join([]string{
+		"--- a/notes.txt",
+		"+++ b/notes.txt",
+		"@@ -1,2 +1,2 @@",
+		"--- heading",
+		"+++ heading",
+		" keep",
+	}, "\n")
+	input, err := json.Marshal(map[string]string{"patch": patch})
+	require.NoError(t, err)
+
+	_, err = registry.Execute(context.Background(), "apply_patch", input, nil)
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "++ heading\nkeep\n", string(data))
+}
+
+func TestApplyPatchToolHandlesPathsWithSpaces(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "file with spaces.txt"), []byte("old\n"), 0o644))
+
+	patch := strings.Join([]string{
+		"--- a/file with spaces.txt",
+		"+++ b/file with spaces.txt",
+		"@@ -1 +1 @@",
+		"-old",
+		"+new",
+	}, "\n")
+	input, err := json.Marshal(map[string]string{"patch": patch})
+	require.NoError(t, err)
+
+	_, err = registry.Execute(context.Background(), "apply_patch", input, nil)
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(workspace, "file with spaces.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "new\n", string(data))
 }
 
 func TestReadFileToolReadsImages(t *testing.T) {

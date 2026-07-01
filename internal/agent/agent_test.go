@@ -856,6 +856,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, ok)
 	require.Contains(t, readTool.Aliases, "Read")
 	require.Contains(t, readTool.Aliases, "FileReadTool")
+	patchTool, ok := capabilityReportTool(report, "apply_patch")
+	require.True(t, ok)
+	require.Contains(t, patchTool.Aliases, "ApplyPatch")
 	bashTool, ok := capabilityReportTool(report, "bash")
 	require.True(t, ok)
 	require.Contains(t, bashTool.Aliases, "Bash")
@@ -5812,7 +5815,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
 	require.Contains(t, out.String(), "Task lanes       active=0 blocked=0 finished=0")
-	require.Contains(t, out.String(), "Tools            81")
+	require.Contains(t, out.String(), "Tools            82")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))
