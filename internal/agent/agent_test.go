@@ -307,6 +307,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "context-noninteractive",
 		},
 		{
+			name:  "conversation local help",
+			args:  []string{"--config", configPath, "conversation", "--help", "--output-format", "json"},
+			topic: "conversation",
+		},
+		{
 			name:  "break-cache local help",
 			args:  []string{"--config", configPath, "break-cache", "--help", "--output-format", "json"},
 			topic: "break-cache",
@@ -454,6 +459,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
 	require.Contains(t, report.Commands, "context-noninteractive")
+	require.Contains(t, report.Commands, "conversation")
 	require.Contains(t, report.Commands, "permissions")
 	require.Contains(t, report.Commands, "plan")
 	require.Contains(t, report.Commands, "teleport")
@@ -1983,6 +1989,15 @@ func TestRunCLIClearCommand(t *testing.T) {
 	require.Equal(t, "ok", report.Status)
 	require.NotEmpty(t, report.SessionID)
 	require.Contains(t, report.ContinueCommands[0], "--session '"+report.SessionID+"' repl")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "conversation", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "clear", report.Kind)
+	require.Equal(t, "create_session", report.Action)
+	require.NotEmpty(t, report.SessionID)
 }
 
 func TestBackfillSessionsCommandAndSlash(t *testing.T) {

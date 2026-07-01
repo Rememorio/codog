@@ -321,7 +321,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.SessionsCommand(rest)
 	case "resume":
 		return app.ResumeCommand(rest)
-	case "clear":
+	case "clear", "conversation":
 		return app.ClearCommand(rest)
 	case "backfill-sessions":
 		return app.BackfillSessions(rest)
@@ -14773,6 +14773,7 @@ func builtInCommandNames() []string {
 		"config",
 		"context",
 		"context-noninteractive",
+		"conversation",
 		"copy",
 		"cost",
 		"cron",
@@ -26243,7 +26244,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
-		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "cron", "ctx_viz",
+		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
@@ -26967,6 +26968,13 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			OutputFields:            []string{"session_id", "message_count", "path", "continue_commands"},
 			StatusValues:            []string{"ok", "error"},
 		}, true
+	case "conversation":
+		spec, _ := commandHelpSpecFor("clear")
+		spec.Topic = "conversation"
+		spec.Command = "conversation"
+		spec.Usage = "codog conversation [--confirm] [--output-format text|json]"
+		spec.Text = "Conversation\n\nUsage:\n  codog conversation [--confirm] [--output-format text|json]\n\nAlias for `codog clear`; creates and reports a fresh empty local session id without deleting existing session JSONL files.\n"
+		return spec, true
 	case "resume":
 		return commandHelpSpec{
 			Topic:                   "resume",
@@ -27013,6 +27021,7 @@ Usage:
   %s [flags] repl
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
+  %s [flags] conversation [--confirm] [--json|--output-format text|json]
   %s [flags] sessions [list|show|exists|fork|rename|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]
