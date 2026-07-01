@@ -3617,6 +3617,83 @@ func TestTerminalSetupCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestSetupCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/setup\n"), 0o644))
+	terminalPath := filepath.Join(t.TempDir(), ".zshrc")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	var setupPayloads []struct {
+		Event string `json:"event"`
+		Input string `json:"input"`
+	}
+	setupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Event string `json:"event"`
+			Input string `json:"input"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		setupPayloads = append(setupPayloads, payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer setupServer.Close()
+	app := &App{
+		Config: config.Config{
+			APIKey:     "test-key",
+			ConfigHome: t.TempDir(),
+			Model:      "claude-test",
+			Hooks: config.HookConfig{
+				SetupCommands: []config.HookCommand{{Type: "http", URL: setupServer.URL}},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Setup(context.Background(), []string{"status", "--shell", "zsh", "--path", terminalPath, "--json"}))
+	var report setupReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "setup", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "warn", report.Status)
+	require.NotNil(t, report.Terminal)
+	require.False(t, report.Terminal.Installed)
+	requireSetupCheck(t, report.Checks, "Provider credentials", "ok")
+	requireSetupCheck(t, report.Checks, "Project memory", "warn")
+	requireSetupCheck(t, report.Checks, "Terminal integration", "warn")
+	out.Reset()
+
+	require.NoError(t, app.Setup(context.Background(), []string{"init", "--json"}))
+	report = setupReport{}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "init", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.NotNil(t, report.Project)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
+	require.Len(t, setupPayloads, 1)
+	require.Equal(t, "setup", setupPayloads[0].Event)
+	require.Contains(t, setupPayloads[0].Input, `"source":"setup"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/setup status --shell zsh --path "+terminalPath, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Setup")
+	require.Contains(t, out.String(), "Terminal integration")
+	require.Empty(t, errOut.String())
+}
+
+func requireSetupCheck(t *testing.T, checks []setupCheck, name string, status string) {
+	t.Helper()
+	for _, check := range checks {
+		if check.Name == name {
+			require.Equal(t, status, check.Status)
+			return
+		}
+	}
+	require.Failf(t, "missing setup check", "check %q not found in %#v", name, checks)
+}
+
 func TestRemoteEnvCommandPersistsSettings(t *testing.T) {
 	configHome := t.TempDir()
 	var out bytes.Buffer

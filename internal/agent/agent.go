@@ -479,6 +479,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Status(rest, overrides)
 	case "statusline":
 		return app.Statusline(rest, overrides)
+	case "setup":
+		return app.Setup(ctx, rest)
 	case "terminal-setup", "terminalSetup":
 		return app.TerminalSetup(rest)
 	case "context":
@@ -12575,6 +12577,316 @@ type terminalSetupRequest struct {
 	Force  bool
 }
 
+type setupRequest struct {
+	Action         string
+	Format         string
+	TerminalAction string
+	Shell          string
+	Path           string
+	Force          bool
+}
+
+type setupCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type setupReport struct {
+	Kind       string                `json:"kind"`
+	Action     string                `json:"action"`
+	Status     string                `json:"status"`
+	Workspace  string                `json:"workspace"`
+	ConfigHome string                `json:"config_home,omitempty"`
+	ConfigPath string                `json:"config_path,omitempty"`
+	Checks     []setupCheck          `json:"checks"`
+	Project    *projectinit.Report   `json:"project,omitempty"`
+	Terminal   *terminalsetup.Report `json:"terminal,omitempty"`
+	Messages   []string              `json:"messages,omitempty"`
+}
+
+func (a *App) Setup(ctx context.Context, args []string) error {
+	req, err := parseSetupArgs(args)
+	if err != nil {
+		return err
+	}
+	report, err := a.buildSetupReport(ctx, req)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSetupReport(a.Out, report)
+	return nil
+}
+
+func parseSetupArgs(args []string) (setupRequest, error) {
+	req := setupRequest{Action: "status", Format: "text", TerminalAction: "status"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("setup output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--shell":
+			index++
+			if index >= len(args) {
+				return req, errors.New("setup shell is required")
+			}
+			req.Shell = args[index]
+		case strings.HasPrefix(arg, "--shell="):
+			req.Shell = strings.TrimPrefix(arg, "--shell=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("setup path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--force":
+			req.Force = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown setup flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "setup"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "check", "checks", "diagnose", "doctor":
+		req.Action = "status"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected setup argument %q", rest[1])
+		}
+	case "init", "project":
+		req.Action = "init"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected setup argument %q", rest[1])
+		}
+	case "terminal", "shell":
+		req.Action = "terminal"
+		if len(rest) > 2 {
+			return req, fmt.Errorf("unexpected setup argument %q", rest[2])
+		}
+		if len(rest) == 2 {
+			req.TerminalAction = strings.ToLower(rest[1])
+		}
+	case "all", "run":
+		req.Action = "all"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected setup argument %q", rest[1])
+		}
+	default:
+		return req, fmt.Errorf("unknown setup command %q", rest[0])
+	}
+	return req, nil
+}
+
+func (a *App) buildSetupReport(ctx context.Context, req setupRequest) (setupReport, error) {
+	workspace := strings.TrimSpace(a.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err == nil {
+		workspace = absWorkspace
+	}
+	report := setupReport{
+		Kind:       "setup",
+		Action:     req.Action,
+		Status:     "ok",
+		Workspace:  workspace,
+		ConfigHome: strings.TrimSpace(a.Config.ConfigHome),
+		ConfigPath: setupConfigPath(a.Config.ConfigHome),
+	}
+	if req.Action == "init" || req.Action == "all" {
+		project, err := projectinit.Initialize(workspace)
+		if err != nil {
+			return setupReport{}, err
+		}
+		if err := a.runSetupHook(ctx, "setup", project.Status); err != nil {
+			return setupReport{}, err
+		}
+		report.Project = &project
+	}
+	if req.Action == "status" || req.Action == "terminal" || req.Action == "all" {
+		terminalAction := req.TerminalAction
+		if req.Action != "terminal" {
+			terminalAction = "status"
+		}
+		terminal, err := terminalsetup.Run(terminalsetup.Options{
+			Action: terminalAction,
+			Shell:  req.Shell,
+			Path:   req.Path,
+			Force:  req.Force,
+		})
+		if err != nil {
+			return setupReport{}, err
+		}
+		report.Terminal = &terminal
+	}
+	report.Checks = a.setupChecks(report.Terminal)
+	report.Status = setupStatus(report.Checks)
+	report.Messages = setupMessages(report)
+	return report, nil
+}
+
+func setupConfigPath(configHome string) string {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" {
+		return ""
+	}
+	return filepath.Join(configHome, "config.json")
+}
+
+func (a *App) setupChecks(terminal *terminalsetup.Report) []setupCheck {
+	checks := []setupCheck{}
+	workspace := strings.TrimSpace(a.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	if abs, err := filepath.Abs(workspace); err == nil {
+		workspace = abs
+	}
+	if info, err := os.Stat(workspace); err != nil {
+		checks = append(checks, setupCheck{Name: "Workspace", Status: "fail", Message: err.Error()})
+	} else if !info.IsDir() {
+		checks = append(checks, setupCheck{Name: "Workspace", Status: "fail", Message: "workspace is not a directory"})
+	} else {
+		checks = append(checks, setupCheck{Name: "Workspace", Status: "ok", Message: workspace})
+	}
+
+	configHome := strings.TrimSpace(a.Config.ConfigHome)
+	switch {
+	case configHome == "":
+		checks = append(checks, setupCheck{Name: "Config home", Status: "warn", Message: "config home is not configured"})
+	default:
+		if info, err := os.Stat(configHome); err == nil && info.IsDir() {
+			checks = append(checks, setupCheck{Name: "Config home", Status: "ok", Message: configHome})
+		} else if err != nil && os.IsNotExist(err) {
+			checks = append(checks, setupCheck{Name: "Config home", Status: "warn", Message: "config home will be created when Codog writes preferences"})
+		} else if err != nil {
+			checks = append(checks, setupCheck{Name: "Config home", Status: "fail", Message: err.Error()})
+		} else {
+			checks = append(checks, setupCheck{Name: "Config home", Status: "fail", Message: "config home path is not a directory"})
+		}
+	}
+
+	if strings.TrimSpace(a.Config.APIKey) != "" || strings.TrimSpace(a.Config.AuthToken) != "" {
+		checks = append(checks, setupCheck{Name: "Provider credentials", Status: "ok", Message: "provider credentials are configured"})
+	} else {
+		checks = append(checks, setupCheck{Name: "Provider credentials", Status: "warn", Message: "set ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a provider-specific API key before running provider requests"})
+	}
+	if strings.TrimSpace(a.Config.Model) != "" {
+		checks = append(checks, setupCheck{Name: "Model", Status: "ok", Message: a.Config.Model})
+	} else {
+		checks = append(checks, setupCheck{Name: "Model", Status: "warn", Message: "model is not configured"})
+	}
+
+	instructionsPath := filepath.Join(workspace, ".codog", "instructions.md")
+	configPath := filepath.Join(workspace, ".codog.json")
+	instructionsOK := fileExists(instructionsPath)
+	projectConfigOK := fileExists(configPath)
+	switch {
+	case instructionsOK && projectConfigOK:
+		checks = append(checks, setupCheck{Name: "Project memory", Status: "ok", Message: ".codog/instructions.md and .codog.json are present"})
+	case instructionsOK || projectConfigOK:
+		checks = append(checks, setupCheck{Name: "Project memory", Status: "warn", Message: "project setup is partial; run `codog setup init`"})
+	default:
+		checks = append(checks, setupCheck{Name: "Project memory", Status: "warn", Message: "run `codog setup init` to create project guidance and shared defaults"})
+	}
+
+	if terminal != nil {
+		if terminal.Installed {
+			checks = append(checks, setupCheck{Name: "Terminal integration", Status: "ok", Message: terminal.Message})
+		} else {
+			checks = append(checks, setupCheck{Name: "Terminal integration", Status: "warn", Message: "run `codog terminal-setup install` to install shell helpers"})
+		}
+	}
+	return checks
+}
+
+func setupStatus(checks []setupCheck) string {
+	status := "ok"
+	for _, check := range checks {
+		switch check.Status {
+		case "fail", "error":
+			return "error"
+		case "warn":
+			if status == "ok" {
+				status = "warn"
+			}
+		}
+	}
+	return status
+}
+
+func setupMessages(report setupReport) []string {
+	messages := []string{}
+	for _, check := range report.Checks {
+		if check.Status == "warn" || check.Status == "fail" || check.Status == "error" {
+			messages = append(messages, check.Name+": "+check.Message)
+		}
+	}
+	if len(messages) == 0 {
+		messages = append(messages, "Codog local setup looks ready.")
+	}
+	return messages
+}
+
+func renderSetupReport(out io.Writer, report setupReport) {
+	fmt.Fprintln(out, "Setup")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	if report.ConfigHome != "" {
+		fmt.Fprintf(out, "  Config home      %s\n", report.ConfigHome)
+	}
+	if report.ConfigPath != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.ConfigPath)
+	}
+	fmt.Fprintln(out, "  Checks")
+	for _, check := range report.Checks {
+		fmt.Fprintf(out, "    %-22s %-5s %s\n", check.Name, check.Status, check.Message)
+	}
+	if report.Project != nil {
+		fmt.Fprintln(out, "  Project init")
+		for _, artifact := range report.Project.Artifacts {
+			fmt.Fprintf(out, "    %-22s %s\n", artifact.Name, artifact.Status)
+		}
+	}
+	if report.Terminal != nil {
+		fmt.Fprintln(out, "  Terminal")
+		fmt.Fprintf(out, "    Shell                 %s\n", report.Terminal.Shell)
+		if report.Terminal.Path != "" {
+			fmt.Fprintf(out, "    Path                  %s\n", report.Terminal.Path)
+		}
+		fmt.Fprintf(out, "    Installed             %t\n", report.Terminal.Installed)
+		if report.Terminal.Changed {
+			fmt.Fprintf(out, "    Changed               %t\n", report.Terminal.Changed)
+		}
+	}
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Message          %s\n", message)
+	}
+}
+
 func (a *App) TerminalSetup(args []string) error {
 	req, err := parseTerminalSetupArgs(args)
 	if err != nil {
@@ -13502,6 +13814,7 @@ func builtInCommandNames() []string {
 		"search",
 		"security-review",
 		"self-test",
+		"setup",
 		"sessions",
 		"share",
 		"skills",
@@ -16281,6 +16594,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		a.renderStatus("text", sess)
 	case "/statusline":
 		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/setup":
+		if err := a.Setup(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/terminal-setup", "/terminalSetup":
@@ -22542,7 +22859,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
-		"search", "security-review", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
@@ -22829,6 +23146,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "setup":
+		return localCommandHelpSpec(
+			"setup",
+			"setup",
+			"codog setup [status|init|terminal|all] [--shell zsh|bash|fish|powershell] [--path PATH] [--output-format text|json]",
+			"Setup\n\nUsage:\n  codog setup [status|init|terminal|all] [--shell zsh|bash|fish|powershell] [--path PATH] [--output-format text|json]\n\nChecks local Codog setup, reports provider credentials, project memory, config paths, and terminal integration, and can initialize project guidance with `codog setup init`.\n",
+			[]string{"workspace", "config_home", "checks", "project", "terminal", "messages"},
+			[]string{"ok", "warn", "error"},
+			true,
+		), true
 	case "context":
 		return localCommandHelpSpec(
 			"context",
@@ -23099,6 +23426,7 @@ Usage:
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
+  %s [flags] setup [status|init|terminal|all] [--shell zsh|bash|fish|powershell] [--path PATH] [--json|--output-format text|json]
   %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--json|--output-format text|json]
