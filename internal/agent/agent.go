@@ -6470,6 +6470,11 @@ func parseOAuthRefreshArgs(args []string) (string, error) {
 }
 
 func (a *App) OAuth(args []string) error {
+	var err error
+	args, err = normalizeOAuthJSONArgs(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 || args[0] == "pkce" {
 		pkce, err := oauth.GeneratePKCE()
 		if err != nil {
@@ -6589,6 +6594,33 @@ func (a *App) OAuth(args []string) error {
 	default:
 		return fmt.Errorf("unknown oauth token command %q", args[1])
 	}
+}
+
+func normalizeOAuthJSONArgs(args []string) ([]string, error) {
+	out := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			continue
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return nil, errors.New("oauth output format is required")
+			}
+			if !strings.EqualFold(strings.TrimSpace(args[index]), "json") {
+				return nil, fmt.Errorf("unknown oauth output format %q", args[index])
+			}
+		case strings.HasPrefix(arg, "--output-format="):
+			format := strings.TrimPrefix(arg, "--output-format=")
+			if !strings.EqualFold(strings.TrimSpace(format), "json") {
+				return nil, fmt.Errorf("unknown oauth output format %q", format)
+			}
+		default:
+			out = append(out, arg)
+		}
+	}
+	return out, nil
 }
 
 func (a *App) oauthTokenRevoke(args []string) (map[string]any, error) {
@@ -19783,6 +19815,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedAPIKeySlash(resumeSlashArgs("api-key", args, format), format)
 	case "/providers":
 		return a.runResumedProvidersSlash(resumeSlashArgs("providers", args, format), format)
+	case "/oauth":
+		return a.runResumedOAuthSlash(args, format)
 	case "/profile":
 		return a.runResumedProfileSlash(resumeSlashArgs("profile", args, format), format)
 	case "/advisor":
@@ -20639,6 +20673,49 @@ func (a *App) runResumedProvidersSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/providers", req.Action), format)
 	}
 	return a.Providers(args)
+}
+
+func (a *App) runResumedOAuthSlash(args []string, format string) error {
+	normalized, err := normalizeOAuthJSONArgs(args)
+	if err != nil {
+		return err
+	}
+	if len(normalized) == 0 {
+		return a.OAuth([]string{"status"})
+	}
+	action := strings.ToLower(strings.TrimSpace(normalized[0]))
+	switch action {
+	case "status":
+		if len(normalized) <= 2 {
+			return a.OAuth(normalized)
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", "status"), format)
+	case "provider":
+		if len(normalized) >= 2 {
+			providerAction := strings.ToLower(strings.TrimSpace(normalized[1]))
+			switch providerAction {
+			case "list":
+				if len(normalized) == 2 {
+					return a.OAuth(normalized)
+				}
+			case "show":
+				if len(normalized) == 3 {
+					return a.OAuth(normalized)
+				}
+			}
+			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth provider", providerAction), format)
+		}
+	case "token":
+		if len(normalized) == 2 && strings.EqualFold(strings.TrimSpace(normalized[1]), "show") {
+			return a.OAuth(normalized)
+		}
+		tokenAction := ""
+		if len(normalized) >= 2 {
+			tokenAction = normalized[1]
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth token", tokenAction), format)
+	}
+	return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
 }
 
 func (a *App) runResumedProfileSlash(args []string, format string) error {
@@ -23851,6 +23928,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			args = []string{"status"}
 		}
 		if err := a.Providers(args); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/oauth":
+		if err := a.OAuth(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/login":
@@ -34413,6 +34494,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Profile\n\nUsage:\n  codog profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--output-format text|json]\n\nShows or switches the active OAuth provider profile used for stored-token refresh.\n",
 			[]string{"active_profile", "profile", "profiles", "oauth_status", "path"},
 			[]string{"ok", "error"},
+			true,
+		), true
+	case "oauth":
+		return localCommandHelpSpec(
+			"oauth",
+			"oauth",
+			"codog oauth pkce | discover ISSUER_URL | provider save|list|show|delete | device start|poll|login | browser start|exchange|login | status [PROFILE] | logout [PROFILE] | token save|show|refresh|revoke|delete [ARGS...]",
+			"OAuth\n\nUsage:\n  codog oauth status [PROFILE]\n  codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...]\n  codog oauth provider list|show NAME|delete NAME\n  codog oauth browser start|exchange|login [ARGS...]\n  codog oauth device start|poll|login [ARGS...]\n  codog oauth token save|show|refresh|revoke|delete [ARGS...]\n  codog login [browser|device] PROFILE\n  codog oauth-refresh [PROFILE]\n  codog logout [PROFILE]\n\nManages OAuth provider profiles and local stored tokens. Status, provider list/show, and token show are local read-only diagnostics; login, refresh, revoke, delete, and provider save/delete mutate local credentials or contact OAuth endpoints.\n",
+			[]string{"profile_name", "profile_configured", "token_present", "ready", "provider_profiles", "token"},
+			[]string{"ready", "missing", "expired", "error"},
 			true,
 		), true
 	case "language":

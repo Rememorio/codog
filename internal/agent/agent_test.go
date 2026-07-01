@@ -214,6 +214,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, *report.MutatesWorkspace)
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"oauth", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "oauth", report.Topic)
+	require.Equal(t, "oauth", report.Command)
+	require.Contains(t, report.Help, "stored tokens")
+	require.Contains(t, report.OutputFields, "token_present")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"metrics", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "metrics", report.Topic)
@@ -712,6 +722,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	debugToolCallSlash, ok := capabilityReportSlash(report, "/debug-tool-call")
 	require.True(t, ok)
 	require.True(t, debugToolCallSlash.ResumeSupported)
+	oauthSlash, ok := capabilityReportSlash(report, "/oauth")
+	require.True(t, ok)
+	require.True(t, oauthSlash.ResumeSupported)
 	cronSlash, ok := capabilityReportSlash(report, "/cron")
 	require.True(t, ok)
 	require.True(t, cronSlash.ResumeSupported)
@@ -1275,6 +1288,21 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	var oauthServer *httptest.Server
+	oauthServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token"}`))
+	}))
+	t.Cleanup(oauthServer.Close)
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "resume-oauth-access-1234",
+		RefreshToken: "resume-oauth-refresh-1234",
+		ExpiresAt:    time.Now().UTC().Add(time.Hour),
+	})
+	require.NoError(t, err)
 	codePath := filepath.Join(workspace, "main.go")
 	require.NoError(t, os.WriteFile(codePath, []byte(`package main
 
@@ -1563,6 +1591,45 @@ func risky(value any) {
 	require.Equal(t, "providers", resumedProviders.Kind)
 	require.Equal(t, "status", resumedProviders.Action)
 	require.Equal(t, "claude-test", resumedProviders.Active.Model)
+
+	out, err = runResumedJSON("/oauth")
+	require.NoError(t, err)
+	var resumedOAuthStatus oauth.Status
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthStatus))
+	require.Equal(t, "default", resumedOAuthStatus.ProfileName)
+	require.True(t, resumedOAuthStatus.ProfileConfigured)
+	require.True(t, resumedOAuthStatus.TokenPresent)
+	require.True(t, resumedOAuthStatus.Ready)
+	require.NotContains(t, out, "resume-oauth-access-1234")
+
+	out, err = runResumedJSON("/oauth", "status", "default", "--json")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthStatus))
+	require.Equal(t, "default", resumedOAuthStatus.ProfileName)
+	require.True(t, resumedOAuthStatus.Ready)
+
+	out, err = runResumedJSON("/oauth", "provider", "list")
+	require.NoError(t, err)
+	var resumedOAuthProfiles []oauth.ProviderProfile
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProfiles))
+	require.Len(t, resumedOAuthProfiles, 1)
+	require.Equal(t, "default", resumedOAuthProfiles[0].Name)
+	require.Equal(t, "client-resume", resumedOAuthProfiles[0].ClientID)
+
+	out, err = runResumedJSON("/oauth", "provider", "show", "default")
+	require.NoError(t, err)
+	var resumedOAuthProfile oauth.ProviderProfile
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProfile))
+	require.Equal(t, "default", resumedOAuthProfile.Name)
+	require.Equal(t, "client-resume", resumedOAuthProfile.ClientID)
+
+	out, err = runResumedJSON("/oauth", "token", "show", "--json")
+	require.NoError(t, err)
+	var resumedOAuthToken oauth.TokenView
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthToken))
+	require.Equal(t, "resu...1234", resumedOAuthToken.AccessToken)
+	require.False(t, resumedOAuthToken.Expired)
+	require.NotContains(t, out, "resume-oauth-access-1234")
 
 	out, err = runResumedJSON("/profile", "list")
 	require.NoError(t, err)
@@ -2434,6 +2501,16 @@ func risky(value any) {
 		{Command: "/rate-limit", Args: []string{"set", "--max-retries", "2"}, Report: "/rate-limit set"},
 		{Command: "/permissions", Args: []string{"read-only"}, Report: "/permissions set"},
 		{Command: "/allowed-tools", Args: []string{"add", "bash"}, Report: "/allowed-tools add"},
+		{Command: "/oauth", Args: []string{"pkce"}, Report: "/oauth pkce"},
+		{Command: "/oauth", Args: []string{"discover", "https://example.test"}, Report: "/oauth discover"},
+		{Command: "/oauth", Args: []string{"provider", "save", "work", "https://example.test", "client"}, Report: "/oauth provider save"},
+		{Command: "/oauth", Args: []string{"provider", "delete", "default"}, Report: "/oauth provider delete"},
+		{Command: "/oauth", Args: []string{"token", "save", "access-token"}, Report: "/oauth token save"},
+		{Command: "/oauth", Args: []string{"token", "refresh"}, Report: "/oauth token refresh"},
+		{Command: "/oauth", Args: []string{"token", "delete"}, Report: "/oauth token delete"},
+		{Command: "/oauth", Args: []string{"logout"}, Report: "/oauth logout"},
+		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
+		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
 		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
 		{Command: "/output-style", Args: []string{"set", "concise"}, Report: "/output-style set"},
@@ -12206,6 +12283,16 @@ func TestOAuthStatusCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"access_token": "stat...1234"`)
 	require.Contains(t, out.String(), `"can_refresh": true`)
 	require.Contains(t, out.String(), `"ready": true`)
+	require.NotContains(t, out.String(), "status-access-1234")
+
+	out.Reset()
+	require.NoError(t, app.OAuth([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"profile_name": "default"`)
+	require.NotContains(t, out.String(), "status-access-1234")
+
+	out.Reset()
+	require.True(t, app.handleSlash(context.Background(), "/oauth status --json", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), `"profile_name": "default"`)
 	require.NotContains(t, out.String(), "status-access-1234")
 }
 
