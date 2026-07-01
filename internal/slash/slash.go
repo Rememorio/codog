@@ -110,7 +110,7 @@ func Specs() []Spec {
 		{Name: "/lint", Usage: "/lint [ARGS...]", Description: "Run go vet for the workspace."},
 		{Name: "/symbols", Usage: "/symbols", Description: "List Go symbols in the workspace."},
 		{Name: "/diagnostics", Usage: "/diagnostics [patterns...]", Description: "Show Go test diagnostics."},
-		{Name: "/map", Usage: "/map [--depth N]", Description: "Show a shallow workspace file map."},
+		{Name: "/map", Usage: "/map [--depth N]", Description: "Show a workspace file map with summary counts."},
 		{Name: "/references", Usage: "/references SYMBOL", Description: "Find references to a symbol."},
 		{Name: "/definition", Usage: "/definition SYMBOL", Description: "Find the definition of a symbol."},
 		{Name: "/hover", Usage: "/hover SYMBOL", Description: "Show definition context for a symbol."},

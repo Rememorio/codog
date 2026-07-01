@@ -22207,10 +22207,21 @@ type diagnosticsReport struct {
 }
 
 type mapReport struct {
-	Kind    string               `json:"kind"`
-	Total   int                  `json:"total"`
-	Depth   int                  `json:"depth"`
-	Entries []codeintel.MapEntry `json:"entries"`
+	Kind       string               `json:"kind"`
+	Total      int                  `json:"total"`
+	Depth      int                  `json:"depth"`
+	Limit      int                  `json:"limit"`
+	FileCount  int                  `json:"file_count"`
+	DirCount   int                  `json:"dir_count"`
+	Truncated  bool                 `json:"truncated"`
+	Extensions []mapSummaryItem     `json:"extensions,omitempty"`
+	TopLevel   []mapSummaryItem     `json:"top_level,omitempty"`
+	Entries    []codeintel.MapEntry `json:"entries"`
+}
+
+type mapSummaryItem struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 type referencesReport struct {
@@ -22302,11 +22313,19 @@ func (a *App) Map(args []string) error {
 	if len(rest) != 0 {
 		return fmt.Errorf("unexpected map argument %q", rest[0])
 	}
-	entries, err := codeintel.CodeMap(a.Workspace, depth, limit)
+	scanLimit := limit
+	if scanLimit > 0 {
+		scanLimit++
+	}
+	entries, err := codeintel.CodeMap(a.Workspace, depth, scanLimit)
 	if err != nil {
 		return err
 	}
-	report := mapReport{Kind: "map", Total: len(entries), Depth: depth, Entries: entries}
+	truncated := limit > 0 && len(entries) > limit
+	if truncated {
+		entries = entries[:limit]
+	}
+	report := buildMapReport(entries, depth, limit, truncated)
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -22314,6 +22333,66 @@ func (a *App) Map(args []string) error {
 	}
 	renderMap(a.Out, report)
 	return nil
+}
+
+func buildMapReport(entries []codeintel.MapEntry, depth int, limit int, truncated bool) mapReport {
+	report := mapReport{
+		Kind:      "map",
+		Total:     len(entries),
+		Depth:     depth,
+		Limit:     limit,
+		Truncated: truncated,
+		Entries:   entries,
+	}
+	extensions := map[string]int{}
+	topLevel := map[string]int{}
+	for _, entry := range entries {
+		if entry.Type == "dir" {
+			report.DirCount++
+		} else {
+			report.FileCount++
+			ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(entry.Path)), ".")
+			if ext == "" {
+				ext = "[none]"
+			}
+			extensions[ext]++
+		}
+		top := firstMapPathSegment(entry.Path)
+		if top != "" {
+			topLevel[top]++
+		}
+	}
+	report.Extensions = sortedMapSummaryItems(extensions)
+	report.TopLevel = sortedMapSummaryItems(topLevel)
+	return report
+}
+
+func firstMapPathSegment(path string) string {
+	path = strings.Trim(strings.TrimSpace(filepath.ToSlash(path)), "/")
+	if path == "" {
+		return ""
+	}
+	if before, _, ok := strings.Cut(path, "/"); ok {
+		return before
+	}
+	return path
+}
+
+func sortedMapSummaryItems(counts map[string]int) []mapSummaryItem {
+	if len(counts) == 0 {
+		return nil
+	}
+	items := make([]mapSummaryItem, 0, len(counts))
+	for name, count := range counts {
+		items = append(items, mapSummaryItem{Name: name, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		return items[i].Name < items[j].Name
+	})
+	return items
 }
 
 func (a *App) References(args []string) error {
@@ -22590,9 +22669,28 @@ func renderDiagnostics(out io.Writer, report diagnosticsReport) {
 func renderMap(out io.Writer, report mapReport) {
 	fmt.Fprintln(out, "Map")
 	fmt.Fprintf(out, "  Entries          %d\n", report.Total)
+	fmt.Fprintf(out, "  Files            %d\n", report.FileCount)
+	fmt.Fprintf(out, "  Directories      %d\n", report.DirCount)
+	fmt.Fprintf(out, "  Depth            %d\n", report.Depth)
+	fmt.Fprintf(out, "  Limit            %d\n", report.Limit)
+	fmt.Fprintf(out, "  Truncated        %t\n", report.Truncated)
+	if len(report.Extensions) > 0 {
+		fmt.Fprintf(out, "  Extensions       %s\n", renderMapSummaryInline(report.Extensions))
+	}
+	if len(report.TopLevel) > 0 {
+		fmt.Fprintf(out, "  Top level        %s\n", renderMapSummaryInline(report.TopLevel))
+	}
 	for _, entry := range report.Entries {
 		fmt.Fprintf(out, "%s\t%s\n", entry.Type, entry.Path)
 	}
+}
+
+func renderMapSummaryInline(items []mapSummaryItem) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		parts = append(parts, fmt.Sprintf("%s=%d", item.Name, item.Count))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func renderReferences(out io.Writer, report referencesReport) {

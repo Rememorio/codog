@@ -6336,7 +6336,22 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 
 	require.NoError(t, app.Map([]string{"--depth", "1"}))
 	require.Contains(t, out.String(), "Map")
+	require.Contains(t, out.String(), "Files")
+	require.Contains(t, out.String(), "Directories")
+	require.Contains(t, out.String(), "Extensions")
+	require.Contains(t, out.String(), "Top level")
 	require.Contains(t, out.String(), "file\tgo.mod")
+	out.Reset()
+
+	require.NoError(t, app.Map([]string{"--depth", "2", "--limit", "2", "--json"}))
+	var mapJSON mapReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &mapJSON))
+	require.Equal(t, "map", mapJSON.Kind)
+	require.Equal(t, 2, mapJSON.Total)
+	require.Equal(t, 2, mapJSON.Limit)
+	require.True(t, mapJSON.Truncated)
+	require.Greater(t, mapJSON.FileCount+mapJSON.DirCount, 0)
+	require.NotEmpty(t, mapJSON.TopLevel)
 	out.Reset()
 
 	require.NoError(t, app.Diagnostics(context.Background(), []string{"./..."}))
