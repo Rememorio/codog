@@ -246,6 +246,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/remote-env")
 	require.Contains(t, names, "/remote-setup")
 	require.Contains(t, names, "/web-setup")
+	require.Contains(t, names, "/setup")
 	require.NotContains(t, names, "/commit")
 	require.NotContains(t, names, "/capabilities")
 	require.Greater(t, len(names), 70)

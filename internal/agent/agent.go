@@ -19837,6 +19837,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.State(resumeSlashArgs("state", args, format))
 	case "/onboarding":
 		return a.Onboarding(resumeSlashArgs("onboarding", args, format))
+	case "/setup":
+		return a.runResumedSetupSlash(ctx, resumeSlashArgs("setup", args, format), format)
 	case "/doctor":
 		return a.Doctor(resumeSlashArgs("doctor", args, format))
 	case "/system-prompt":
@@ -20096,6 +20098,26 @@ func (a *App) runResumedTerminalSetupSlash(args []string, format string) error {
 		return a.TerminalSetup(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/terminal-setup", req.Action), format)
+	}
+}
+
+func (a *App) runResumedSetupSlash(ctx context.Context, args []string, format string) error {
+	req, err := parseSetupArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+		return a.Setup(ctx, args)
+	case "terminal":
+		switch req.TerminalAction {
+		case "status", "snippet", "print":
+			return a.Setup(ctx, args)
+		default:
+			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/setup terminal", req.TerminalAction), format)
+		}
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/setup", req.Action), format)
 	}
 }
 

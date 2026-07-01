@@ -312,6 +312,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/search":             true,
 	"/security-review":    true,
 	"/session":            true,
+	"/setup":              true,
 	"/settings":           true,
 	"/share":              true,
 	"/skills":             true,

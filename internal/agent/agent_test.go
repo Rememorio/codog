@@ -714,6 +714,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	hooksSlash, ok := capabilityReportSlash(report, "/hooks")
 	require.True(t, ok)
 	require.True(t, hooksSlash.ResumeSupported)
+	setupSlash, ok := capabilityReportSlash(report, "/setup")
+	require.True(t, ok)
+	require.True(t, setupSlash.ResumeSupported)
 	terminalSetupSlash, ok := capabilityReportSlash(report, "/terminal-setup")
 	require.True(t, ok)
 	require.True(t, terminalSetupSlash.ResumeSupported)
@@ -1318,6 +1321,7 @@ func risky(value any) {
 		TaskID: "missing-task",
 	}}, []string{"missing-task"})
 	require.NoError(t, err)
+	terminalProfilePath := filepath.Join(workspace, ".zshrc")
 
 	oldWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -1714,6 +1718,27 @@ func risky(value any) {
 	require.Equal(t, "onboarding", resumedOnboarding.Kind)
 	require.NotEmpty(t, resumedOnboarding.Checks)
 
+	out, err = runResumedJSON("/setup", "status", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedSetup setupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSetup))
+	require.Equal(t, "setup", resumedSetup.Kind)
+	require.Equal(t, "status", resumedSetup.Action)
+	require.NotNil(t, resumedSetup.Terminal)
+	require.Equal(t, "status", resumedSetup.Terminal.Action)
+	require.Equal(t, "zsh", resumedSetup.Terminal.Shell)
+	require.Equal(t, terminalProfilePath, resumedSetup.Terminal.Path)
+
+	out, err = runResumedJSON("/setup", "terminal", "snippet", "--shell", "zsh")
+	require.NoError(t, err)
+	var resumedSetupTerminal setupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSetupTerminal))
+	require.Equal(t, "setup", resumedSetupTerminal.Kind)
+	require.Equal(t, "terminal", resumedSetupTerminal.Action)
+	require.NotNil(t, resumedSetupTerminal.Terminal)
+	require.Equal(t, "snippet", resumedSetupTerminal.Terminal.Action)
+	require.Contains(t, resumedSetupTerminal.Terminal.Snippet, "codog_statusline")
+
 	out, err = runResumedJSON("/system-prompt")
 	require.NoError(t, err)
 	var resumedSystemPrompt struct {
@@ -1737,7 +1762,6 @@ func risky(value any) {
 	require.Equal(t, "bash", resumedToolDetails.Tool.Name)
 	require.Contains(t, resumedToolDetails.Aliases, "Bash")
 
-	terminalProfilePath := filepath.Join(workspace, ".zshrc")
 	out, err = runResumedJSON("/terminal-setup", "status", "--shell", "zsh", "--path", terminalProfilePath)
 	require.NoError(t, err)
 	var resumedTerminalSetup terminalsetup.Report
@@ -2208,6 +2232,10 @@ func risky(value any) {
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
+		{Command: "/setup", Args: []string{"init"}, Report: "/setup init"},
+		{Command: "/setup", Args: []string{"all"}, Report: "/setup all"},
+		{Command: "/setup", Args: []string{"terminal", "install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/setup terminal install"},
+		{Command: "/setup", Args: []string{"terminal", "uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/setup terminal uninstall"},
 		{Command: "/terminal-setup", Args: []string{"install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup install"},
 		{Command: "/terminal-setup", Args: []string{"uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup uninstall"},
 		{Command: "/remote-env", Args: []string{"set", "--enabled", "off"}, Report: "/remote-env set"},
