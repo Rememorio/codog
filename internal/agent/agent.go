@@ -413,6 +413,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Reset(rest)
 	case "model":
 		return app.Model(rest)
+	case "models":
+		return app.Models(rest)
 	case "api":
 		return app.API(rest)
 	case "api-key":
@@ -19376,6 +19378,7 @@ func builtInCommandNames() []string {
 		"mock-limits",
 		"mock-server",
 		"model",
+		"models",
 		"node",
 		"notifications",
 		"notebook-edit",
@@ -24860,7 +24863,31 @@ type modelReport struct {
 	RequestedModel string `json:"requested_model,omitempty"`
 }
 
+type modelAliasReport struct {
+	Name  string `json:"name"`
+	Model string `json:"model"`
+}
+
+type modelsReport struct {
+	Kind                    string             `json:"kind"`
+	Action                  string             `json:"action"`
+	Status                  string             `json:"status"`
+	DefaultModel            string             `json:"default_model"`
+	Aliases                 []modelAliasReport `json:"aliases"`
+	ConfiguredModel         string             `json:"configured_model"`
+	ResolvedConfiguredModel string             `json:"resolved_configured_model"`
+	ModelCommand            string             `json:"model_command"`
+	ConfigCommand           string             `json:"config_command"`
+	LocalOnly               bool               `json:"local_only"`
+	RequiresCredentials     bool               `json:"requires_credentials"`
+	RequiresProviderRequest bool               `json:"requires_provider_request"`
+	Message                 string             `json:"message"`
+}
+
 func (a *App) Model(args []string) error {
+	if modelHelpRequested(args) {
+		return renderCommandHelpTopic(a.Out, "models", modelHelpArgsWithoutHelp(args), "text")
+	}
 	req, err := parseModelArgs(args)
 	if err != nil {
 		return err
@@ -24882,6 +24909,46 @@ func (a *App) Model(args []string) error {
 		report.Previous = ""
 	}
 	return renderModelReport(a.Out, report, req.Format)
+}
+
+func (a *App) Models(args []string) error {
+	format, action, err := parseModelsArgs(args)
+	if err != nil {
+		return err
+	}
+	if action == "help" {
+		return renderCommandHelpTopic(a.Out, "models", modelHelpArgsWithoutHelp(args), format)
+	}
+	if action != "" {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "models",
+			Action:    action,
+			Status:    "error",
+			ErrorKind: "unsupported_models_action",
+			Message:   fmt.Sprintf("unsupported models action %q", action),
+			Hint:      "Usage: codog models [help] [--output-format text|json].",
+		}, format)
+	}
+	report := modelsReport{
+		Kind:                    "models",
+		Action:                  "list",
+		Status:                  "ok",
+		DefaultModel:            config.DefaultModel,
+		Aliases:                 modelAliases(),
+		ConfiguredModel:         a.Config.Model,
+		ResolvedConfiguredModel: resolveModelAlias(a.Config.Model),
+		ModelCommand:            "codog --model MODEL prompt \"...\"",
+		ConfigCommand:           "codog model MODEL",
+		LocalOnly:               true,
+		RequiresCredentials:     false,
+		RequiresProviderRequest: false,
+		Message:                 "Use --model MODEL for one run or `codog model MODEL` to change the current configured model.",
+	}
+	if strings.TrimSpace(report.ConfiguredModel) == "" {
+		report.ConfiguredModel = config.DefaultModel
+		report.ResolvedConfiguredModel = config.DefaultModel
+	}
+	return renderModelsReport(a.Out, report, format)
 }
 
 func (a *App) ResumedModel(args []string) error {
@@ -24928,6 +24995,74 @@ func parseModelArgs(args []string) (modelRequest, error) {
 	return req, nil
 }
 
+func parseModelsArgs(args []string) (string, string, error) {
+	format := "text"
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", "", errors.New("models output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return "", "", fmt.Errorf("unknown models flag %q", arg)
+		default:
+			positionals = append(positionals, strings.ToLower(strings.TrimSpace(arg)))
+		}
+	}
+	if err := validateTextOrJSON(format, "models"); err != nil {
+		return "", "", err
+	}
+	if len(positionals) == 0 {
+		return format, "", nil
+	}
+	if len(positionals) == 1 {
+		return format, positionals[0], nil
+	}
+	return format, strings.Join(positionals, " "), nil
+}
+
+func modelHelpRequested(args []string) bool {
+	meaningful := routeMeaningfulArgs(args)
+	return len(meaningful) == 1 && strings.EqualFold(strings.TrimSpace(meaningful[0]), "help")
+}
+
+func modelHelpArgsWithoutHelp(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.EqualFold(strings.TrimSpace(arg), "help") || isHelpFlag(arg) {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+func modelAliases() []modelAliasReport {
+	return []modelAliasReport{
+		{Name: "opus", Model: "claude-opus"},
+		{Name: "sonnet", Model: config.DefaultModel},
+		{Name: "haiku", Model: "claude-haiku"},
+	}
+}
+
+func resolveModelAlias(model string) string {
+	trimmed := strings.TrimSpace(model)
+	for _, alias := range modelAliases() {
+		if strings.EqualFold(trimmed, alias.Name) {
+			return alias.Model
+		}
+	}
+	return trimmed
+}
+
 func renderModelReport(out io.Writer, report modelReport, format string) error {
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -24938,6 +25073,28 @@ func renderModelReport(out io.Writer, report modelReport, format string) error {
 	if report.RequestedModel != "" {
 		fmt.Fprintf(out, "requested_model=%s\n", report.RequestedModel)
 	}
+	return nil
+}
+
+func renderModelsReport(out io.Writer, report modelsReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Models")
+	fmt.Fprintf(out, "  Default          %s\n", report.DefaultModel)
+	aliasParts := make([]string, 0, len(report.Aliases))
+	for _, alias := range report.Aliases {
+		aliasParts = append(aliasParts, alias.Name+" -> "+alias.Model)
+	}
+	fmt.Fprintf(out, "  Built-in aliases %s\n", strings.Join(aliasParts, ", "))
+	fmt.Fprintf(out, "  Config model     %s", report.ConfiguredModel)
+	if report.ResolvedConfiguredModel != "" && report.ResolvedConfiguredModel != report.ConfiguredModel {
+		fmt.Fprintf(out, " -> %s", report.ResolvedConfiguredModel)
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "  Usage            %s\n", report.ModelCommand)
 	return nil
 }
 
@@ -35285,7 +35442,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
@@ -35852,6 +36009,19 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "models":
+		spec := localCommandHelpSpec(
+			"models",
+			"models",
+			"codog models [help] [--output-format text|json]",
+			"Models\n\nUsage:\n  codog models [help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, and the current configured model without making a provider request.\n",
+			[]string{"default_model", "aliases", "configured_model", "resolved_configured_model", "requires_provider_request"},
+			[]string{"ok", "error"},
+			false,
+		)
+		spec.Aliases = []string{"model help"}
+		spec.Related = []string{"codog model MODEL", "codog providers status", "codog config model"}
+		return spec, true
 	case "temperature":
 		return localCommandHelpSpec(
 			"temperature",
@@ -36471,7 +36641,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] model [NAME]
+  %s [flags] model [NAME] | models [help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]

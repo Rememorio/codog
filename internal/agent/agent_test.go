@@ -415,6 +415,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "api",
 		},
 		{
+			name:  "models local help",
+			args:  []string{"--config", configPath, "models", "--help", "--output-format", "json"},
+			topic: "models",
+		},
+		{
 			name:  "cache local help",
 			args:  []string{"--config", configPath, "cache", "--help", "--output-format", "json"},
 			topic: "cache",
@@ -1232,6 +1237,43 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "set", setModel.Action)
 	require.Equal(t, "claude-json", setModel.Model)
 	require.NotEmpty(t, setModel.Previous)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var models modelsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &models))
+	require.Equal(t, "models", models.Kind)
+	require.Equal(t, "list", models.Action)
+	require.Equal(t, "ok", models.Status)
+	require.Equal(t, config.DefaultModel, models.DefaultModel)
+	require.NotEmpty(t, models.Aliases)
+	require.False(t, models.RequiresCredentials)
+	require.False(t, models.RequiresProviderRequest)
+	require.True(t, models.LocalOnly)
+	require.True(t, commandAcceptsGlobalOutputFormat("models"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "model", "help", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var modelHelp helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &modelHelp))
+	require.Equal(t, "models", modelHelp.Topic)
+	require.Equal(t, "models", modelHelp.Command)
+	require.NotNil(t, modelHelp.RequiresProviderRequest)
+	require.False(t, *modelHelp.RequiresProviderRequest)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models", "bogus"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var modelsError actionErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &modelsError))
+	require.Equal(t, "models", modelsError.Kind)
+	require.Equal(t, "bogus", modelsError.Action)
+	require.Equal(t, "unsupported_models_action", modelsError.ErrorKind)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/max-tokens"}, config.FlagOverrides{})
