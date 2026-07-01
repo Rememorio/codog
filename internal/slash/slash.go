@@ -319,6 +319,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/settings":           true,
 	"/share":              true,
 	"/skills":             true,
+	"/speak":              true,
 	"/stash":              true,
 	"/state":              true,
 	"/stats":              true,
@@ -346,6 +347,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/version":            true,
 	"/web-setup":          true,
 	"/vim":                true,
+	"/voice":              true,
 	"/workspace":          true,
 }
 

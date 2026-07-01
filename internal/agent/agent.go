@@ -19801,6 +19801,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedEffortSlash(resumeSlashArgs("reasoning", args, format), "reasoning", format)
 	case "/fast":
 		return a.runResumedFastSlash(resumeSlashArgs("fast", args, format), format)
+	case "/voice":
+		return a.runResumedVoiceSlash(resumeSlashArgs("voice", args, format), format)
+	case "/speak":
+		return a.runResumedSpeakSlash(ctx, resumeSlashArgs("speak", args, format), resumed, format)
 	case "/vim":
 		return a.runResumedVimSlash(resumeSlashArgs("vim", args, format), format)
 	case "/chrome":
@@ -20158,6 +20162,28 @@ func (a *App) runResumedAdvisorSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/advisor", req.Action), format)
 	}
 	return a.Advisor(args)
+}
+
+func (a *App) runResumedVoiceSlash(args []string, format string) error {
+	req, err := parseVoiceArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/voice", req.Action), format)
+	}
+	return a.Voice(args)
+}
+
+func (a *App) runResumedSpeakSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {
+	req, err := parseSpeakArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/speak", req.Action), format)
+	}
+	return a.Speak(ctx, args, overrides)
 }
 
 func (a *App) runResumedSandboxToggleSlash(args []string, format string) error {

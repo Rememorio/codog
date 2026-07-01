@@ -250,7 +250,10 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/setup")
 	require.Contains(t, names, "/reset")
 	require.Contains(t, names, "/sandbox-toggle")
+	require.Contains(t, names, "/speak")
+	require.Contains(t, names, "/voice")
 	require.NotContains(t, names, "/commit")
+	require.NotContains(t, names, "/listen")
 	require.NotContains(t, names, "/capabilities")
 	require.Greater(t, len(names), 70)
 

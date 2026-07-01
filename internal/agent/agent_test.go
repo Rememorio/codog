@@ -726,6 +726,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	sandboxToggleSlash, ok := capabilityReportSlash(report, "/sandbox-toggle")
 	require.True(t, ok)
 	require.True(t, sandboxToggleSlash.ResumeSupported)
+	speakSlash, ok := capabilityReportSlash(report, "/speak")
+	require.True(t, ok)
+	require.True(t, speakSlash.ResumeSupported)
 	terminalSetupSlash, ok := capabilityReportSlash(report, "/terminal-setup")
 	require.True(t, ok)
 	require.True(t, terminalSetupSlash.ResumeSupported)
@@ -741,6 +744,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	webSetupSlash, ok := capabilityReportSlash(report, "/web-setup")
 	require.True(t, ok)
 	require.True(t, webSetupSlash.ResumeSupported)
+	voiceSlash, ok := capabilityReportSlash(report, "/voice")
+	require.True(t, ok)
+	require.True(t, voiceSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1304,6 +1310,9 @@ func risky(value any) {
 		"theme":            "dark",
 		"reasoning_effort": "high",
 		"fast_mode":        true,
+		"speech_command":   "codog-test-speech-helper",
+		"voice_command":    "codog-test-voice-helper",
+		"voice_enabled":    true,
 		"editorMode":       "vim",
 		"privacy_settings": map[string]any{
 			"telemetry_enabled":      true,
@@ -1643,6 +1652,25 @@ func risky(value any) {
 	require.Equal(t, "fast", resumedFast.Kind)
 	require.Equal(t, "status", resumedFast.Action)
 	require.True(t, resumedFast.Enabled)
+
+	out, err = runResumedJSON("/voice")
+	require.NoError(t, err)
+	var resumedVoice voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoice))
+	require.Equal(t, "voice", resumedVoice.Kind)
+	require.Equal(t, "status", resumedVoice.Action)
+	require.True(t, resumedVoice.Enabled)
+	require.True(t, resumedVoice.CommandConfigured)
+	require.Equal(t, "codog-test-voice-helper", resumedVoice.Command)
+
+	out, err = runResumedJSON("/speak", "status")
+	require.NoError(t, err)
+	var resumedSpeak speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeak))
+	require.Equal(t, "speak", resumedSpeak.Kind)
+	require.Equal(t, "status", resumedSpeak.Action)
+	require.True(t, resumedSpeak.CommandConfigured)
+	require.Equal(t, "codog-test-speech-helper", resumedSpeak.Command)
 
 	out, err = runResumedJSON("/vim")
 	require.NoError(t, err)
@@ -2257,6 +2285,20 @@ func risky(value any) {
 		{Command: "/language", Args: []string{"French"}, Report: "/language set"},
 		{Command: "/effort", Args: []string{"low"}, Report: "/effort set"},
 		{Command: "/fast", Args: []string{"toggle"}, Report: "/fast toggle"},
+		{Command: "/voice", Args: []string{"set-command", "say"}, Report: "/voice set-command"},
+		{Command: "/voice", Args: []string{"on"}, Report: "/voice on"},
+		{Command: "/voice", Args: []string{"off"}, Report: "/voice off"},
+		{Command: "/voice", Args: []string{"toggle"}, Report: "/voice toggle"},
+		{Command: "/voice", Args: []string{"test"}, Report: "/voice test"},
+		{Command: "/voice", Args: []string{"listen"}, Report: "/voice listen"},
+		{Command: "/voice", Args: []string{"clear"}, Report: "/voice clear"},
+		{Command: "/listen", Args: nil, Report: "/listen"},
+		{Command: "/speak", Args: nil, Report: "/speak speak"},
+		{Command: "/speak", Args: []string{"hello"}, Report: "/speak speak"},
+		{Command: "/speak", Args: []string{"last"}, Report: "/speak speak"},
+		{Command: "/speak", Args: []string{"test"}, Report: "/speak test"},
+		{Command: "/speak", Args: []string{"set-command", "say"}, Report: "/speak set-command"},
+		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
 		{Command: "/vim", Args: []string{"toggle"}, Report: "/vim toggle"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
 		{Command: "/notifications", Args: []string{"on"}, Report: "/notifications on"},
