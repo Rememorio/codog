@@ -10744,8 +10744,10 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review skill body ${CLAUDE_SESSION_ID}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "deploy.md"), []byte("Deploy command body"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill body"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -10771,6 +10773,8 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 
 	require.NoError(t, app.Skills([]string{"list", "--json"}))
 	require.Contains(t, out.String(), `"name": "team:audit"`)
+	require.Contains(t, out.String(), `"name": "deploy"`)
+	require.Contains(t, out.String(), `"id": "legacy_commands_dir"`)
 	require.Contains(t, out.String(), `"name": "debug"`)
 	require.Contains(t, out.String(), `"source": "bundled"`)
 	out.Reset()
@@ -10791,10 +10795,18 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	requireSkillSourceRoot(t, sourceReport.Roots, "user", filepath.Join(configHome, "skills"), true)
 	requireSkillSourceRoot(t, sourceReport.Roots, "claude", filepath.Join(workspace, ".claude", "skills"), true)
 	requireSkillSourceRoot(t, sourceReport.Roots, "workspace", filepath.Join(workspace, ".codog", "skills"), false)
+	commandRoot := skillSourceRootByPath(sourceReport.Roots, filepath.Join(workspace, ".codog", "commands"))
+	require.NotNil(t, commandRoot.Origin)
+	require.Equal(t, "legacy_commands_dir", commandRoot.Origin.ID)
+	require.Equal(t, "legacy /commands", commandRoot.Origin.DetailLabel)
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"show", "review"}))
 	require.Equal(t, "Review skill body ${CLAUDE_SESSION_ID}\n", out.String())
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"show", "deploy"}))
+	require.Equal(t, "Deploy command body\n", out.String())
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"invoke", "debug", "failing test"}))
@@ -10832,6 +10844,15 @@ func requireSkillSourceRoot(t *testing.T, roots []skills.DiscoveryRoot, source s
 		}
 	}
 	require.Failf(t, "skill source root not found", "source=%s path=%s roots=%v", source, path, roots)
+}
+
+func skillSourceRootByPath(roots []skills.DiscoveryRoot, path string) skills.DiscoveryRoot {
+	for _, root := range roots {
+		if root.Path == path {
+			return root
+		}
+	}
+	return skills.DiscoveryRoot{}
 }
 
 func TestSkillsListMarksShadowedEntries(t *testing.T) {
@@ -10881,9 +10902,9 @@ Mismatch body.`), 0o644))
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"list"}))
-	require.Contains(t, out.String(), "debug\tuser\tactive")
-	require.Contains(t, out.String(), "debug\tbundled\tshadowed by user")
-	require.Contains(t, out.String(), "mismatch\tuser\tactive\t\tname drift: external-review")
+	require.Contains(t, out.String(), "debug\tuser\tskills_dir\tactive")
+	require.Contains(t, out.String(), "debug\tbundled\tskills_dir\tshadowed by user")
+	require.Contains(t, out.String(), "mismatch\tuser\tskills_dir\tactive\t\tname drift: external-review")
 }
 
 func skillReportEntry(all []skills.Skill, name string, source string) skills.Skill {

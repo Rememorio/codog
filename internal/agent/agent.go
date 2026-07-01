@@ -29466,6 +29466,7 @@ func (a *App) Skills(args []string) error {
 				"kind":     "skill_invocation",
 				"name":     skill.Name,
 				"source":   skill.Source,
+				"origin":   skill.Origin,
 				"path":     skill.Path,
 				"rendered": rendered,
 			}, "", "  ")
@@ -29781,7 +29782,7 @@ func (a *App) listSkills(args []string) error {
 		if skill.NameDrift {
 			drift = "name drift: " + skill.DisplayName
 		}
-		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\t%s\n", skill.Name, skill.Source, status, enabled, drift, skill.Path)
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", skill.Name, skill.Source, skillOriginText(skill.Origin), status, enabled, drift, skill.Path)
 	}
 	return nil
 }
@@ -29809,9 +29810,19 @@ func (a *App) skillSources(args []string) error {
 		if root.Exists {
 			state = "present"
 		}
-		fmt.Fprintf(a.Out, "  %-11s %-8s %s\n", root.Source, state, root.Path)
+		fmt.Fprintf(a.Out, "  %-11s %-22s %-8s %s\n", root.Source, skillOriginText(root.Origin), state, root.Path)
 	}
 	return nil
+}
+
+func skillOriginText(origin *skills.Origin) string {
+	if origin == nil || strings.TrimSpace(origin.ID) == "" {
+		return "skills_dir"
+	}
+	if strings.TrimSpace(origin.DetailLabel) == "" {
+		return origin.ID
+	}
+	return origin.ID + " (" + origin.DetailLabel + ")"
 }
 
 func filterSkills(all []skills.Skill, filter string) []skills.Skill {
@@ -35110,8 +35121,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"skills",
 			"skills",
 			"codog skill|skills [list|sources|show|invoke|add|install|uninstall|help]",
-			"Skills\n\nUsage:\n  codog skills [list|sources|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
-			[]string{"skills", "roots", "name", "path", "body", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
+			"Skills\n\nUsage:\n  codog skills [list|sources|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
+			[]string{"skills", "roots", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
 			[]string{"ok", "error"},
 			true,
 		)

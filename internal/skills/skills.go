@@ -37,19 +37,26 @@ type Skill struct {
 	FrontmatterError       string   `json:"frontmatter_error,omitempty"`
 	Body                   string   `json:"body,omitempty"`
 	Source                 string   `json:"source"`
+	Origin                 *Origin  `json:"origin,omitempty"`
 	Active                 bool     `json:"active"`
 	ShadowedBy             string   `json:"shadowed_by,omitempty"`
 	ShadowedByPath         string   `json:"shadowed_by_path,omitempty"`
 	NameDrift              bool     `json:"metadata_drift,omitempty"`
 }
 
+type Origin struct {
+	ID          string `json:"id"`
+	DetailLabel string `json:"detail_label,omitempty"`
+}
+
 type DiscoveryRoot struct {
-	Source     string `json:"source"`
-	Label      string `json:"label"`
-	Path       string `json:"path"`
-	Exists     bool   `json:"exists"`
-	PluginID   string `json:"plugin_id,omitempty"`
-	PluginRoot string `json:"plugin_root,omitempty"`
+	Source     string  `json:"source"`
+	Label      string  `json:"label"`
+	Path       string  `json:"path"`
+	Exists     bool    `json:"exists"`
+	Origin     *Origin `json:"origin,omitempty"`
+	PluginID   string  `json:"plugin_id,omitempty"`
+	PluginRoot string  `json:"plugin_root,omitempty"`
 }
 
 type MetadataDrift struct {
@@ -79,6 +86,12 @@ type UninstallReport struct {
 }
 
 var ErrNotFound = errors.New("skill not found")
+
+const (
+	originSkillsDir          = "skills_dir"
+	originLegacyCommandsDir  = "legacy_commands_dir"
+	legacyCommandsDetailText = "legacy /commands"
+)
 
 type SourceNotFoundError struct {
 	Source string
@@ -285,11 +298,13 @@ Check that claims match current behavior, examples are portable, links or paths 
 }
 
 type root struct {
-	path       string
-	source     string
-	prefix     string
-	pluginRoot string
-	pluginData string
+	path         string
+	source       string
+	prefix       string
+	originID     string
+	originDetail string
+	pluginRoot   string
+	pluginData   string
 }
 
 func Load(configHome, workspace string) ([]Skill, error) {
@@ -331,10 +346,17 @@ func Load(configHome, workspace string) ([]Skill, error) {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if strings.EqualFold(out[i].Name, out[j].Name) {
-			if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
-				return out[i].Path < out[j].Path
+			leftSource := sourceRank(out[i].Source)
+			rightSource := sourceRank(out[j].Source)
+			if leftSource == rightSource {
+				leftOrigin := originRank(out[i].Origin)
+				rightOrigin := originRank(out[j].Origin)
+				if leftOrigin == rightOrigin {
+					return out[i].Path < out[j].Path
+				}
+				return leftOrigin < rightOrigin
 			}
-			return sourceRank(out[i].Source) < sourceRank(out[j].Source)
+			return leftSource < rightSource
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
@@ -361,13 +383,19 @@ func Sources(configHome, workspace string) []DiscoveryRoot {
 		Label:  "Bundled skills",
 		Path:   "builtin://skills",
 		Exists: true,
+		Origin: newOrigin(originSkillsDir, ""),
 	}}
 	for _, root := range roots(configHome, workspace) {
 		out = append(out, discoveryRoot(root))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
-			return out[i].Path < out[j].Path
+			leftOrigin := originRank(out[i].Origin)
+			rightOrigin := originRank(out[j].Origin)
+			if leftOrigin == rightOrigin {
+				return out[i].Path < out[j].Path
+			}
+			return leftOrigin < rightOrigin
 		}
 		return sourceRank(out[i].Source) < sourceRank(out[j].Source)
 	})
@@ -423,6 +451,7 @@ func discoveryRoot(root root) DiscoveryRoot {
 		Label:      sourceLabel(root.source),
 		Path:       root.path,
 		Exists:     exists,
+		Origin:     rootOrigin(root),
 		PluginID:   pluginIDFromSource(root.source),
 		PluginRoot: root.pluginRoot,
 	}
@@ -455,9 +484,12 @@ func pluginIDFromSource(source string) string {
 
 func roots(configHome, workspace string) []root {
 	out := []root{
-		{path: filepath.Join(configHome, "skills"), source: "user"},
-		{path: filepath.Join(workspace, ".codog", "skills"), source: "workspace"},
-		{path: filepath.Join(workspace, ".claude", "skills"), source: "claude"},
+		skillRoot(filepath.Join(configHome, "skills"), "user"),
+		skillRoot(filepath.Join(workspace, ".codog", "skills"), "workspace"),
+		skillRoot(filepath.Join(workspace, ".claude", "skills"), "claude"),
+		legacyCommandsRoot(filepath.Join(configHome, "commands"), "user"),
+		legacyCommandsRoot(filepath.Join(workspace, ".codog", "commands"), "workspace"),
+		legacyCommandsRoot(filepath.Join(workspace, ".claude", "commands"), "claude"),
 	}
 	manifests, err := plugins.Load(workspace)
 	if err != nil {
@@ -469,6 +501,14 @@ func roots(configHome, workspace string) []root {
 	return out
 }
 
+func skillRoot(path string, source string) root {
+	return root{path: path, source: source, originID: originSkillsDir}
+}
+
+func legacyCommandsRoot(path string, source string) root {
+	return root{path: path, source: source, originID: originLegacyCommandsDir, originDetail: legacyCommandsDetailText}
+}
+
 func skillRootsForPlugin(manifest plugins.Manifest) []root {
 	if !manifest.Enabled {
 		return nil
@@ -477,6 +517,7 @@ func skillRootsForPlugin(manifest plugins.Manifest) []root {
 		path:       filepath.Join(manifest.Root, "skills"),
 		source:     "plugin:" + manifest.ID,
 		prefix:     manifest.ID,
+		originID:   originSkillsDir,
 		pluginRoot: manifest.Root,
 		pluginData: plugins.DataDirForManifest(manifest),
 	}}
@@ -506,7 +547,7 @@ func skillRootsForPlugin(manifest plugins.Manifest) []root {
 			continue
 		}
 		seen[key] = true
-		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID, pluginRoot: manifest.Root, pluginData: plugins.DataDirForManifest(manifest)})
+		out = append(out, root{path: rootPath, source: "plugin:" + manifest.ID, prefix: manifest.ID, originID: originSkillsDir, pluginRoot: manifest.Root, pluginData: plugins.DataDirForManifest(manifest)})
 	}
 	return out
 }
@@ -520,7 +561,7 @@ func Find(configHome, workspace, name string) (Skill, error) {
 	for _, skill := range all {
 		if strings.EqualFold(skill.Name, name) {
 			candidate := skill
-			if found == nil || sourceRank(candidate.Source) < sourceRank(found.Source) {
+			if found == nil || skillPriority(candidate) < skillPriority(*found) {
 				found = &candidate
 			}
 		}
@@ -745,20 +786,21 @@ func renderPromptBlockWithVariables(skill Skill, variables map[string]string) st
 }
 
 func ParseDocument(name string, path string, source string, text string) Skill {
-	return parseDocumentWithContext(name, path, source, "", "", "", text)
+	return parseDocumentWithContext(name, path, source, "", "", "", newOrigin(originSkillsDir, ""), text)
 }
 
 func parseDocumentFromRoot(name string, path string, root root, text string) Skill {
-	return parseDocumentWithContext(name, path, root.source, skillDir(path), root.pluginRoot, root.pluginData, text)
+	return parseDocumentWithContext(name, path, root.source, skillDir(path), root.pluginRoot, root.pluginData, rootOrigin(root), text)
 }
 
-func parseDocumentWithContext(name string, path string, source string, skillRoot string, pluginRoot string, pluginData string, text string) Skill {
+func parseDocumentWithContext(name string, path string, source string, skillRoot string, pluginRoot string, pluginData string, origin *Origin, text string) Skill {
 	body, values, parseErr := frontmatter.Parse(text)
 	skill := Skill{
 		Name:          name,
 		Path:          path,
 		Body:          body,
 		Source:        source,
+		Origin:        cloneOrigin(origin),
 		Active:        true,
 		SkillDir:      normalizedPathVariable(skillRoot),
 		PluginRoot:    normalizedPathVariable(pluginRoot),
@@ -994,6 +1036,44 @@ func sourceRank(source string) int {
 	default:
 		return 5
 	}
+}
+
+func skillPriority(skill Skill) int {
+	return sourceRank(skill.Source)*10 + originRank(skill.Origin)
+}
+
+func originRank(origin *Origin) int {
+	if origin == nil {
+		return 0
+	}
+	switch strings.TrimSpace(origin.ID) {
+	case "", originSkillsDir:
+		return 0
+	case originLegacyCommandsDir:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func rootOrigin(root root) *Origin {
+	return newOrigin(root.originID, root.originDetail)
+}
+
+func newOrigin(id string, detail string) *Origin {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = originSkillsDir
+	}
+	detail = strings.TrimSpace(detail)
+	return &Origin{ID: id, DetailLabel: detail}
+}
+
+func cloneOrigin(origin *Origin) *Origin {
+	if origin == nil {
+		return newOrigin(originSkillsDir, "")
+	}
+	return newOrigin(origin.ID, origin.DetailLabel)
 }
 
 func escapeAttr(value string) string {
