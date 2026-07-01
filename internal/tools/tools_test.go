@@ -2919,6 +2919,8 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 
 	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`","message":"review logs"}`))
 	require.NoError(t, err)
+	require.Contains(t, updateOut, `"task_id": "`+task.ID+`"`)
+	require.Contains(t, updateOut, `"taskId": "`+task.ID+`"`)
 	require.Contains(t, updateOut, `"message_count": 1`)
 	require.Contains(t, updateOut, `"last_message": "review logs"`)
 
@@ -2960,6 +2962,8 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	stopOut, err := TaskStopTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`"}`))
 	require.NoError(t, err)
 	require.Contains(t, stopOut, task.ID)
+	require.Contains(t, stopOut, `"task_id": "`+task.ID+`"`)
+	require.Contains(t, stopOut, `"message": "Task stopped"`)
 
 	registry := NewRegistryWithOptions(workspace, RegistryOptions{ConfigHome: configHome})
 	info, ok := registry.Info("task_create")

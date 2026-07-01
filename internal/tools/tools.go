@@ -7503,6 +7503,8 @@ func (t TaskUpdateTool) Execute(_ context.Context, input json.RawMessage) (strin
 		last = task.Messages[len(task.Messages)-1].Message
 	}
 	return pretty(map[string]any{
+		"task_id":       task.ID,
+		"taskId":        task.ID,
 		"id":            task.ID,
 		"status":        task.Status,
 		"message_count": len(task.Messages),
@@ -7670,7 +7672,9 @@ func (t TaskStopTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	return pretty(task), nil
+	fields := taskCompatibilityFields(task)
+	fields["message"] = "Task stopped"
+	return pretty(fields), nil
 }
 
 type TaskOutputTool struct {
