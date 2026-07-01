@@ -293,6 +293,7 @@ type Config struct {
 	AdvisorModel        string                     `json:"advisor_model,omitempty"`
 	SystemPrompt        string                     `json:"system_prompt,omitempty"`
 	AppendSystemPrompt  string                     `json:"append_system_prompt,omitempty"`
+	Language            string                     `json:"language,omitempty"`
 	Theme               string                     `json:"theme,omitempty"`
 	EditorMode          string                     `json:"editorMode,omitempty"`
 	ReasoningEffort     string                     `json:"reasoning_effort,omitempty"`
@@ -864,6 +865,9 @@ func merge(dst *Config, src Config) {
 	if src.AppendSystemPrompt != "" {
 		dst.AppendSystemPrompt = joinPromptAppend(dst.AppendSystemPrompt, src.AppendSystemPrompt)
 	}
+	if src.Language != "" {
+		dst.Language = src.Language
+	}
 	if src.Theme != "" {
 		dst.Theme = src.Theme
 	}
@@ -1267,6 +1271,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_APPEND_SYSTEM_PROMPT"); value != "" {
 		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, value)
+	}
+	if value := os.Getenv("CODOG_LANGUAGE"); value != "" {
+		cfg.Language = value
 	}
 	if value := os.Getenv("CODOG_THEME"); value != "" {
 		cfg.Theme = value

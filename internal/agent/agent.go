@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"math"
 	"net/http"
@@ -346,6 +347,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Permissions(rest)
 	case "allowed-tools":
 		return app.AllowedTools(rest)
+	case "language":
+		return app.Language(rest)
 	case "theme":
 		return app.Theme(rest)
 	case "color":
@@ -7762,6 +7765,186 @@ func validateThemeName(name string) error {
 	return nil
 }
 
+type languageRequest struct {
+	Action   string
+	Language string
+	Format   string
+	Target   string
+	Path     string
+}
+
+type languageReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Configured bool   `json:"configured"`
+	Language   string `json:"language"`
+	Previous   string `json:"previous,omitempty"`
+	Path       string `json:"path,omitempty"`
+}
+
+func (a *App) Language(args []string) error {
+	req, err := parseLanguageArgs(args)
+	if err != nil {
+		return err
+	}
+	current := normalizeConfiguredLanguage(a.Config.Language)
+	report := languageReport{
+		Kind:       "language",
+		Action:     req.Action,
+		Status:     "ok",
+		Configured: current != "",
+		Language:   current,
+	}
+	switch req.Action {
+	case "status":
+	case "set":
+		language, err := normalizeLanguageName(req.Language)
+		if err != nil {
+			return err
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		previous := current
+		if _, err := config.SetFileValue(path, "language", language); err != nil {
+			return err
+		}
+		a.Config.Language = language
+		report.Configured = true
+		report.Language = language
+		report.Previous = previous
+		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		previous := current
+		if _, err := config.UnsetFileValue(path, "language"); err != nil {
+			return err
+		}
+		a.Config.Language = ""
+		report.Configured = false
+		report.Language = ""
+		report.Previous = previous
+		report.Path = path
+	default:
+		return fmt.Errorf("unknown language command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderLanguageReport(a.Out, report)
+	return nil
+}
+
+func parseLanguageArgs(args []string) (languageRequest, error) {
+	req := languageRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("language output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("language target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("language config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "language"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected language argument %q", rest[1])
+		}
+		req.Action = "status"
+	case "set":
+		if len(rest) < 2 {
+			return req, errors.New("language name is required")
+		}
+		req.Action = "set"
+		req.Language = strings.Join(rest[1:], " ")
+	case "clear", "reset", "unset", "default":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected language argument %q", rest[1])
+		}
+		req.Action = "clear"
+	default:
+		req.Action = "set"
+		req.Language = strings.Join(rest, " ")
+	}
+	return req, nil
+}
+
+func renderLanguageReport(out io.Writer, report languageReport) {
+	fmt.Fprintln(out, "Language")
+	if report.Configured {
+		fmt.Fprintf(out, "  Active           %s\n", report.Language)
+	} else {
+		fmt.Fprintln(out, "  Active           default")
+	}
+	if report.Previous != "" {
+		fmt.Fprintf(out, "  Previous         %s\n", report.Previous)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+}
+
+func normalizeConfiguredLanguage(language string) string {
+	language, err := normalizeLanguageName(language)
+	if err != nil {
+		return ""
+	}
+	return language
+}
+
+func normalizeLanguageName(language string) (string, error) {
+	language = strings.TrimSpace(language)
+	if language == "" {
+		return "", errors.New("language name is required")
+	}
+	if strings.ContainsAny(language, "\r\n") {
+		return "", errors.New("language must be a single line")
+	}
+	if len(language) > 80 {
+		return "", errors.New("language must be 80 characters or fewer")
+	}
+	return language, nil
+}
+
 var availableEfforts = []string{"auto", "low", "medium", "high"}
 
 type effortRequest struct {
@@ -14277,6 +14460,7 @@ func codogCapabilityFeatures() []string {
 		"hooks",
 		"hooks_health",
 		"ide_bridge",
+		"interface_language",
 		"jsonl_sessions",
 		"lsp",
 		"mcp_client",
@@ -14388,6 +14572,7 @@ func builtInCommandNames() []string {
 		"install-slack-app",
 		"issue",
 		"keybindings",
+		"language",
 		"listen",
 		"lint",
 		"log",
@@ -17382,6 +17567,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/output-style":
 		if err := a.OutputStyle(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/language":
+		if err := a.Language(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/theme":
@@ -24358,6 +24547,11 @@ func (a *App) systemPromptForInput(input string) string {
 		builder.WriteString("\n\n")
 		builder.WriteString(rendered)
 	}
+	if language := normalizeConfiguredLanguage(a.Config.Language); language != "" {
+		builder.WriteString("\n\n<codog_interface_language>")
+		builder.WriteString(html.EscapeString(language))
+		builder.WriteString("</codog_interface_language>")
+	}
 	if effort := strings.TrimSpace(a.Config.ReasoningEffort); effort != "" {
 		builder.WriteString("\n\n<codog_reasoning_effort>")
 		builder.WriteString(effectiveEffort(effort))
@@ -24757,7 +24951,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
 		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
-		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
+		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
@@ -25129,6 +25323,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "language":
+		return localCommandHelpSpec(
+			"language",
+			"language",
+			"codog language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--output-format text|json]",
+			"Language\n\nUsage:\n  codog language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--output-format text|json]\n\nShows or changes the interface language preference stored as `language`. The preference is injected into provider prompts as runtime context.\n",
+			[]string{"configured", "language", "previous", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -25439,6 +25643,7 @@ Usage:
   %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|rename|delete]
@@ -25584,7 +25789,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	return strings.ReplaceAll(help, "%s", exe)
 }

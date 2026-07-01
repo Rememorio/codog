@@ -197,6 +197,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "active_profile")
 	require.NotNil(t, report.MutatesWorkspace)
 	require.True(t, *report.MutatesWorkspace)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"language", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "language", report.Topic)
+	require.Equal(t, "language", report.Command)
+	require.Contains(t, report.Help, "interface language")
+	require.Contains(t, report.OutputFields, "language")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -294,6 +304,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "profile",
 		},
 		{
+			name:  "language local help",
+			args:  []string{"--config", configPath, "language", "--help", "--output-format", "json"},
+			topic: "language",
+		},
+		{
 			name:  "rate-limit-options local help",
 			args:  []string{"--config", configPath, "rate-limit-options", "--help", "--output-format", "json"},
 			topic: "rate-limit-options",
@@ -363,6 +378,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
@@ -370,6 +386,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "hooks_health")
+	require.Contains(t, report.Features, "interface_language")
 	require.Contains(t, report.Features, "mcp_server")
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "team_watch")
@@ -416,6 +433,37 @@ func TestReasoningCommandPersistsPreference(t *testing.T) {
 	require.Contains(t, out, `"kind": "reasoning"`)
 	require.Contains(t, out, `"effort": "high"`)
 	require.True(t, commandAcceptsGlobalOutputFormat("reasoning"))
+}
+
+func TestLanguageCommandPersistsPreference(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "language", "Japanese", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "language"`)
+	require.Contains(t, out, `"action": "set"`)
+	require.Contains(t, out, `"configured": true`)
+	require.Contains(t, out, `"language": "Japanese"`)
+
+	storedConfigPath := filepath.Join(configHome, "config.json")
+	stored, err := os.ReadFile(storedConfigPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"language": "Japanese"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", storedConfigPath, "--output-format", "json", "language", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "language"`)
+	require.Contains(t, out, `"action": "status"`)
+	require.Contains(t, out, `"language": "Japanese"`)
+	require.True(t, commandAcceptsGlobalOutputFormat("language"))
 }
 
 func TestRateLimitCommandSetsShowsAndResetsConfig(t *testing.T) {
@@ -3765,6 +3813,16 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"theme": "light"`)
 	out.Reset()
 
+	require.NoError(t, app.Language([]string{"Japanese", "--json"}))
+	require.Contains(t, out.String(), `"kind": "language"`)
+	require.Contains(t, out.String(), `"language": "Japanese"`)
+	require.Equal(t, "Japanese", app.Config.Language)
+	require.Contains(t, app.systemPrompt(), "<codog_interface_language>Japanese</codog_interface_language>")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"language": "Japanese"`)
+	out.Reset()
+
 	require.NoError(t, app.Vim([]string{"on", "--json"}))
 	require.Contains(t, out.String(), `"kind": "vim"`)
 	require.Contains(t, out.String(), `"enabled": true`)
@@ -3926,6 +3984,15 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/theme clear", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Theme")
 	require.Equal(t, "", app.Config.Theme)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/language clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Language")
+	require.Equal(t, "", app.Config.Language)
+	require.NotContains(t, app.systemPrompt(), "<codog_interface_language>")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"language"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/reasoning clear", &session.Session{ID: "session"}))

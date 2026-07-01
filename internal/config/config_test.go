@@ -177,6 +177,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	configPath := filepath.Join(dir, "config.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"theme": "dark",
+		"language": "Japanese",
 		"editorMode": "vim",
 		"advisor_model": "claude-opus-test",
 		"oauth_profile": "default",
@@ -204,6 +205,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "dark", cfg.Theme)
+	require.Equal(t, "Japanese", cfg.Language)
 	require.Equal(t, "vim", cfg.EditorMode)
 	require.Equal(t, "claude-opus-test", cfg.AdvisorModel)
 	require.Equal(t, "default", cfg.OAuthProfile)
@@ -231,6 +233,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.False(t, *cfg.Privacy.PromptHistoryEnabled)
 
 	t.Setenv("CODOG_THEME", "light")
+	t.Setenv("CODOG_LANGUAGE", "French")
 	t.Setenv("CODOG_EDITOR_MODE", "default")
 	t.Setenv("CODOG_ADVISOR_MODEL", "claude-sonnet-advisor")
 	t.Setenv("CODOG_OAUTH_PROFILE", "work")
@@ -244,6 +247,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "light", cfg.Theme)
+	require.Equal(t, "French", cfg.Language)
 	require.Equal(t, "default", cfg.EditorMode)
 	require.Equal(t, "claude-sonnet-advisor", cfg.AdvisorModel)
 	require.Equal(t, "work", cfg.OAuthProfile)
