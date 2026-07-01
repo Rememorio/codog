@@ -46,6 +46,7 @@ import (
 	"github.com/Rememorio/codog/internal/perfissue"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/sessionname"
 	"github.com/Rememorio/codog/internal/skills"
@@ -1665,7 +1666,7 @@ func risky(value any) {
 	var resumedSandbox sandboxReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandbox))
 	require.Equal(t, "sandbox", resumedSandbox.Kind)
-	require.Equal(t, "show", resumedSandbox.Action)
+	require.Equal(t, "status", resumedSandbox.Action)
 
 	out, err = runResumedJSON("/mcp", "list")
 	require.NoError(t, err)
@@ -3549,6 +3550,63 @@ func TestRuntimeInfoSlashCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"strategy_statuses":`)
 	require.Contains(t, out.String(), `"container":`)
 	require.Contains(t, out.String(), `"namespace_supported":`)
+	require.Contains(t, out.String(), `"requested":`)
+	require.Contains(t, out.String(), `"filesystem_mode":`)
+	require.Contains(t, out.String(), `"active_components":`)
+}
+
+func TestSandboxCommandReportsConfiguredRequest(t *testing.T) {
+	workspace := t.TempDir()
+	enabled := true
+	namespace := false
+	network := true
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{Future: config.FutureConfig{
+			Sandbox: config.SandboxConfig{
+				Enabled:               &enabled,
+				NamespaceRestrictions: &namespace,
+				NetworkIsolation:      &network,
+				FilesystemMode:        "allow-list",
+				AllowedMounts:         []string{"logs"},
+			},
+		}},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Sandbox())
+	var report struct {
+		Kind               string                         `json:"kind"`
+		Action             string                         `json:"action"`
+		Status             string                         `json:"status"`
+		ConfiguredStrategy string                         `json:"configured_strategy"`
+		Requested          bool                           `json:"requested"`
+		RequestedNamespace bool                           `json:"requested_namespace"`
+		RequestedNetwork   bool                           `json:"requested_network"`
+		FilesystemMode     string                         `json:"filesystem_mode"`
+		AllowedMounts      []string                       `json:"allowed_mounts"`
+		Markers            []string                       `json:"markers"`
+		Execution          sandbox.SandboxExecutionStatus `json:"execution"`
+		ActiveComponents   map[string]bool                `json:"active_components"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "sandbox", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Contains(t, []string{"ok", "warn", "error"}, report.Status)
+	require.Equal(t, "detect", report.ConfiguredStrategy)
+	require.True(t, report.Requested)
+	require.False(t, report.RequestedNamespace)
+	require.True(t, report.RequestedNetwork)
+	require.Equal(t, "allow-list", report.FilesystemMode)
+	require.Equal(t, []string{filepath.Join(workspace, "logs")}, report.AllowedMounts)
+	require.NotNil(t, report.Markers)
+	require.NotNil(t, report.ActiveComponents)
+	require.True(t, report.Execution.Requested.Enabled)
+	require.False(t, report.Execution.Requested.NamespaceRestrictions)
+	require.True(t, report.Execution.Requested.NetworkIsolation)
+	require.Equal(t, sandbox.FilesystemIsolationAllowList, report.Execution.Requested.FilesystemMode)
 }
 
 func TestSandboxToggleCommandPersistsSettings(t *testing.T) {

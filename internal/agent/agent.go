@@ -7069,53 +7069,167 @@ func isURLish(value string) bool {
 
 func (a *App) Sandbox() error {
 	status := sandbox.Detect()
-	resolution := sandbox.ResolveStrategyReportFor(a.Config.Future.SandboxStrategy, status)
+	strategy, options, err := sandboxReportRequestOptions(a.Config.Future)
+	if err != nil {
+		return err
+	}
+	execution, effective, executionErr := sandbox.ResolveSandboxExecutionStatusFor(strategy, a.Workspace, options, status)
+	resolution := sandbox.ResolveStrategyReportFor(strategy, status)
+	if resolution.Effective == "" {
+		resolution.Effective = effective
+	}
 	data, _ := json.MarshalIndent(sandboxReport{
 		Kind:               "sandbox",
-		Action:             "show",
-		Status:             sandboxReportStatus(status.Available, resolution.Error),
+		Action:             "status",
+		Status:             sandboxRuntimeReportStatus(execution, firstNonEmptyAgentString(resolution.Error, errorString(executionErr))),
 		OS:                 status.OS,
 		Strategies:         append([]string(nil), status.Strategies...),
 		Default:            status.Default,
 		Available:          status.Available,
-		ConfiguredStrategy: strings.TrimSpace(a.Config.Future.SandboxStrategy),
+		ConfiguredStrategy: strategy,
 		EffectiveStrategy:  resolution.Effective,
 		Enabled:            resolution.Enabled,
 		ResolutionStatus:   resolution.Status,
-		FallbackReason:     firstNonEmptyAgentString(resolution.FallbackReason, status.FallbackReason),
+		FallbackReason:     firstNonEmptyAgentString(execution.FallbackReason, resolution.FallbackReason, status.FallbackReason),
 		StrategyStatuses:   status.StrategyStatuses,
 		Container:          status.Container,
 		NamespaceSupported: status.NamespaceSupported,
 		NetworkSupported:   status.NetworkSupported,
+		Execution:          execution,
+		Requested:          execution.Enabled,
+		Active:             execution.Active,
+		Supported:          execution.Supported,
+		InContainer:        execution.InContainer,
+		RequestedNamespace: execution.Requested.NamespaceRestrictions,
+		ActiveNamespace:    execution.NamespaceActive,
+		RequestedNetwork:   execution.Requested.NetworkIsolation,
+		ActiveNetwork:      execution.NetworkActive,
+		FilesystemMode:     execution.FilesystemMode,
+		FilesystemActive:   execution.FilesystemActive,
+		AllowedMounts:      jsonStringSlice(execution.AllowedMounts),
+		Markers:            jsonStringSlice(execution.ContainerMarkers),
+		ActiveComponents: map[string]bool{
+			"namespace":  execution.NamespaceActive,
+			"network":    execution.NetworkActive,
+			"filesystem": execution.FilesystemActive,
+		},
 	}, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
 }
 
 type sandboxReport struct {
-	Kind               string                   `json:"kind"`
-	Action             string                   `json:"action"`
-	Status             string                   `json:"status"`
-	OS                 string                   `json:"os"`
-	Strategies         []string                 `json:"strategies"`
-	Default            string                   `json:"default"`
-	Available          bool                     `json:"available"`
-	ConfiguredStrategy string                   `json:"configured_strategy"`
-	EffectiveStrategy  string                   `json:"effective_strategy,omitempty"`
-	Enabled            bool                     `json:"enabled"`
-	ResolutionStatus   string                   `json:"resolution_status"`
-	FallbackReason     string                   `json:"fallback_reason,omitempty"`
-	StrategyStatuses   []sandbox.StrategyStatus `json:"strategy_statuses,omitempty"`
-	Container          sandbox.ContainerStatus  `json:"container"`
-	NamespaceSupported bool                     `json:"namespace_supported"`
-	NetworkSupported   bool                     `json:"network_supported"`
+	Kind               string                         `json:"kind"`
+	Action             string                         `json:"action"`
+	Status             string                         `json:"status"`
+	OS                 string                         `json:"os"`
+	Strategies         []string                       `json:"strategies"`
+	Default            string                         `json:"default"`
+	Available          bool                           `json:"available"`
+	ConfiguredStrategy string                         `json:"configured_strategy"`
+	EffectiveStrategy  string                         `json:"effective_strategy,omitempty"`
+	Enabled            bool                           `json:"enabled"`
+	ResolutionStatus   string                         `json:"resolution_status"`
+	FallbackReason     string                         `json:"fallback_reason,omitempty"`
+	StrategyStatuses   []sandbox.StrategyStatus       `json:"strategy_statuses,omitempty"`
+	Container          sandbox.ContainerStatus        `json:"container"`
+	NamespaceSupported bool                           `json:"namespace_supported"`
+	NetworkSupported   bool                           `json:"network_supported"`
+	Execution          sandbox.SandboxExecutionStatus `json:"execution"`
+	Requested          bool                           `json:"requested"`
+	Active             bool                           `json:"active"`
+	Supported          bool                           `json:"supported"`
+	InContainer        bool                           `json:"in_container"`
+	RequestedNamespace bool                           `json:"requested_namespace"`
+	ActiveNamespace    bool                           `json:"active_namespace"`
+	RequestedNetwork   bool                           `json:"requested_network"`
+	ActiveNetwork      bool                           `json:"active_network"`
+	FilesystemMode     string                         `json:"filesystem_mode"`
+	FilesystemActive   bool                           `json:"filesystem_active"`
+	AllowedMounts      []string                       `json:"allowed_mounts"`
+	Markers            []string                       `json:"markers"`
+	ActiveComponents   map[string]bool                `json:"active_components"`
 }
 
-func sandboxReportStatus(available bool, resolutionError string) string {
-	if available && resolutionError == "" {
-		return "ok"
+func sandboxRuntimeReportStatus(status sandbox.SandboxExecutionStatus, resolutionError string) string {
+	if strings.TrimSpace(resolutionError) != "" {
+		if status.Enabled {
+			return "error"
+		}
+		return "warn"
 	}
-	return "warn"
+	switch {
+	case !status.Enabled:
+		return "ok"
+	case status.Active:
+		return "ok"
+	case status.Supported || status.FilesystemActive:
+		return "warn"
+	default:
+		return "error"
+	}
+}
+
+func jsonStringSlice(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return append([]string(nil), values...)
+}
+
+func sandboxReportRequestOptions(cfg config.FutureConfig) (string, sandbox.SandboxRequestOptions, error) {
+	strategy := strings.TrimSpace(cfg.SandboxStrategy)
+	if strategy == "" && cfg.Sandbox.Enabled != nil && *cfg.Sandbox.Enabled {
+		strategy = "detect"
+	}
+	options, err := sandboxRequestOptionsFromConfig(cfg.Sandbox)
+	if err != nil {
+		return strategy, options, err
+	}
+	if !sandboxStrategyRequestsStatus(strategy) {
+		disabled := false
+		options.Enabled = &disabled
+	}
+	return strategy, options, nil
+}
+
+func sandboxRequestOptionsFromConfig(cfg config.SandboxConfig) (sandbox.SandboxRequestOptions, error) {
+	options := sandbox.SandboxRequestOptions{
+		Enabled:               cloneBoolAgent(cfg.Enabled),
+		NamespaceRestrictions: cloneBoolAgent(cfg.NamespaceRestrictions),
+		NetworkIsolation:      cloneBoolAgent(cfg.NetworkIsolation),
+		AllowedMounts:         append([]string(nil), cfg.AllowedMounts...),
+	}
+	mode, err := sandbox.ParseFilesystemIsolationMode(cfg.FilesystemMode)
+	if err != nil {
+		return options, err
+	}
+	options.FilesystemMode = mode
+	return options, nil
+}
+
+func sandboxStrategyRequestsStatus(strategy string) bool {
+	switch strings.TrimSpace(strategy) {
+	case "", "off", "none":
+		return false
+	default:
+		return true
+	}
+}
+
+func cloneBoolAgent(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func firstNonEmptyAgentString(values ...string) string {
@@ -18025,6 +18139,7 @@ func codogCapabilityFeatures() []string {
 		"resume_safe_slash_metadata",
 		"sandbox",
 		"sandbox_config_defaults",
+		"sandbox_runtime_status_report",
 		"session_identity_metadata",
 		"session_identity_reconciliation",
 		"session_resume",
