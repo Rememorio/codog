@@ -18109,6 +18109,7 @@ func codogCapabilityFeatures() []string {
 		"config_layers",
 		"config_reset",
 		"cost_token_tracking",
+		"doctor_sandbox_runtime_status",
 		"editor_bridge",
 		"git_workflows",
 		"hooks",
@@ -20377,6 +20378,11 @@ func (a *App) Doctor(args []string) error {
 	}
 	mcpStatuses := mcp.PreflightAll(context.Background(), a.Config.MCPServers)
 	sandboxStatus := sandbox.Detect()
+	sandboxStrategy, sandboxOptions, err := sandboxReportRequestOptions(a.Config.Future)
+	if err != nil {
+		return err
+	}
+	sandboxRuntime, _, _ := sandbox.ResolveSandboxExecutionStatusFor(sandboxStrategy, a.Workspace, sandboxOptions, sandboxStatus)
 	report := doctor.Run(doctor.Options{
 		Workspace:          a.Workspace,
 		ConfigHome:         a.Config.ConfigHome,
@@ -20417,6 +20423,7 @@ func (a *App) Doctor(args []string) error {
 		SandboxStrategies:  sandboxStatus.Strategies,
 		SandboxFallback:    sandboxStatus.FallbackReason,
 		SandboxInContainer: sandboxStatus.Container.InContainer,
+		SandboxRuntime:     &sandboxRuntime,
 	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")

@@ -4729,6 +4729,18 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.Doctor([]string{"--json"}))
 	require.Contains(t, out.String(), `"kind": "doctor"`)
 	require.Contains(t, out.String(), `"name": "Auth"`)
+	var doctorReport doctor.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &doctorReport))
+	var sandboxCheck doctor.Check
+	for _, check := range doctorReport.Checks {
+		if check.Name == "Sandbox" {
+			sandboxCheck = check
+			break
+		}
+	}
+	require.Equal(t, "Sandbox", sandboxCheck.Name)
+	require.Contains(t, sandboxCheck.Data, "enabled")
+	require.Contains(t, sandboxCheck.Data, "filesystem_mode")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/doctor", sess))

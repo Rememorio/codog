@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -196,6 +197,48 @@ func TestRunReportsSandboxFallbackDetails(t *testing.T) {
 	require.Equal(t, StatusWarn, check.Status)
 	require.Contains(t, strings.Join(check.Details, "\n"), "Fallback: bwrap: command not found")
 	require.Contains(t, strings.Join(check.Details, "\n"), "In container: false")
+}
+
+func TestRunReportsSandboxRuntimeStatus(t *testing.T) {
+	status := sandbox.SandboxExecutionStatus{
+		Enabled:            true,
+		Active:             false,
+		Supported:          false,
+		NamespaceSupported: false,
+		NamespaceActive:    false,
+		NetworkSupported:   false,
+		NetworkActive:      false,
+		FilesystemMode:     "workspace-only",
+		FilesystemActive:   false,
+		AllowedMounts:      []string{},
+		InContainer:        true,
+		ContainerMarkers:   []string{"/.dockerenv"},
+		FallbackReason:     "sandbox strategy unavailable",
+	}
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxRuntime: &status,
+	})
+
+	check := findCheck(t, report, "Sandbox")
+	require.Equal(t, StatusWarn, check.Status)
+	require.Contains(t, check.Summary, "not currently active")
+	require.Contains(t, strings.Join(check.Details, "\n"), "Enabled: true")
+	require.Contains(t, strings.Join(check.Details, "\n"), "Filesystem mode: workspace-only")
+	require.Contains(t, strings.Join(check.Details, "\n"), "Fallback: sandbox strategy unavailable")
+	require.NotNil(t, check.Data)
+	require.Equal(t, true, check.Data["enabled"])
+	require.Equal(t, false, check.Data["active"])
+	require.Equal(t, "workspace-only", check.Data["filesystem_mode"])
+	require.Equal(t, []string{}, check.Data["allowed_mounts"])
+	require.Contains(t, check.Hint, "supported sandbox strategy")
 }
 
 func runTestGit(t *testing.T, workspace string, args ...string) {

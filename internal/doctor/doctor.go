@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/sandbox"
 )
 
 const (
@@ -63,6 +64,7 @@ type Options struct {
 	SandboxStrategies  []string
 	SandboxFallback    string
 	SandboxInContainer bool
+	SandboxRuntime     *sandbox.SandboxExecutionStatus
 }
 
 type Summary struct {
@@ -73,11 +75,12 @@ type Summary struct {
 }
 
 type Check struct {
-	Name    string   `json:"name"`
-	Status  string   `json:"status"`
-	Summary string   `json:"summary"`
-	Details []string `json:"details,omitempty"`
-	Hint    string   `json:"hint,omitempty"`
+	Name    string         `json:"name"`
+	Status  string         `json:"status"`
+	Summary string         `json:"summary"`
+	Details []string       `json:"details,omitempty"`
+	Hint    string         `json:"hint,omitempty"`
+	Data    map[string]any `json:"data,omitempty"`
 }
 
 type Report struct {
@@ -470,6 +473,9 @@ func checkGit(workspace string) Check {
 }
 
 func checkSandbox(opts Options) Check {
+	if opts.SandboxRuntime != nil {
+		return checkSandboxRuntime(*opts.SandboxRuntime)
+	}
 	details := []string{}
 	if opts.SandboxDefault != "" {
 		details = append(details, "Default: "+opts.SandboxDefault)
@@ -494,6 +500,89 @@ func checkSandbox(opts Options) Check {
 		summary = "Configured platform sandbox strategy is not available."
 	}
 	return Check{Name: "Sandbox", Status: status, Summary: summary, Details: details}
+}
+
+func checkSandboxRuntime(status sandbox.SandboxExecutionStatus) Check {
+	details := []string{
+		fmt.Sprintf("Enabled: %t", status.Enabled),
+		fmt.Sprintf("Active: %t", status.Active),
+		fmt.Sprintf("Supported: %t", status.Supported),
+		"Strategy: " + emptyDoctorValue(status.Strategy),
+		fmt.Sprintf("Namespace supported: %t", status.NamespaceSupported),
+		fmt.Sprintf("Namespace active: %t", status.NamespaceActive),
+		fmt.Sprintf("Network supported: %t", status.NetworkSupported),
+		fmt.Sprintf("Network active: %t", status.NetworkActive),
+		"Filesystem mode: " + emptyDoctorValue(status.FilesystemMode),
+		fmt.Sprintf("Filesystem active: %t", status.FilesystemActive),
+		"Allowed mounts: " + joinedDoctorValues(status.AllowedMounts),
+		fmt.Sprintf("In container: %t", status.InContainer),
+	}
+	if status.FallbackReason != "" {
+		details = append(details, "Fallback: "+status.FallbackReason)
+	}
+	if len(status.ContainerMarkers) != 0 {
+		details = append(details, "Container markers: "+strings.Join(status.ContainerMarkers, ", "))
+	}
+	check := Check{
+		Name:    "Sandbox",
+		Status:  StatusOK,
+		Summary: "Sandbox is not requested for this session.",
+		Details: details,
+		Data: map[string]any{
+			"enabled":             status.Enabled,
+			"active":              status.Active,
+			"supported":           status.Supported,
+			"strategy":            status.Strategy,
+			"namespace_supported": status.NamespaceSupported,
+			"namespace_active":    status.NamespaceActive,
+			"network_supported":   status.NetworkSupported,
+			"network_active":      status.NetworkActive,
+			"filesystem_mode":     status.FilesystemMode,
+			"filesystem_active":   status.FilesystemActive,
+			"allowed_mounts":      jsonDoctorStringSlice(status.AllowedMounts),
+			"in_container":        status.InContainer,
+			"container_markers":   jsonDoctorStringSlice(status.ContainerMarkers),
+			"fallback_reason":     status.FallbackReason,
+		},
+	}
+	switch {
+	case !status.Enabled:
+		return check
+	case status.Active:
+		check.Summary = "Sandbox protections are active."
+		return check
+	case status.Supported || status.FilesystemActive:
+		check.Status = StatusWarn
+		check.Summary = "Sandbox was requested but is running in a degraded state."
+		check.Hint = "Review `codog sandbox` for the active components and fallback reason."
+		return check
+	default:
+		check.Status = StatusWarn
+		check.Summary = "Sandbox was requested but is not currently active."
+		check.Hint = "Install or enable a supported sandbox strategy, or disable sandbox when isolation is not required."
+		return check
+	}
+}
+
+func emptyDoctorValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "<none>"
+	}
+	return value
+}
+
+func joinedDoctorValues(values []string) string {
+	if len(values) == 0 {
+		return "<none>"
+	}
+	return strings.Join(values, ", ")
+}
+
+func jsonDoctorStringSlice(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), values...)
 }
 
 func checkDeveloperToolchain() Check {
