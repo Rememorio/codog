@@ -531,6 +531,18 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AgentsWithOverrides(rest, overrides)
 	case "reload-plugins":
 		return app.ReloadPlugins(rest)
+	case "AddMarketplace":
+		return app.Marketplace(append([]string{"sources", "add"}, rest...))
+	case "ManageMarketplaces":
+		return app.Marketplace(append([]string{"sources"}, rest...))
+	case "BrowseMarketplace", "DiscoverPlugins":
+		return app.Marketplace(append([]string{"remote"}, rest...))
+	case "ValidatePlugin":
+		return app.Marketplace(append([]string{"validate"}, rest...))
+	case "ManagePlugins":
+		return app.Marketplace(rest)
+	case "PluginSettings":
+		return app.Marketplace(append([]string{"settings"}, rest...))
 	case "plugin", "plugins", "marketplace":
 		return app.Marketplace(rest)
 	case "login":
@@ -4116,6 +4128,42 @@ type pluginsListReport struct {
 	LoadFailures    []map[string]string `json:"load_failures"`
 }
 
+type marketplaceSourceInfo struct {
+	URL                 string `json:"url"`
+	PublicKeyConfigured bool   `json:"public_key_configured"`
+}
+
+type marketplaceSourcesReport struct {
+	Kind    string                  `json:"kind"`
+	Action  string                  `json:"action"`
+	Status  string                  `json:"status"`
+	Target  string                  `json:"target,omitempty"`
+	Path    string                  `json:"path,omitempty"`
+	URL     string                  `json:"url,omitempty"`
+	Added   bool                    `json:"added,omitempty"`
+	Removed bool                    `json:"removed,omitempty"`
+	Cleared bool                    `json:"cleared,omitempty"`
+	Sources []marketplaceSourceInfo `json:"sources"`
+}
+
+type marketplaceSettingsReport struct {
+	Kind             string                  `json:"kind"`
+	Action           string                  `json:"action"`
+	Status           string                  `json:"status"`
+	PluginRoot       string                  `json:"plugin_root"`
+	InstalledPlugins int                     `json:"installed_plugins"`
+	EnabledPlugins   int                     `json:"enabled_plugins"`
+	Sources          []marketplaceSourceInfo `json:"sources"`
+}
+
+type marketplaceSourcesRequest struct {
+	Action    string
+	URL       string
+	PublicKey string
+	Target    string
+	Path      string
+}
+
 func (a *App) listPlugins(format string) error {
 	manifests, err := plugins.Load(a.Workspace)
 	if err != nil {
@@ -4174,7 +4222,15 @@ func (a *App) Marketplace(args []string) error {
 	}
 	var payload any
 	switch args[0] {
-	case "remote":
+	case "sources", "source", "marketplaces", "manage-marketplaces":
+		return a.marketplaceSourcesCommand(args[1:], format)
+	case "add-marketplace":
+		return a.marketplaceSourcesCommand(append([]string{"add"}, args[1:]...), format)
+	case "remove-marketplace", "delete-marketplace":
+		return a.marketplaceSourcesCommand(append([]string{"remove"}, args[1:]...), format)
+	case "settings":
+		return a.marketplaceSettings(format)
+	case "remote", "browse", "discover":
 		indexes, err := a.marketplaceRemote(args[1:])
 		if err != nil {
 			return err
@@ -4297,7 +4353,7 @@ func (a *App) Marketplace(args []string) error {
 			Status:    "error",
 			ErrorKind: "unknown_plugins_action",
 			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      "Use `codog plugins list`, `show`, `validate`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+			Hint:      "Use `codog plugins list`, `show`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
 		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
@@ -4388,6 +4444,401 @@ func renderPluginValidation(out io.Writer, source string, result plugins.Validat
 	}
 	if !result.Success {
 		return &ExitError{Code: 1, Err: errors.New("plugin validation failed"), Silent: true}
+	}
+	return nil
+}
+
+func (a *App) marketplaceSourcesCommand(args []string, format string) error {
+	req, err := parseMarketplaceSourcesArgs(args)
+	if err != nil {
+		return err
+	}
+	urls, keys := a.marketplaceSourceState()
+	report := marketplaceSourcesReport{
+		Kind:    "marketplace",
+		Action:  "sources_" + req.Action,
+		Status:  "ok",
+		Sources: marketplaceSourceInfos(urls, keys),
+	}
+	switch req.Action {
+	case "list":
+		return renderMarketplaceSources(a.Out, report, format)
+	case "add":
+		sourceURL, err := normalizeMarketplaceSourceURL(req.URL)
+		if err != nil {
+			return err
+		}
+		report.URL = sourceURL
+		report.Added = !containsString(urls, sourceURL)
+		if report.Added {
+			urls = append(urls, sourceURL)
+		}
+		if strings.TrimSpace(req.PublicKey) != "" {
+			if keys == nil {
+				keys = map[string]string{}
+			}
+			keys[sourceURL] = strings.TrimSpace(req.PublicKey)
+		}
+		path, err := a.writeMarketplaceSources(req, urls, keys)
+		if err != nil {
+			return err
+		}
+		report.Target = normalizedConfigTarget(req.Target)
+		report.Path = path
+		report.Sources = marketplaceSourceInfos(urls, keys)
+		return renderMarketplaceSources(a.Out, report, format)
+	case "remove":
+		sourceURL, err := normalizeMarketplaceSourceURL(req.URL)
+		if err != nil {
+			return err
+		}
+		report.URL = sourceURL
+		next := make([]string, 0, len(urls))
+		for _, value := range urls {
+			if value == sourceURL {
+				report.Removed = true
+				continue
+			}
+			next = append(next, value)
+		}
+		urls = next
+		delete(keys, sourceURL)
+		path, err := a.writeMarketplaceSources(req, urls, keys)
+		if err != nil {
+			return err
+		}
+		report.Target = normalizedConfigTarget(req.Target)
+		report.Path = path
+		report.Sources = marketplaceSourceInfos(urls, keys)
+		return renderMarketplaceSources(a.Out, report, format)
+	case "clear":
+		report.Cleared = len(urls) > 0 || len(keys) > 0
+		urls = []string{}
+		keys = map[string]string{}
+		path, err := a.writeMarketplaceSources(req, urls, keys)
+		if err != nil {
+			return err
+		}
+		report.Target = normalizedConfigTarget(req.Target)
+		report.Path = path
+		report.Sources = marketplaceSourceInfos(urls, keys)
+		return renderMarketplaceSources(a.Out, report, format)
+	default:
+		return fmt.Errorf("unknown marketplace sources action %q", req.Action)
+	}
+}
+
+func parseMarketplaceSourcesArgs(args []string) (marketplaceSourcesRequest, error) {
+	req := marketplaceSourcesRequest{Action: "list", Target: "user"}
+	actionSet := false
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace sources target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace sources path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--public-key" || arg == "--key":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace public key is required")
+			}
+			req.PublicKey = args[index]
+		case strings.HasPrefix(arg, "--public-key="):
+			req.PublicKey = strings.TrimPrefix(arg, "--public-key=")
+		case strings.HasPrefix(arg, "--key="):
+			req.PublicKey = strings.TrimPrefix(arg, "--key=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown marketplace sources flag %q", arg)
+		default:
+			if !actionSet && isMarketplaceSourcesAction(arg) {
+				req.Action = normalizeMarketplaceSourcesAction(arg)
+				actionSet = true
+				continue
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateMarketplaceSourcesTarget(req.Target); err != nil {
+		return req, err
+	}
+	switch req.Action {
+	case "list":
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[0])
+		}
+	case "add":
+		if len(positionals) == 0 {
+			return req, errors.New("usage: codog marketplace sources add URL [PUBLIC_KEY]")
+		}
+		req.URL = positionals[0]
+		if len(positionals) > 1 {
+			if strings.TrimSpace(req.PublicKey) != "" {
+				return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[1])
+			}
+			req.PublicKey = positionals[1]
+		}
+		if len(positionals) > 2 {
+			return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[2])
+		}
+	case "remove":
+		if len(positionals) != 1 {
+			return req, errors.New("usage: codog marketplace sources remove URL")
+		}
+		req.URL = positionals[0]
+	case "clear":
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected marketplace sources argument %q", positionals[0])
+		}
+	}
+	return req, nil
+}
+
+func isMarketplaceSourcesAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "list", "show", "ls", "add", "set", "remove", "rm", "delete", "del", "clear":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeMarketplaceSourcesAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "show", "ls":
+		return "list"
+	case "set":
+		return "add"
+	case "rm", "delete", "del":
+		return "remove"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+func validateMarketplaceSourcesTarget(target string) error {
+	switch normalizedConfigTarget(target) {
+	case "user", "project", "local":
+		return nil
+	default:
+		return fmt.Errorf("unknown marketplace sources target %q", target)
+	}
+}
+
+func normalizedConfigTarget(target string) string {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "user", "global":
+		return "user"
+	case "project", "workspace":
+		return "project"
+	case "local":
+		return "local"
+	default:
+		return strings.ToLower(strings.TrimSpace(target))
+	}
+}
+
+func normalizeMarketplaceSourceURL(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", errors.New("marketplace URL is required")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("marketplace URL %q must include scheme and host", raw)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return parsed.String(), nil
+	default:
+		return "", fmt.Errorf("unsupported marketplace URL scheme %q", parsed.Scheme)
+	}
+}
+
+func (a *App) marketplaceSourceState() ([]string, map[string]string) {
+	urls := make([]string, 0, len(a.Config.Future.PluginMarketplaces))
+	seen := map[string]bool{}
+	for _, value := range a.Config.Future.PluginMarketplaces {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		urls = append(urls, value)
+	}
+	keys := map[string]string{}
+	for urlValue, publicKey := range a.Config.Future.PluginMarketplaceKeys {
+		urlValue = strings.TrimSpace(urlValue)
+		publicKey = strings.TrimSpace(publicKey)
+		if urlValue == "" || publicKey == "" {
+			continue
+		}
+		keys[urlValue] = publicKey
+	}
+	return urls, keys
+}
+
+func (a *App) writeMarketplaceSources(req marketplaceSourcesRequest, urls []string, keys map[string]string) (string, error) {
+	path, err := a.preferenceConfigPath(normalizedConfigTarget(req.Target), req.Path)
+	if err != nil {
+		return "", err
+	}
+	urls = dedupeStrings(urls)
+	cleanKeys := map[string]string{}
+	for _, sourceURL := range urls {
+		if publicKey := strings.TrimSpace(keys[sourceURL]); publicKey != "" {
+			cleanKeys[sourceURL] = publicKey
+		}
+	}
+	if _, err := config.SetFileValue(path, "future.plugin_marketplaces", urls); err != nil {
+		return "", err
+	}
+	if len(cleanKeys) == 0 {
+		if _, err := config.UnsetFileValue(path, "future.plugin_marketplace_public_keys"); err != nil {
+			return "", err
+		}
+		a.Config.Future.PluginMarketplaceKeys = nil
+	} else {
+		if _, err := config.SetFileValue(path, "future.plugin_marketplace_public_keys", cleanKeys); err != nil {
+			return "", err
+		}
+		a.Config.Future.PluginMarketplaceKeys = cleanKeys
+	}
+	a.Config.Future.PluginMarketplaces = append([]string(nil), urls...)
+	return path, nil
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func marketplaceSourceInfos(urls []string, keys map[string]string) []marketplaceSourceInfo {
+	urls = dedupeStrings(urls)
+	out := make([]marketplaceSourceInfo, 0, len(urls))
+	for _, sourceURL := range urls {
+		out = append(out, marketplaceSourceInfo{
+			URL:                 sourceURL,
+			PublicKeyConfigured: strings.TrimSpace(keys[sourceURL]) != "",
+		})
+	}
+	return out
+}
+
+func renderMarketplaceSources(out io.Writer, report marketplaceSourcesReport, format string) error {
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Marketplace Sources")
+	fmt.Fprintf(out, "  Status   %s\n", report.Status)
+	if report.Target != "" {
+		fmt.Fprintf(out, "  Target   %s\n", report.Target)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Path     %s\n", report.Path)
+	}
+	if report.URL != "" {
+		fmt.Fprintf(out, "  URL      %s\n", report.URL)
+	}
+	if report.Action == "sources_add" {
+		fmt.Fprintf(out, "  Added    %t\n", report.Added)
+	}
+	if report.Action == "sources_remove" {
+		fmt.Fprintf(out, "  Removed  %t\n", report.Removed)
+	}
+	if report.Action == "sources_clear" {
+		fmt.Fprintf(out, "  Cleared  %t\n", report.Cleared)
+	}
+	fmt.Fprintln(out, "\nSources:")
+	if len(report.Sources) == 0 {
+		fmt.Fprintln(out, "  (none)")
+		return nil
+	}
+	for _, source := range report.Sources {
+		keyStatus := "no public key"
+		if source.PublicKeyConfigured {
+			keyStatus = "public key configured"
+		}
+		fmt.Fprintf(out, "  - %s (%s)\n", source.URL, keyStatus)
+	}
+	return nil
+}
+
+func (a *App) marketplaceSettings(format string) error {
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		return err
+	}
+	urls, keys := a.marketplaceSourceState()
+	report := marketplaceSettingsReport{
+		Kind:             "marketplace",
+		Action:           "settings",
+		Status:           "ok",
+		PluginRoot:       plugins.Root(a.Workspace),
+		InstalledPlugins: len(manifests),
+		Sources:          marketplaceSourceInfos(urls, keys),
+	}
+	for _, manifest := range manifests {
+		if manifest.Enabled {
+			report.EnabledPlugins++
+		}
+	}
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Plugin Settings")
+	fmt.Fprintf(a.Out, "  Plugin root       %s\n", report.PluginRoot)
+	fmt.Fprintf(a.Out, "  Installed plugins %d\n", report.InstalledPlugins)
+	fmt.Fprintf(a.Out, "  Enabled plugins   %d\n", report.EnabledPlugins)
+	fmt.Fprintln(a.Out, "\nMarketplace sources:")
+	if len(report.Sources) == 0 {
+		fmt.Fprintln(a.Out, "  (none)")
+		return nil
+	}
+	for _, source := range report.Sources {
+		keyStatus := "no public key"
+		if source.PublicKeyConfigured {
+			keyStatus = "public key configured"
+		}
+		fmt.Fprintf(a.Out, "  - %s (%s)\n", source.URL, keyStatus)
 	}
 	return nil
 }
@@ -15367,6 +15818,7 @@ func codogCapabilityProtocols() []string {
 
 func builtInCommandNames() []string {
 	return sortedUniqueStrings([]string{
+		"AddMarketplace",
 		"acp",
 		"add-dir",
 		"advisor",
@@ -15387,6 +15839,7 @@ func builtInCommandNames() []string {
 		"bridge-kick",
 		"break-cache",
 		"brief",
+		"BrowseMarketplace",
 		"bug",
 		"budget",
 		"btw",
@@ -15420,6 +15873,7 @@ func builtInCommandNames() []string {
 		"desktop",
 		"diagnostics",
 		"diff",
+		"DiscoverPlugins",
 		"doctor",
 		"dump-manifests",
 		"effort",
@@ -15458,6 +15912,8 @@ func builtInCommandNames() []string {
 		"log",
 		"login",
 		"logout",
+		"ManageMarketplaces",
+		"ManagePlugins",
 		"map",
 		"marketplace",
 		"max-tokens",
@@ -15480,6 +15936,7 @@ func builtInCommandNames() []string {
 		"permissions",
 		"plan",
 		"plugin",
+		"PluginSettings",
 		"plugins",
 		"pr",
 		"pr-comments",
@@ -15557,6 +16014,7 @@ func builtInCommandNames() []string {
 		"updater",
 		"upgrade",
 		"usage",
+		"ValidatePlugin",
 		"validation",
 		"version",
 		"vim",
@@ -27628,18 +28086,18 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "ant-trace", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
-		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
+	case "add-dir", "addmarketplace", "advisor", "agents", "ant-trace", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
+		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "heapdump", "hooks", "language",
-		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
+		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
-		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"pluginsettings", "pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"ultrareview", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
+		"ultrareview", "usage", "validateplugin", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
 		return true
 	default:
 		return false
@@ -28320,6 +28778,20 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "warn", "error"},
 			true,
 		), true
+	case "marketplace", "plugin", "plugins", "addmarketplace", "managemarketplaces", "browsemarketplace", "discoverplugins", "validateplugin", "manageplugins", "pluginsettings":
+		command := strings.TrimSpace(topic)
+		if command == "" {
+			command = "marketplace"
+		}
+		return localCommandHelpSpec(
+			command,
+			"marketplace",
+			"codog marketplace [list|show ID|validate PATH|sources [list|add|remove|clear]|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
+			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, configures trusted marketplace index URLs, browses remote marketplace indexes, installs signed remote plugins, and updates installed plugins.\n",
+			[]string{"plugins", "sources", "marketplace_url", "signature_valid", "checksum_valid", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "mcp":
 		return localCommandHelpSpec(
 			"mcp",
@@ -28674,7 +29146,7 @@ Usage:
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
-  %s plugin|plugins|marketplace list|show|validate|remote|updates|install|install-remote|update|enable|disable|remove | providers status|list|show|set
+  %s plugin|plugins|marketplace list|show|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|lsp

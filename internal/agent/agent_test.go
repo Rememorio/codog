@@ -558,6 +558,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "mock-limits")
 	require.Contains(t, report.Commands, "onboarding")
 	require.Contains(t, report.Commands, "perf-issue")
+	require.Contains(t, report.Commands, "AddMarketplace")
+	require.Contains(t, report.Commands, "BrowseMarketplace")
+	require.Contains(t, report.Commands, "DiscoverPlugins")
+	require.Contains(t, report.Commands, "ManageMarketplaces")
+	require.Contains(t, report.Commands, "ManagePlugins")
+	require.Contains(t, report.Commands, "PluginSettings")
+	require.Contains(t, report.Commands, "ValidatePlugin")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rc")
 	require.Contains(t, report.Commands, "rate-limit")
@@ -605,6 +612,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
 	require.True(t, commandAcceptsGlobalOutputFormat("onboarding"))
+	require.True(t, commandAcceptsGlobalOutputFormat("AddMarketplace"))
+	require.True(t, commandAcceptsGlobalOutputFormat("BrowseMarketplace"))
+	require.True(t, commandAcceptsGlobalOutputFormat("DiscoverPlugins"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ManageMarketplaces"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ManagePlugins"))
+	require.True(t, commandAcceptsGlobalOutputFormat("PluginSettings"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ValidatePlugin"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
@@ -9270,6 +9284,143 @@ func TestMarketplaceAcceptsOutputFormatFlags(t *testing.T) {
 
 	require.NoError(t, app.Marketplace([]string{"list", "--json"}))
 	require.Contains(t, out.String(), `"summary"`)
+}
+
+func TestMarketplaceSourcesManageConfigAndBrowse(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	index := plugins.MarketplaceIndex{
+		Name: "Test Marketplace",
+		Plugins: []plugins.RemotePlugin{
+			{ID: "demo", Name: "Demo", Version: "0.1.0", URL: "demo.zip", SHA256: strings.Repeat("a", 64)},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/index.json", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(index))
+	}))
+	defer server.Close()
+	indexURL := server.URL + "/index.json"
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+	}
+	require.NoError(t, app.Marketplace([]string{"sources", "add", indexURL, "public-key", "--target", "project", "--json"}))
+	var addReport marketplaceSourcesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &addReport))
+	require.Equal(t, "marketplace", addReport.Kind)
+	require.Equal(t, "sources_add", addReport.Action)
+	require.Equal(t, "ok", addReport.Status)
+	require.Equal(t, "project", addReport.Target)
+	require.True(t, addReport.Added)
+	require.Equal(t, indexURL, addReport.URL)
+	require.Equal(t, filepath.Join(workspace, ".codog.json"), addReport.Path)
+	require.Len(t, addReport.Sources, 1)
+	require.True(t, addReport.Sources[0].PublicKeyConfigured)
+	require.Equal(t, []string{indexURL}, app.Config.Future.PluginMarketplaces)
+	require.Equal(t, "public-key", app.Config.Future.PluginMarketplaceKeys[indexURL])
+	configData, err := os.ReadFile(filepath.Join(workspace, ".codog.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(configData), `"plugin_marketplaces"`)
+	require.Contains(t, string(configData), indexURL)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"sources", "--json"}))
+	var listReport marketplaceSourcesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "sources_list", listReport.Action)
+	require.Len(t, listReport.Sources, 1)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"settings", "--json"}))
+	var settingsReport marketplaceSettingsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &settingsReport))
+	require.Equal(t, "settings", settingsReport.Action)
+	require.Equal(t, plugins.Root(workspace), settingsReport.PluginRoot)
+	require.Len(t, settingsReport.Sources, 1)
+	out.Reset()
+
+	app.Config.Future.PluginMarketplaceKeys = nil
+	require.NoError(t, app.Marketplace([]string{"browse"}))
+	var indexes []plugins.MarketplaceIndex
+	require.NoError(t, json.Unmarshal(out.Bytes(), &indexes))
+	require.Len(t, indexes, 1)
+	require.Equal(t, "demo", indexes[0].Plugins[0].ID)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"sources", "remove", indexURL, "--target", "project", "--json"}))
+	var removeReport marketplaceSourcesReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &removeReport))
+	require.True(t, removeReport.Removed)
+	require.Empty(t, removeReport.Sources)
+	require.Empty(t, app.Config.Future.PluginMarketplaces)
+}
+
+func TestMarketplaceCompatibilityCommands(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	index := plugins.MarketplaceIndex{
+		Plugins: []plugins.RemotePlugin{
+			{ID: "demo", URL: "demo.zip", SHA256: strings.Repeat("b", 64)},
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/index.json", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(index))
+	}))
+	defer server.Close()
+	indexURL := server.URL + "/index.json"
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "AddMarketplace", indexURL, "--path", configPath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var addReport marketplaceSourcesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &addReport))
+	require.Equal(t, "sources_add", addReport.Action)
+	require.True(t, addReport.Added)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ManageMarketplaces"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var listReport marketplaceSourcesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &listReport))
+	require.Equal(t, "sources_list", listReport.Action)
+	require.Len(t, listReport.Sources, 1)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "BrowseMarketplace"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var indexes []plugins.MarketplaceIndex
+	require.NoError(t, json.Unmarshal([]byte(out), &indexes))
+	require.Equal(t, "demo", indexes[0].Plugins[0].ID)
+
+	pluginDir := filepath.Join(workspace, "source-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"id":"source-plugin","name":"source-plugin","tools":[{"name":"source_tool","command":"echo ok","permission":"read-only"}]}`), 0o644))
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ValidatePlugin", pluginDir}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var validation pluginValidationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &validation))
+	require.Equal(t, "validate", validation.Action)
+	require.Equal(t, "ok", validation.Status)
+	require.True(t, validation.Success)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "PluginSettings"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var settings marketplaceSettingsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &settings))
+	require.Equal(t, "settings", settings.Action)
+	require.Len(t, settings.Sources, 1)
 }
 
 func TestMarketplaceDisableSkipsPluginToolRegistration(t *testing.T) {
