@@ -971,13 +971,30 @@ func (s *Store) readMessages(path string) ([]anthropic.Message, error) {
 
 func identityFromRecords(id string, workspace string, records []Record) SessionIdentity {
 	var identity SessionIdentity
+	hadExplicitIdentity := false
+	hadExplicitTitle := false
+	hadExplicitPurpose := false
 	for _, record := range records {
 		if record.Type != "session_identity" || record.Identity == nil {
 			continue
 		}
+		hadExplicitIdentity = true
 		identity = *record.Identity
+		hadExplicitTitle = strings.TrimSpace(identity.Title) != ""
+		hadExplicitPurpose = strings.TrimSpace(identity.Purpose) != ""
 	}
-	return normalizeSessionIdentity(id, workspace, identity)
+	identity = normalizeSessionIdentity(id, workspace, identity)
+	prompt := firstPromptTextFromRecords(records)
+	if prompt != "" {
+		if shouldEnrichIdentityTitle(identity.Title, id, hadExplicitIdentity, hadExplicitTitle) {
+			identity.Title = sessionIdentityTitleFromText(prompt)
+		}
+		if !hadExplicitPurpose && strings.TrimSpace(identity.Purpose) == "" {
+			identity.Purpose = sessionIdentityPurposeFromText(prompt)
+		}
+	}
+	identity = normalizeSessionIdentity(id, workspace, identity)
+	return identity
 }
 
 func mergeSessionIdentity(base SessionIdentity, update SessionIdentity) SessionIdentity {
@@ -1015,6 +1032,67 @@ func firstSessionIdentityValue(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPromptTextFromRecords(records []Record) string {
+	for _, record := range records {
+		if record.Type != "input" {
+			continue
+		}
+		if text := normalizePromptText(record.Input); text != "" {
+			return text
+		}
+	}
+	for _, record := range records {
+		if record.Message == nil || record.Message.Role != "user" {
+			continue
+		}
+		for _, block := range record.Message.Content {
+			if block.Type != "text" {
+				continue
+			}
+			if text := normalizePromptText(block.Text); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func shouldEnrichIdentityTitle(title string, id string, hadExplicitIdentity bool, hadExplicitTitle bool) bool {
+	title = strings.TrimSpace(title)
+	id = strings.TrimSpace(id)
+	if title == "" {
+		return true
+	}
+	if !hadExplicitIdentity {
+		return true
+	}
+	return !hadExplicitTitle || title == id
+}
+
+func sessionIdentityTitleFromText(text string) string {
+	text = normalizePromptText(text)
+	const maxTitleRunes = 80
+	runes := []rune(text)
+	if len(runes) <= maxTitleRunes {
+		return text
+	}
+	return string(runes[:maxTitleRunes])
+}
+
+func sessionIdentityPurposeFromText(text string) string {
+	text = normalizePromptText(text)
+	const maxPurposeRunes = 200
+	runes := []rune(text)
+	if len(runes) <= maxPurposeRunes {
+		return text
+	}
+	return string(runes[:maxPurposeRunes])
+}
+
+func normalizePromptText(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func sessionIdentityPlaceholders(identity SessionIdentity) []IdentityPlaceholder {

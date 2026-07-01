@@ -18014,6 +18014,7 @@ func codogCapabilityFeatures() []string {
 		"resume_safe_slash_metadata",
 		"sandbox",
 		"session_identity_metadata",
+		"session_identity_reconciliation",
 		"session_resume",
 		"skills",
 		"slash_commands",

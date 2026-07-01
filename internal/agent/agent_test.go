@@ -653,6 +653,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "recovery_recipes_ledger")
 	require.Contains(t, report.Features, "resume_safe_slash_metadata")
 	require.Contains(t, report.Features, "session_identity_metadata")
+	require.Contains(t, report.Features, "session_identity_reconciliation")
 	require.Contains(t, report.Features, "stale_branch_guard")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")

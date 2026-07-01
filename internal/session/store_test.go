@@ -145,6 +145,47 @@ func TestUpdateIdentityEnrichesTypedPlaceholders(t *testing.T) {
 	require.NotContains(t, string(data), "unknown")
 }
 
+func TestOpenReconcilesIdentityFromInputRecord(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+
+	require.NoError(t, store.AppendInput("legacy-input", "Investigate flaky test\nwith scheduler logs"))
+	opened, err := store.Open("legacy-input")
+	require.NoError(t, err)
+
+	require.Equal(t, "Investigate flaky test with scheduler logs", opened.Identity.Title)
+	require.Equal(t, "Investigate flaky test with scheduler logs", opened.Identity.Purpose)
+	require.Empty(t, opened.Identity.Placeholders)
+}
+
+func TestOpenReconcilesIdentityFromLegacyUserMessage(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+
+	require.NoError(t, store.Append("legacy-message", anthropic.TextMessage("assistant", "ignored")))
+	require.NoError(t, store.Append("legacy-message", anthropic.TextMessage("user", "Summarize this repository structure")))
+	opened, err := store.Open("legacy-message")
+	require.NoError(t, err)
+
+	require.Equal(t, "Summarize this repository structure", opened.Identity.Title)
+	require.Equal(t, "Summarize this repository structure", opened.Identity.Purpose)
+	require.Empty(t, opened.Identity.Placeholders)
+}
+
+func TestOpenReconcilePreservesExplicitSessionIdentity(t *testing.T) {
+	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
+	created, err := store.CreateWithIdentity("explicit-identity", SessionIdentity{
+		Title:   "Release checklist",
+		Purpose: "manual",
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.AppendInput(created.ID, "Rewrite the title from prompt"))
+
+	opened, err := store.Open(created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "Release checklist", opened.Identity.Title)
+	require.Equal(t, "manual", opened.Identity.Purpose)
+	require.Empty(t, opened.Identity.Placeholders)
+}
+
 func TestReplaceMessagesPreservesSessionIdentity(t *testing.T) {
 	store := NewWorkspaceStore(t.TempDir(), t.TempDir())
 	created, err := store.Open("identity-preserve")
