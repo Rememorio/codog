@@ -14218,6 +14218,7 @@ type installGitHubAppStepReport struct {
 	DocsURL               string                     `json:"docs_url"`
 	Workflows             []githubsetup.WorkflowFile `json:"workflows,omitempty"`
 	ExistingWorkflows     []string                   `json:"existing_workflows,omitempty"`
+	SecretCheck           *installGitHubSecretCheck  `json:"secret_check,omitempty"`
 	Instructions          []string                   `json:"instructions,omitempty"`
 	Messages              []string                   `json:"messages,omitempty"`
 	Warnings              []string                   `json:"warnings,omitempty"`
@@ -14225,6 +14226,16 @@ type installGitHubAppStepReport struct {
 	ProviderRequestMade   bool                       `json:"provider_request_made"`
 	WorkspaceWillMutate   bool                       `json:"workspace_will_mutate"`
 	InstallCommandMutates bool                       `json:"install_command_mutates"`
+}
+
+type installGitHubSecretCheck struct {
+	Attempted  bool     `json:"attempted"`
+	Available  bool     `json:"available"`
+	Exists     bool     `json:"exists"`
+	SecretName string   `json:"secret_name"`
+	Repo       string   `json:"repo,omitempty"`
+	Command    []string `json:"command,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 type installSlackAppRequest struct {
@@ -14645,14 +14656,34 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 	case "CheckExistingSecretStep":
 		report.Messages = append(report.Messages, fmt.Sprintf("Repository secret expected: %s", setupReport.SecretName))
 		report.Messages = append(report.Messages, fmt.Sprintf("Use `gh secret set %s --body \"$ANTHROPIC_API_KEY\"` to create or update it.", setupReport.SecretName))
+		secretCheck := installGitHubSecretCheck{
+			Available:  ghErr == nil,
+			SecretName: setupReport.SecretName,
+			Repo:       setupReport.Repo,
+		}
 		if ghErr != nil {
 			report.Status = "warn"
 			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available; secret existence cannot be checked locally.")
-		}
-		if setupReport.Repo == "" {
+		} else if setupReport.Repo == "" {
 			report.Status = "warn"
 			report.Warnings = append(report.Warnings, "No GitHub origin remote was detected; pass a repository to gh manually if needed.")
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			secretCheck = checkGitHubRepositorySecret(ctx, ghPath, setupReport.Repo, setupReport.SecretName)
+			report.ProviderRequestMade = secretCheck.Attempted
+			switch {
+			case secretCheck.Error != "":
+				report.Status = "warn"
+				report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub repository secret: %s", secretCheck.Error))
+			case secretCheck.Exists:
+				report.Messages = append(report.Messages, fmt.Sprintf("Repository secret %s exists on %s.", setupReport.SecretName, setupReport.Repo))
+			default:
+				report.Status = "warn"
+				report.Warnings = append(report.Warnings, fmt.Sprintf("Repository secret %s was not found on %s.", setupReport.SecretName, setupReport.Repo))
+			}
+			cancel()
 		}
+		report.SecretCheck = &secretCheck
 	case "CheckGitHubStep":
 		if setupReport.Repo != "" {
 			report.Messages = append(report.Messages, "GitHub origin remote detected.")
@@ -14729,6 +14760,51 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		report.Messages = append(report.Messages, "GitHub App setup step report generated.")
 	}
 	return report
+}
+
+func commandErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		stderr := strings.TrimSpace(string(exitErr.Stderr))
+		if stderr != "" {
+			return stderr
+		}
+	}
+	return err.Error()
+}
+
+func checkGitHubRepositorySecret(ctx context.Context, ghPath string, repo string, secretName string) installGitHubSecretCheck {
+	args := []string{"secret", "list", "--repo", repo, "--json", "name"}
+	check := installGitHubSecretCheck{
+		Attempted:  true,
+		Available:  true,
+		SecretName: secretName,
+		Repo:       repo,
+		Command:    append([]string{ghPath}, args...),
+	}
+	cmd := exec.CommandContext(ctx, ghPath, args...)
+	data, err := cmd.Output()
+	if err != nil {
+		check.Error = commandErrorMessage(err)
+		return check
+	}
+	var entries []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		check.Error = fmt.Sprintf("failed to parse gh secret list output: %v", err)
+		return check
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(strings.TrimSpace(entry.Name), secretName) {
+			check.Exists = true
+			break
+		}
+	}
+	return check
 }
 
 func installGitHubAppNextCommand(req installGitHubAppRequest) string {

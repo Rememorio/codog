@@ -7372,6 +7372,46 @@ func TestInstallGitHubAppStepCompatibilityCommands(t *testing.T) {
 	require.False(t, fileExists(filepath.Join(dryWorkspace, ".github", "workflows", "claude-code-review.yml")))
 	out.Reset()
 
+	if runtime.GOOS != "windows" {
+		if _, err := exec.LookPath("git"); err == nil {
+			secretWorkspace := initGitRepo(t)
+			runGit(t, secretWorkspace, "remote", "add", "origin", "git@github.com:acme/widgets.git")
+			fakeBin := t.TempDir()
+			fakeGH := filepath.Join(fakeBin, "gh")
+			require.NoError(t, os.WriteFile(fakeGH, []byte(`#!/bin/sh
+if [ "$1" = "secret" ] && [ "$2" = "list" ]; then
+  cat <<'JSON'
+[{"name":"ANTHROPIC_API_KEY"},{"name":"OTHER_SECRET"}]
+JSON
+  exit 0
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`), 0o755))
+			t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			secretApp := &App{
+				Config:    config.Config{APIKey: "test-key"},
+				Workspace: secretWorkspace,
+				Out:       &out,
+				Err:       io.Discard,
+			}
+			require.NoError(t, secretApp.InstallGitHubAppStep("CheckExistingSecretStep", []string{"--json"}))
+			var secretReport installGitHubAppStepReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &secretReport))
+			require.Equal(t, "CheckExistingSecretStep", secretReport.Step)
+			require.Equal(t, "ok", secretReport.Status)
+			require.True(t, secretReport.ProviderRequestMade)
+			require.NotNil(t, secretReport.SecretCheck)
+			require.True(t, secretReport.SecretCheck.Attempted)
+			require.True(t, secretReport.SecretCheck.Available)
+			require.True(t, secretReport.SecretCheck.Exists)
+			require.Equal(t, "acme/widgets", secretReport.SecretCheck.Repo)
+			require.Contains(t, secretReport.SecretCheck.Command, "--json")
+			require.Contains(t, secretReport.Messages, "Repository secret ANTHROPIC_API_KEY exists on acme/widgets.")
+			out.Reset()
+		}
+	}
+
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")
 	configData, err := json.Marshal(map[string]string{"config_home": configHome})
