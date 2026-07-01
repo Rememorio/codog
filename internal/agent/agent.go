@@ -527,7 +527,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Setup(ctx, rest)
 	case "terminal-setup", "terminalSetup":
 		return app.TerminalSetup(rest)
-	case "context":
+	case "context", "context-noninteractive":
 		return app.Context(rest, overrides)
 	case "ctx_viz":
 		return app.ContextViz(rest, overrides)
@@ -14772,6 +14772,7 @@ func builtInCommandNames() []string {
 		"completion",
 		"config",
 		"context",
+		"context-noninteractive",
 		"copy",
 		"cost",
 		"cron",
@@ -26242,7 +26243,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
-		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
+		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
@@ -26556,6 +26557,13 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "context-noninteractive":
+		spec, _ := commandHelpSpecFor("context")
+		spec.Topic = "context-noninteractive"
+		spec.Command = "context-noninteractive"
+		spec.Usage = "codog context-noninteractive [--session ID|--resume ID|latest] [--output-format text|json]"
+		spec.Text = "Context Noninteractive\n\nUsage:\n  codog context-noninteractive [--session ID|--resume ID|latest] [--output-format text|json]\n\nAlias for `codog context`; prints the same local prompt preflight context without entering the REPL or making a provider request.\n"
+		return spec, true
 	case "ctx_viz", "context-viz":
 		return localCommandHelpSpec(
 			"ctx_viz",
@@ -27035,6 +27043,7 @@ Usage:
   %s [flags] setup [status|init|terminal|all] [--shell zsh|bash|fish|powershell] [--path PATH] [--json|--output-format text|json]
   %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] context-noninteractive [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--json|--output-format text|json]
   %s [flags] workspace|cwd [status|PATH|set PATH] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]

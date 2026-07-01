@@ -28,6 +28,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
@@ -301,6 +302,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "cache",
 		},
 		{
+			name:  "context-noninteractive local help",
+			args:  []string{"--config", configPath, "context-noninteractive", "--help", "--output-format", "json"},
+			topic: "context-noninteractive",
+		},
+		{
 			name:  "break-cache local help",
 			args:  []string{"--config", configPath, "break-cache", "--help", "--output-format", "json"},
 			topic: "break-cache",
@@ -447,6 +453,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
+	require.Contains(t, report.Commands, "context-noninteractive")
 	require.Contains(t, report.Commands, "permissions")
 	require.Contains(t, report.Commands, "plan")
 	require.Contains(t, report.Commands, "teleport")
@@ -3814,6 +3821,30 @@ func TestContextCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"message_count": 2`)
 	require.Contains(t, out.String(), `"total_tokens":`)
 	out.Reset()
+
+	require.NoError(t, app.Context([]string{"--json"}, config.FlagOverrides{SessionID: "context-session"}))
+	var contextReport contextview.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &contextReport))
+	require.Equal(t, "context", contextReport.Kind)
+	require.Equal(t, "context-session", contextReport.Session.ID)
+	require.Equal(t, 2, contextReport.Session.MessageCount)
+	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome, "model": "claude-test"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--session", "context-session", "--output-format", "json", "context-noninteractive"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &contextReport))
+	require.Equal(t, "context", contextReport.Kind)
+	require.Equal(t, "context-session", contextReport.Session.ID)
 
 	sess, err := store.Open("context-session")
 	require.NoError(t, err)
