@@ -594,7 +594,9 @@ type NotebookEditResult struct {
 	Path        string `json:"path"`
 	Mode        string `json:"mode"`
 	Index       int    `json:"index"`
+	CellID      string `json:"cell_id,omitempty"`
 	CellType    string `json:"cell_type,omitempty"`
+	Language    string `json:"language,omitempty"`
 	CellCount   int    `json:"cell_count"`
 	SourceLines int    `json:"source_lines,omitempty"`
 }
@@ -616,6 +618,7 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 	if err := json.Unmarshal(data, &notebook); err != nil {
 		return NotebookEditResult{}, err
 	}
+	language := notebookLanguage(notebook)
 	cells, err := notebookCells(notebook)
 	if err != nil {
 		return NotebookEditResult{}, err
@@ -635,14 +638,17 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 		return NotebookEditResult{}, fmt.Errorf("unsupported cell type %q", cellType)
 	}
 	sourceLines := notebookSourceLines(options.Source)
+	cellID := ""
 	switch mode {
 	case "replace":
-		for len(cells) <= options.Index {
-			cells = append(cells, newNotebookCell("code", nil))
+		if options.Index >= len(cells) {
+			return NotebookEditResult{}, errors.New("cell index out of range")
 		}
-		cells[options.Index] = applyNotebookCell(cells[options.Index], cellType, sourceLines)
+		cells[options.Index] = applyNotebookCell(cells[options.Index], cellType, sourceLines, makeNotebookCellIDForIndex(cells, options.Index))
+		cellID = notebookCellID(cells[options.Index])
 	case "insert":
-		cell := newNotebookCell(cellType, sourceLines)
+		cell := newNotebookCell(cellType, sourceLines, makeNotebookCellID(cells))
+		cellID = notebookCellID(cell)
 		if options.Index >= len(cells) {
 			cells = append(cells, cell)
 		} else {
@@ -652,6 +658,7 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 		if options.Index < 0 || options.Index >= len(cells) {
 			return NotebookEditResult{}, errors.New("cell index out of range")
 		}
+		cellID = notebookCellID(cells[options.Index])
 		cells = append(cells[:options.Index], cells[options.Index+1:]...)
 	default:
 		return NotebookEditResult{}, fmt.Errorf("unknown notebook edit mode %q", options.Mode)
@@ -668,7 +675,9 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 		Path:        path,
 		Mode:        mode,
 		Index:       options.Index,
+		CellID:      cellID,
 		CellType:    cellType,
+		Language:    language,
 		CellCount:   len(cells),
 		SourceLines: len(sourceLines),
 	}, nil
@@ -705,7 +714,7 @@ func validNotebookCellType(cellType string) bool {
 
 func notebookSourceLines(source string) []any {
 	if source == "" {
-		return []any{}
+		return []any{""}
 	}
 	lines := strings.SplitAfter(source, "\n")
 	if lines[len(lines)-1] == "" {
@@ -718,9 +727,10 @@ func notebookSourceLines(source string) []any {
 	return out
 }
 
-func newNotebookCell(cellType string, source []any) map[string]any {
+func newNotebookCell(cellType string, source []any, id string) map[string]any {
 	cell := map[string]any{
 		"cell_type": cellType,
+		"id":        id,
 		"metadata":  map[string]any{},
 		"source":    source,
 	}
@@ -731,11 +741,14 @@ func newNotebookCell(cellType string, source []any) map[string]any {
 	return cell
 }
 
-func applyNotebookCell(cell map[string]any, cellType string, source []any) map[string]any {
+func applyNotebookCell(cell map[string]any, cellType string, source []any, fallbackID string) map[string]any {
 	if cell == nil {
 		cell = map[string]any{}
 	}
 	cell["cell_type"] = cellType
+	if strings.TrimSpace(notebookCellID(cell)) == "" {
+		cell["id"] = fallbackID
+	}
 	if _, ok := cell["metadata"]; !ok {
 		cell["metadata"] = map[string]any{}
 	}
@@ -752,6 +765,46 @@ func applyNotebookCell(cell map[string]any, cellType string, source []any) map[s
 		delete(cell, "outputs")
 	}
 	return cell
+}
+
+func notebookLanguage(notebook map[string]any) string {
+	metadata, ok := notebook["metadata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	kernelspec, ok := metadata["kernelspec"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	language, _ := kernelspec["language"].(string)
+	return strings.TrimSpace(language)
+}
+
+func notebookCellID(cell map[string]any) string {
+	if cell == nil {
+		return ""
+	}
+	id, _ := cell["id"].(string)
+	return strings.TrimSpace(id)
+}
+
+func makeNotebookCellID(cells []map[string]any) string {
+	return makeNotebookCellIDForIndex(cells, len(cells))
+}
+
+func makeNotebookCellIDForIndex(cells []map[string]any, index int) string {
+	used := map[string]bool{}
+	for _, cell := range cells {
+		if id := notebookCellID(cell); id != "" {
+			used[id] = true
+		}
+	}
+	for next := index + 1; ; next++ {
+		id := fmt.Sprintf("cell-%d", next)
+		if !used[id] {
+			return id
+		}
+	}
 }
 
 func mapsToAny(cells []map[string]any) []any {

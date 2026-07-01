@@ -4600,12 +4600,12 @@ func (NotebookEditTool) Permission() Permission { return PermissionWorkspace }
 
 func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		NotebookPath string `json:"notebook_path"`
-		CellIndex    *int   `json:"cell_index"`
-		CellID       string `json:"cell_id"`
-		CellType     string `json:"cell_type"`
-		NewSource    string `json:"new_source"`
-		EditMode     string `json:"edit_mode"`
+		NotebookPath string  `json:"notebook_path"`
+		CellIndex    *int    `json:"cell_index"`
+		CellID       string  `json:"cell_id"`
+		CellType     string  `json:"cell_type"`
+		NewSource    *string `json:"new_source"`
+		EditMode     string  `json:"edit_mode"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -4617,6 +4617,16 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 	if !strings.HasSuffix(strings.ToLower(path), ".ipynb") {
 		return "", errors.New("notebook_path must point to a .ipynb file")
 	}
+	mode := strings.ToLower(strings.TrimSpace(payload.EditMode))
+	if mode == "" {
+		mode = "replace"
+	}
+	source := ""
+	if payload.NewSource != nil {
+		source = *payload.NewSource
+	} else if mode == "insert" || mode == "replace" {
+		return "", errors.New("new_source is required for insert and replace edits")
+	}
 	index, err := resolveNotebookEditIndex(path, payload.CellIndex, payload.CellID, payload.EditMode)
 	if err != nil {
 		return "", err
@@ -4624,8 +4634,8 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 	result, err := codeintel.EditNotebook(path, codeintel.NotebookEditOptions{
 		Index:    index,
 		CellType: payload.CellType,
-		Source:   payload.NewSource,
-		Mode:     payload.EditMode,
+		Source:   source,
+		Mode:     mode,
 	})
 	if err != nil {
 		return "", err
@@ -4634,33 +4644,35 @@ func (t NotebookEditTool) Execute(_ context.Context, input json.RawMessage) (str
 }
 
 func resolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode string) (int, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "replace"
+	}
 	if cellIndex != nil {
 		if *cellIndex < 0 {
 			return 0, errors.New("cell_index must be non-negative")
 		}
 		return *cellIndex, nil
 	}
-	cellID = strings.TrimSpace(cellID)
-	if cellID == "" {
-		if strings.EqualFold(strings.TrimSpace(mode), "insert") {
-			return 0, nil
-		}
-		return 0, errors.New("cell_index or cell_id is required")
-	}
-	if index, err := strconv.Atoi(cellID); err == nil && index >= 0 {
-		return index, nil
-	}
-	data, err := os.ReadFile(path)
+	rawCells, err := notebookCellsFromPath(path)
 	if err != nil {
 		return 0, err
 	}
-	var notebook map[string]any
-	if err := json.Unmarshal(data, &notebook); err != nil {
-		return 0, err
+	cellID = strings.TrimSpace(cellID)
+	if cellID == "" {
+		if mode == "insert" {
+			return len(rawCells), nil
+		}
+		if len(rawCells) == 0 {
+			return 0, errors.New("Notebook has no cells to edit")
+		}
+		return len(rawCells) - 1, nil
 	}
-	rawCells, ok := notebook["cells"].([]any)
-	if !ok {
-		return 0, errors.New("notebook cells array not found")
+	if index, err := strconv.Atoi(cellID); err == nil && index >= 0 {
+		if mode == "insert" {
+			return index + 1, nil
+		}
+		return index, nil
 	}
 	for index, raw := range rawCells {
 		cell, ok := raw.(map[string]any)
@@ -4668,10 +4680,29 @@ func resolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode s
 			continue
 		}
 		if stringValue(cell["id"]) == cellID {
+			if mode == "insert" {
+				return index + 1, nil
+			}
 			return index, nil
 		}
 	}
 	return 0, fmt.Errorf("cell_id %q not found", cellID)
+}
+
+func notebookCellsFromPath(path string) ([]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var notebook map[string]any
+	if err := json.Unmarshal(data, &notebook); err != nil {
+		return nil, err
+	}
+	rawCells, ok := notebook["cells"].([]any)
+	if !ok {
+		return nil, errors.New("notebook cells array not found")
+	}
+	return rawCells, nil
 }
 
 type LSPTool struct {

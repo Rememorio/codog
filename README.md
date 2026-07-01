@@ -42,7 +42,7 @@ report is the source of truth for a specific build.
 | --- | --- |
 | Agent entry points | One-shot prompts, REPL, Bubble Tea TUI, side-question sessions, resume, fork, rename, rewind, and export. |
 | Model providers | Anthropic Messages streaming, Anthropic-compatible endpoints, OpenAI-compatible chat streaming, API key management, and OAuth profile plumbing. |
-| Workspace tools | Shell, PowerShell, read, write, edit, multi-edit, grep, glob, file listing, git inspection, todos, background tasks, notebook stubs, and LSP/code-intel helpers. |
+| Workspace tools | Shell, PowerShell, read, write, edit, multi-edit, grep, glob, file listing, git inspection, todos, background tasks, notebook read/edit, and LSP/code-intel helpers. |
 | Safety controls | Read-only, workspace-write, prompt, allow-list, and danger modes, plus trusted roots, tool allow/deny rules, audit records, and sandbox status reporting. |
 | Local state | JSONL sessions, prompt history, summaries, compaction metadata, token usage, estimated cost, exports, cache stats, and recovery ledgers. |
 | Extension surfaces | Slash commands, prompt templates, hooks, skills, plugins, local MCP client/server resources, local prompts, and marketplace scaffolding. |
