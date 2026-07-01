@@ -292,6 +292,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/output-style":       true,
 	"/perf-issue":         true,
 	"/permissions":        true,
+	"/plan":               true,
 	"/plugin":             true,
 	"/plugins":            true,
 	"/privacy-settings":   true,

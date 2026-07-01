@@ -19961,6 +19961,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.ReleaseNotes(resumeSlashArgs("release-notes", args, format))
 	case "/reset":
 		return a.runResumedResetSlash(resumeSlashArgs("reset", args, format), format)
+	case "/plan":
+		return a.runResumedPlanSlash(resumeSlashArgs("plan", args, format), format)
 	case "/branch":
 		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
 	case "/tag":
@@ -20220,6 +20222,17 @@ func resumedResetSlashLabel(req resetRequest) string {
 		return resumedSlashCommandLabel("/reset", req.Section)
 	}
 	return resumedSlashCommandLabel("/reset", req.Action)
+}
+
+func (a *App) runResumedPlanSlash(args []string, format string) error {
+	req, err := parsePlanArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/plan", req.Action), format)
+	}
+	return a.Plan(args)
 }
 
 func (a *App) runResumedFormatSlash(args []string, format string) error {

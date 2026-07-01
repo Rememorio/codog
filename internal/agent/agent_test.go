@@ -720,6 +720,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	resetSlash, ok := capabilityReportSlash(report, "/reset")
 	require.True(t, ok)
 	require.True(t, resetSlash.ResumeSupported)
+	planSlash, ok := capabilityReportSlash(report, "/plan")
+	require.True(t, ok)
+	require.True(t, planSlash.ResumeSupported)
 	setupSlash, ok := capabilityReportSlash(report, "/setup")
 	require.True(t, ok)
 	require.True(t, setupSlash.ResumeSupported)
@@ -1340,6 +1343,8 @@ func risky(value any) {
 		Prompt: "check missing worker",
 		TaskID: "missing-task",
 	}}, []string{"missing-task"})
+	require.NoError(t, err)
+	_, err = planmode.Enter(workspace, "inspect before editing")
 	require.NoError(t, err)
 	terminalProfilePath := filepath.Join(workspace, ".zshrc")
 
@@ -2265,6 +2270,16 @@ func risky(value any) {
 	require.True(t, resumedReset.ConfirmRequired)
 	require.Contains(t, resumedReset.AvailableSections, "model")
 
+	out, err = runResumedJSON("/plan")
+	require.NoError(t, err)
+	var resumedPlan planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlan))
+	require.Equal(t, "plan", resumedPlan.Kind)
+	require.Equal(t, "show", resumedPlan.Action)
+	require.Equal(t, "active", resumedPlan.Status)
+	require.True(t, resumedPlan.State.Active)
+	require.Equal(t, "inspect before editing", resumedPlan.State.Plan)
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
@@ -2334,6 +2349,13 @@ func risky(value any) {
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/reset", Args: []string{"model"}, Report: "/reset model"},
 		{Command: "/reset", Args: []string{"all", "--confirm"}, Report: "/reset all"},
+		{Command: "/plan", Args: []string{"inspect", "more"}, Report: "/plan enter"},
+		{Command: "/plan", Args: []string{"enter", "inspect"}, Report: "/plan enter"},
+		{Command: "/plan", Args: []string{"set", "ship"}, Report: "/plan set"},
+		{Command: "/plan", Args: []string{"exit"}, Report: "/plan exit"},
+		{Command: "/plan", Args: []string{"clear"}, Report: "/plan clear"},
+		{Command: "/ultraplan", Args: []string{"inspect"}, Report: "/ultraplan"},
+		{Command: "/exit-plan", Args: nil, Report: "/exit-plan"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
