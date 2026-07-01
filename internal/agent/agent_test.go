@@ -5442,6 +5442,33 @@ func TestGreenContractCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestReportSchemaCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	input := `{"generated_at":"2026-05-14T00:00:00Z","producer":"worker-1","claims":[{"id":"claim-secret","kind":"observed_fact","text":"secret","confidence":"high","sensitivity":"secret"},{"id":"claim-fact","kind":"observed_fact","text":"done","confidence":"high","sensitivity":"public"}]}`
+
+	require.NoError(t, app.ReportSchema([]string{
+		"project",
+		"--input", input,
+		"--consumer", "viewer",
+		"--max-sensitivity", "public",
+		"--json",
+	}))
+	require.Contains(t, out.String(), `"kind": "report_schema"`)
+	require.Contains(t, out.String(), `"status": "ok"`)
+	require.Contains(t, out.String(), `"projection_id":`)
+	require.Contains(t, out.String(), `"field_path": "claims[1]"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/report-schema registry", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Report Schema")
+	require.Contains(t, out.String(), "Schema           claw.report.v1")
+	require.Contains(t, out.String(), "identity.report_id")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))

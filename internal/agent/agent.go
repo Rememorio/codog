@@ -71,6 +71,7 @@ import (
 	"github.com/Rememorio/codog/internal/promptrefs"
 	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/releasenotes"
+	"github.com/Rememorio/codog/internal/reportschema"
 	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
@@ -543,6 +544,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.StaleBase(rest)
 	case "green-contract", "green":
 		return app.GreenContract(rest)
+	case "report-schema":
+		return app.ReportSchema(rest)
 	case "trust":
 		return app.Trust(rest)
 	case "tag":
@@ -19267,6 +19270,7 @@ func codogCapabilityFeatures() []string {
 		"project_memory",
 		"notification_preferences",
 		"recovery_recipes_ledger",
+		"report_schema_projection",
 		"remote_control",
 		"repl",
 		"resume_safe_slash_metadata",
@@ -19482,6 +19486,7 @@ func builtInCommandNames() []string {
 		"reasoning",
 		"references",
 		"release-notes",
+		"report-schema",
 		"reload-plugins",
 		"remote",
 		"remote-control",
@@ -20353,6 +20358,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.StaleBase(resumeSlashArgs("stale-base", args, format))
 	case "/green-contract", "/green":
 		return a.GreenContract(resumeSlashArgs("green-contract", args, format))
+	case "/report-schema":
+		return a.ReportSchema(resumeSlashArgs("report-schema", args, format))
 	case "/trust":
 		return a.Trust(resumeSlashArgs("trust", args, format))
 	case "/tag":
@@ -24605,6 +24612,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/green-contract", "/green":
 		if err := a.GreenContract(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/report-schema":
+		if err := a.ReportSchema(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/trust":
@@ -28874,6 +28885,275 @@ func renderGreenContractReport(out io.Writer, report greenContractReport) {
 		fmt.Fprintln(out, "  Blocking flakes")
 		for _, flake := range report.Outcome.BlockingFlakes {
 			fmt.Fprintf(out, "    - %s\n", flake.TestName)
+		}
+	}
+}
+
+type reportSchemaRequest struct {
+	Format         string
+	Action         string
+	Input          string
+	File           string
+	Stdin          bool
+	View           string
+	Consumer       string
+	SchemaVersions []string
+	FieldFamilies  []string
+	MaxSensitivity string
+}
+
+type reportSchemaReport struct {
+	Kind       string                        `json:"kind"`
+	Action     string                        `json:"action"`
+	Status     string                        `json:"status"`
+	Registry   *reportschema.Registry        `json:"registry,omitempty"`
+	Report     *reportschema.CanonicalReport `json:"report,omitempty"`
+	Projection *reportschema.Projection      `json:"projection,omitempty"`
+}
+
+func (a *App) ReportSchema(args []string) error {
+	req, err := parseReportSchemaArgs(args)
+	if err != nil {
+		return err
+	}
+	out := reportSchemaReport{Kind: "report_schema", Action: req.Action, Status: "ok"}
+	switch req.Action {
+	case "registry":
+		registry := reportschema.RegistryV1()
+		out.Registry = &registry
+	case "canonicalize":
+		report, err := readReportSchemaInput(req, a.In)
+		if err != nil {
+			return err
+		}
+		canonical, err := reportschema.Canonicalize(report)
+		if err != nil {
+			return err
+		}
+		out.Report = &canonical
+	case "project":
+		report, err := readReportSchemaInput(req, a.In)
+		if err != nil {
+			return err
+		}
+		projection, err := reportschema.Project(report, reportschema.ConsumerCapabilities{
+			Consumer:       req.Consumer,
+			SchemaVersions: append([]string(nil), req.SchemaVersions...),
+			FieldFamilies:  append([]string(nil), req.FieldFamilies...),
+			MaxSensitivity: req.MaxSensitivity,
+		}, req.View)
+		if err != nil {
+			return err
+		}
+		out.Projection = &projection
+	default:
+		return fmt.Errorf("unknown report-schema action %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderReportSchemaReport(a.Out, out)
+	return nil
+}
+
+func parseReportSchemaArgs(args []string) (reportSchemaRequest, error) {
+	req := reportSchemaRequest{
+		Format:         "text",
+		Action:         "registry",
+		View:           "default",
+		Consumer:       "codog",
+		SchemaVersions: []string{reportschema.SchemaV1},
+		MaxSensitivity: reportschema.SensitivityPublic,
+	}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--input":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema input JSON is required")
+			}
+			req.Input = args[i]
+		case strings.HasPrefix(arg, "--input="):
+			req.Input = strings.TrimPrefix(arg, "--input=")
+		case arg == "--file" || arg == "-f":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema file is required")
+			}
+			req.File = args[i]
+		case strings.HasPrefix(arg, "--file="):
+			req.File = strings.TrimPrefix(arg, "--file=")
+		case arg == "--stdin":
+			req.Stdin = true
+		case arg == "--view":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema view is required")
+			}
+			req.View = args[i]
+		case strings.HasPrefix(arg, "--view="):
+			req.View = strings.TrimPrefix(arg, "--view=")
+		case arg == "--consumer":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema consumer is required")
+			}
+			req.Consumer = args[i]
+		case strings.HasPrefix(arg, "--consumer="):
+			req.Consumer = strings.TrimPrefix(arg, "--consumer=")
+		case arg == "--schema-version":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema schema version is required")
+			}
+			req.SchemaVersions = appendSchemaVersion(req.SchemaVersions, args[i])
+		case strings.HasPrefix(arg, "--schema-version="):
+			req.SchemaVersions = appendSchemaVersion(req.SchemaVersions, strings.TrimPrefix(arg, "--schema-version="))
+		case arg == "--field-family":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema field family is required")
+			}
+			req.FieldFamilies = append(req.FieldFamilies, args[i])
+		case strings.HasPrefix(arg, "--field-family="):
+			req.FieldFamilies = append(req.FieldFamilies, strings.TrimPrefix(arg, "--field-family="))
+		case arg == "--max-sensitivity":
+			i++
+			if i >= len(args) {
+				return req, errors.New("report-schema max sensitivity is required")
+			}
+			req.MaxSensitivity = args[i]
+		case strings.HasPrefix(arg, "--max-sensitivity="):
+			req.MaxSensitivity = strings.TrimPrefix(arg, "--max-sensitivity=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown report-schema flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "report-schema")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+		switch action {
+		case "registry", "schema", "fields":
+			req.Action = "registry"
+		case "canonicalize", "canonicalise", "canonical":
+			req.Action = "canonicalize"
+		case "project", "projection":
+			req.Action = "project"
+		default:
+			return req, fmt.Errorf("unknown report-schema action %q", positionals[0])
+		}
+		positionals = positionals[1:]
+	}
+	if len(positionals) > 0 {
+		return req, errors.New("usage: codog report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]")
+	}
+	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
+		return req, errors.New("report-schema accepts only one of --input or --file")
+	}
+	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
+		return req, errors.New("report-schema accepts --stdin only without --input or --file")
+	}
+	if (req.Action == "canonicalize" || req.Action == "project") && strings.TrimSpace(req.Input) == "" && strings.TrimSpace(req.File) == "" && !req.Stdin {
+		return req, errors.New("report-schema input is required for canonicalize and project")
+	}
+	return req, nil
+}
+
+func appendSchemaVersion(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	if len(values) == 1 && values[0] == reportschema.SchemaV1 {
+		return []string{value}
+	}
+	return append(values, value)
+}
+
+func readReportSchemaInput(req reportSchemaRequest, stdin io.Reader) (reportschema.CanonicalReport, error) {
+	var data []byte
+	var err error
+	switch {
+	case strings.TrimSpace(req.Input) != "":
+		data = []byte(req.Input)
+	case strings.TrimSpace(req.File) != "":
+		data, err = os.ReadFile(req.File)
+		if err != nil {
+			return reportschema.CanonicalReport{}, err
+		}
+	case req.Stdin:
+		if stdin == nil {
+			return reportschema.CanonicalReport{}, errors.New("report-schema stdin is not available")
+		}
+		data, err = io.ReadAll(stdin)
+		if err != nil {
+			return reportschema.CanonicalReport{}, err
+		}
+	default:
+		return reportschema.CanonicalReport{}, errors.New("report-schema input is required")
+	}
+	var report reportschema.CanonicalReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return reportschema.CanonicalReport{}, fmt.Errorf("report-schema input JSON: %w", err)
+	}
+	return report, nil
+}
+
+func renderReportSchemaReport(out io.Writer, report reportSchemaReport) {
+	fmt.Fprintln(out, "Report Schema")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.Registry != nil {
+		fmt.Fprintf(out, "  Schema           %s\n", report.Registry.SchemaVersion)
+		fmt.Fprintf(out, "  Fields           %d\n", len(report.Registry.Fields))
+		for _, field := range report.Registry.Fields {
+			required := "optional"
+			if field.Required {
+				required = "required"
+			}
+			fmt.Fprintf(out, "    - %s [%s] %s\n", field.ID, required, field.FieldFamily)
+		}
+	}
+	if report.Report != nil {
+		fmt.Fprintf(out, "  Schema           %s\n", report.Report.SchemaVersion)
+		fmt.Fprintf(out, "  Report ID        %s\n", report.Report.Identity.ReportID)
+		fmt.Fprintf(out, "  Content hash     %s\n", report.Report.Identity.ContentHash)
+		fmt.Fprintf(out, "  Claims           %d\n", len(report.Report.Claims))
+	}
+	if report.Projection != nil {
+		fmt.Fprintf(out, "  Schema           %s\n", report.Projection.SchemaVersion)
+		fmt.Fprintf(out, "  Projection ID    %s\n", report.Projection.ProjectionID)
+		fmt.Fprintf(out, "  View             %s\n", report.Projection.View)
+		fmt.Fprintf(out, "  Consumer         %s\n", report.Projection.Provenance.Consumer)
+		fmt.Fprintf(out, "  Downgraded       %t\n", report.Projection.Provenance.Downgraded)
+		if len(report.Projection.Provenance.OmittedFieldFamilies) > 0 {
+			fmt.Fprintf(out, "  Omitted          %s\n", strings.Join(report.Projection.Provenance.OmittedFieldFamilies, ", "))
+		}
+		if len(report.Projection.Provenance.Redactions) > 0 {
+			fmt.Fprintln(out, "  Redactions")
+			for _, redaction := range report.Projection.Provenance.Redactions {
+				fmt.Fprintf(out, "    - %s %s\n", redaction.FieldPath, redaction.Reason)
+			}
 		}
 	}
 }
@@ -36538,7 +36818,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
+		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
 		"stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
@@ -36883,6 +37163,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Green Contract\n\nUsage:\n  codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--output-format text|json]\n  codog green [same flags]\n\nEvaluates structured evidence against a green/merge-ready contract. `--merge-ready` requires a passing test command, fresh base branch evidence, recovery attempt context, and no blocking known flakes.\n",
 			[]string{"status", "contract", "evidence", "outcome", "missing", "blocking_flakes"},
 			[]string{"satisfied", "unsatisfied", "error"},
+			false,
+		), true
+	case "report-schema":
+		return localCommandHelpSpec(
+			"report-schema",
+			"report-schema",
+			"codog report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]",
+			"Report Schema\n\nUsage:\n  codog report-schema registry [--output-format text|json]\n  codog report-schema canonicalize [--input JSON|--file PATH|--stdin] [--output-format text|json]\n  codog report-schema project [--input JSON|--file PATH|--stdin] [--consumer NAME] [--field-family NAME] [--max-sensitivity public|internal|operator_only|secret] [--output-format text|json]\n\nExposes the canonical report schema registry, canonicalizes reports with stable content hashes, and projects reports for consumers while recording omitted field families and redaction provenance.\n",
+			[]string{"schema_version", "registry", "report", "projection", "provenance", "redactions"},
+			[]string{"ok", "error"},
 			false,
 		), true
 	case "trust":
@@ -37877,6 +38167,7 @@ Usage:
   %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
   %s [flags] stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]
   %s [flags] green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--json|--output-format text|json]
+  %s [flags] report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--json|--output-format text|json]
   %s [flags] trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--allow PATTERN] [--deny PATH] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]
