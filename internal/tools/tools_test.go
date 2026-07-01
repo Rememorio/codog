@@ -2140,19 +2140,42 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.Contains(t, outputOut, `"task_id": "`)
 	require.Contains(t, outputOut, `"status": "completed"`)
 	require.Contains(t, outputOut, `"exit_code": 0`)
+	var completeOutput struct {
+		Output        string          `json:"output"`
+		Stdout        string          `json:"stdout"`
+		HasOutput     bool            `json:"has_output"`
+		RawOutputPath string          `json:"rawOutputPath"`
+		Task          background.Task `json:"task"`
+		LogSize       int64           `json:"logSize"`
+		Truncated     bool            `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(outputOut), &completeOutput))
+	require.Equal(t, "task-output", completeOutput.Output)
+	require.Equal(t, completeOutput.Output, completeOutput.Stdout)
+	require.True(t, completeOutput.HasOutput)
+	require.Equal(t, task.ID, completeOutput.Task.ID)
+	require.FileExists(t, completeOutput.RawOutputPath)
+	require.Equal(t, int64(len("task-output")), completeOutput.LogSize)
+	require.False(t, completeOutput.Truncated)
 	outputOut, err = TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","offset":0,"limit":4}`))
 	require.NoError(t, err)
 	var offsetOutput struct {
-		Output     string `json:"output"`
-		Offset     int64  `json:"offset"`
-		NextOffset int64  `json:"nextOffset"`
-		BytesRead  int    `json:"bytesRead"`
+		Output              string `json:"output"`
+		Offset              int64  `json:"offset"`
+		NextOffset          int64  `json:"nextOffset"`
+		BytesRead           int    `json:"bytesRead"`
+		Truncated           bool   `json:"truncated"`
+		PersistedOutputPath string `json:"persistedOutputPath"`
+		PersistedOutputSize int64  `json:"persistedOutputSize"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(outputOut), &offsetOutput))
 	require.Equal(t, "task", offsetOutput.Output)
 	require.Equal(t, int64(0), offsetOutput.Offset)
 	require.Equal(t, int64(4), offsetOutput.NextOffset)
 	require.Equal(t, 4, offsetOutput.BytesRead)
+	require.True(t, offsetOutput.Truncated)
+	require.Equal(t, completeOutput.RawOutputPath, offsetOutput.PersistedOutputPath)
+	require.Equal(t, int64(len("task-output")), offsetOutput.PersistedOutputSize)
 
 	delayedOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"sleep 0.1; printf delayed-task","kind":"delayed","session_id":"session-2"}`))
 	require.NoError(t, err)

@@ -2702,6 +2702,8 @@ type backgroundLogReadResult struct {
 	Offset     int64
 	NextOffset int64
 	BytesRead  int
+	LogSize    int64
+	Truncated  bool
 	TimedOut   bool
 	TimeoutMS  int
 }
@@ -2783,6 +2785,8 @@ func readBackgroundLogOnce(store background.Store, id string, task background.Ta
 		Offset:     appliedOffset,
 		NextOffset: nextOffset,
 		BytesRead:  len([]byte(output)),
+		LogSize:    logSize,
+		Truncated:  output != "" && (appliedOffset > 0 || nextOffset < logSize),
 	}, nil
 }
 
@@ -6874,19 +6878,36 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{
-		"id":         id,
-		"task_id":    id,
-		"status":     task.Status,
-		"exit_code":  task.ExitCode,
-		"error":      task.Error,
-		"output":     logRead.Output,
-		"offset":     logRead.Offset,
-		"nextOffset": logRead.NextOffset,
-		"bytesRead":  logRead.BytesRead,
-		"timedOut":   logRead.TimedOut,
-		"timeoutMs":  logRead.TimeoutMS,
-	}), nil
+	result := map[string]any{
+		"id":               id,
+		"task_id":          id,
+		"status":           task.Status,
+		"exit_code":        task.ExitCode,
+		"error":            task.Error,
+		"output":           logRead.Output,
+		"stdout":           logRead.Output,
+		"stderr":           "",
+		"has_output":       logRead.Output != "",
+		"task":             task,
+		"kind":             task.Kind,
+		"command":          task.Command,
+		"logPath":          task.LogPath,
+		"rawOutputPath":    task.LogPath,
+		"interrupted":      task.Status == "stopped",
+		"noOutputExpected": strings.TrimSpace(logRead.Output) == "",
+		"offset":           logRead.Offset,
+		"nextOffset":       logRead.NextOffset,
+		"bytesRead":        logRead.BytesRead,
+		"logSize":          logRead.LogSize,
+		"truncated":        logRead.Truncated,
+		"timedOut":         logRead.TimedOut,
+		"timeoutMs":        logRead.TimeoutMS,
+	}
+	if logRead.Truncated {
+		result["persistedOutputPath"] = task.LogPath
+		result["persistedOutputSize"] = logRead.LogSize
+	}
+	return pretty(result), nil
 }
 
 type TaskSuperviseTool struct {
