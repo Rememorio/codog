@@ -14812,6 +14812,7 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 	case "OAuthFlowStep":
 		report.Messages = append(report.Messages, "If your organization uses OAuth or OIDC, complete provider authorization before enabling workflow automation.")
 	case "SuccessStep":
+		a.populateGitHubAppSuccessChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
 		if len(report.Warnings) > 0 {
 			report.Status = "warn"
 			report.Messages = append(report.Messages, "Setup can proceed, but warnings should be reviewed first.")
@@ -14832,6 +14833,71 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		report.Messages = append(report.Messages, "GitHub App setup step report generated.")
 	}
 	return report
+}
+
+func (a *App) populateGitHubAppSuccessChecks(report *installGitHubAppStepReport, setupReport githubsetup.Report, ghPath string, ghErr error, apiKeyConfigured bool) {
+	if !apiKeyConfigured {
+		report.Warnings = append(report.Warnings, "No local Anthropic API key or auth token was detected.")
+	}
+	missingWorkflows := []string{}
+	for _, workflow := range setupReport.Workflows {
+		if !workflow.Exists {
+			missingWorkflows = append(missingWorkflows, workflow.Path)
+		}
+	}
+	if len(missingWorkflows) > 0 {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("%d selected workflow file(s) are not present yet.", len(missingWorkflows)))
+	} else {
+		report.Messages = append(report.Messages, "All selected workflow files are present.")
+	}
+	if ghErr != nil {
+		report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available on PATH.")
+		return
+	}
+	if setupReport.Repo == "" {
+		report.Warnings = append(report.Warnings, "No GitHub origin remote was detected.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	githubCheck := checkGitHubCLI(ctx, ghPath, setupReport.Repo)
+	report.GitHubCheck = &githubCheck
+	report.ProviderRequestMade = report.ProviderRequestMade || githubCheck.Attempted
+	if githubCheck.Authenticated {
+		report.Messages = append(report.Messages, "GitHub CLI authentication is active.")
+	} else {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub CLI authentication check failed: %s", fallbackMessage(githubCheck.AuthError, "not authenticated")))
+	}
+	if githubCheck.RepoAccessible {
+		report.Messages = append(report.Messages, fmt.Sprintf("Repository %s is accessible through gh.", setupReport.Repo))
+	} else {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub repository access check failed: %s", fallbackMessage(githubCheck.RepoError, "repository not accessible")))
+	}
+
+	secretCheck := checkGitHubRepositorySecret(ctx, ghPath, setupReport.Repo, setupReport.SecretName)
+	report.SecretCheck = &secretCheck
+	report.ProviderRequestMade = report.ProviderRequestMade || secretCheck.Attempted
+	switch {
+	case secretCheck.Error != "":
+		report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub repository secret: %s", secretCheck.Error))
+	case secretCheck.Exists:
+		report.Messages = append(report.Messages, fmt.Sprintf("Repository secret %s exists on %s.", setupReport.SecretName, setupReport.Repo))
+	default:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("Repository secret %s was not found on %s.", setupReport.SecretName, setupReport.Repo))
+	}
+
+	actionsCheck := checkGitHubActionsPermissions(ctx, ghPath, setupReport.Repo)
+	report.ActionsCheck = &actionsCheck
+	report.ProviderRequestMade = report.ProviderRequestMade || actionsCheck.Attempted
+	switch {
+	case actionsCheck.Error != "":
+		report.Warnings = append(report.Warnings, fmt.Sprintf("Could not check GitHub Actions permissions: %s", actionsCheck.Error))
+	case actionsCheck.Enabled:
+		report.Messages = append(report.Messages, fmt.Sprintf("GitHub Actions is enabled for %s.", setupReport.Repo))
+	default:
+		report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub Actions is disabled for %s.", setupReport.Repo))
+	}
 }
 
 func commandErrorMessage(err error) string {

@@ -7458,6 +7458,31 @@ exit 1
 			require.Contains(t, installReport.Messages, "GitHub Actions is enabled for acme/widgets.")
 			require.Contains(t, installReport.Messages, "Allowed actions policy: all.")
 			out.Reset()
+
+			successWorkflowDir := filepath.Join(secretWorkspace, ".github", "workflows")
+			require.NoError(t, os.MkdirAll(successWorkflowDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(successWorkflowDir, "claude.yml"), []byte("name: Claude Code\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(successWorkflowDir, "claude-code-review.yml"), []byte("name: Claude Code Review\n"), 0o644))
+			require.NoError(t, secretApp.InstallGitHubAppStep("SuccessStep", []string{"--json"}))
+			var successReport installGitHubAppStepReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &successReport))
+			require.Equal(t, "SuccessStep", successReport.Step)
+			require.Equal(t, "ready", successReport.Status)
+			require.True(t, successReport.ProviderRequestMade)
+			require.NotNil(t, successReport.GitHubCheck)
+			require.True(t, successReport.GitHubCheck.Authenticated)
+			require.True(t, successReport.GitHubCheck.RepoAccessible)
+			require.NotNil(t, successReport.SecretCheck)
+			require.True(t, successReport.SecretCheck.Exists)
+			require.NotNil(t, successReport.ActionsCheck)
+			require.True(t, successReport.ActionsCheck.Enabled)
+			require.Len(t, successReport.Workflows, 2)
+			require.True(t, successReport.Workflows[0].Exists)
+			require.True(t, successReport.Workflows[1].Exists)
+			require.Contains(t, successReport.Messages, "All selected workflow files are present.")
+			require.Contains(t, successReport.Messages, "Local GitHub App setup checks are ready.")
+			require.Empty(t, successReport.Warnings)
+			out.Reset()
 		}
 	}
 
