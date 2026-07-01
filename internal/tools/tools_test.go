@@ -569,9 +569,13 @@ func TestFileToolsAllowAdditionalDirs(t *testing.T) {
 func TestLSToolListsScopedDirectory(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "ignored-dir"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "main.go"), []byte("package pkg\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("docs\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".secret"), []byte("hidden\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored.txt"), []byte("ignored\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "trace.log"), []byte("ignored\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.txt\n*.log\nignored-dir/\n"), 0o644))
 
 	out, err := LSTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"ignore":["README.md"]}`))
 	require.NoError(t, err)
@@ -580,6 +584,28 @@ func TestLSToolListsScopedDirectory(t *testing.T) {
 	require.Contains(t, out, `"type": "directory"`)
 	require.NotContains(t, out, `"name": "README.md"`)
 	require.NotContains(t, out, `.secret`)
+	require.NotContains(t, out, `ignored.txt`)
+	require.NotContains(t, out, `trace.log`)
+	require.NotContains(t, out, `ignored-dir`)
+	var report struct {
+		Files      []string `json:"files"`
+		Filenames  []string `json:"filenames"`
+		NumFiles   int      `json:"numFiles"`
+		NumFilesSN int      `json:"num_files"`
+		NumEntries int      `json:"numEntries"`
+		DurationMS int64    `json:"durationMs"`
+		DurationMs int64    `json:"duration_ms"`
+		Truncated  bool     `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{"pkg"}, report.Files)
+	require.Equal(t, report.Files, report.Filenames)
+	require.Equal(t, 1, report.NumFiles)
+	require.Equal(t, report.NumFiles, report.NumFilesSN)
+	require.Equal(t, 1, report.NumEntries)
+	require.GreaterOrEqual(t, report.DurationMS, int64(0))
+	require.Equal(t, report.DurationMS, report.DurationMs)
+	require.False(t, report.Truncated)
 
 	out, err = NewRegistry(workspace).Execute(context.Background(), "LS", []byte(`{"path":".","hidden":true}`), nil)
 	require.NoError(t, err)
@@ -587,6 +613,30 @@ func TestLSToolListsScopedDirectory(t *testing.T) {
 	out, err = NewRegistry(workspace).Execute(context.Background(), "LS", []byte(`{"path":".","hidden":true,"limit":1}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"truncated": true`)
+}
+
+func TestLSToolUsesNestedIgnoreFiles(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "pkg", "cache"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", ".clawignore"), []byte("cache/\n*.tmp\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "main.go"), []byte("package pkg\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "draft.tmp"), []byte("ignored\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "cache", "data.txt"), []byte("ignored\n"), 0o644))
+
+	out, err := NewRegistry(workspace).Execute(context.Background(), "LS", []byte(`{"path":"pkg"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `main.go`)
+	require.NotContains(t, out, `draft.tmp`)
+	require.NotContains(t, out, `"name": "cache"`)
+	var report struct {
+		Files     []string `json:"files"`
+		NumFiles  int      `json:"numFiles"`
+		Truncated bool     `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{filepath.ToSlash(filepath.Join("pkg", "main.go"))}, report.Files)
+	require.Equal(t, 1, report.NumFiles)
+	require.False(t, report.Truncated)
 }
 
 func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {

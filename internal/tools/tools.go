@@ -4622,6 +4622,7 @@ func (LSTool) Definition() anthropic.ToolDefinition {
 func (LSTool) Permission() Permission { return PermissionReadOnly }
 
 func (t LSTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	started := time.Now()
 	var payload struct {
 		Path   string   `json:"path"`
 		Ignore []string `json:"ignore"`
@@ -4656,6 +4657,7 @@ func (t LSTool) Execute(_ context.Context, input json.RawMessage) (string, error
 	if err != nil {
 		return "", err
 	}
+	fileIgnorePatterns := loadLSIgnorePatterns(t.Workspace, dir)
 	sort.Slice(children, func(i, j int) bool {
 		left, right := children[i], children[j]
 		if left.IsDir() != right.IsDir() {
@@ -4664,6 +4666,7 @@ func (t LSTool) Execute(_ context.Context, input json.RawMessage) (string, error
 		return strings.ToLower(left.Name()) < strings.ToLower(right.Name())
 	})
 	entries := make([]lsEntry, 0, min(len(children), limit))
+	entryPaths := make([]string, 0, min(len(children), limit))
 	truncated := false
 	for _, child := range children {
 		name := child.Name()
@@ -4672,7 +4675,10 @@ func (t LSTool) Execute(_ context.Context, input json.RawMessage) (string, error
 			continue
 		}
 		childPath := filepath.Join(dir, name)
-		if ignoredLSEntry(t.Workspace, childPath, name, payload.Ignore) {
+		if ignoredLSEntry(t.Workspace, childPath, name, child.IsDir(), payload.Ignore) {
+			continue
+		}
+		if ignoredByLSIgnoreFiles(childPath, name, child.IsDir(), fileIgnorePatterns) {
 			continue
 		}
 		if len(entries) >= limit {
@@ -4690,23 +4696,35 @@ func (t LSTool) Execute(_ context.Context, input json.RawMessage) (string, error
 		case childInfo.Mode()&os.ModeSymlink != 0:
 			kind = "symlink"
 		}
+		display := displayPath(t.Workspace, childPath)
 		entries = append(entries, lsEntry{
 			Name:   name,
-			Path:   displayPath(t.Workspace, childPath),
+			Path:   display,
 			Type:   kind,
 			Size:   childInfo.Size(),
 			Hidden: hidden,
 		})
+		entryPaths = append(entryPaths, display)
 	}
+	durationMS := time.Since(started).Milliseconds()
 	return pretty(map[string]any{
-		"kind":      "ls",
-		"path":      displayPath(t.Workspace, dir),
-		"entries":   entries,
-		"truncated": truncated,
+		"kind":        "ls",
+		"path":        displayPath(t.Workspace, dir),
+		"entries":     entries,
+		"files":       entryPaths,
+		"filenames":   entryPaths,
+		"numFiles":    len(entryPaths),
+		"num_files":   len(entryPaths),
+		"numEntries":  len(entries),
+		"num_entries": len(entries),
+		"durationMs":  durationMS,
+		"duration_ms": durationMS,
+		"limit":       limit,
+		"truncated":   truncated,
 	}), nil
 }
 
-func ignoredLSEntry(workspace string, fullPath string, name string, patterns []string) bool {
+func ignoredLSEntry(workspace string, fullPath string, name string, isDir bool, patterns []string) bool {
 	if len(patterns) == 0 {
 		return false
 	}
@@ -4714,6 +4732,11 @@ func ignoredLSEntry(workspace string, fullPath string, name string, patterns []s
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "" {
+			continue
+		}
+		directoryOnly := strings.HasSuffix(pattern, "/")
+		pattern = strings.TrimSuffix(pattern, "/")
+		if directoryOnly && !isDir {
 			continue
 		}
 		if ok, _ := filepath.Match(pattern, name); ok {
@@ -4724,6 +4747,94 @@ func ignoredLSEntry(workspace string, fullPath string, name string, patterns []s
 		}
 	}
 	return false
+}
+
+type lsIgnorePattern struct {
+	Base          string
+	Pattern       string
+	DirectoryOnly bool
+}
+
+func loadLSIgnorePatterns(workspace string, dir string) []lsIgnorePattern {
+	patterns := []lsIgnorePattern{}
+	for _, base := range lsIgnoreBases(workspace, dir) {
+		for _, filename := range []string{".gitignore", ".clawignore", ".claudeignore", ".codogignore"} {
+			data, err := os.ReadFile(filepath.Join(base, filename))
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+					continue
+				}
+				line = strings.TrimPrefix(filepath.ToSlash(line), "/")
+				directoryOnly := strings.HasSuffix(line, "/")
+				line = strings.TrimSuffix(line, "/")
+				if line == "" {
+					continue
+				}
+				patterns = append(patterns, lsIgnorePattern{
+					Base:          base,
+					Pattern:       line,
+					DirectoryOnly: directoryOnly,
+				})
+			}
+		}
+	}
+	return patterns
+}
+
+func lsIgnoreBases(workspace string, dir string) []string {
+	workspace = filepath.Clean(workspace)
+	dir = filepath.Clean(dir)
+	rel, err := filepath.Rel(workspace, dir)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return []string{dir}
+	}
+	bases := []string{workspace}
+	if rel == "." {
+		return bases
+	}
+	current := workspace
+	for _, component := range strings.Split(filepath.ToSlash(rel), "/") {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		bases = append(bases, current)
+	}
+	return bases
+}
+
+func ignoredByLSIgnoreFiles(fullPath string, name string, isDir bool, patterns []lsIgnorePattern) bool {
+	for _, pattern := range patterns {
+		if pattern.DirectoryOnly && !isDir {
+			continue
+		}
+		rel, err := filepath.Rel(pattern.Base, fullPath)
+		if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		if lsIgnorePatternMatches(pattern.Pattern, rel, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func lsIgnorePatternMatches(pattern string, rel string, name string) bool {
+	if strings.Contains(pattern, "/") {
+		if ok, _ := path.Match(pattern, rel); ok {
+			return true
+		}
+		return rel == pattern || strings.HasPrefix(rel, pattern+"/")
+	}
+	if ok, _ := path.Match(pattern, name); ok {
+		return true
+	}
+	return name == pattern
 }
 
 type WebFetchTool struct{}
