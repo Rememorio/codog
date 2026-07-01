@@ -19785,6 +19785,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedProvidersSlash(resumeSlashArgs("providers", args, format), format)
 	case "/profile":
 		return a.runResumedProfileSlash(resumeSlashArgs("profile", args, format), format)
+	case "/advisor":
+		return a.runResumedAdvisorSlash(resumeSlashArgs("advisor", args, format), format)
 	case "/budget":
 		return a.runResumedBudgetSlash(resumeSlashArgs("budget", args, format), format)
 	case "/output-style":
@@ -19853,6 +19855,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Statusline(resumeSlashArgs("statusline", args, format), resumed)
 	case "/sandbox":
 		return a.Sandbox()
+	case "/sandbox-toggle":
+		return a.runResumedSandboxToggleSlash(resumeSlashArgs("sandbox-toggle", args, format), format)
 	case "/mcp":
 		return a.MCP(ctx, resumeSlashArgs("mcp", args, format))
 	case "/skills":
@@ -19951,6 +19955,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Changelog(resumeSlashArgs("changelog", args, format))
 	case "/release-notes":
 		return a.ReleaseNotes(resumeSlashArgs("release-notes", args, format))
+	case "/reset":
+		return a.runResumedResetSlash(resumeSlashArgs("reset", args, format), format)
 	case "/branch":
 		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
 	case "/tag":
@@ -20141,6 +20147,53 @@ func (a *App) runResumedRemoteSetupSlash(args []string, overrides config.FlagOve
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/remote-setup", req.Action), format)
 	}
 	return a.RemoteSetup(args, overrides)
+}
+
+func (a *App) runResumedAdvisorSlash(args []string, format string) error {
+	req, err := parseAdvisorArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/advisor", req.Action), format)
+	}
+	return a.Advisor(args)
+}
+
+func (a *App) runResumedSandboxToggleSlash(args []string, format string) error {
+	req, err := parseSandboxToggleArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSandboxToggleSlashLabel(req), format)
+	}
+	return a.SandboxToggle(args)
+}
+
+func resumedSandboxToggleSlashLabel(req sandboxToggleRequest) string {
+	if req.Action == "set" && strings.TrimSpace(req.Strategy) != "" {
+		return resumedSlashCommandLabel("/sandbox-toggle", req.Strategy)
+	}
+	return resumedSlashCommandLabel("/sandbox-toggle", req.Action)
+}
+
+func (a *App) runResumedResetSlash(args []string, format string) error {
+	req, err := parseResetArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedResetSlashLabel(req), format)
+	}
+	return a.Reset(args)
+}
+
+func resumedResetSlashLabel(req resetRequest) string {
+	if req.Action == "reset" && strings.TrimSpace(req.Section) != "" {
+		return resumedSlashCommandLabel("/reset", req.Section)
+	}
+	return resumedSlashCommandLabel("/reset", req.Action)
 }
 
 func (a *App) runResumedFormatSlash(args []string, format string) error {

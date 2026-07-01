@@ -699,6 +699,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	statusSlash, ok := capabilityReportSlash(report, "/status")
 	require.True(t, ok)
 	require.True(t, statusSlash.ResumeSupported)
+	advisorSlash, ok := capabilityReportSlash(report, "/advisor")
+	require.True(t, ok)
+	require.True(t, advisorSlash.ResumeSupported)
 	systemPromptSlash, ok := capabilityReportSlash(report, "/system-prompt")
 	require.True(t, ok)
 	require.True(t, systemPromptSlash.ResumeSupported)
@@ -714,9 +717,15 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	hooksSlash, ok := capabilityReportSlash(report, "/hooks")
 	require.True(t, ok)
 	require.True(t, hooksSlash.ResumeSupported)
+	resetSlash, ok := capabilityReportSlash(report, "/reset")
+	require.True(t, ok)
+	require.True(t, resetSlash.ResumeSupported)
 	setupSlash, ok := capabilityReportSlash(report, "/setup")
 	require.True(t, ok)
 	require.True(t, setupSlash.ResumeSupported)
+	sandboxToggleSlash, ok := capabilityReportSlash(report, "/sandbox-toggle")
+	require.True(t, ok)
+	require.True(t, sandboxToggleSlash.ResumeSupported)
 	terminalSetupSlash, ok := capabilityReportSlash(report, "/terminal-setup")
 	require.True(t, ok)
 	require.True(t, terminalSetupSlash.ResumeSupported)
@@ -1278,6 +1287,7 @@ func risky(value any) {
 	data, err := json.Marshal(map[string]any{
 		"config_home":           configHome,
 		"auto_compact_messages": 2,
+		"advisor_model":         "claude-advisor",
 		"model":                 "claude-test",
 		"api_key":               "test-key",
 		"max_tokens":            1000,
@@ -1305,6 +1315,7 @@ func risky(value any) {
 			"remote_auth_token":      "remote-secret",
 			"remote_enabled":         true,
 			"remote_lease_seconds":   45,
+			"sandbox_strategy":       "detect",
 		},
 	})
 	require.NoError(t, err)
@@ -1805,12 +1816,30 @@ func risky(value any) {
 	require.Equal(t, "claude-test", requestedModel.Model)
 	require.Equal(t, "claude-requested", requestedModel.RequestedModel)
 
+	out, err = runResumedJSON("/advisor")
+	require.NoError(t, err)
+	var resumedAdvisor advisorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAdvisor))
+	require.Equal(t, "advisor", resumedAdvisor.Kind)
+	require.Equal(t, "show", resumedAdvisor.Action)
+	require.Equal(t, "claude-advisor", resumedAdvisor.Model)
+	require.Equal(t, "claude-test", resumedAdvisor.MainModel)
+
 	out, err = runResumedJSON("/sandbox")
 	require.NoError(t, err)
 	var resumedSandbox sandboxReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandbox))
 	require.Equal(t, "sandbox", resumedSandbox.Kind)
 	require.Equal(t, "status", resumedSandbox.Action)
+
+	out, err = runResumedJSON("/sandbox-toggle", "status")
+	require.NoError(t, err)
+	var resumedSandboxToggle sandboxToggleReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandboxToggle))
+	require.Equal(t, "sandbox_toggle", resumedSandboxToggle.Kind)
+	require.Equal(t, "status", resumedSandboxToggle.Action)
+	require.Equal(t, "detect", resumedSandboxToggle.ConfiguredStrategy)
+	require.NotEmpty(t, resumedSandboxToggle.ResolutionStatus)
 
 	out, err = runResumedJSON("/mcp", "list")
 	require.NoError(t, err)
@@ -2198,6 +2227,16 @@ func risky(value any) {
 	require.Equal(t, "format", resumedFormat.Kind)
 	require.False(t, resumedFormat.Write)
 
+	out, err = runResumedJSON("/reset", "status")
+	require.NoError(t, err)
+	var resumedReset resetReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedReset))
+	require.Equal(t, "reset", resumedReset.Kind)
+	require.Equal(t, "status", resumedReset.Action)
+	require.Equal(t, "all", resumedReset.Section)
+	require.True(t, resumedReset.ConfirmRequired)
+	require.Contains(t, resumedReset.AvailableSections, "model")
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
@@ -2211,6 +2250,8 @@ func risky(value any) {
 		{Command: "/rate-limit", Args: []string{"set", "--max-retries", "2"}, Report: "/rate-limit set"},
 		{Command: "/permissions", Args: []string{"read-only"}, Report: "/permissions set"},
 		{Command: "/allowed-tools", Args: []string{"add", "bash"}, Report: "/allowed-tools add"},
+		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
+		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
 		{Command: "/output-style", Args: []string{"set", "concise"}, Report: "/output-style set"},
 		{Command: "/theme", Args: []string{"light"}, Report: "/theme set"},
 		{Command: "/language", Args: []string{"French"}, Report: "/language set"},
@@ -2225,6 +2266,9 @@ func risky(value any) {
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
+		{Command: "/sandbox-toggle", Args: []string{"detect"}, Report: "/sandbox-toggle detect"},
+		{Command: "/sandbox-toggle", Args: []string{"off"}, Report: "/sandbox-toggle off"},
+		{Command: "/sandbox-toggle", Args: []string{"clear"}, Report: "/sandbox-toggle clear"},
 		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
 		{Command: "/cron", Args: []string{"create", "@daily", "check"}, Report: "/cron create"},
 		{Command: "/cron", Args: []string{"delete", cronEntry.ID}, Report: "/cron delete"},
@@ -2246,6 +2290,8 @@ func risky(value any) {
 		{Command: "/remote-setup", Args: []string{"clear"}, Report: "/remote-setup clear"},
 		{Command: "/web-setup", Args: []string{"enable"}, Report: "/remote-setup enable"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
+		{Command: "/reset", Args: []string{"model"}, Report: "/reset model"},
+		{Command: "/reset", Args: []string{"all", "--confirm"}, Report: "/reset all"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
