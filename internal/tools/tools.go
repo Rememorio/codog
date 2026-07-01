@@ -8711,7 +8711,7 @@ type todoWriteOutput struct {
 	Items                   []todos.Item        `json:"items"`
 	OldTodos                []todoWriteListItem `json:"oldTodos"`
 	NewTodos                []todoWriteListItem `json:"newTodos"`
-	VerificationNudgeNeeded bool                `json:"verificationNudgeNeeded"`
+	VerificationNudgeNeeded bool                `json:"verificationNudgeNeeded,omitempty"`
 }
 
 type todoWriteListItem struct {

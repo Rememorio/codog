@@ -2038,6 +2038,9 @@ func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
 	require.Equal(t, "write tests", writeReport.NewTodos[0].Content)
 	require.Equal(t, "writing tests", writeReport.NewTodos[0].ActiveForm)
 	require.False(t, writeReport.VerificationNudgeNeeded)
+	var writeRaw map[string]any
+	require.NoError(t, json.Unmarshal([]byte(writeOut), &writeRaw))
+	require.NotContains(t, writeRaw, "verificationNudgeNeeded")
 
 	readOut, err := TodoReadTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
 	require.NoError(t, err)
@@ -2084,6 +2087,9 @@ func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
 	require.Len(t, clearReport.NewTodos, 3)
 	require.Equal(t, "completed", clearReport.NewTodos[2].Status)
 	require.True(t, clearReport.VerificationNudgeNeeded)
+	var clearRaw map[string]any
+	require.NoError(t, json.Unmarshal([]byte(clearOut), &clearRaw))
+	require.Equal(t, true, clearRaw["verificationNudgeNeeded"])
 	readOut, err = TodoReadTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
 	require.NoError(t, err)
 	require.NotContains(t, readOut, "write tests")
