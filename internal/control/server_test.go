@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -52,6 +53,66 @@ func TestControlAuth(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestControlHooksHealth(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "hook-ran")
+	server := httptest.NewServer(Server{
+		Sessions:  &session.Store{Dir: filepath.Join(root, "sessions")},
+		Workspace: root,
+		Hooks: config.HookConfig{
+			PreToolUseCommands: []config.HookCommand{
+				{Matcher: "read_*", Type: "command", Command: "touch " + marker},
+				{Matcher: "bash", Type: "command", Command: "echo bash"},
+			},
+			NotificationCommands: []config.HookCommand{
+				{Matcher: "background_*", Type: "command", Command: "touch " + marker},
+			},
+		},
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/hooks/health?event=pre&tool=read_file")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var getReport hookHealthReport
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&getReport))
+	require.Equal(t, "hooks", getReport.Kind)
+	require.Equal(t, "health", getReport.Action)
+	require.Equal(t, "ok", getReport.Status)
+	require.Equal(t, "/hooks/health", getReport.Route)
+	require.True(t, getReport.RoutePresent)
+	require.Equal(t, []string{http.MethodGet, http.MethodPost}, getReport.AcceptedMethods)
+	require.False(t, getReport.ExecutesHooks)
+	require.Equal(t, "pre_tool_use", getReport.Event)
+	require.Equal(t, "read_file", getReport.MatcherTarget)
+	require.Equal(t, 3, getReport.ConfiguredCount)
+	require.Equal(t, 1, getReport.MatchedCount)
+	require.Len(t, getReport.Matched, 1)
+	require.Equal(t, "read_*", getReport.Matched[0].Matcher)
+	require.Contains(t, getReport.Matched[0].Command, marker)
+	require.NoFileExists(t, marker)
+
+	resp, err = http.Post(server.URL+"/hooks/status", "application/json", bytes.NewBufferString(`{"event":"notification","notification_type":"background_task_started"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var postReport hookHealthReport
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&postReport))
+	require.Equal(t, "/hooks/status", postReport.Route)
+	require.Equal(t, "notification", postReport.Event)
+	require.Equal(t, "background_task_started", postReport.MatcherTarget)
+	require.Equal(t, 1, postReport.MatchedCount)
+	require.Equal(t, "background_*", postReport.Matched[0].Matcher)
+	require.False(t, postReport.ExecutesHooks)
+	require.NoFileExists(t, marker)
+
+	resp, err = http.Get(server.URL + "/hooks/health?event=unknown")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestControlState(t *testing.T) {

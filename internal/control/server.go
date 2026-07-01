@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
+	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
@@ -25,6 +28,7 @@ type Server struct {
 	ConfigHome  string
 	Workspace   string
 	AuthToken   string
+	Hooks       config.HookConfig
 	LeaseTTL    time.Duration
 	Executable  string
 	EditorToken string
@@ -48,6 +52,66 @@ type State struct {
 	LeaseExpired    bool       `json:"lease_expired,omitempty"`
 }
 
+type hookHealthRequest struct {
+	Event            string   `json:"event"`
+	Tool             string   `json:"tool"`
+	Input            string   `json:"input,omitempty"`
+	Output           string   `json:"output,omitempty"`
+	IsError          bool     `json:"is_error,omitempty"`
+	Reason           string   `json:"reason,omitempty"`
+	NotificationType string   `json:"notification_type,omitempty"`
+	Title            string   `json:"title,omitempty"`
+	AgentID          string   `json:"agent_id,omitempty"`
+	AgentType        string   `json:"agent_type,omitempty"`
+	TranscriptPath   string   `json:"agent_transcript_path,omitempty"`
+	LastAssistant    string   `json:"last_assistant_message,omitempty"`
+	WorktreeID       string   `json:"worktree_id,omitempty"`
+	WorktreePath     string   `json:"worktree_path,omitempty"`
+	Ref              string   `json:"ref,omitempty"`
+	OldCWD           string   `json:"old_cwd,omitempty"`
+	NewCWD           string   `json:"new_cwd,omitempty"`
+	TaskID           string   `json:"task_id,omitempty"`
+	TaskKind         string   `json:"task_kind,omitempty"`
+	TaskStatus       string   `json:"task_status,omitempty"`
+	FilePath         string   `json:"file_path,omitempty"`
+	Operation        string   `json:"operation,omitempty"`
+	MemoryType       string   `json:"memory_type,omitempty"`
+	LoadReason       string   `json:"load_reason,omitempty"`
+	Globs            []string `json:"globs,omitempty"`
+	TriggerFilePath  string   `json:"trigger_file_path,omitempty"`
+	ParentFilePath   string   `json:"parent_file_path,omitempty"`
+	StopHookActive   bool     `json:"stop_hook_active,omitempty"`
+}
+
+type hookHealthReport struct {
+	Kind            string               `json:"kind"`
+	Action          string               `json:"action"`
+	Status          string               `json:"status"`
+	Workspace       string               `json:"workspace"`
+	Route           string               `json:"route"`
+	RoutePresent    bool                 `json:"route_present"`
+	AcceptedMethods []string             `json:"accepted_methods"`
+	ExecutesHooks   bool                 `json:"executes_hooks"`
+	Event           string               `json:"event"`
+	MatcherTarget   string               `json:"matcher_target"`
+	ConfiguredCount int                  `json:"configured_count"`
+	MatchedCount    int                  `json:"matched_count"`
+	Matched         []hookCommandSummary `json:"matched"`
+	Events          []hookEventHealth    `json:"events"`
+}
+
+type hookEventHealth struct {
+	Event      string `json:"event"`
+	Configured int    `json:"configured"`
+}
+
+type hookCommandSummary struct {
+	Matcher string `json:"matcher,omitempty"`
+	Type    string `json:"type,omitempty"`
+	If      string `json:"if,omitempty"`
+	Command string `json:"command"`
+}
+
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)
@@ -67,6 +131,8 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/background/prune", s.backgroundPrune)
 	mux.HandleFunc("/background/supervise", s.backgroundSupervise)
 	mux.HandleFunc("/background/", s.backgroundByID)
+	mux.HandleFunc("/hooks/health", s.hooksHealth)
+	mux.HandleFunc("/hooks/status", s.hooksHealth)
 	mux.HandleFunc("/diagnostics/go", s.goDiagnostics)
 	mux.HandleFunc("/code/symbols", s.codeSymbols)
 	mux.HandleFunc("/code/references", s.codeReferences)
@@ -813,6 +879,355 @@ func parseWatchOptions(r *http.Request) (background.WatchOptions, error) {
 	return options, nil
 }
 
+func (s Server) hooksHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req hookHealthRequest
+	if r.Method == http.MethodGet {
+		req = hookHealthRequestFromQuery(r)
+	} else if err := decodeOptionalJSONPayload(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	event, err := normalizeHookHealthEvent(firstNonEmpty(req.Event, "pre_tool_use"))
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	req.Event = event
+	if strings.TrimSpace(req.Input) == "" {
+		req.Input = `{}`
+	}
+	defaultHookHealthTool(&req)
+	payload := hookHealthPayload(req)
+	matched := hooks.HooksForPayload(s.Hooks, payload)
+	writeJSON(w, buildHookHealthReport(s.Hooks, s.Workspace, r.URL.Path, payload, matched))
+}
+
+func defaultHookHealthRequest() hookHealthRequest {
+	return hookHealthRequest{Event: "pre_tool_use", Input: `{}`}
+}
+
+func hookHealthRequestFromQuery(r *http.Request) hookHealthRequest {
+	q := r.URL.Query()
+	req := defaultHookHealthRequest()
+	req.Event = firstNonEmpty(q.Get("event"), q.Get("hook_event"), req.Event)
+	req.Tool = firstNonEmpty(q.Get("tool"), q.Get("tool_name"), req.Tool)
+	req.Input = firstNonEmpty(q.Get("input"), req.Input)
+	req.Output = q.Get("output")
+	req.IsError = parseOptionalBool(firstNonEmpty(q.Get("is_error"), q.Get("error")))
+	req.Reason = q.Get("reason")
+	req.NotificationType = firstNonEmpty(q.Get("notification_type"), q.Get("notification-type"))
+	req.Title = q.Get("title")
+	req.AgentID = firstNonEmpty(q.Get("agent_id"), q.Get("agent-id"))
+	req.AgentType = firstNonEmpty(q.Get("agent_type"), q.Get("agent-type"))
+	req.TranscriptPath = firstNonEmpty(q.Get("agent_transcript_path"), q.Get("agent-transcript-path"))
+	req.LastAssistant = firstNonEmpty(q.Get("last_assistant_message"), q.Get("last-assistant-message"))
+	req.WorktreeID = firstNonEmpty(q.Get("worktree_id"), q.Get("worktree-id"))
+	req.WorktreePath = firstNonEmpty(q.Get("worktree_path"), q.Get("worktree-path"))
+	req.Ref = q.Get("ref")
+	req.OldCWD = firstNonEmpty(q.Get("old_cwd"), q.Get("old-cwd"))
+	req.NewCWD = firstNonEmpty(q.Get("new_cwd"), q.Get("new-cwd"))
+	req.TaskID = firstNonEmpty(q.Get("task_id"), q.Get("task-id"))
+	req.TaskKind = firstNonEmpty(q.Get("task_kind"), q.Get("task-kind"))
+	req.TaskStatus = firstNonEmpty(q.Get("task_status"), q.Get("task-status"))
+	req.FilePath = firstNonEmpty(q.Get("file_path"), q.Get("file-path"), q.Get("path"))
+	req.Operation = q.Get("operation")
+	req.MemoryType = firstNonEmpty(q.Get("memory_type"), q.Get("memory-type"))
+	req.LoadReason = firstNonEmpty(q.Get("load_reason"), q.Get("load-reason"))
+	req.Globs = append([]string(nil), q["glob"]...)
+	if len(req.Globs) == 0 {
+		req.Globs = append([]string(nil), q["globs"]...)
+	}
+	req.TriggerFilePath = firstNonEmpty(q.Get("trigger_file_path"), q.Get("trigger-file-path"))
+	req.ParentFilePath = firstNonEmpty(q.Get("parent_file_path"), q.Get("parent-file-path"))
+	req.StopHookActive = parseOptionalBool(firstNonEmpty(q.Get("stop_hook_active"), q.Get("stop-hook-active")))
+	return req
+}
+
+func defaultHookHealthTool(req *hookHealthRequest) {
+	if strings.TrimSpace(req.Tool) != "" {
+		return
+	}
+	switch req.Event {
+	case "user_prompt_submit", "session_start", "stop", "pre_compact", "post_compact", "notification", "subagent_start", "subagent_stop", "file_changed", "instructions_loaded":
+		return
+	default:
+		req.Tool = "bash"
+	}
+}
+
+func hookHealthPayload(req hookHealthRequest) hooks.Payload {
+	payload := hooks.Payload{
+		Event:            req.Event,
+		Tool:             req.Tool,
+		ToolName:         req.Tool,
+		ToolInput:        json.RawMessage(req.Input),
+		Input:            req.Input,
+		Output:           req.Output,
+		IsError:          req.IsError,
+		Reason:           req.Reason,
+		Message:          req.Input,
+		Title:            req.Title,
+		NotificationType: req.NotificationType,
+		AgentID:          req.AgentID,
+		AgentType:        req.AgentType,
+		TranscriptPath:   req.TranscriptPath,
+		LastAssistant:    req.LastAssistant,
+		WorktreeID:       req.WorktreeID,
+		WorktreePath:     req.WorktreePath,
+		Ref:              req.Ref,
+		OldCWD:           req.OldCWD,
+		NewCWD:           req.NewCWD,
+		TaskID:           req.TaskID,
+		TaskKind:         req.TaskKind,
+		TaskStatus:       req.TaskStatus,
+		FilePath:         req.FilePath,
+		Operation:        req.Operation,
+		MemoryType:       req.MemoryType,
+		LoadReason:       req.LoadReason,
+		Globs:            append([]string(nil), req.Globs...),
+		TriggerFilePath:  req.TriggerFilePath,
+		ParentFilePath:   req.ParentFilePath,
+		StopHookActive:   req.StopHookActive,
+	}
+	switch req.Event {
+	case "notification":
+		payload.NotificationType = firstNonEmpty(req.NotificationType, req.Tool, "generic")
+		payload.Tool = payload.NotificationType
+	case "subagent_start", "subagent_stop":
+		payload.AgentType = firstNonEmpty(req.AgentType, req.Tool, "general")
+		payload.Tool = payload.AgentType
+	case "worktree_create", "worktree_remove":
+		payload.WorktreeID = firstNonEmpty(req.WorktreeID, req.Tool)
+		payload.Tool = payload.WorktreeID
+	case "cwd_changed":
+		payload.NewCWD = firstNonEmpty(req.NewCWD, req.Tool)
+		payload.Tool = payload.NewCWD
+	case "task_created", "task_completed":
+		payload.TaskID = firstNonEmpty(req.TaskID, req.Tool)
+		payload.TaskKind = firstNonEmpty(req.TaskKind, req.AgentType, "background")
+		payload.Tool = payload.TaskKind
+	case "file_changed":
+		payload.Operation = firstNonEmpty(req.Operation, req.Tool, "write_file")
+		payload.Tool = payload.Operation
+		payload.ToolName = payload.Operation
+	case "instructions_loaded":
+		payload.LoadReason = firstNonEmpty(req.LoadReason, req.Tool, "session_start")
+		payload.Tool = payload.LoadReason
+		payload.MemoryType = firstNonEmpty(req.MemoryType, "Project")
+	}
+	return payload
+}
+
+func buildHookHealthReport(cfg config.HookConfig, workspace string, route string, payload hooks.Payload, matched []config.HookCommand) hookHealthReport {
+	events := make([]hookEventHealth, 0, len(allHookHealthEvents()))
+	configured := 0
+	for _, event := range allHookHealthEvents() {
+		count := hookConfiguredCount(cfg, event)
+		configured += count
+		events = append(events, hookEventHealth{Event: event, Configured: count})
+	}
+	return hookHealthReport{
+		Kind:            "hooks",
+		Action:          "health",
+		Status:          "ok",
+		Workspace:       workspace,
+		Route:           route,
+		RoutePresent:    true,
+		AcceptedMethods: []string{http.MethodGet, http.MethodPost},
+		ExecutesHooks:   false,
+		Event:           payload.Event,
+		MatcherTarget:   hookMatcherTarget(payload),
+		ConfiguredCount: configured,
+		MatchedCount:    len(matched),
+		Matched:         summarizeHookCommands(matched),
+		Events:          events,
+	}
+}
+
+func hookMatcherTarget(payload hooks.Payload) string {
+	switch payload.Event {
+	case "notification":
+		if strings.TrimSpace(payload.NotificationType) != "" {
+			return payload.NotificationType
+		}
+	case "subagent_start", "subagent_stop":
+		if strings.TrimSpace(payload.AgentType) != "" {
+			return payload.AgentType
+		}
+	}
+	return payload.Tool
+}
+
+func allHookHealthEvents() []string {
+	return []string{
+		"pre_tool_use",
+		"post_tool_use",
+		"post_tool_use_failure",
+		"permission_request",
+		"permission_denied",
+		"user_prompt_submit",
+		"session_start",
+		"session_end",
+		"setup",
+		"stop",
+		"stop_failure",
+		"pre_compact",
+		"post_compact",
+		"notification",
+		"subagent_start",
+		"subagent_stop",
+		"worktree_create",
+		"worktree_remove",
+		"cwd_changed",
+		"task_created",
+		"task_completed",
+		"instructions_loaded",
+		"file_changed",
+	}
+}
+
+func hookConfiguredCount(cfg config.HookConfig, event string) int {
+	switch event {
+	case "pre_tool_use":
+		return len(hookCommandsForList(cfg.PreToolUseCommands, cfg.PreToolUse))
+	case "post_tool_use":
+		return len(hookCommandsForList(cfg.PostToolUseCommands, cfg.PostToolUse))
+	case "post_tool_use_failure":
+		return len(hookCommandsForList(cfg.PostToolUseFailureCommands, cfg.PostToolUseFailure))
+	case "permission_request":
+		return len(hookCommandsForList(cfg.PermissionRequestCommands, cfg.PermissionRequest))
+	case "permission_denied":
+		return len(hookCommandsForList(cfg.PermissionDeniedCommands, cfg.PermissionDenied))
+	case "user_prompt_submit":
+		return len(hookCommandsForList(cfg.UserPromptSubmitCommands, cfg.UserPromptSubmit))
+	case "session_start":
+		return len(hookCommandsForList(cfg.SessionStartCommands, cfg.SessionStart))
+	case "session_end":
+		return len(hookCommandsForList(cfg.SessionEndCommands, cfg.SessionEnd))
+	case "setup":
+		return len(hookCommandsForList(cfg.SetupCommands, cfg.Setup))
+	case "stop":
+		return len(hookCommandsForList(cfg.StopCommands, cfg.Stop))
+	case "stop_failure":
+		return len(hookCommandsForList(cfg.StopFailureCommands, cfg.StopFailure))
+	case "pre_compact":
+		return len(hookCommandsForList(cfg.PreCompactCommands, cfg.PreCompact))
+	case "post_compact":
+		return len(hookCommandsForList(cfg.PostCompactCommands, cfg.PostCompact))
+	case "notification":
+		return len(hookCommandsForList(cfg.NotificationCommands, cfg.Notification))
+	case "subagent_start":
+		return len(hookCommandsForList(cfg.SubagentStartCommands, cfg.SubagentStart))
+	case "subagent_stop":
+		return len(hookCommandsForList(cfg.SubagentStopCommands, cfg.SubagentStop))
+	case "worktree_create":
+		return len(hookCommandsForList(cfg.WorktreeCreateCommands, cfg.WorktreeCreate))
+	case "worktree_remove":
+		return len(hookCommandsForList(cfg.WorktreeRemoveCommands, cfg.WorktreeRemove))
+	case "cwd_changed":
+		return len(hookCommandsForList(cfg.CwdChangedCommands, cfg.CwdChanged))
+	case "task_created":
+		return len(hookCommandsForList(cfg.TaskCreatedCommands, cfg.TaskCreated))
+	case "task_completed":
+		return len(hookCommandsForList(cfg.TaskCompletedCommands, cfg.TaskCompleted))
+	case "instructions_loaded":
+		return len(hookCommandsForList(cfg.InstructionsLoadedCommands, cfg.InstructionsLoaded))
+	case "file_changed":
+		return len(hookCommandsForList(cfg.FileChangedCommands, cfg.FileChanged))
+	default:
+		return 0
+	}
+}
+
+func hookCommandsForList(commands []config.HookCommand, legacy []string) []hookCommandSummary {
+	summaries := summarizeHookCommands(commands)
+	if len(summaries) != 0 || len(legacy) == 0 {
+		return summaries
+	}
+	out := make([]hookCommandSummary, 0, len(legacy))
+	for _, command := range legacy {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			out = append(out, hookCommandSummary{Command: command})
+		}
+	}
+	return out
+}
+
+func summarizeHookCommands(commands []config.HookCommand) []hookCommandSummary {
+	out := make([]hookCommandSummary, 0, len(commands))
+	for _, command := range commands {
+		display := config.HookCommandDisplay(command)
+		if display == "" {
+			continue
+		}
+		out = append(out, hookCommandSummary{
+			Matcher: strings.TrimSpace(command.Matcher),
+			Type:    strings.TrimSpace(command.Type),
+			If:      strings.TrimSpace(command.If),
+			Command: display,
+		})
+	}
+	return out
+}
+
+func normalizeHookHealthEvent(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pre", "pre_tool_use", "pre-tool-use":
+		return "pre_tool_use", nil
+	case "post", "post_tool_use", "post-tool-use":
+		return "post_tool_use", nil
+	case "post-failure", "postfailure", "post_tool_use_failure", "post-tool-use-failure":
+		return "post_tool_use_failure", nil
+	case "permission-request", "permissionrequest", "permission_request":
+		return "permission_request", nil
+	case "permission-denied", "permissiondenied", "permission_denied":
+		return "permission_denied", nil
+	case "prompt", "userpromptsubmit", "user_prompt_submit", "user-prompt-submit":
+		return "user_prompt_submit", nil
+	case "session", "sessionstart", "session_start", "session-start":
+		return "session_start", nil
+	case "session-end", "sessionend", "session_end":
+		return "session_end", nil
+	case "setup":
+		return "setup", nil
+	case "stop":
+		return "stop", nil
+	case "stop-failure", "stopfailure", "stop_failure":
+		return "stop_failure", nil
+	case "compact", "precompact", "pre_compact", "pre-compact":
+		return "pre_compact", nil
+	case "postcompact", "post_compact", "post-compact":
+		return "post_compact", nil
+	case "notification", "notify":
+		return "notification", nil
+	case "subagent-start", "subagentstart", "subagent_start":
+		return "subagent_start", nil
+	case "subagent-stop", "subagentstop", "subagent_stop":
+		return "subagent_stop", nil
+	case "worktree-create", "worktreecreate", "worktree_create":
+		return "worktree_create", nil
+	case "worktree-remove", "worktreeremove", "worktree_remove":
+		return "worktree_remove", nil
+	case "cwd-changed", "cwdchanged", "cwd_changed":
+		return "cwd_changed", nil
+	case "task-created", "taskcreated", "task_created":
+		return "task_created", nil
+	case "task-completed", "taskcompleted", "task_completed":
+		return "task_completed", nil
+	case "instructions-loaded", "instructionsloaded", "instructions_loaded":
+		return "instructions_loaded", nil
+	case "file-changed", "filechanged", "file_changed":
+		return "file_changed", nil
+	default:
+		return "", fmt.Errorf("unknown hook event %q", value)
+	}
+}
+
 func (s Server) goDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1137,6 +1552,15 @@ func parseOptionalInt(value string) int {
 func parseOptionalBool(value string) bool {
 	parsed, _ := strconv.ParseBool(value)
 	return parsed
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s Server) withAuth(next http.Handler) http.Handler {

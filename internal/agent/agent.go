@@ -665,6 +665,7 @@ func (a *App) Remote(args []string) error {
 		ConfigHome:  a.Config.ConfigHome,
 		Workspace:   a.Workspace,
 		AuthToken:   a.Config.Future.RemoteAuthToken,
+		Hooks:       a.Config.Hooks,
 		LeaseTTL:    time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
 		Executable:  executable,
 		EditorToken: a.Config.Future.EditorBridgeToken,

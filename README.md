@@ -385,7 +385,8 @@ Claude Code source.
   tasks, terminal command streams, logs/watch streams, workspace file
   list/search/read/write/edit/diff operations, Go diagnostics and
   code-intelligence queries, editor identity/open-file/selection state,
-  bearer-token auth, and heartbeat lease/failure state.
+  hook health and matcher diagnostics, bearer-token auth, and heartbeat
+  lease/failure state.
 - `codog bridge serve`, `codog remote-control serve`, and
   `/remote-control serve` start a stdio JSON-RPC bridge for trusted editor
   identity, open-file/selection state, session mutation/rewind, background

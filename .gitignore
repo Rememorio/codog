@@ -1,4 +1,11 @@
 /codog
 *.test
+*.coverprofile
+*.prof
 coverage.out
+/coverage/
+/bin/
+/build/
+/dist/
 .codog/
+.DS_Store
