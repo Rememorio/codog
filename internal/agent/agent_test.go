@@ -1109,6 +1109,27 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "resume-slash", statusReport.Session.ID)
 	require.Equal(t, 4, statusReport.Session.MessageCount)
 
+	exportPath := filepath.Join(workspace, "resume-export.json")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "/export", exportPath, "--format", "json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var exportReport struct {
+		SessionID string `json:"session_id"`
+		File      string `json:"file"`
+		Format    string `json:"format"`
+		Messages  int    `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &exportReport))
+	require.Equal(t, "resume-slash", exportReport.SessionID)
+	require.Equal(t, exportPath, exportReport.File)
+	require.Equal(t, "json", exportReport.Format)
+	require.Equal(t, 4, exportReport.Messages)
+	exported, err := os.ReadFile(exportPath)
+	require.NoError(t, err)
+	require.Contains(t, string(exported), `"id": "resume-slash"`)
+	require.Contains(t, string(exported), `"text": "four"`)
+
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "/compact", "--keep", "2", "--json"}, config.FlagOverrides{})
 	})
@@ -1121,6 +1142,35 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	opened, err := store.Open("resume-slash")
 	require.NoError(t, err)
 	require.Len(t, opened.Messages, 3)
+
+	shareDir := filepath.Join(workspace, "shared")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/share", "--output-dir", shareDir, "--format", "json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var shareReport shareReport
+	require.NoError(t, json.Unmarshal([]byte(out), &shareReport))
+	require.Equal(t, "resume-slash", shareReport.SessionID)
+	require.Equal(t, "json", shareReport.Format)
+	require.Equal(t, 3, shareReport.Messages)
+	require.FileExists(t, filepath.Join(shareDir, "resume-slash.json"))
+
+	var copied []byte
+	previousClipboard := writeClipboard
+	writeClipboard = func(_ context.Context, data []byte) (string, error) {
+		copied = append([]byte(nil), data...)
+		return "resume-test-clipboard", nil
+	}
+	t.Cleanup(func() { writeClipboard = previousClipboard })
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/copy"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var copyReport copyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &copyReport))
+	require.Equal(t, "resume-slash", copyReport.SessionID)
+	require.Equal(t, "resume-test-clipboard", copyReport.Clipboard)
+	require.Equal(t, "four\n", string(copied))
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/commit"}, config.FlagOverrides{})

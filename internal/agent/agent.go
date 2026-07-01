@@ -469,7 +469,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "exit-plan":
 		return app.Plan(append([]string{"exit"}, rest...))
 	case "export":
-		return app.Export(rest)
+		return app.ExportWithOverrides(rest, overrides)
 	case "share":
 		return app.Share(rest, overrides)
 	case "copy":
@@ -17678,6 +17678,12 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Context(resumeSlashArgs("context", args, format), resumed)
 	case "/ctx_viz":
 		return a.ContextViz(resumeSlashArgs("ctx_viz", args, format), resumed)
+	case "/export":
+		return a.ExportWithOverrides(resumeSlashArgs("export", args, format), resumed)
+	case "/share":
+		return a.Share(resumeSlashJSONArgs(args, format), resumed)
+	case "/copy":
+		return a.Copy(ctx, resumeSlashJSONArgs(args, format), resumed)
 	case "/cost", "/tokens":
 		return a.ShowCost(resumed)
 	case "/usage", "/stats":
@@ -17700,6 +17706,15 @@ func resumeSlashArgs(_ string, args []string, format string) []string {
 	}
 	out := append([]string(nil), args...)
 	out = append(out, "--output-format", format)
+	return out
+}
+
+func resumeSlashJSONArgs(args []string, format string) []string {
+	if !strings.EqualFold(strings.TrimSpace(format), "json") || argsHaveOutputFormat(args) {
+		return args
+	}
+	out := append([]string(nil), args...)
+	out = append(out, "--json")
 	return out
 }
 
@@ -17752,7 +17767,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -24530,7 +24545,17 @@ func parseRenameArgs(args []string, overrides config.FlagOverrides) (renameReque
 }
 
 func (a *App) Export(args []string) error {
-	req, err := parseExportArgs(args, "latest")
+	return a.ExportWithOverrides(args, config.FlagOverrides{})
+}
+
+func (a *App) ExportWithOverrides(args []string, overrides config.FlagOverrides) error {
+	defaultSession := "latest"
+	if strings.TrimSpace(overrides.Resume) != "" {
+		defaultSession = overrides.Resume
+	} else if strings.TrimSpace(overrides.SessionID) != "" {
+		defaultSession = overrides.SessionID
+	}
+	req, err := parseExportArgs(args, defaultSession)
 	if err != nil {
 		return err
 	}
@@ -30520,7 +30545,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			Topic:                   "resume",
 			Command:                 "resume",
 			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, or /session. Help is local and does not open a session.\n",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
