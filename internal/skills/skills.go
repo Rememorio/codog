@@ -40,6 +40,7 @@ type Skill struct {
 	Active                 bool     `json:"active"`
 	ShadowedBy             string   `json:"shadowed_by,omitempty"`
 	ShadowedByPath         string   `json:"shadowed_by_path,omitempty"`
+	NameDrift              bool     `json:"metadata_drift,omitempty"`
 }
 
 type DiscoveryRoot struct {
@@ -49,6 +50,13 @@ type DiscoveryRoot struct {
 	Exists     bool   `json:"exists"`
 	PluginID   string `json:"plugin_id,omitempty"`
 	PluginRoot string `json:"plugin_root,omitempty"`
+}
+
+type MetadataDrift struct {
+	InvocationName  string `json:"invocation_name"`
+	FrontmatterName string `json:"frontmatter_name"`
+	Path            string `json:"path"`
+	Source          string `json:"source"`
 }
 
 type InstallReport struct {
@@ -385,6 +393,22 @@ func annotateActiveSkills(all []Skill) {
 		all[index].ShadowedBy = winner.Source
 		all[index].ShadowedByPath = winner.Path
 	}
+}
+
+func MetadataDrifts(all []Skill) []MetadataDrift {
+	out := []MetadataDrift{}
+	for _, skill := range all {
+		if !skill.NameDrift {
+			continue
+		}
+		out = append(out, MetadataDrift{
+			InvocationName:  skill.Name,
+			FrontmatterName: skill.DisplayName,
+			Path:            skill.Path,
+			Source:          skill.Source,
+		})
+	}
+	return out
 }
 
 func discoveryRoot(root root) DiscoveryRoot {
@@ -745,11 +769,26 @@ func parseDocumentWithContext(name string, path string, source string, skillRoot
 		skill.FrontmatterError = parseErr.Error()
 	}
 	applyFrontmatter(&skill, values)
+	skill.NameDrift = hasNameDrift(skill.Name, skill.DisplayName)
 	skill.AllowedTools = argsub.SubstituteVariablesInList(skill.AllowedTools, skillVariables(skill))
 	if skill.Description == "" {
 		skill.Description = frontmatter.DescriptionFromMarkdown(skill.Body)
 	}
 	return skill
+}
+
+func hasNameDrift(invocationName string, frontmatterName string) bool {
+	invocationName = normalizeSkillIdentity(invocationName)
+	frontmatterName = normalizeSkillIdentity(frontmatterName)
+	return invocationName != "" && frontmatterName != "" && invocationName != frontmatterName
+}
+
+func normalizeSkillIdentity(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "\\", "/")
+	value = strings.ReplaceAll(value, "/", ":")
+	value = strings.Join(strings.Fields(value), "-")
+	return value
 }
 
 func skillVariables(skill Skill) map[string]string {

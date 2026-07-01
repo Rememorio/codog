@@ -14,11 +14,16 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "skills", "review"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "skills", "mismatch"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "extra", "rewrite"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "plain.md"), []byte("Plain skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "review", "SKILL.md"), []byte("Review skill from ${CLAUDE_SKILL_DIR}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "mismatch", "SKILL.md"), []byte(`---
+name: external-review
+---
+Mismatch skill`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo","skills":["./extra/rewrite"]}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "skills", "summarize", "SKILL.md"), []byte(`---
@@ -36,6 +41,7 @@ Summarize ${CLAUDE_SKILL_DIR} ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA}`), 0o6
 	require.Contains(t, names, "verifyContent")
 	require.Contains(t, names, "demo:rewrite")
 	require.Contains(t, names, "demo:summarize")
+	require.Contains(t, names, "mismatch")
 	require.Contains(t, names, "plain")
 	require.Contains(t, names, "review")
 	require.Contains(t, names, "team:audit")
@@ -70,6 +76,18 @@ Summarize ${CLAUDE_SKILL_DIR} ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA}`), 0o6
 	require.NoError(t, err)
 	require.Equal(t, "plugin:demo", skill.Source)
 	require.Equal(t, "Rewrite skill", skill.Body)
+
+	skill, err = Find(configHome, workspace, "mismatch")
+	require.NoError(t, err)
+	require.True(t, skill.NameDrift)
+	require.Equal(t, "external-review", skill.DisplayName)
+	drifts := MetadataDrifts(all)
+	require.Contains(t, drifts, MetadataDrift{
+		InvocationName:  "mismatch",
+		FrontmatterName: "external-review",
+		Path:            filepath.Join(workspace, ".codog", "skills", "mismatch", "SKILL.md"),
+		Source:          "workspace",
+	})
 
 	_, err = Find(configHome, workspace, "missing")
 	require.True(t, errors.Is(err, ErrNotFound))

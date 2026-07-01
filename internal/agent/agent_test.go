@@ -10838,7 +10838,12 @@ func TestSkillsListMarksShadowedEntries(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills", "mismatch"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "debug.md"), []byte("User debug override."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "mismatch", "SKILL.md"), []byte(`---
+name: external-review
+---
+Mismatch body.`), 0o644))
 	var out bytes.Buffer
 	app := &App{
 		Config:    config.Config{ConfigHome: configHome},
@@ -10849,13 +10854,24 @@ func TestSkillsListMarksShadowedEntries(t *testing.T) {
 
 	require.NoError(t, app.Skills([]string{"list", "--json"}))
 	var report struct {
-		Kind   string         `json:"kind"`
-		Action string         `json:"action"`
-		Skills []skills.Skill `json:"skills"`
+		Kind               string                 `json:"kind"`
+		Action             string                 `json:"action"`
+		Status             string                 `json:"status"`
+		MetadataDriftCount int                    `json:"metadata_drift_count"`
+		MetadataDrift      []skills.MetadataDrift `json:"metadata_drift"`
+		Skills             []skills.Skill         `json:"skills"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out.String()), &report))
 	require.Equal(t, "skills", report.Kind)
 	require.Equal(t, "list", report.Action)
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, 1, report.MetadataDriftCount)
+	require.Contains(t, report.MetadataDrift, skills.MetadataDrift{
+		InvocationName:  "mismatch",
+		FrontmatterName: "external-review",
+		Path:            filepath.Join(configHome, "skills", "mismatch", "SKILL.md"),
+		Source:          "user",
+	})
 	userDebug := skillReportEntry(report.Skills, "debug", "user")
 	require.True(t, userDebug.Active)
 	bundledDebug := skillReportEntry(report.Skills, "debug", "bundled")
@@ -10867,6 +10883,7 @@ func TestSkillsListMarksShadowedEntries(t *testing.T) {
 	require.NoError(t, app.Skills([]string{"list"}))
 	require.Contains(t, out.String(), "debug\tuser\tactive")
 	require.Contains(t, out.String(), "debug\tbundled\tshadowed by user")
+	require.Contains(t, out.String(), "mismatch\tuser\tactive\t\tname drift: external-review")
 }
 
 func skillReportEntry(all []skills.Skill, name string, source string) skills.Skill {

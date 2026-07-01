@@ -29732,8 +29732,32 @@ func (a *App) listSkills(args []string) error {
 	if filter != "" {
 		all = filterSkills(all, filter)
 	}
+	drifts := skills.MetadataDrifts(all)
 	if format == "json" {
-		data, _ := json.MarshalIndent(map[string]any{"kind": "skills", "action": "list", "skills": all}, "", "  ")
+		status := "ok"
+		if len(drifts) > 0 {
+			status = "degraded"
+		}
+		activeCount := 0
+		for _, skill := range all {
+			if skill.Active {
+				activeCount++
+			}
+		}
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":                 "skills",
+			"action":               "list",
+			"status":               status,
+			"count":                len(all),
+			"metadata_drift_count": len(drifts),
+			"summary": map[string]any{
+				"total":    len(all),
+				"active":   activeCount,
+				"shadowed": len(all) - activeCount,
+			},
+			"skills":         all,
+			"metadata_drift": drifts,
+		}, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
@@ -29753,7 +29777,11 @@ func (a *App) listSkills(args []string) error {
 				status += " by " + skill.ShadowedBy
 			}
 		}
-		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\n", skill.Name, skill.Source, status, enabled, skill.Path)
+		drift := ""
+		if skill.NameDrift {
+			drift = "name drift: " + skill.DisplayName
+		}
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\t%s\n", skill.Name, skill.Source, status, enabled, drift, skill.Path)
 	}
 	return nil
 }
@@ -35083,7 +35111,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"skills",
 			"codog skill|skills [list|sources|show|invoke|add|install|uninstall|help]",
 			"Skills\n\nUsage:\n  codog skills [list|sources|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
-			[]string{"skills", "roots", "name", "path", "body", "active", "shadowed_by"},
+			[]string{"skills", "roots", "name", "path", "body", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
 			[]string{"ok", "error"},
 			true,
 		)
