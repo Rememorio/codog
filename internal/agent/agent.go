@@ -8707,17 +8707,19 @@ type keybindingsRequest struct {
 	Action string
 	Format string
 	Force  bool
+	Path   string
 }
 
 type keybindingReport struct {
-	Kind              string              `json:"kind"`
-	Action            string              `json:"action"`
-	Status            string              `json:"status"`
-	EditorMode        string              `json:"editor_mode"`
-	VimMode           bool                `json:"vim_mode"`
-	KeybindingsPath   string              `json:"keybindings_path,omitempty"`
-	KeybindingsExists bool                `json:"keybindings_exists"`
-	Sections          []keybindingSection `json:"sections,omitempty"`
+	Kind              string                      `json:"kind"`
+	Action            string                      `json:"action"`
+	Status            string                      `json:"status"`
+	EditorMode        string                      `json:"editor_mode"`
+	VimMode           bool                        `json:"vim_mode"`
+	KeybindingsPath   string                      `json:"keybindings_path,omitempty"`
+	KeybindingsExists bool                        `json:"keybindings_exists"`
+	UserBindings      *keybindingValidationReport `json:"user_bindings,omitempty"`
+	Sections          []keybindingSection         `json:"sections,omitempty"`
 }
 
 type keybindingsFileReport struct {
@@ -8727,6 +8729,19 @@ type keybindingsFileReport struct {
 	Path    string `json:"path"`
 	Created bool   `json:"created"`
 	Exists  bool   `json:"exists"`
+}
+
+type keybindingValidationReport struct {
+	Kind         string              `json:"kind"`
+	Action       string              `json:"action"`
+	Status       string              `json:"status"`
+	Path         string              `json:"path"`
+	Exists       bool                `json:"exists"`
+	Valid        bool                `json:"valid"`
+	ContextCount int                 `json:"context_count"`
+	BindingCount int                 `json:"binding_count"`
+	Errors       []string            `json:"errors,omitempty"`
+	Sections     []keybindingSection `json:"sections,omitempty"`
 }
 
 func (a *App) Keybindings(args []string) error {
@@ -8775,6 +8790,18 @@ func (a *App) Keybindings(args []string) error {
 		}
 		renderKeybindingsFileReport(a.Out, report)
 		return nil
+	case "validate":
+		report := a.validateKeybindings(req.Path)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			renderKeybindingsValidation(a.Out, report)
+		}
+		if !report.Valid {
+			return errors.New("invalid keybindings")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown keybindings command %q", req.Action)
 	}
@@ -8798,6 +8825,14 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--force":
 			req.Force = true
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("keybindings path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown keybindings flag %q", arg)
 		default:
@@ -8811,6 +8846,8 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 				req.Action = "path"
 			case "init", "create", "template":
 				req.Action = "init"
+			case "validate", "check":
+				req.Action = "validate"
 			default:
 				return req, fmt.Errorf("unknown keybindings command %q", arg)
 			}
@@ -8873,6 +8910,111 @@ func (a *App) keybindingsPath() (string, error) {
 	return filepath.Join(a.Config.ConfigHome, "keybindings.json"), nil
 }
 
+func (a *App) validateKeybindings(path string) keybindingValidationReport {
+	if strings.TrimSpace(path) == "" {
+		var err error
+		path, err = a.keybindingsPath()
+		if err != nil {
+			return keybindingValidationReport{
+				Kind:   "keybindings",
+				Action: "validate",
+				Status: "invalid",
+				Errors: []string{err.Error()},
+			}
+		}
+	} else {
+		path = a.resolveOutputPath(path)
+	}
+	report := keybindingValidationReport{
+		Kind:   "keybindings",
+		Action: "validate",
+		Status: "missing",
+		Path:   path,
+		Exists: fileExists(path),
+	}
+	if !report.Exists {
+		report.Errors = []string{"keybindings file does not exist"}
+		return report
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		report.Status = "invalid"
+		report.Errors = []string{err.Error()}
+		return report
+	}
+	sections, validationErrors := parseKeybindingsFile(data)
+	report.Sections = sections
+	report.ContextCount = len(sections)
+	for _, section := range sections {
+		report.BindingCount += len(section.Entries)
+	}
+	if len(validationErrors) != 0 {
+		report.Status = "invalid"
+		report.Errors = validationErrors
+		return report
+	}
+	report.Valid = true
+	report.Status = "ok"
+	return report
+}
+
+func parseKeybindingsFile(data []byte) ([]keybindingSection, []string) {
+	type bindingBlock struct {
+		Context  string            `json:"context"`
+		Bindings map[string]string `json:"bindings"`
+		Disabled bool              `json:"disabled,omitempty"`
+	}
+	var raw struct {
+		Bindings []bindingBlock `json:"bindings"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, []string{err.Error()}
+	}
+	var validationErrors []string
+	if len(raw.Bindings) == 0 {
+		validationErrors = append(validationErrors, "bindings must contain at least one context")
+	}
+	seen := map[string]bool{}
+	sections := make([]keybindingSection, 0, len(raw.Bindings))
+	for index, block := range raw.Bindings {
+		contextName := strings.TrimSpace(block.Context)
+		if contextName == "" {
+			validationErrors = append(validationErrors, fmt.Sprintf("bindings[%d].context is required", index))
+		}
+		if len(block.Bindings) == 0 {
+			validationErrors = append(validationErrors, fmt.Sprintf("bindings[%d].bindings must contain at least one key", index))
+		}
+		entries := make([]keybindingEntry, 0, len(block.Bindings))
+		keys := make([]string, 0, len(block.Bindings))
+		for key := range block.Bindings {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			action := block.Bindings[key]
+			trimmedKey := strings.TrimSpace(key)
+			trimmedAction := strings.TrimSpace(action)
+			if trimmedKey == "" {
+				validationErrors = append(validationErrors, fmt.Sprintf("bindings[%d] contains an empty key", index))
+				continue
+			}
+			if trimmedAction == "" {
+				validationErrors = append(validationErrors, fmt.Sprintf("bindings[%d].bindings[%q] action is required", index, trimmedKey))
+				continue
+			}
+			duplicateKey := strings.ToLower(contextName) + "\x00" + strings.ToLower(trimmedKey)
+			if seen[duplicateKey] {
+				validationErrors = append(validationErrors, fmt.Sprintf("duplicate binding %q in context %q", trimmedKey, contextName))
+				continue
+			}
+			seen[duplicateKey] = true
+			entries = append(entries, keybindingEntry{Key: trimmedKey, Action: trimmedAction})
+		}
+		sections = append(sections, keybindingSection{Name: contextName, Entries: entries, Disabled: block.Disabled})
+	}
+	return sections, validationErrors
+}
+
 func defaultKeybindingsTemplate() []byte {
 	type bindingBlock struct {
 		Context  string            `json:"context"`
@@ -8914,10 +9056,11 @@ func defaultKeybindingsTemplate() []byte {
 			{
 				Context: "slash",
 				Bindings: map[string]string{
-					"/help":             "show command help",
-					"/keybindings":      "show keybinding report",
-					"/keybindings init": "create keybindings.json template",
-					"/vim":              "toggle vim keybinding preference",
+					"/help":                 "show command help",
+					"/keybindings":          "show keybinding report",
+					"/keybindings init":     "create keybindings.json template",
+					"/keybindings validate": "validate keybindings.json",
+					"/vim":                  "toggle vim keybinding preference",
 				},
 			},
 		},
@@ -8929,6 +9072,11 @@ func defaultKeybindingsTemplate() []byte {
 func (a *App) keybindingReport() keybindingReport {
 	editorMode := effectiveEditorMode(a.Config.EditorMode)
 	path, _ := a.keybindingsPath()
+	var userBindings *keybindingValidationReport
+	if path != "" && fileExists(path) {
+		report := a.validateKeybindings(path)
+		userBindings = &report
+	}
 	return keybindingReport{
 		Kind:              "keybindings",
 		Action:            "show",
@@ -8937,6 +9085,7 @@ func (a *App) keybindingReport() keybindingReport {
 		VimMode:           editorModeIsVim(editorMode),
 		KeybindingsPath:   path,
 		KeybindingsExists: path != "" && fileExists(path),
+		UserBindings:      userBindings,
 		Sections: []keybindingSection{
 			{
 				Name: "REPL",
@@ -8973,11 +9122,24 @@ func (a *App) keybindingReport() keybindingReport {
 					{Key: "/help", Action: "show command help"},
 					{Key: "/keybindings", Action: "show this report"},
 					{Key: "/keybindings init", Action: "create keybindings.json template"},
+					{Key: "/keybindings validate", Action: "validate keybindings.json"},
 					{Key: "/vim", Action: "toggle vim keybinding preference"},
 					{Key: "/privacy-settings", Action: "change local privacy preferences"},
 				},
 			},
 		},
+	}
+}
+
+func renderKeybindingsValidation(out io.Writer, report keybindingValidationReport) {
+	fmt.Fprintln(out, "Keybindings Validation")
+	fmt.Fprintf(out, "  Path             %s\n", emptyAsNone(report.Path))
+	fmt.Fprintf(out, "  Exists           %t\n", report.Exists)
+	fmt.Fprintf(out, "  Valid            %t\n", report.Valid)
+	fmt.Fprintf(out, "  Contexts         %d\n", report.ContextCount)
+	fmt.Fprintf(out, "  Bindings         %d\n", report.BindingCount)
+	for _, validationError := range report.Errors {
+		fmt.Fprintf(out, "  Error            %s\n", validationError)
 	}
 }
 
@@ -8999,6 +9161,14 @@ func renderKeybindings(out io.Writer, report keybindingReport) {
 	if report.KeybindingsPath != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.KeybindingsPath)
 		fmt.Fprintf(out, "  Config exists    %t\n", report.KeybindingsExists)
+	}
+	if report.UserBindings != nil {
+		fmt.Fprintf(out, "  User valid       %t\n", report.UserBindings.Valid)
+		fmt.Fprintf(out, "  User contexts    %d\n", report.UserBindings.ContextCount)
+		fmt.Fprintf(out, "  User bindings    %d\n", report.UserBindings.BindingCount)
+		for _, validationError := range report.UserBindings.Errors {
+			fmt.Fprintf(out, "  User error       %s\n", validationError)
+		}
 	}
 	for _, section := range report.Sections {
 		fmt.Fprintln(out)
@@ -22127,7 +22297,7 @@ Usage:
   %s [flags] voice [status|set-command|on|off|toggle|clear] [--command COMMAND] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] keybindings [show|path|init] [--force] [--json|--output-format text|json]
+  %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]

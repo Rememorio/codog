@@ -185,9 +185,10 @@ Claude Code source.
   terminal theme, vim keybinding mode, reasoning effort, fast mode, external
   voice command enablement, Chrome integration defaults, and prompt history
   recording.
-- `/keybindings` and `codog keybindings [show|path|init]` show the active editor
-  mode plus REPL, TUI, vim, and slash-command shortcuts, and can create a
-  `keybindings.json` template under the Codog config directory.
+- `/keybindings` and `codog keybindings [show|path|init|validate]` show the
+  active editor mode plus REPL, TUI, vim, and slash-command shortcuts, create a
+  `keybindings.json` template under the Codog config directory, and validate
+  user binding files.
 - `codog mcp list|serve|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt`
   manages and inspects configured stdio MCP servers, and configured MCP tools
   are exposed to the model as `mcp__server__tool` tool calls or through the

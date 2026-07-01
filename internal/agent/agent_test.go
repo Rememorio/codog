@@ -3451,7 +3451,19 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"context": "repl"`)
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"validate", "--json"}))
+	require.Contains(t, out.String(), `"action": "validate"`)
+	require.Contains(t, out.String(), `"valid": true`)
+	require.Contains(t, out.String(), `"context_count": 4`)
+	require.Contains(t, out.String(), `"binding_count": 19`)
+	out.Reset()
+
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
+	require.Error(t, app.Keybindings([]string{"validate", "--json"}))
+	require.Contains(t, out.String(), `"status": "invalid"`)
+	require.Contains(t, out.String(), `"valid": false`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"init"}))
 	require.Contains(t, out.String(), "already exists")
 	data, err = os.ReadFile(keybindingsPath)
@@ -3466,11 +3478,22 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"bindings"`)
 	out.Reset()
 
+	require.NoError(t, os.WriteFile(keybindingsPath, []byte(`{"bindings":[{"context":"repl","bindings":{"enter":"submit"}},{"context":"repl","bindings":{"enter":"duplicate"}},{"context":"slash","bindings":{"/empty":""}}]}`), 0o644))
+	require.Error(t, app.Keybindings([]string{"validate"}))
+	require.Contains(t, out.String(), "duplicate binding")
+	require.Contains(t, out.String(), "action is required")
+	out.Reset()
+
+	require.NoError(t, app.Keybindings([]string{"init", "--force"}))
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/keybindings", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Keybindings")
 	require.Contains(t, out.String(), "Editor mode      vim")
 	require.Contains(t, out.String(), "REPL vim")
 	require.Contains(t, out.String(), "Config exists    true")
+	require.Contains(t, out.String(), "User valid       true")
+	require.Contains(t, out.String(), "User bindings    19")
 	require.Empty(t, errOut.String())
 }
 
