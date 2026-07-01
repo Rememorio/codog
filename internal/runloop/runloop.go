@@ -11,6 +11,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hooks"
+	"github.com/Rememorio/codog/internal/sessionsummary"
 	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/tools"
 )
@@ -352,8 +353,9 @@ func CompactMessages(messages []anthropic.Message, keep int) []anthropic.Message
 	if !shouldCompactMessages(messages, keep) {
 		return messages
 	}
-	omitted := len(messages) - keep
-	summary := anthropic.TextMessage("user", fmt.Sprintf("Previous Codog context was auto-compacted. %d older messages were omitted; recent context is retained.", omitted))
+	omitted := messages[:len(messages)-keep]
+	summaryText := sessionsummary.BuildCompactionSummary(omitted, keep).Summary
+	summary := anthropic.TextMessage("user", summaryText)
 	out := make([]anthropic.Message, 0, keep+1)
 	out = append(out, summary)
 	out = append(out, messages[len(messages)-keep:]...)

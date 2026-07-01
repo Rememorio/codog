@@ -535,14 +535,27 @@ func TestRunnerExecutesStopFailureHookOnModelError(t *testing.T) {
 
 func TestCompactMessagesKeepsRecentContext(t *testing.T) {
 	messages := []anthropic.Message{
-		anthropic.TextMessage("user", "one"),
-		anthropic.TextMessage("assistant", "two"),
-		anthropic.TextMessage("user", "three"),
+		anthropic.TextMessage("user", "inspect flaky tests"),
+		{
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{{
+				Type: "tool_use",
+				ID:   "tool-1",
+				Name: "bash",
+			}},
+		},
+		anthropic.ToolResultMessage("tool-1", "failed", true),
+		anthropic.TextMessage("assistant", "runloop test failed"),
+		anthropic.TextMessage("user", "keep this"),
 	}
 	compacted := CompactMessages(messages, 1)
 	require.Len(t, compacted, 2)
-	require.Equal(t, "three", compacted[1].Content[0].Text)
-	require.Contains(t, compacted[0].Content[0].Text, "auto-compacted")
+	require.Equal(t, "keep this", compacted[1].Content[0].Text)
+	summary := compacted[0].Content[0].Text
+	require.Contains(t, summary, "auto-compacted")
+	require.Contains(t, summary, "inspect flaky tests")
+	require.Contains(t, summary, "Tools mentioned: bash")
+	require.Contains(t, summary, "Tool results: 1 result message(s), 1 error result(s).")
 }
 
 func requestHasTool(req anthropic.Request, name string) bool {

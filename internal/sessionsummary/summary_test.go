@@ -3,6 +3,7 @@ package sessionsummary
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Rememorio/codog/internal/anthropic"
@@ -43,4 +44,55 @@ func TestBuildSessionSummary(t *testing.T) {
 	require.Contains(t, out.String(), "Summary")
 	require.Contains(t, out.String(), "Session          session-1")
 	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=1")
+}
+
+func TestCompressTextKeepsCoreLinesAndReportsOmissions(t *testing.T) {
+	summary := strings.Join([]string{
+		"Conversation summary:",
+		"",
+		"- Scope:   compact   earlier   messages.",
+		"- Scope: compact earlier messages.",
+		"- Current work: finish summary compression.",
+		"- Key timeline:",
+		"  - user: asked for a working implementation.",
+		"  - assistant: inspected runtime compaction flow.",
+		"  - tool: go test ./... succeeded.",
+	}, "\n")
+
+	result := CompressText(summary, CompressionBudget{
+		MaxChars:     132,
+		MaxLines:     4,
+		MaxLineChars: 80,
+	})
+
+	require.Equal(t, 1, result.RemovedDuplicateLines)
+	require.Greater(t, result.OmittedLines, 0)
+	require.True(t, result.Truncated)
+	require.Contains(t, result.Summary, "Conversation summary:")
+	require.Contains(t, result.Summary, "- Scope: compact earlier messages.")
+	require.Contains(t, result.Summary, "- Current work: finish summary compression.")
+	require.NotContains(t, result.Summary, "  compact   earlier")
+}
+
+func TestBuildCompactionSummaryIncludesActionableContext(t *testing.T) {
+	result := BuildCompactionSummary([]anthropic.Message{
+		anthropic.TextMessage("user", "investigate failing tests"),
+		{
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{{
+				Type:  "tool_use",
+				ID:    "tool-1",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"go test ./..."}`),
+			}},
+		},
+		anthropic.ToolResultMessage("tool-1", "package failed", true),
+		anthropic.TextMessage("assistant", "The failure is in internal/runloop."),
+	}, 2)
+
+	require.Contains(t, result.Summary, "auto-compacted")
+	require.Contains(t, result.Summary, "- Current work: investigate failing tests")
+	require.Contains(t, result.Summary, "- Last assistant response: The failure is in internal/runloop.")
+	require.Contains(t, result.Summary, "- Tools mentioned: bash")
+	require.Contains(t, result.Summary, "- Tool results: 1 result message(s), 1 error result(s).")
 }
