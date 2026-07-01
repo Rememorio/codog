@@ -258,11 +258,13 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 		})
 	}
 	wire := openAIRequest{
-		Model:         wireModel,
-		Messages:      messages,
-		Tools:         tools,
-		Stream:        true,
-		StreamOptions: map[string]bool{"include_usage": true},
+		Model:    wireModel,
+		Messages: messages,
+		Tools:    tools,
+		Stream:   true,
+	}
+	if modelrouting.ProviderForModel(req.Model) != modelrouting.ProviderXAI {
+		wire.StreamOptions = map[string]bool{"include_usage": true}
 	}
 	if modelrouting.UsesMaxCompletionTokens(wireModel) {
 		wire.MaxCompletionTokens = req.MaxTokens

@@ -1611,6 +1611,18 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 				cfg.BaseURL = modelrouting.DefaultOpenAIBaseURL
 			}
 		}
+	case modelrouting.ProviderXAI:
+		if !genericCredentialSet {
+			cfg.AuthToken = ""
+			cfg.APIKey = strings.TrimSpace(os.Getenv("XAI_API_KEY"))
+		}
+		if !genericBaseURLSet {
+			if value := strings.TrimSpace(os.Getenv("XAI_BASE_URL")); value != "" {
+				cfg.BaseURL = value
+			} else {
+				cfg.BaseURL = modelrouting.DefaultXAIBaseURL
+			}
+		}
 	case modelrouting.ProviderDashScope:
 		if !genericCredentialSet {
 			cfg.AuthToken = ""

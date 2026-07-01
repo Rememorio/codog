@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,6 +139,12 @@ func TestClientStreamsDashScopeAliasThroughOpenAICompatibleRoute(t *testing.T) {
 	assertOpenAICompatibleRequestModel(t, "kimi", "kimi-k2.5")
 }
 
+func TestClientStreamsXAIAliasThroughOpenAICompatibleRoute(t *testing.T) {
+	assertOpenAICompatibleRequestModel(t, "grok", "grok-3")
+	assertOpenAICompatibleRequestModel(t, "grok-mini", "grok-3-mini")
+	assertOpenAICompatibleRequestModel(t, "xai/grok-3", "grok-3")
+}
+
 func TestOpenAIWireModelPreservesNamespacedModelForCustomGateway(t *testing.T) {
 	wire, err := openAIRequestFromAnthropic(Request{
 		Model:     "openai/gpt-4.1-mini",
@@ -146,6 +153,21 @@ func TestOpenAIWireModelPreservesNamespacedModelForCustomGateway(t *testing.T) {
 	}, "https://openrouter.ai/api/v1")
 	require.NoError(t, err)
 	require.Equal(t, "openai/gpt-4.1-mini", wire.Model)
+}
+
+func TestOpenAICompatibleXAIRequestOmitsOpenAISpecificStreamOptions(t *testing.T) {
+	temperature := 0.7
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:       "grok-mini",
+		MaxTokens:   64,
+		Temperature: &temperature,
+		Messages:    []Message{TextMessage("user", "hi")},
+	}, modelrouting.DefaultXAIBaseURL)
+	require.NoError(t, err)
+	require.Equal(t, "grok-3-mini", wire.Model)
+	require.Nil(t, wire.Temperature)
+	require.Nil(t, wire.StreamOptions)
+	require.Equal(t, 64, wire.MaxTokens)
 }
 
 func TestOpenAICompatibleReasoningModelStripsTemperature(t *testing.T) {

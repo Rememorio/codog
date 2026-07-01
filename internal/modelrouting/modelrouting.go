@@ -8,10 +8,12 @@ import (
 const (
 	ProviderAnthropic = "anthropic"
 	ProviderOpenAI    = "openai"
+	ProviderXAI       = "xai"
 	ProviderDashScope = "dashscope"
 
 	DefaultAnthropicBaseURL = "https://api.anthropic.com"
 	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
+	DefaultXAIBaseURL       = "https://api.x.ai/v1"
 	DefaultDashScopeBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 
@@ -29,6 +31,11 @@ var builtInAliases = []ModelAlias{
 	{Name: "opus", Model: "claude-opus-4-7"},
 	{Name: "sonnet", Model: "claude-sonnet-4-6"},
 	{Name: "haiku", Model: "claude-haiku-4-5-20251213"},
+	{Name: "grok", Model: "grok-3"},
+	{Name: "grok-3", Model: "grok-3"},
+	{Name: "grok-mini", Model: "grok-3-mini"},
+	{Name: "grok-3-mini", Model: "grok-3-mini"},
+	{Name: "grok-2", Model: "grok-2"},
 	{Name: "kimi", Model: "kimi-k2.5"},
 }
 
@@ -53,6 +60,8 @@ func ProviderForModel(model string) string {
 	switch {
 	case canonical == "":
 		return ProviderAnthropic
+	case strings.HasPrefix(canonical, "xai/"), strings.HasPrefix(canonical, "grok/"), strings.HasPrefix(canonical, "grok"):
+		return ProviderXAI
 	case strings.HasPrefix(canonical, "qwen/"), strings.HasPrefix(canonical, "qwen-"):
 		return ProviderDashScope
 	case strings.HasPrefix(canonical, "kimi/"), strings.HasPrefix(canonical, "kimi-"):
@@ -66,7 +75,7 @@ func ProviderForModel(model string) string {
 
 func IsOpenAICompatibleModel(model string) bool {
 	provider := ProviderForModel(model)
-	return provider == ProviderOpenAI || provider == ProviderDashScope
+	return provider == ProviderOpenAI || provider == ProviderXAI || provider == ProviderDashScope
 }
 
 func WireModelForBaseURL(model string, baseURL string) string {
@@ -83,7 +92,7 @@ func WireModelForBaseURL(model string, baseURL string) string {
 			return trimmed[pos+1:]
 		}
 		return trimmed
-	case "local", "qwen", "kimi":
+	case "local", "xai", "grok", "qwen", "kimi":
 		return trimmed[pos+1:]
 	default:
 		return trimmed
@@ -107,6 +116,8 @@ func TokenLimitForModel(model string) (TokenLimit, bool) {
 		return TokenLimit{MaxOutputTokens: 128000, ContextWindowTokens: 1000000}, true
 	case "gpt-5.4-mini", "gpt-5.4-nano":
 		return TokenLimit{MaxOutputTokens: 128000, ContextWindowTokens: 400000}, true
+	case "grok-3", "grok-3-mini":
+		return TokenLimit{MaxOutputTokens: 64000, ContextWindowTokens: 131072}, true
 	case "kimi-k2.5", "kimi-k1.5":
 		return TokenLimit{MaxOutputTokens: 16384, ContextWindowTokens: 256000}, true
 	case "qwen-max", "qwen-plus":

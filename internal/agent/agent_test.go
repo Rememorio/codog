@@ -1251,10 +1251,13 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, config.DefaultModel, models.DefaultModel)
 	require.NotEmpty(t, models.Aliases)
 	require.True(t, modelAliasExists(models.Aliases, "kimi", "kimi-k2.5", modelrouting.ProviderDashScope))
+	require.True(t, modelAliasExists(models.Aliases, "grok", "grok-3", modelrouting.ProviderXAI))
+	require.True(t, modelAliasExists(models.Aliases, "grok-mini", "grok-3-mini", modelrouting.ProviderXAI))
 	require.True(t, modelAliasExists(models.Aliases, "opus", "claude-opus-4-7", modelrouting.ProviderAnthropic))
 	require.NotEmpty(t, models.Routes)
 	require.True(t, modelRouteExists(models.Routes, "openai/", modelrouting.ProviderOpenAI))
 	require.True(t, modelRouteExists(models.Routes, "local/", modelrouting.ProviderOpenAI))
+	require.True(t, modelRouteExists(models.Routes, "grok or xai/", modelrouting.ProviderXAI))
 	require.True(t, modelRouteExists(models.Routes, "qwen/ or qwen-", modelrouting.ProviderDashScope))
 	require.True(t, modelRouteExists(models.Routes, "kimi/ or kimi-", modelrouting.ProviderDashScope))
 	require.False(t, models.RequiresCredentials)
@@ -12959,6 +12962,8 @@ func TestProvidersStatusRedactsAuth(t *testing.T) {
 
 	require.NoError(t, app.Providers([]string{"status", "--json"}))
 	require.Contains(t, out.String(), `"name": "anthropic"`)
+	require.Contains(t, out.String(), `"name": "xai"`)
+	require.Contains(t, out.String(), `"base_url": "https://api.x.ai/v1"`)
 	require.Contains(t, out.String(), `"stored_oauth"`)
 	require.Contains(t, out.String(), `"api_key": true`)
 	require.NotContains(t, out.String(), "api-key-secret")
@@ -13054,6 +13059,15 @@ func TestProvidersSetWritesConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"base_url": "https://api.openai.com/v1"`)
 	require.Contains(t, string(data), `"model": "openai/gpt-4o-mini"`)
+	out.Reset()
+
+	xaiPath := filepath.Join(configHome, "xai-provider.json")
+	require.NoError(t, app.Providers([]string{"set", "xai", "--path", xaiPath, "--json"}))
+	require.Contains(t, out.String(), `"provider": "xai"`)
+	data, err = os.ReadFile(xaiPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"base_url": "https://api.x.ai/v1"`)
+	require.Contains(t, string(data), `"model": "grok"`)
 }
 
 func TestProvidersShowCurrent(t *testing.T) {
@@ -13081,6 +13095,14 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "openai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
 	require.Contains(t, out.String(), `"model": "openai/gpt-4o-mini"`)
+	out.Reset()
+
+	app.Config.BaseURL = "https://api.x.ai/v1"
+	app.Config.Model = "grok"
+	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
+	require.Contains(t, out.String(), `"name": "xai"`)
+	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
+	require.Contains(t, out.String(), `"model": "grok"`)
 }
 
 func TestOAuthBrowserCommands(t *testing.T) {

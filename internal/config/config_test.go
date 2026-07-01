@@ -223,6 +223,35 @@ func TestLoadDashScopeEnvironmentForKimiAlias(t *testing.T) {
 	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1", cfg.BaseURL)
 }
 
+func TestLoadXAIEnvironmentForGrokAlias(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "XAI_BASE_URL")
+	t.Setenv("CODOG_MODEL", "grok")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("XAI_API_KEY", "xai-secret")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "grok", cfg.Model)
+	require.Equal(t, "xai-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, "https://api.x.ai/v1", cfg.BaseURL)
+}
+
+func TestLoadXAIEnvironmentUsesBaseURLOverride(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
+	t.Setenv("CODOG_MODEL", "xai/grok-3")
+	t.Setenv("XAI_API_KEY", "xai-secret")
+	t.Setenv("XAI_BASE_URL", "http://127.0.0.1:9090/v1")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "xai/grok-3", cfg.Model)
+	require.Equal(t, "xai-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, "http://127.0.0.1:9090/v1", cfg.BaseURL)
+}
+
 func TestLoadLocalModelUsesOllamaHost(t *testing.T) {
 	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_BASE_URL")
 	t.Setenv("CODOG_MODEL", "local/Qwen/Qwen3.6-27B-FP8")

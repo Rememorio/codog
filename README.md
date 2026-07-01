@@ -20,7 +20,8 @@ inspectable:
 - A single binary for normal CLI use.
 - Plain local files for config, memory, sessions, hooks, and audit records.
 - Explicit permission checks before shell commands or workspace writes.
-- Provider-backed streaming with Anthropic and OpenAI-compatible endpoints.
+- Provider-backed streaming with Anthropic, OpenAI-compatible, xAI/Grok, and
+  DashScope-compatible endpoints.
 - Compatibility-minded command contracts for sessions, slash commands, tools,
   MCP, skills, hooks, plugins, and editor-facing workflows.
 
@@ -81,7 +82,7 @@ build you are running.
 | Area | Current shape |
 | --- | --- |
 | Agent loop | One-shot prompts, side questions, REPL, Bubble Tea TUI, streaming output, and resumable sessions. |
-| Providers | Anthropic Messages streaming plus OpenAI-compatible chat-completions configuration. |
+| Providers | Anthropic Messages streaming plus OpenAI-compatible chat-completions configuration for OpenAI-style, xAI/Grok, and DashScope-compatible models. |
 | Workspace tools | Bash, read, write, edit, patch, grep, glob, git helpers, notebook helpers, and code-intelligence helpers. |
 | Safety | Permission modes, allow and deny rules, broad working-directory guards, sandbox detection, approval records, and audit events. |
 | State | JSONL sessions, prompt history, summaries, export, sharing, usage, cost, cache statistics, rewind, and compaction. |

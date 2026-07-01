@@ -7374,7 +7374,7 @@ func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
 		}
 	case "set":
 		if len(positionals) == 0 {
-			return req, errors.New("usage: codog providers set anthropic|openai|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
+			return req, errors.New("usage: codog providers set anthropic|openai|xai|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
 		}
 		req.Name = positionals[0]
 		if len(positionals) > 1 && req.BaseURL == "" {
@@ -7447,8 +7447,12 @@ func activeProvider(cfg config.Config) activeProviderReport {
 	if sameProviderURL(cfg.BaseURL, config.DefaultBaseURL) {
 		name = "anthropic"
 	}
-	if strings.HasPrefix(strings.TrimSpace(cfg.Model), "openai/") {
+	switch modelrouting.ProviderForModel(cfg.Model) {
+	case modelrouting.ProviderOpenAI:
 		name = "openai"
+		protocol = "openai-compatible"
+	case modelrouting.ProviderXAI:
+		name = "xai"
 		protocol = "openai-compatible"
 	}
 	return activeProviderReport{
@@ -7510,10 +7514,18 @@ func providerPresets() []providerPreset {
 		{
 			Name:         "openai",
 			Protocol:     "openai-compatible",
-			BaseURL:      "https://api.openai.com/v1",
+			BaseURL:      modelrouting.DefaultOpenAIBaseURL,
 			DefaultModel: "openai/gpt-4o-mini",
 			AuthEnv:      []string{"CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY"},
 			Description:  "OpenAI-compatible Chat Completions API selected by the openai/ model prefix.",
+		},
+		{
+			Name:         "xai",
+			Protocol:     "openai-compatible",
+			BaseURL:      modelrouting.DefaultXAIBaseURL,
+			DefaultModel: "grok",
+			AuthEnv:      []string{"XAI_API_KEY"},
+			Description:  "xAI Chat Completions API selected by Grok model aliases or the xai/ model prefix.",
 		},
 		{
 			Name:        "custom",
@@ -7569,14 +7581,22 @@ func setProviderConfig(paths []string, req providerCommandRequest) (providerSetR
 	case "openai", "openai-compatible":
 		name = "openai"
 		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
+			baseURL = modelrouting.DefaultOpenAIBaseURL
 		}
 		if model == "" {
 			model = "openai/gpt-4o-mini"
 		}
+	case "xai", "grok":
+		name = "xai"
+		if baseURL == "" {
+			baseURL = modelrouting.DefaultXAIBaseURL
+		}
+		if model == "" {
+			model = "grok"
+		}
 	default:
 		if baseURL == "" {
-			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic, openai, or custom --base-url URL", req.Name)
+			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic, openai, xai, or custom --base-url URL", req.Name)
 		}
 	}
 	if err := validateProviderBaseURL(baseURL); err != nil {
@@ -25109,6 +25129,15 @@ func modelRoutes() []modelRouteReport {
 			Description:    "Forces OpenAI-compatible local routing while preserving slash-containing model IDs after the prefix.",
 		},
 		{
+			Prefix:         "grok or xai/",
+			Provider:       modelrouting.ProviderXAI,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "XAI_API_KEY",
+			BaseURLEnv:     "XAI_BASE_URL",
+			DefaultBaseURL: modelrouting.DefaultXAIBaseURL,
+			Description:    "Routes Grok aliases and explicit xAI model names to the xAI OpenAI-compatible backend.",
+		},
+		{
 			Prefix:         "qwen/ or qwen-",
 			Provider:       modelrouting.ProviderDashScope,
 			WireProtocol:   "openai_chat_completions",
@@ -36863,7 +36892,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST, XAI_API_KEY, XAI_BASE_URL, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	return strings.ReplaceAll(help, "%s", exe)
 }
