@@ -7022,7 +7022,7 @@ func TestPluginHooksLoadedByRunCLI(t *testing.T) {
 	pluginRoot := filepath.Join(workspace, ".codog", "plugins", "demo")
 	require.NoError(t, os.MkdirAll(filepath.Join(pluginRoot, "hooks"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "hooks", "hooks.json"), []byte(`{"user_prompt_submit":["echo plugin-prompt"],"pre_tool_use":[{"matcher":"bash","command":"echo plugin-pre"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "hooks", "hooks.json"), []byte(`{"user_prompt_submit":["${CLAUDE_PLUGIN_ROOT}/prompt"],"pre_tool_use":[{"matcher":"bash","command":"${CLAUDE_PLUGIN_DATA}/pre"}]}`), 0o644))
 
 	oldWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -7035,10 +7035,14 @@ func TestPluginHooksLoadedByRunCLI(t *testing.T) {
 	require.NoError(t, err)
 	var report hooksListReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	require.Contains(t, report.UserPromptSubmit, "echo plugin-prompt")
+	actualWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	pluginRootSlash := filepath.ToSlash(filepath.Join(actualWorkspace, ".codog", "plugins", "demo"))
+	pluginDataSlash := filepath.ToSlash(filepath.Join(actualWorkspace, ".codog", "plugin-data", "demo"))
+	require.Contains(t, report.UserPromptSubmit, pluginRootSlash+"/prompt")
 	require.Len(t, report.PreToolUseCommands, 1)
 	require.Equal(t, "bash", report.PreToolUseCommands[0].Matcher)
-	require.Equal(t, "echo plugin-pre", report.PreToolUseCommands[0].Command)
+	require.Equal(t, pluginDataSlash+"/pre", report.PreToolUseCommands[0].Command)
 }
 
 func TestPluginMCPServersMergeIntoRuntimeConfig(t *testing.T) {

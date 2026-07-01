@@ -215,15 +215,24 @@ func TestLoadHookConfigsLoadsStandardAndManifestPaths(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "hooks"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "extra"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{"id":"demo","name":"demo","hooks":["./extra/hooks.json"]}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "hooks", "hooks.json"), []byte(`{"pre_tool_use":["echo standard"]}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "extra", "hooks.json"), []byte(`{"session_start":[{"command":"echo explicit"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "hooks", "hooks.json"), []byte(`{
+		"pre_tool_use":["${CLAUDE_PLUGIN_ROOT}/hooks/pre.sh"],
+		"notification":[{"type":"http","url":"https://example.test/hook","headers":{"X-Plugin":"${CLAUDE_PLUGIN_ROOT}"},"allowedEnvVars":["${CLAUDE_PLUGIN_DATA}"]}]
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "extra", "hooks.json"), []byte(`{"session_start":[{"command":"${CLAUDE_PLUGIN_DATA}/state.sh"}]}`), 0o644))
 
 	files, err := LoadHookConfigs(workspace)
 	require.NoError(t, err)
 	require.Len(t, files, 2)
 	require.Equal(t, "demo", files[0].PluginID)
-	require.Equal(t, []string{"echo standard"}, files[0].Config.PreToolUse)
-	require.Equal(t, []string{"echo explicit"}, files[1].Config.SessionStart)
+	pluginRoot := filepath.ToSlash(root)
+	pluginData := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugin-data", "demo"))
+	require.Equal(t, []string{pluginRoot + "/hooks/pre.sh"}, files[0].Config.PreToolUse)
+	require.Equal(t, pluginRoot+"/hooks/pre.sh", files[0].Config.PreToolUseCommands[0].Command)
+	require.Equal(t, pluginRoot, files[0].Config.NotificationCommands[0].Headers["X-Plugin"])
+	require.Equal(t, []string{pluginData}, files[0].Config.NotificationCommands[0].AllowedEnvVars)
+	require.Equal(t, []string{pluginData + "/state.sh"}, files[1].Config.SessionStart)
+	require.Equal(t, pluginData+"/state.sh", files[1].Config.SessionStartCommands[0].Command)
 }
 
 func requireValidationCode(t *testing.T, messages []ValidationMessage, code string) {
