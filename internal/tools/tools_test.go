@@ -2366,6 +2366,48 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.Equal(t, PermissionDanger, info.Permission)
 }
 
+func TestTaskCreateToolAcceptsPromptContract(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte(`#!/bin/sh
+printf 'codog:%s\n' "$*"
+`), 0o755))
+
+	out, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"prompt":"check auth","description":"audit auth","session_id":"session-1"}`))
+	require.NoError(t, err)
+	var report struct {
+		TaskID      string          `json:"task_id"`
+		Status      string          `json:"status"`
+		Prompt      string          `json:"prompt"`
+		Description string          `json:"description"`
+		CreatedAt   time.Time       `json:"created_at"`
+		Task        background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.NotEmpty(t, report.TaskID)
+	require.Equal(t, report.Task.ID, report.TaskID)
+	require.Equal(t, "running", report.Status)
+	require.Equal(t, "check auth", report.Prompt)
+	require.Equal(t, "audit auth", report.Description)
+	require.False(t, report.CreatedAt.IsZero())
+	require.Equal(t, "task", report.Task.Kind)
+	require.Equal(t, "session-1", report.Task.SessionID)
+	require.Contains(t, report.Task.Command, "prompt")
+
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(report.TaskID, 4096)
+		return err == nil && strings.Contains(logs, "Task: audit auth") && strings.Contains(logs, "check auth")
+	}, 2*time.Second, 20*time.Millisecond)
+
+	_, err = TaskCreateTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"command":"printf ok","prompt":"check auth"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot both be provided")
+}
+
 func TestTaskSuperviseToolRestartsEligibleTasks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")

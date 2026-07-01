@@ -6362,6 +6362,7 @@ func workerStore(configHome string, workspace string) workers.Store {
 type TaskCreateTool struct {
 	Workspace  string
 	ConfigHome string
+	Executable string
 }
 
 func (TaskCreateTool) Definition() anthropic.ToolDefinition {
@@ -6371,9 +6372,11 @@ func (TaskCreateTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"command":    map[string]any{"type": "string"},
-				"kind":       map[string]any{"type": "string"},
-				"session_id": map[string]any{"type": "string"},
+				"command":     map[string]any{"type": "string"},
+				"prompt":      map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"kind":        map[string]any{"type": "string"},
+				"session_id":  map[string]any{"type": "string"},
 				"restart_policy": map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -6385,7 +6388,7 @@ func (TaskCreateTool) Definition() anthropic.ToolDefinition {
 					},
 				},
 			},
-			"required":             []string{"command"},
+			"anyOf":                []map[string]any{{"required": []string{"command"}}, {"required": []string{"prompt"}}},
 			"additionalProperties": false,
 		},
 	}
@@ -6395,13 +6398,23 @@ func (TaskCreateTool) Permission() Permission { return PermissionDanger }
 
 func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Command   string                    `json:"command"`
-		Kind      string                    `json:"kind"`
-		SessionID string                    `json:"session_id"`
-		Restart   *background.RestartPolicy `json:"restart_policy"`
+		Command     string                    `json:"command"`
+		Prompt      string                    `json:"prompt"`
+		Description string                    `json:"description"`
+		Kind        string                    `json:"kind"`
+		SessionID   string                    `json:"session_id"`
+		Restart     *background.RestartPolicy `json:"restart_policy"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
+	}
+	command := strings.TrimSpace(payload.Command)
+	prompt := strings.TrimSpace(payload.Prompt)
+	if command == "" && prompt == "" {
+		return "", errors.New("command or prompt is required")
+	}
+	if command != "" && prompt != "" {
+		return "", errors.New("command and prompt cannot both be provided")
 	}
 	env, err := toolEnvironment(ctx, t.ConfigHome)
 	if err != nil {
@@ -6411,7 +6424,41 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
-	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(payload.Command, cwd, background.RunOptions{
+	if prompt != "" {
+		executable := strings.TrimSpace(t.Executable)
+		if executable == "" {
+			executable, err = os.Executable()
+			if err != nil {
+				return "", err
+			}
+		}
+		taskPrompt := prompt
+		if description := strings.TrimSpace(payload.Description); description != "" {
+			taskPrompt = "Task: " + description + "\n\n" + taskPrompt
+		}
+		kind := strings.TrimSpace(payload.Kind)
+		if kind == "" {
+			kind = "task"
+		}
+		task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, taskPrompt), cwd, background.RunOptions{
+			Kind:          kind,
+			SessionID:     payload.SessionID,
+			RestartPolicy: payload.Restart,
+			Env:           env,
+		})
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{
+			"task_id":     task.ID,
+			"status":      task.Status,
+			"prompt":      prompt,
+			"description": strings.TrimSpace(payload.Description),
+			"created_at":  task.StartedAt,
+			"task":        task,
+		}), nil
+	}
+	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(command, cwd, background.RunOptions{
 		Kind:          payload.Kind,
 		SessionID:     payload.SessionID,
 		RestartPolicy: payload.Restart,
