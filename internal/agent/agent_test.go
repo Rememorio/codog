@@ -1346,6 +1346,8 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", "")
 	var oauthServer *httptest.Server
 	oauthServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
@@ -11016,6 +11018,8 @@ func skillSourceRootByPath(roots []skills.DiscoveryRoot, path string) skills.Dis
 func TestSkillsListMarksShadowedEntries(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", "")
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills", "mismatch"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "debug.md"), []byte("User debug override."), 0o644))

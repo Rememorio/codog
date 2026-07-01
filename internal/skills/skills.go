@@ -475,6 +475,8 @@ func sourceLabel(source string) string {
 		return "Agents-compatible project skills"
 	case source == "omc":
 		return "OMC-compatible project skills"
+	case source == "opencode":
+		return "OpenCode-compatible user skills"
 	case strings.HasPrefix(source, "plugin:"):
 		return "Plugin skills"
 	default:
@@ -500,6 +502,7 @@ func roots(configHome, workspace string) []root {
 		legacyCommandsRoot(filepath.Join(workspace, ".claude", "commands"), "claude"),
 	}
 	out = append(out, compatibilityProjectRoots(workspace)...)
+	out = append(out, compatibilityConfigRoots(out)...)
 	manifests, err := plugins.Load(workspace)
 	if err != nil {
 		return out
@@ -508,6 +511,75 @@ func roots(configHome, workspace string) []root {
 		out = append(out, skillRootsForPlugin(manifest)...)
 	}
 	return out
+}
+
+func compatibilityConfigRoots(existing []root) []root {
+	out := []root{}
+	seen := rootPathSet(existing)
+	addSkillRoot := func(path string, source string) {
+		path = strings.TrimSpace(path)
+		if path == "" || !existingDir(path) {
+			return
+		}
+		key := filepath.Clean(path)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, skillRoot(path, source))
+	}
+	addCommandRoot := func(path string, source string) {
+		path = strings.TrimSpace(path)
+		if path == "" || !existingDir(path) {
+			return
+		}
+		key := filepath.Clean(path)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, legacyCommandsRoot(path, source))
+	}
+	addPrefixedRoots := func(prefix string, source string) {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			return
+		}
+		addSkillRoot(filepath.Join(prefix, "skills"), source)
+		addCommandRoot(filepath.Join(prefix, "commands"), source)
+	}
+
+	addPrefixedRoots(os.Getenv("CLAW_CONFIG_HOME"), "claw")
+	addPrefixedRoots(os.Getenv("CODEX_HOME"), "codex")
+	if claudeConfigDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); claudeConfigDir != "" {
+		addSkillRoot(filepath.Join(claudeConfigDir, "skills"), "claude")
+		addSkillRoot(filepath.Join(claudeConfigDir, "skills", "omc-learned"), "claude")
+		addCommandRoot(filepath.Join(claudeConfigDir, "commands"), "claude")
+	}
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		home = strings.TrimSpace(os.Getenv("USERPROFILE"))
+	}
+	if home != "" {
+		addPrefixedRoots(filepath.Join(home, ".omc"), "omc")
+		addPrefixedRoots(filepath.Join(home, ".claw"), "claw")
+		addPrefixedRoots(filepath.Join(home, ".codex"), "codex")
+		addPrefixedRoots(filepath.Join(home, ".claude"), "claude")
+		addSkillRoot(filepath.Join(home, ".agents", "skills"), "agents")
+		addSkillRoot(filepath.Join(home, ".config", "opencode", "skills"), "opencode")
+		addSkillRoot(filepath.Join(home, ".claude", "skills", "omc-learned"), "claude")
+	}
+	return out
+}
+
+func rootPathSet(roots []root) map[string]bool {
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if strings.TrimSpace(root.path) != "" {
+			seen[filepath.Clean(root.path)] = true
+		}
+	}
+	return seen
 }
 
 func compatibilityProjectRoots(workspace string) []root {
@@ -1091,7 +1163,7 @@ func sourceRank(source string) int {
 		return 1
 	case source == "claude":
 		return 2
-	case source == "codex", source == "claw", source == "agents", source == "omc":
+	case source == "codex", source == "claw", source == "agents", source == "omc", source == "opencode":
 		return 3
 	case strings.HasPrefix(source, "plugin:"):
 		return 4

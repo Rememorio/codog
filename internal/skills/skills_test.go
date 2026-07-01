@@ -198,6 +198,59 @@ func TestCompatibilityProjectSkillRoots(t *testing.T) {
 	require.True(t, clawCommandSource.Exists)
 }
 
+func TestCompatibilityConfigAndHomeSkillRoots(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	codexHome := t.TempDir()
+	clawHome := t.TempDir()
+	claudeConfig := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLAW_CONFIG_HOME", clawHome)
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfig)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", "")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(codexHome, "skills", "codexenv"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(clawHome, "commands"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(claudeConfig, "skills", "omc-learned", "learned"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "opencode", "skills", "open"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "skills", "codexenv", "SKILL.md"), []byte("Codex env skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(clawHome, "commands", "clawcmd.md"), []byte("Claw env command"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(claudeConfig, "skills", "omc-learned", "learned", "SKILL.md"), []byte("Learned Claude skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".config", "opencode", "skills", "open", "SKILL.md"), []byte("OpenCode skill"), 0o644))
+
+	codexSkill, err := Find(configHome, workspace, "codexenv")
+	require.NoError(t, err)
+	require.Equal(t, "codex", codexSkill.Source)
+	require.Equal(t, "Codex env skill", codexSkill.Body)
+
+	clawCommand, err := Find(configHome, workspace, "clawcmd")
+	require.NoError(t, err)
+	require.Equal(t, "claw", clawCommand.Source)
+	require.Equal(t, originLegacyCommandsDir, clawCommand.Origin.ID)
+	require.Equal(t, "Claw env command", clawCommand.Body)
+
+	learned, err := Find(configHome, workspace, "learned")
+	require.NoError(t, err)
+	require.Equal(t, "claude", learned.Source)
+	require.Equal(t, "Learned Claude skill", learned.Body)
+
+	openCodeSkill, err := Find(configHome, workspace, "open")
+	require.NoError(t, err)
+	require.Equal(t, "opencode", openCodeSkill.Source)
+	require.Equal(t, "OpenCode skill", openCodeSkill.Body)
+
+	sources := Sources(configHome, workspace)
+	codexSource := sourceByPath(sources, filepath.Join(codexHome, "skills"))
+	require.Equal(t, "codex", codexSource.Source)
+	require.True(t, codexSource.Exists)
+	opencodeSource := sourceByPath(sources, filepath.Join(home, ".config", "opencode", "skills"))
+	require.Equal(t, "opencode", opencodeSource.Source)
+	require.Equal(t, "OpenCode-compatible user skills", opencodeSource.Label)
+	require.True(t, opencodeSource.Exists)
+}
+
 func TestRenderInvocationSubstitutesNamedAndIndexedArguments(t *testing.T) {
 	doc := `---
 description: Review a target.
