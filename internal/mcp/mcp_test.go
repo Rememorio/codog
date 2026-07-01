@@ -96,6 +96,13 @@ func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
 	require.Equal(t, []string{"echo"}, statuses[1].Tools)
 }
 
+func TestToolNameNormalizationMatchesMCPCompatibility(t *testing.T) {
+	require.Equal(t, "github_com", NormalizeNameForTooling("github.com"))
+	require.Equal(t, "tool_name_", NormalizeNameForTooling("tool name!"))
+	require.Equal(t, "claude_ai_Example_Server", NormalizeNameForTooling("claude.ai Example   Server!!"))
+	require.Equal(t, "mcp__claude_ai_Example_Server__weather_tool", ToolName("claude.ai Example Server", "weather tool"))
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_FAIL_STDERR") == "1" {
 		fmt.Fprintln(os.Stderr, "mcp boot failed")

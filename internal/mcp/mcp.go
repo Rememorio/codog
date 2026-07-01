@@ -17,6 +17,8 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 )
 
+const claudeAIServerPrefix = "claude.ai "
+
 type ServerStatus struct {
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
@@ -113,6 +115,54 @@ type rpcResponse struct {
 	Error  *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+func NormalizeNameForTooling(name string) string {
+	var builder strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '_' || r == '-':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	normalized := builder.String()
+	if strings.HasPrefix(name, claudeAIServerPrefix) {
+		normalized = strings.Trim(collapseUnderscores(normalized), "_")
+	}
+	return normalized
+}
+
+func ToolPrefix(serverName string) string {
+	return "mcp__" + NormalizeNameForTooling(serverName) + "__"
+}
+
+func ToolName(serverName, toolName string) string {
+	return ToolPrefix(serverName) + NormalizeNameForTooling(toolName)
+}
+
+func collapseUnderscores(value string) string {
+	var builder strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		if r == '_' {
+			if !lastUnderscore {
+				builder.WriteRune(r)
+			}
+			lastUnderscore = true
+			continue
+		}
+		builder.WriteRune(r)
+		lastUnderscore = false
+	}
+	return builder.String()
 }
 
 func InspectAll(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {

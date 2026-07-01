@@ -3560,6 +3560,11 @@ func TestMCPPromptAndTemplateTools(t *testing.T) {
 	require.Contains(t, promptOut, `"Review tools"`)
 }
 
+func TestNewMCPToolNameUsesCompatibilityNormalization(t *testing.T) {
+	require.Equal(t, "mcp__github_com__tool_name_", NewMCPToolName("github.com", "tool name!"))
+	require.Equal(t, "mcp__claude_ai_Example_Server__weather_tool", NewMCPToolName("claude.ai Example Server", "weather tool"))
+}
+
 func TestMCPToolHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_TOOL_HELPER") != "1" {
 		return

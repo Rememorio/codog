@@ -1027,30 +1027,7 @@ func (t CommandTool) Execute(ctx context.Context, input json.RawMessage) (string
 }
 
 func NewMCPToolName(serverName, toolName string) string {
-	return "mcp__" + toolNameComponent(serverName, "server") + "__" + toolNameComponent(toolName, "tool")
-}
-
-func toolNameComponent(value, fallback string) string {
-	var builder strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			builder.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			builder.WriteRune(r)
-		case r >= '0' && r <= '9':
-			builder.WriteRune(r)
-		case r == '_' || r == '-':
-			builder.WriteRune(r)
-		default:
-			builder.WriteRune('_')
-		}
-	}
-	component := strings.Trim(builder.String(), "_-")
-	if component == "" {
-		return fallback
-	}
-	return component
+	return mcp.ToolName(serverName, toolName)
 }
 
 func (t MCPTool) Definition() anthropic.ToolDefinition {
