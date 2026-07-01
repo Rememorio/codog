@@ -10057,6 +10057,21 @@ func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Contains(t, out, "broken.json")
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "show", "demo"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var showReport mcpShowReport
+	require.NoError(t, json.Unmarshal([]byte(out), &showReport))
+	require.Equal(t, "mcp", showReport.Kind)
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "degraded", showReport.Status)
+	require.Equal(t, "demo", showReport.ServerName)
+	require.False(t, showReport.Found)
+	require.NotNil(t, showReport.ConfigLoadError)
+	require.Contains(t, *showReport.ConfigLoadError, "broken.json")
+	require.Equal(t, "config_load_failed", showReport.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "list", "extra"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
@@ -10187,7 +10202,7 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.Contains(t, string(configData), `"demo-server"`)
 	out.Reset()
 
-	require.NoError(t, app.MCP(context.Background(), []string{"show", "demo"}))
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "demo", "--json"}))
 	require.Contains(t, out.String(), `"action": "show"`)
 	require.Contains(t, out.String(), `"command": "demo-server"`)
 	require.Contains(t, out.String(), `"signature": "stdio:[demo-server|arg1|arg2]"`)
@@ -10196,6 +10211,18 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"env_keys": [`)
 	require.NotContains(t, out.String(), `"A=B"`)
 	require.NotContains(t, out.String(), `"C=D"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "missing", "--json"}))
+	var missingShow mcpShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &missingShow))
+	require.Equal(t, "mcp", missingShow.Kind)
+	require.Equal(t, "show", missingShow.Action)
+	require.Equal(t, "error", missingShow.Status)
+	require.Equal(t, "server_not_found", missingShow.ErrorKind)
+	require.False(t, missingShow.Found)
+	require.Equal(t, "missing", missingShow.ServerName)
+	require.Contains(t, missingShow.AvailableServers, "demo")
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"remove", "demo"}))

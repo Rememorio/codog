@@ -941,6 +941,32 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 		renderMCPListReport(out, format, buildMCPListReport(nil, buildMCPValidation(nil), strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind))
 		return nil
 	}
+	if cleanArgs[0] == "show" {
+		if len(cleanArgs) < 2 {
+			return renderActionError(out, actionErrorReport{
+				Kind:      "mcp",
+				Action:    "show",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "mcp show requires a server name",
+				Hint:      "Usage: codog mcp show <server>.",
+			}, format)
+		}
+		if len(cleanArgs) > 2 {
+			return renderCLIError(out, unexpectedExtraArgsError{
+				Command: "mcp show",
+				Args:    append([]string(nil), cleanArgs[2:]...),
+				Usage:   "codog mcp show SERVER [--json|--output-format text|json]",
+			}, format)
+		}
+		renderMCPShowReport(out, format, buildMCPShowReport(mcpShowReportOptions{
+			Workspace:           currentWorkingDirectory(),
+			ServerName:          cleanArgs[1],
+			ConfigLoadError:     strings.TrimSpace(loadErr.Error()),
+			ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
+		}))
+		return nil
+	}
 	return renderCLIError(out, loadErr, format)
 }
 
@@ -30756,6 +30782,28 @@ type mcpListReport struct {
 	InvalidServers      []localstatus.ValidationIssue `json:"invalid_servers,omitempty"`
 }
 
+type mcpShowReport struct {
+	Kind                string                        `json:"kind"`
+	Action              string                        `json:"action"`
+	Status              string                        `json:"status"`
+	ErrorKind           string                        `json:"error_kind,omitempty"`
+	WorkingDirectory    string                        `json:"working_directory"`
+	Found               bool                          `json:"found"`
+	ServerName          string                        `json:"server_name,omitempty"`
+	Message             string                        `json:"message,omitempty"`
+	Hint                string                        `json:"hint,omitempty"`
+	Signature           string                        `json:"signature,omitempty"`
+	ConfigHash          string                        `json:"config_hash,omitempty"`
+	ConfigLoadError     *string                       `json:"config_load_error"`
+	ConfigLoadErrorKind string                        `json:"config_load_error_kind,omitempty"`
+	Server              *mcp.ServerDescriptor         `json:"server,omitempty"`
+	AvailableServers    []string                      `json:"available_servers,omitempty"`
+	TotalConfigured     int                           `json:"total_configured"`
+	ValidCount          int                           `json:"valid_count"`
+	InvalidCount        int                           `json:"invalid_count"`
+	InvalidServers      []localstatus.ValidationIssue `json:"invalid_servers,omitempty"`
+}
+
 func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPValidationStatus, configLoadError string, configLoadErrorKind string) mcpListReport {
 	if statuses == nil {
 		statuses = []mcp.ServerStatus{}
@@ -30788,6 +30836,96 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 	}
 }
 
+type mcpShowReportOptions struct {
+	Workspace           string
+	ServerName          string
+	Server              *config.MCPServerConfig
+	AvailableServers    []string
+	Validation          localstatus.MCPValidationStatus
+	ConfigLoadError     string
+	ConfigLoadErrorKind string
+}
+
+func buildMCPShowReport(options mcpShowReportOptions) mcpShowReport {
+	workspace := strings.TrimSpace(options.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	status := "ok"
+	var loadError *string
+	if strings.TrimSpace(options.ConfigLoadError) != "" {
+		status = "degraded"
+		value := strings.TrimSpace(options.ConfigLoadError)
+		loadError = &value
+		if strings.TrimSpace(options.ConfigLoadErrorKind) == "" {
+			options.ConfigLoadErrorKind = "config_load_failed"
+		}
+	} else if options.Validation.InvalidCount > 0 {
+		status = "degraded"
+	}
+	report := mcpShowReport{
+		Kind:                "mcp",
+		Action:              "show",
+		Status:              status,
+		WorkingDirectory:    workspace,
+		Found:               options.Server != nil,
+		ServerName:          strings.TrimSpace(options.ServerName),
+		ConfigLoadError:     loadError,
+		ConfigLoadErrorKind: strings.TrimSpace(options.ConfigLoadErrorKind),
+		AvailableServers:    append([]string(nil), options.AvailableServers...),
+		TotalConfigured:     options.Validation.TotalConfigured,
+		ValidCount:          options.Validation.ValidCount,
+		InvalidCount:        options.Validation.InvalidCount,
+		InvalidServers:      append([]localstatus.ValidationIssue(nil), options.Validation.InvalidServers...),
+	}
+	if options.Server != nil {
+		server := *options.Server
+		descriptor := mcp.DescribeServer(report.ServerName, server)
+		report.Server = &descriptor
+		report.Signature = mcp.ServerSignature(server)
+		report.ConfigHash = mcp.ServerConfigHash(server)
+		report.ServerName = ""
+		return report
+	}
+	if report.Status == "ok" {
+		report.Status = "error"
+	}
+	report.ErrorKind = "server_not_found"
+	report.Message = fmt.Sprintf("server %q is not configured", strings.TrimSpace(options.ServerName))
+	report.Hint = "Run `codog mcp list` to see configured servers."
+	return report
+}
+
+func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
+	if format == "text" {
+		fmt.Fprintln(out, "MCP")
+		fmt.Fprintf(out, "  Working directory %s\n", report.WorkingDirectory)
+		fmt.Fprintf(out, "  Status           %s\n", report.Status)
+		if report.ConfigLoadError != nil {
+			fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
+		}
+		if !report.Found {
+			fmt.Fprintf(out, "  Result           server `%s` is not configured\n", report.ServerName)
+			if len(report.AvailableServers) > 0 {
+				fmt.Fprintf(out, "  Available        %s\n", strings.Join(report.AvailableServers, ", "))
+			}
+			return
+		}
+		fmt.Fprintf(out, "  Name             %s\n", report.Server.Name)
+		fmt.Fprintf(out, "  Transport        %s\n", report.Server.Transport.Label)
+		fmt.Fprintf(out, "  Command          %s\n", report.Server.Details.Command)
+		fmt.Fprintf(out, "  Args count       %d\n", report.Server.Details.ArgsCount)
+		if len(report.Server.Details.EnvKeys) > 0 {
+			fmt.Fprintf(out, "  Env keys         %s\n", strings.Join(report.Server.Details.EnvKeys, ", "))
+		}
+		fmt.Fprintf(out, "  Signature        %s\n", report.Signature)
+		fmt.Fprintf(out, "  Config hash      %s\n", report.ConfigHash)
+		return
+	}
+	data, _ := json.MarshalIndent(report, "", "  ")
+	fmt.Fprintln(out, string(data))
+}
+
 func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 	if format == "text" {
 		if report.ConfigLoadError == nil {
@@ -30812,6 +30950,14 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(out, string(data))
+}
+
+func currentWorkingDirectory() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return wd
 }
 
 const mcpUsage = "usage: codog mcp list | serve | self | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
@@ -30967,20 +31113,20 @@ func (a *App) mcpShow(args []string, format string) error {
 		}, format)
 	}
 	name := args[0]
+	validation := buildMCPValidation(a.Config.MCPServers)
 	server, ok := a.Config.MCPServers[name]
-	if !ok {
-		return fmt.Errorf("unknown MCP server %q", name)
+	var serverPtr *config.MCPServerConfig
+	if ok {
+		serverCopy := server
+		serverPtr = &serverCopy
 	}
-	data, _ := json.MarshalIndent(map[string]any{
-		"kind":        "mcp",
-		"action":      "show",
-		"status":      "ok",
-		"name":        name,
-		"signature":   mcp.ServerSignature(server),
-		"config_hash": mcp.ServerConfigHash(server),
-		"server":      mcp.DescribeServer(name, server),
-	}, "", "  ")
-	fmt.Fprintln(a.Out, string(data))
+	renderMCPShowReport(a.Out, format, buildMCPShowReport(mcpShowReportOptions{
+		Workspace:        a.Workspace,
+		ServerName:       name,
+		Server:           serverPtr,
+		AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
+		Validation:       validation,
+	}))
 	return nil
 }
 
