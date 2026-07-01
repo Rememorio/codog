@@ -3495,7 +3495,7 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 			name:      "mcp unknown",
 			args:      []string{"--config", configPath, "--output-format", "json", "mcp", "bogus"},
 			kind:      "mcp",
-			action:    "bogus",
+			action:    "error",
 			errorKind: "unsupported_action",
 			hintPart:  "codog mcp",
 		},
@@ -9920,7 +9920,16 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Equal(t, mcp.ServerConfigHash(server), listReport.Servers[0].ConfigHash)
 	out.Reset()
 
-	require.ErrorContains(t, app.MCP(context.Background(), []string{"list", "extra"}), "usage: codog mcp list")
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"list", "extra", "--json"}), "unsupported_action")
+	var unsupported mcpUnsupportedActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &unsupported))
+	require.Equal(t, "mcp", unsupported.Kind)
+	require.Equal(t, "error", unsupported.Action)
+	require.False(t, unsupported.OK)
+	require.Equal(t, "unsupported_action", unsupported.ErrorKind)
+	require.Equal(t, "list extra", unsupported.RequestedAction)
+	require.Contains(t, unsupported.Hint, "codog mcp list")
+	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"tools", "test"}))
 	require.Contains(t, out.String(), `"name": "echo"`)
@@ -10051,6 +10060,23 @@ func TestMCPHelpCommand(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/mcp help", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Usage")
 	require.Contains(t, out.String(), "/mcp [list|show <server>|help]")
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"info", "missing", "--json"}), "unsupported_action")
+	var unsupported mcpUnsupportedActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &unsupported))
+	require.Equal(t, "mcp", unsupported.Kind)
+	require.Equal(t, "error", unsupported.Action)
+	require.False(t, unsupported.OK)
+	require.Equal(t, "unsupported_action", unsupported.ErrorKind)
+	require.Equal(t, "info missing", unsupported.RequestedAction)
+	require.Contains(t, unsupported.Hint, "mcp show")
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"describe", "missing", "--json"}), "unsupported_action")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &unsupported))
+	require.Equal(t, "describe missing", unsupported.RequestedAction)
+	require.Contains(t, unsupported.Hint, "mcp show")
 }
 
 func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
@@ -10122,9 +10148,10 @@ func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "list", "extra"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
-	var errorReport cliErrorReport
+	var errorReport mcpUnsupportedActionReport
 	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
-	require.Equal(t, "unexpected_extra_args", errorReport.ErrorKind)
+	require.Equal(t, "unsupported_action", errorReport.ErrorKind)
+	require.Equal(t, "list extra", errorReport.RequestedAction)
 	require.NotContains(t, out, "config_load_error")
 }
 

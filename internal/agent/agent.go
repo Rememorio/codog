@@ -936,11 +936,7 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 	}
 	if len(cleanArgs) == 0 || cleanArgs[0] == "list" {
 		if len(cleanArgs) > 1 {
-			return renderCLIError(out, unexpectedExtraArgsError{
-				Command: "mcp list",
-				Args:    append([]string(nil), cleanArgs[1:]...),
-				Usage:   "codog mcp list [--json|--output-format text|json]",
-			}, format)
+			return renderMCPUnsupportedAction(out, format, strings.Join(cleanArgs, " "), "list accepts no filter argument; use `codog mcp list`")
 		}
 		renderMCPListReport(out, format, buildMCPListReport(nil, buildMCPValidation(nil), strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind))
 		return nil
@@ -30678,7 +30674,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	}
 	if len(args) == 0 || args[0] == "list" {
 		if len(args) > 1 {
-			return errors.New("usage: codog mcp list")
+			return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), "list accepts no filter argument; use `codog mcp list`")
 		}
 		validation := buildMCPValidation(a.Config.MCPServers)
 		if len(a.Config.MCPServers) == 0 {
@@ -30705,15 +30701,12 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	case "remove", "delete", "rm":
 		return a.mcpRemove(args[1:])
 	}
+	if args[0] == "info" || args[0] == "describe" {
+		return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), "use `codog mcp show <server>` to inspect a server")
+	}
 	if !mcpRemoteAction(args[0]) {
-		return renderActionError(a.Out, actionErrorReport{
-			Kind:      "mcp",
-			Action:    args[0],
-			Status:    "error",
-			ErrorKind: "unsupported_action",
-			Message:   fmt.Sprintf("unsupported mcp action %q", args[0]),
-			Hint:      mcpUsage,
-		}, format)
+		verb := strings.TrimSpace(args[0])
+		return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), fmt.Sprintf("`%s` is not a supported MCP sub-action; run `codog mcp help`.", verb))
 	}
 	if len(a.Config.MCPServers) == 0 {
 		fmt.Fprintln(a.Out, "No MCP servers configured.")
@@ -30829,6 +30822,17 @@ type mcpUsageBlock struct {
 	Sources      []string `json:"sources"`
 }
 
+type mcpUnsupportedActionReport struct {
+	Kind            string        `json:"kind"`
+	Action          string        `json:"action"`
+	OK              bool          `json:"ok"`
+	Status          string        `json:"status"`
+	ErrorKind       string        `json:"error_kind"`
+	RequestedAction string        `json:"requested_action"`
+	Hint            string        `json:"hint"`
+	Usage           mcpUsageBlock `json:"usage"`
+}
+
 func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPValidationStatus, configLoadError string, configLoadErrorKind string) mcpListReport {
 	if statuses == nil {
 		statuses = []mcp.ServerStatus{}
@@ -30859,6 +30863,38 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		Servers:             statuses,
 		InvalidServers:      append([]localstatus.ValidationIssue(nil), validation.InvalidServers...),
 	}
+}
+
+func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUnsupportedActionReport {
+	return mcpUnsupportedActionReport{
+		Kind:            "mcp",
+		Action:          "error",
+		OK:              false,
+		Status:          "error",
+		ErrorKind:       "unsupported_action",
+		RequestedAction: strings.TrimSpace(requestedAction),
+		Hint:            strings.TrimSpace(hint),
+		Usage: mcpUsageBlock{
+			SlashCommand: "/mcp [list|show <server>|help]",
+			DirectCLI:    "codog mcp [list|show <server>|help]",
+			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
+		},
+	}
+}
+
+func renderMCPUnsupportedAction(out io.Writer, format string, requestedAction string, hint string) error {
+	report := buildMCPUnsupportedActionReport(requestedAction, hint)
+	err := fmt.Errorf("%s: unsupported mcp action %q\n%s", report.ErrorKind, report.RequestedAction, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	fmt.Fprintln(out, "MCP")
+	fmt.Fprintf(out, "  Error            unsupported action '%s'\n", report.RequestedAction)
+	fmt.Fprintf(out, "  Hint             %s\n", report.Hint)
+	fmt.Fprintf(out, "  Usage            %s\n", report.Usage.SlashCommand)
+	return &ExitError{Code: 1, Err: err}
 }
 
 func buildMCPUsageReport(unexpected string) mcpUsageReport {
