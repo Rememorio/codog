@@ -44,6 +44,7 @@ import (
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/sessionname"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
@@ -456,6 +457,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "reset-limits", "--help", "--output-format", "json"},
 			topic: "reset-limits",
 		},
+		{
+			name:  "generateSessionName local help",
+			args:  []string{"--config", configPath, "generateSessionName", "--help", "--output-format", "json"},
+			topic: "generateSessionName",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -540,6 +546,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "bug")
 	require.Contains(t, report.Commands, "checkpoint")
+	require.Contains(t, report.Commands, "generateSessionName")
 	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "metrics")
 	require.Contains(t, report.Commands, "mock-limits")
@@ -576,6 +583,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasTool(report, "read_file"))
 	require.True(t, capabilityReportHasSlash(report, "/ant-trace"))
 	require.True(t, capabilityReportHasSlash(report, "/bug"))
+	require.True(t, capabilityReportHasSlash(report, "/generateSessionName"))
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
 	require.True(t, capabilityReportHasSlash(report, "/checkpoint"))
 	require.True(t, capabilityReportHasSlash(report, "/new"))
@@ -587,6 +595,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
+	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
@@ -2178,6 +2187,57 @@ func TestRenameSessionCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, opened.Messages, 1)
 	require.Equal(t, "rename me", opened.Messages[0].Content[0].Text)
+}
+
+func TestGenerateSessionNameCommandAndSlash(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.AppendInput("source", "Fix the HTTP 500 in API users endpoint"))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "Fix the HTTP 500 in API users endpoint")))
+	require.NoError(t, store.AppendInput("existing", "Fix the HTTP 500 in API users endpoint"))
+	require.NoError(t, store.Append("existing", anthropic.TextMessage("user", "collision holder")))
+	_, err := store.Rename("existing", "fix-http-500-api-users-endpoint")
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.GenerateSessionName([]string{"--session", "source", "--json"}, config.FlagOverrides{}))
+	var report sessionname.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_name", report.Kind)
+	require.Equal(t, "generate", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, "fix-http-500-api-users-endpoint-2", report.SuggestedID)
+	require.Equal(t, 1, report.CollisionCount)
+	require.Equal(t, "first_prompt", report.Source)
+	out.Reset()
+
+	require.NoError(t, app.GenerateSessionName([]string{"--session", "source", "--rename", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "renamed", report.Status)
+	require.True(t, report.Renamed)
+	require.Equal(t, "source", report.OldID)
+	require.Equal(t, "fix-http-500-api-users-endpoint-2", report.NewID)
+	ok, err := store.Exists("source")
+	require.NoError(t, err)
+	require.False(t, ok)
+	ok, err = store.Exists("fix-http-500-api-users-endpoint-2")
+	require.NoError(t, err)
+	require.True(t, ok)
+	out.Reset()
+
+	require.NoError(t, store.AppendInput("slash", "Add session name slash support"))
+	require.NoError(t, store.Append("slash", anthropic.TextMessage("user", "Add session name slash support")))
+	sess, err := store.Open("slash")
+	require.NoError(t, err)
+	require.True(t, app.handleSlash(context.Background(), "/generateSessionName --rename --json", sess))
+	require.Equal(t, "add-session-name-slash-support", sess.ID)
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "renamed", report.Status)
+	require.Equal(t, "add-session-name-slash-support", report.NewID)
+	require.Empty(t, errOut.String())
 }
 
 func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {

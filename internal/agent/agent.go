@@ -72,6 +72,7 @@ import (
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/securityreview"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/sessionname"
 	"github.com/Rememorio/codog/internal/sessionsummary"
 	"github.com/Rememorio/codog/internal/skills"
 	"github.com/Rememorio/codog/internal/slash"
@@ -329,6 +330,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ClearCommand(rest)
 	case "backfill-sessions":
 		return app.BackfillSessions(rest)
+	case "generateSessionName", "generatesessionname", "generate-session-name":
+		return app.GenerateSessionName(rest, overrides)
 	case "rename":
 		return app.Rename(rest, overrides)
 	case "history", "prompt-history":
@@ -15369,6 +15372,7 @@ func builtInCommandNames() []string {
 		"files",
 		"focus",
 		"format",
+		"generateSessionName",
 		"git",
 		"heapdump",
 		"help",
@@ -18719,6 +18723,27 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	case "/summary":
 		if err := a.Summary(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/generateSessionName", "/generate-session-name":
+		report, format, err := a.generateSessionNameReport(fields[1:], config.FlagOverrides{SessionID: sess.ID})
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return true
+		}
+		if format == "json" {
+			if err := sessionname.RenderJSON(a.Out, report); err != nil {
+				fmt.Fprintln(a.Err, "error:", err)
+			}
+		} else {
+			sessionname.RenderText(a.Out, report)
+		}
+		if report.Renamed && report.NewID != "" {
+			next, err := a.Sessions.Open(report.NewID)
+			if err != nil {
+				fmt.Fprintln(a.Err, "error:", err)
+				return true
+			}
+			*sess = *next
 		}
 	case "/rename":
 		if len(fields) < 2 {
@@ -22348,6 +22373,16 @@ type renameRequest struct {
 	Format    string
 }
 
+type generateSessionNameRequest struct {
+	SessionID string
+	Source    string
+	Format    string
+	Prefix    string
+	Text      string
+	MaxWords  int
+	Rename    bool
+}
+
 type shareRequest struct {
 	SessionID string
 	OutputDir string
@@ -22387,6 +22422,230 @@ type copyReport struct {
 }
 
 var writeClipboard = writeSystemClipboard
+
+func (a *App) GenerateSessionName(args []string, overrides config.FlagOverrides) error {
+	report, format, err := a.generateSessionNameReport(args, overrides)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		return sessionname.RenderJSON(a.Out, report)
+	}
+	sessionname.RenderText(a.Out, report)
+	return nil
+}
+
+func (a *App) generateSessionNameReport(args []string, overrides config.FlagOverrides) (sessionname.Report, string, error) {
+	req, err := parseGenerateSessionNameArgs(args, overrides)
+	if err != nil {
+		return sessionname.Report{}, "", err
+	}
+	if strings.TrimSpace(req.Text) == "" && a.Sessions == nil {
+		return sessionname.Report{}, "", errors.New("session store is not configured")
+	}
+	sourceText := req.Text
+	source := "text"
+	sessionID := req.SessionID
+	messageCount := 0
+	path := ""
+	if strings.TrimSpace(sourceText) == "" {
+		sess, err := a.Sessions.Open(req.SessionID)
+		if err != nil {
+			return sessionname.Report{}, "", err
+		}
+		sessionID = sess.ID
+		messageCount = len(sess.Messages)
+		path = sess.Path
+		sourceText, source, err = a.generateSessionNameSource(sess, req.Source)
+		if err != nil {
+			return sessionname.Report{}, "", err
+		}
+	}
+	base := sessionname.Suggest(sourceText, sessionname.Options{Prefix: req.Prefix, MaxWords: req.MaxWords})
+	suggested := base
+	collisions := 0
+	if a.Sessions != nil {
+		suggested, collisions, err = sessionname.Unique(base, func(id string) (bool, error) {
+			if id == sessionID {
+				return false, nil
+			}
+			return a.Sessions.Exists(id)
+		})
+		if err != nil {
+			return sessionname.Report{}, "", err
+		}
+	}
+	report := sessionname.Report{
+		Kind:           "session_name",
+		Action:         "generate",
+		Status:         "ok",
+		SessionID:      sessionID,
+		SuggestedID:    suggested,
+		Source:         source,
+		SourceText:     truncateForReport(sourceText, 240),
+		MessageCount:   messageCount,
+		CollisionCount: collisions,
+		Path:           path,
+	}
+	if !req.Rename {
+		return report, req.Format, nil
+	}
+	if a.Sessions == nil {
+		return sessionname.Report{}, "", errors.New("session store is not configured")
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return sessionname.Report{}, "", errors.New("session id is required for rename")
+	}
+	report.Action = "rename"
+	if suggested == sessionID {
+		report.Status = "unchanged"
+		report.Messages = append(report.Messages, "Generated name already matches the session id.")
+		return report, req.Format, nil
+	}
+	renamed, err := a.Sessions.Rename(sessionID, suggested)
+	if err != nil {
+		return sessionname.Report{}, "", err
+	}
+	report.Status = "renamed"
+	report.Renamed = true
+	report.OldID = renamed.OldID
+	report.NewID = renamed.NewID
+	report.Path = renamed.NewPath
+	report.MessageCount = renamed.MessageCount
+	return report, req.Format, nil
+}
+
+func (a *App) generateSessionNameSource(sess *session.Session, source string) (string, string, error) {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" {
+		source = "first"
+	}
+	history, err := a.Sessions.PromptHistory(sess.ID)
+	if err != nil {
+		return "", "", err
+	}
+	if len(history) > 0 {
+		switch source {
+		case "first", "oldest":
+			return history[0].Text, "first_prompt", nil
+		case "last", "latest", "recent":
+			return history[len(history)-1].Text, "last_prompt", nil
+		default:
+			return "", "", fmt.Errorf("unknown generateSessionName source %q", source)
+		}
+	}
+	if strings.TrimSpace(sess.ID) != "" {
+		return sess.ID, "session_id", nil
+	}
+	return "session", "fallback", nil
+}
+
+func truncateForReport(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
+}
+
+func parseGenerateSessionNameArgs(args []string, overrides config.FlagOverrides) (generateSessionNameRequest, error) {
+	req := generateSessionNameRequest{SessionID: "latest", Source: "first", Format: "text", MaxWords: 7}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName resume id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--source":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName source is required")
+			}
+			req.Source = args[index]
+		case strings.HasPrefix(arg, "--source="):
+			req.Source = strings.TrimPrefix(arg, "--source=")
+		case arg == "--prefix":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName prefix is required")
+			}
+			req.Prefix = args[index]
+		case strings.HasPrefix(arg, "--prefix="):
+			req.Prefix = strings.TrimPrefix(arg, "--prefix=")
+		case arg == "--max-words":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName max words is required")
+			}
+			value, err := parsePositiveInt(args[index], "generateSessionName max words")
+			if err != nil {
+				return req, err
+			}
+			req.MaxWords = value
+		case strings.HasPrefix(arg, "--max-words="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-words="), "generateSessionName max words")
+			if err != nil {
+				return req, err
+			}
+			req.MaxWords = value
+		case arg == "--text":
+			index++
+			if index >= len(args) {
+				return req, errors.New("generateSessionName text is required")
+			}
+			req.Text = args[index]
+		case strings.HasPrefix(arg, "--text="):
+			req.Text = strings.TrimPrefix(arg, "--text=")
+		case arg == "--rename" || arg == "--apply":
+			req.Rename = true
+		default:
+			return req, fmt.Errorf("unknown generateSessionName argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "generateSessionName"); err != nil {
+		return req, err
+	}
+	source := strings.ToLower(strings.TrimSpace(req.Source))
+	switch source {
+	case "first", "oldest", "last", "latest", "recent":
+		req.Source = source
+	default:
+		return req, fmt.Errorf("unknown generateSessionName source %q", req.Source)
+	}
+	return req, nil
+}
 
 func (a *App) Rename(args []string, overrides config.FlagOverrides) error {
 	req, err := parseRenameArgs(args, overrides)
@@ -27304,7 +27563,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	case "add-dir", "advisor", "agents", "ant-trace", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
@@ -28134,6 +28393,20 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Topic = "sessions"
 		spec.Command = "sessions"
 		return spec, true
+	case "generatesessionname", "generate-session-name":
+		return commandHelpSpec{
+			Topic:                   "generateSessionName",
+			Command:                 "generateSessionName",
+			Usage:                   "codog generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--max-words N] [--prefix TEXT] [--rename] [--output-format text|json]",
+			Text:                    "Generate Session Name\n\nUsage:\n  codog generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--max-words N] [--prefix TEXT] [--rename] [--output-format text|json]\n  codog generate-session-name [same flags]\n\nGenerates a readable, collision-free session id from saved JSONL prompt history. With `--rename`, it applies the generated id through the session store.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   true,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"session_id", "suggested_id", "source", "source_text", "collision_count", "renamed"},
+			StatusValues:            []string{"ok", "renamed", "unchanged", "error"},
+		}, true
 	case "clear":
 		return commandHelpSpec{
 			Topic:                   "clear",
@@ -28205,6 +28478,7 @@ Usage:
   %s [flags] conversation [--confirm] [--json|--output-format text|json]
   %s [flags] sessions [list|show|exists|fork|rename|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
+  %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]
   %s [flags] history [--session ID] [--limit N] [--json|--output-format text|json]
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
