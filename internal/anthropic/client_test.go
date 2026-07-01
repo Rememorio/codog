@@ -148,6 +148,40 @@ func TestOpenAIWireModelPreservesNamespacedModelForCustomGateway(t *testing.T) {
 	require.Equal(t, "openai/gpt-4.1-mini", wire.Model)
 }
 
+func TestOpenAICompatibleReasoningModelStripsTemperature(t *testing.T) {
+	temperature := 0.7
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:       "o1-mini",
+		MaxTokens:   64,
+		Temperature: &temperature,
+		Messages:    []Message{TextMessage("user", "hi")},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Nil(t, wire.Temperature)
+	require.Equal(t, 64, wire.MaxTokens)
+	require.Zero(t, wire.MaxCompletionTokens)
+}
+
+func TestOpenAICompatibleGPT5UsesMaxCompletionTokens(t *testing.T) {
+	temperature := 0.7
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:       "openai/gpt-5.4",
+		MaxTokens:   512,
+		Temperature: &temperature,
+		Messages:    []Message{TextMessage("user", "hi")},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.4", wire.Model)
+	require.Zero(t, wire.MaxTokens)
+	require.Equal(t, 512, wire.MaxCompletionTokens)
+	data, err := json.Marshal(wire)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.NotContains(t, payload, "max_tokens")
+	require.Equal(t, float64(512), payload["max_completion_tokens"])
+}
+
 func TestOpenAICompatibleToolResultsIncludeIsErrorForNonKimiModels(t *testing.T) {
 	wire, err := openAIRequestFromAnthropic(Request{
 		Model:     "gpt-4o",

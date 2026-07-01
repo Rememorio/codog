@@ -145,13 +145,14 @@ func (c *Client) newRequest(ctx context.Context, body []byte) (*http.Request, er
 }
 
 type openAIRequest struct {
-	Model         string          `json:"model"`
-	Messages      []openAIMessage `json:"messages"`
-	Tools         []openAITool    `json:"tools,omitempty"`
-	Stream        bool            `json:"stream"`
-	StreamOptions map[string]bool `json:"stream_options,omitempty"`
-	MaxTokens     int             `json:"max_tokens,omitempty"`
-	Temperature   *float64        `json:"temperature,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []openAIMessage `json:"messages"`
+	Tools               []openAITool    `json:"tools,omitempty"`
+	Stream              bool            `json:"stream"`
+	StreamOptions       map[string]bool `json:"stream_options,omitempty"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
 }
 
 type openAIMessage struct {
@@ -261,8 +262,14 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 		Tools:         tools,
 		Stream:        true,
 		StreamOptions: map[string]bool{"include_usage": true},
-		MaxTokens:     req.MaxTokens,
-		Temperature:   req.Temperature,
+	}
+	if modelrouting.UsesMaxCompletionTokens(wireModel) {
+		wire.MaxCompletionTokens = req.MaxTokens
+	} else {
+		wire.MaxTokens = req.MaxTokens
+	}
+	if !modelrouting.IsReasoningModel(wireModel) {
+		wire.Temperature = req.Temperature
 	}
 	return wire, nil
 }

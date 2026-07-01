@@ -124,6 +124,28 @@ func ModelRejectsIsErrorField(model string) bool {
 	return canonical == "kimi" || strings.HasPrefix(canonical, "kimi-")
 }
 
+func IsReasoningModel(model string) bool {
+	canonical := strings.ToLower(ResolveAlias(model))
+	if slash := strings.LastIndex(canonical, "/"); slash >= 0 {
+		canonical = canonical[slash+1:]
+	}
+	return strings.HasPrefix(canonical, "o1") ||
+		strings.HasPrefix(canonical, "o3") ||
+		strings.HasPrefix(canonical, "o4") ||
+		canonical == "grok-3-mini" ||
+		strings.HasPrefix(canonical, "qwen-qwq") ||
+		strings.HasPrefix(canonical, "qwq") ||
+		strings.Contains(canonical, "thinking")
+}
+
+func UsesMaxCompletionTokens(model string) bool {
+	canonical := strings.ToLower(ResolveAlias(model))
+	if slash := strings.LastIndex(canonical, "/"); slash >= 0 {
+		canonical = canonical[slash+1:]
+	}
+	return strings.HasPrefix(canonical, "gpt-5")
+}
+
 func shouldStripOpenAIPrefix(baseURL string) bool {
 	normalized := normalizeBaseURL(baseURL)
 	if normalized == "" || strings.EqualFold(normalized, normalizeBaseURL(DefaultOpenAIBaseURL)) {

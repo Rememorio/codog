@@ -71,3 +71,31 @@ func TestModelRejectsIsErrorFieldOnlyForKimiFamily(t *testing.T) {
 	require.False(t, ModelRejectsIsErrorField("qwen/qwen-plus"))
 	require.False(t, ModelRejectsIsErrorField("claude-sonnet-4-6"))
 }
+
+func TestReasoningModelDetection(t *testing.T) {
+	require.True(t, IsReasoningModel("o1"))
+	require.True(t, IsReasoningModel("o1-mini"))
+	require.True(t, IsReasoningModel("o3-mini"))
+	require.True(t, IsReasoningModel("o4-mini"))
+	require.True(t, IsReasoningModel("grok-3-mini"))
+	require.True(t, IsReasoningModel("qwen-qwq-32b"))
+	require.True(t, IsReasoningModel("qwen/qwen-qwq-32b"))
+	require.True(t, IsReasoningModel("qwen3-30b-a3b-thinking"))
+	require.True(t, IsReasoningModel("qwen/qwen3-30b-a3b-thinking"))
+	require.True(t, IsReasoningModel("qwq-plus"))
+
+	require.False(t, IsReasoningModel("gpt-4o"))
+	require.False(t, IsReasoningModel("grok-3"))
+	require.False(t, IsReasoningModel("qwen/qwen-plus"))
+	require.False(t, IsReasoningModel("claude-sonnet-4-6"))
+}
+
+func TestUsesMaxCompletionTokensForGPT5Family(t *testing.T) {
+	require.True(t, UsesMaxCompletionTokens("gpt-5.2"))
+	require.True(t, UsesMaxCompletionTokens("openai/gpt-5.4"))
+	require.True(t, UsesMaxCompletionTokens("gpt-5.4-mini"))
+
+	require.False(t, UsesMaxCompletionTokens("gpt-4.1-mini"))
+	require.False(t, UsesMaxCompletionTokens("qwen-plus"))
+	require.False(t, UsesMaxCompletionTokens("claude-sonnet-4-6"))
+}
