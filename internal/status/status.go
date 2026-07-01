@@ -13,6 +13,8 @@ import (
 
 type Options struct {
 	Version                     string
+	ConfigLoadError             string
+	ConfigLoadErrorKind         string
 	Workspace                   string
 	ConfigHome                  string
 	Model                       string
@@ -72,21 +74,23 @@ type Options struct {
 }
 
 type Snapshot struct {
-	Kind           string               `json:"kind"`
-	Action         string               `json:"action"`
-	Status         string               `json:"status"`
-	Version        string               `json:"version"`
-	Workspace      WorkspaceStatus      `json:"workspace"`
-	Config         ConfigStatus         `json:"config"`
-	Session        SessionStatus        `json:"session"`
-	Plan           PlanStatus           `json:"plan"`
-	Tools          ToolsStatus          `json:"tools"`
-	Git            GitStatus            `json:"git"`
-	LaneBoard      LaneBoardStatus      `json:"lane_board"`
-	Sandbox        SandboxStatus        `json:"sandbox"`
-	Runtime        RuntimeStatus        `json:"runtime"`
-	MCPValidation  MCPValidationStatus  `json:"mcp_validation"`
-	HookValidation HookValidationStatus `json:"hook_validation"`
+	Kind                string               `json:"kind"`
+	Action              string               `json:"action"`
+	Status              string               `json:"status"`
+	ConfigLoadError     string               `json:"config_load_error,omitempty"`
+	ConfigLoadErrorKind string               `json:"config_load_error_kind,omitempty"`
+	Version             string               `json:"version"`
+	Workspace           WorkspaceStatus      `json:"workspace"`
+	Config              ConfigStatus         `json:"config"`
+	Session             SessionStatus        `json:"session"`
+	Plan                PlanStatus           `json:"plan"`
+	Tools               ToolsStatus          `json:"tools"`
+	Git                 GitStatus            `json:"git"`
+	LaneBoard           LaneBoardStatus      `json:"lane_board"`
+	Sandbox             SandboxStatus        `json:"sandbox"`
+	Runtime             RuntimeStatus        `json:"runtime"`
+	MCPValidation       MCPValidationStatus  `json:"mcp_validation"`
+	HookValidation      HookValidationStatus `json:"hook_validation"`
 }
 
 type WorkspaceStatus struct {
@@ -237,6 +241,8 @@ func Build(opts Options) Snapshot {
 	status := "ok"
 	if !git.Available {
 		status = "degraded"
+	} else if strings.TrimSpace(opts.ConfigLoadError) != "" {
+		status = "degraded"
 	} else if opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
 		status = "degraded"
 	} else if git.Freshness != nil {
@@ -245,10 +251,12 @@ func Build(opts Options) Snapshot {
 		}
 	}
 	return Snapshot{
-		Kind:    "status",
-		Action:  "show",
-		Status:  status,
-		Version: opts.Version,
+		Kind:                "status",
+		Action:              "show",
+		Status:              status,
+		ConfigLoadError:     strings.TrimSpace(opts.ConfigLoadError),
+		ConfigLoadErrorKind: strings.TrimSpace(opts.ConfigLoadErrorKind),
+		Version:             opts.Version,
 		Workspace: WorkspaceStatus{
 			Path:            opts.Workspace,
 			Name:            filepath.Base(opts.Workspace),
@@ -330,6 +338,9 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintln(w, "Status")
 	fmt.Fprintf(w, "  Version          %s\n", snapshot.Version)
 	fmt.Fprintf(w, "  Status           %s\n", snapshot.Status)
+	if snapshot.ConfigLoadError != "" {
+		fmt.Fprintf(w, "  Config load      degraded: %s\n", snapshot.ConfigLoadError)
+	}
 	fmt.Fprintf(w, "  Workspace        %s\n", snapshot.Workspace.Path)
 	fmt.Fprintf(w, "  Memory files     %d\n", snapshot.Workspace.MemoryFileCount)
 	fmt.Fprintf(w, "  Model            %s\n", snapshot.Config.Model)

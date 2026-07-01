@@ -144,6 +144,23 @@ func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 	require.Contains(t, out.String(), "Hook validation  valid=1 invalid=1")
 }
 
+func TestBuildMarksConfigLoadErrorDegraded(t *testing.T) {
+	snapshot := Build(Options{
+		Version:             "test-version",
+		GitStatus:           "## main",
+		ConfigLoadError:     "broken.json: unexpected end of JSON input",
+		ConfigLoadErrorKind: "config_load_failed",
+	})
+
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, "broken.json: unexpected end of JSON input", snapshot.ConfigLoadError)
+	require.Equal(t, "config_load_failed", snapshot.ConfigLoadErrorKind)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Config load      degraded: broken.json")
+}
+
 func TestBuildParsesInitialBranch(t *testing.T) {
 	snapshot := Build(Options{GitStatus: "## No commits yet on main"})
 

@@ -674,6 +674,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "session_identity_metadata")
 	require.Contains(t, report.Features, "session_identity_reconciliation")
 	require.Contains(t, report.Features, "stale_branch_guard")
+	require.Contains(t, report.Features, "status_config_load_degraded")
 	require.Contains(t, report.Features, "status_config_validation")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
@@ -4968,6 +4969,33 @@ func TestStatusValidationReportsDegradedConfig(t *testing.T) {
 	require.NoError(t, app.Status(nil, config.FlagOverrides{}))
 	require.Contains(t, out.String(), "MCP validation   valid=1 invalid=1")
 	require.Contains(t, out.String(), "Hook validation  valid=4 invalid=3")
+}
+
+func TestStatusDegradesOnMalformedConfigFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var snapshot localstatus.Snapshot
+	require.NoError(t, json.Unmarshal([]byte(out), &snapshot))
+	require.Equal(t, "status", snapshot.Kind)
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, "config_load_failed", snapshot.ConfigLoadErrorKind)
+	require.Contains(t, snapshot.ConfigLoadError, "broken.json")
+	require.Contains(t, snapshot.ConfigLoadError, "unexpected end of JSON input")
+	require.NotEmpty(t, snapshot.Workspace.Path)
+	require.NotEmpty(t, snapshot.Config.ConfigHome)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &snapshot))
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, "config_load_failed", snapshot.ConfigLoadErrorKind)
 }
 
 func TestStatusIncludesBranchFreshness(t *testing.T) {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -426,24 +427,12 @@ type FlagOverrides struct {
 }
 
 func Load(overrides FlagOverrides) (Config, error) {
-	cfg := Config{
-		BaseURL:             DefaultBaseURL,
-		Model:               DefaultModel,
-		MaxTokens:           4096,
-		MaxTurns:            8,
-		PermissionMode:      "workspace-write",
-		AutoCompactMessages: 40,
-		RateLimit:           DefaultRateLimitConfig(),
-		MCPServers:          map[string]MCPServerConfig{},
-	}
-
-	home, err := defaultConfigHome()
+	cfg, err := defaultConfig()
 	if err != nil {
 		return Config{}, err
 	}
-	cfg.ConfigHome = home
 
-	for _, path := range configPaths(home, overrides.ConfigPath) {
+	for _, path := range configPaths(cfg.ConfigHome, overrides.ConfigPath) {
 		if path == "" {
 			continue
 		}
@@ -459,46 +448,18 @@ func Load(overrides FlagOverrides) (Config, error) {
 	if err := applyManagedPolicy(&cfg); err != nil {
 		return Config{}, err
 	}
-
-	if cfg.MaxTokens <= 0 {
-		cfg.MaxTokens = 4096
-	}
-	if cfg.MaxTurns <= 0 {
-		cfg.MaxTurns = 8
-	}
-	if cfg.AutoCompactMessages <= 0 {
-		cfg.AutoCompactMessages = 40
-	}
-	if err := validateTemperature(&cfg); err != nil {
+	if err := finalizeConfig(&cfg); err != nil {
 		return Config{}, err
 	}
-	if err := validatePermissionMode(&cfg); err != nil {
-		return Config{}, err
-	}
-	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
-		return Config{}, err
-	}
-	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
 	return cfg, nil
 }
 
 func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
-	cfg := Config{
-		BaseURL:             DefaultBaseURL,
-		Model:               DefaultModel,
-		MaxTokens:           4096,
-		MaxTurns:            8,
-		PermissionMode:      "workspace-write",
-		AutoCompactMessages: 40,
-		RateLimit:           DefaultRateLimitConfig(),
-		MCPServers:          map[string]MCPServerConfig{},
-	}
-	home, err := defaultConfigHome()
+	cfg, err := defaultConfig()
 	if err != nil {
 		return Config{}, nil, err
 	}
-	cfg.ConfigHome = home
-	paths := configPaths(home, overrides.ConfigPath)
+	paths := configPaths(cfg.ConfigHome, overrides.ConfigPath)
 	for _, path := range paths {
 		if path == "" {
 			continue
@@ -514,17 +475,68 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	if err := applyManagedPolicy(&cfg); err != nil {
 		return Config{}, paths, err
 	}
-	if err := validateTemperature(&cfg); err != nil {
+	if err := finalizeConfig(&cfg); err != nil {
 		return Config{}, paths, err
 	}
-	if err := validatePermissionMode(&cfg); err != nil {
-		return Config{}, paths, err
+	return cfg, paths, nil
+}
+
+func Default(overrides FlagOverrides) (Config, error) {
+	cfg, err := defaultConfig()
+	if err != nil {
+		return Config{}, err
+	}
+	applyEnv(&cfg)
+	applyFlags(&cfg, overrides)
+	if err := applyManagedPolicy(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := finalizeConfig(&cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func defaultConfig() (Config, error) {
+	cfg := Config{
+		BaseURL:             DefaultBaseURL,
+		Model:               DefaultModel,
+		MaxTokens:           4096,
+		MaxTurns:            8,
+		PermissionMode:      "workspace-write",
+		AutoCompactMessages: 40,
+		RateLimit:           DefaultRateLimitConfig(),
+		MCPServers:          map[string]MCPServerConfig{},
+	}
+	home, err := defaultConfigHome()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ConfigHome = home
+	return cfg, nil
+}
+
+func finalizeConfig(cfg *Config) error {
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = 4096
+	}
+	if cfg.MaxTurns <= 0 {
+		cfg.MaxTurns = 8
+	}
+	if cfg.AutoCompactMessages <= 0 {
+		cfg.AutoCompactMessages = 40
+	}
+	if err := validateTemperature(cfg); err != nil {
+		return err
+	}
+	if err := validatePermissionMode(cfg); err != nil {
+		return err
 	}
 	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
-		return Config{}, paths, err
+		return err
 	}
 	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
-	return cfg, paths, nil
+	return nil
 }
 
 func configPaths(home, explicit string) []string {
@@ -544,13 +556,40 @@ func readConfigFile(path string) (Config, error) {
 		if os.IsNotExist(err) {
 			return Config{}, nil
 		}
-		return Config{}, err
+		return Config{}, &FileError{Path: path, Err: err}
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, err
+		return Config{}, &FileError{Path: path, Err: err}
 	}
 	return cfg, nil
+}
+
+type FileError struct {
+	Path string
+	Err  error
+}
+
+func (e *FileError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Path) == "" {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("%s: %v", e.Path, e.Err)
+}
+
+func (e *FileError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func IsFileError(err error) bool {
+	var fileErr *FileError
+	return errors.As(err, &fileErr)
 }
 
 func SetFileValue(path string, key string, value any) (MutationReport, error) {

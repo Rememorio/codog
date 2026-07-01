@@ -110,7 +110,9 @@ type App struct {
 	Err        io.Writer
 	In         io.Reader
 
-	mcpToolsLoaded bool
+	ConfigLoadError     string
+	ConfigLoadErrorKind string
+	mcpToolsLoaded      bool
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
@@ -237,6 +239,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
+		if config.IsFileError(err) && isStatusCommand(command) {
+			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+		}
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	applyStoredOAuthToken(&cfg, time.Now().UTC())
@@ -706,6 +711,56 @@ func (e *ExitError) Unwrap() error {
 		return nil
 	}
 	return e.Err
+}
+
+func isStatusCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "status", "/status":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderStatusWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	statusArgs := append([]string(nil), rest...)
+	if strings.EqualFold(strings.TrimSpace(command), "/status") {
+		statusArgs = injectGlobalOutputFormat("status", statusArgs, requestedOutputFormat(originalArgs))
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	app := &App{
+		Config: cfg,
+		Client: anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Tools: tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+			SandboxStrategy: cfg.Future.SandboxStrategy,
+			Sandbox:         cfg.Future.Sandbox,
+			AdditionalDirs:  additionalDirs,
+			ConfigHome:      cfg.ConfigHome,
+			MCPServers:      cfg.MCPServers,
+			QuestionIn:      os.Stdin,
+			QuestionOut:     os.Stderr,
+		}),
+		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Workspace:           workspace,
+		Out:                 out,
+		Err:                 os.Stderr,
+		In:                  os.Stdin,
+		ConfigLoadError:     strings.TrimSpace(loadErr.Error()),
+		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
+	}
+	return app.Status(statusArgs, overrides)
 }
 
 func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
@@ -18023,6 +18078,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	hookValidation := buildHookValidation(a.Config.Hooks)
 	return localstatus.Build(localstatus.Options{
 		Version:                     version,
+		ConfigLoadError:             a.ConfigLoadError,
+		ConfigLoadErrorKind:         a.ConfigLoadErrorKind,
 		Workspace:                   a.Workspace,
 		ConfigHome:                  a.Config.ConfigHome,
 		Model:                       a.Config.Model,
@@ -18454,6 +18511,7 @@ func codogCapabilityFeatures() []string {
 		"sampling_temperature",
 		"speech_output",
 		"stale_branch_guard",
+		"status_config_load_degraded",
 		"status_config_validation",
 		"team_watch",
 		"telemetry_preferences",
