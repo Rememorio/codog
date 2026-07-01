@@ -3138,7 +3138,7 @@ func (WebFetchTool) Definition() anthropic.ToolDefinition {
 				"timeout_ms": map[string]any{"type": "integer", "minimum": 1},
 				"max_bytes":  map[string]any{"type": "integer", "minimum": 1},
 			},
-			"required":             []string{"url"},
+			"required":             []string{"url", "prompt"},
 			"additionalProperties": false,
 		},
 	}
@@ -3147,11 +3147,24 @@ func (WebFetchTool) Definition() anthropic.ToolDefinition {
 func (WebFetchTool) Permission() Permission { return PermissionReadOnly }
 
 func (WebFetchTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
-	var payload webaccess.FetchInput
+	var payload struct {
+		URL       string  `json:"url"`
+		Prompt    *string `json:"prompt"`
+		TimeoutMS int     `json:"timeout_ms,omitempty"`
+		MaxBytes  int64   `json:"max_bytes,omitempty"`
+	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	result, err := webaccess.Fetch(ctx, payload)
+	if payload.Prompt == nil {
+		return "", errors.New("prompt is required")
+	}
+	result, err := webaccess.Fetch(ctx, webaccess.FetchInput{
+		URL:       payload.URL,
+		Prompt:    *payload.Prompt,
+		TimeoutMS: payload.TimeoutMS,
+		MaxBytes:  payload.MaxBytes,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -3167,7 +3180,7 @@ func (WebSearchTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query":           map[string]any{"type": "string"},
+				"query":           map[string]any{"type": "string", "minLength": 2},
 				"max_results":     map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
 				"allowed_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"blocked_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},

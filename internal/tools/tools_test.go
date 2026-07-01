@@ -1062,11 +1062,19 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	require.Contains(t, fetchOut, `"title": "Local"`)
 	require.Contains(t, fetchOut, `"summary": "Title: Local"`)
 
+	_, err = WebFetchTool{}.Execute(context.Background(), []byte(`{"url":"`+server.URL+`/page"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "prompt is required")
+
 	searchOut, err := WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"local result"}`))
 	require.NoError(t, err)
 	require.Contains(t, searchOut, `"title": "Example Result"`)
 	require.Contains(t, searchOut, `"url": "https://example.com/result"`)
 	require.Contains(t, searchOut, `"snippet": "A local search summary."`)
+
+	_, err = WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"x"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at least 2 characters")
 
 	_, err = WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"local result","allowed_domains":["example.com"],"blocked_domains":["example.org"]}`))
 	require.Error(t, err)
@@ -1076,9 +1084,13 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	info, ok := registry.Info("web_fetch")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	require.ElementsMatch(t, []string{"url", "prompt"}, info.InputSchema["required"])
 	info, ok = registry.Info("web_search")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	properties := info.InputSchema["properties"].(map[string]any)
+	querySchema := properties["query"].(map[string]any)
+	require.Equal(t, 2, querySchema["minLength"])
 }
 
 func TestRemoteTriggerToolCallsWebhook(t *testing.T) {

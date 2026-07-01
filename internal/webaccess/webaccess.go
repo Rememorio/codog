@@ -115,6 +115,9 @@ func Search(ctx context.Context, input SearchInput) (SearchOutput, error) {
 	if query == "" {
 		return SearchOutput{}, errors.New("query is required")
 	}
+	if len([]rune(query)) < 2 {
+		return SearchOutput{}, errors.New("query must be at least 2 characters")
+	}
 	if len(input.AllowedDomains) != 0 && len(input.BlockedDomains) != 0 {
 		return SearchOutput{}, errors.New("cannot specify both allowed_domains and blocked_domains in the same request")
 	}

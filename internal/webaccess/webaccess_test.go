@@ -89,6 +89,12 @@ func TestSearchRejectsAllowedAndBlockedDomainsTogether(t *testing.T) {
 	require.Contains(t, err.Error(), "blocked_domains")
 }
 
+func TestSearchRejectsTooShortQuery(t *testing.T) {
+	_, err := Search(context.Background(), SearchInput{Query: "x"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at least 2 characters")
+}
+
 func TestSearchFallsBackToGenericLinks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
