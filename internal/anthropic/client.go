@@ -245,6 +245,7 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 		}
 		messages = append(messages, converted...)
 	}
+	messages = sanitizeOpenAIToolMessagePairing(messages)
 	tools := make([]openAITool, 0, len(req.Tools))
 	for _, tool := range req.Tools {
 		tools = append(tools, openAITool{
@@ -336,6 +337,47 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 		return []openAIMessage{{Role: "assistant", Content: text.String(), ToolCalls: toolCalls}}, nil
 	}
 	return []openAIMessage{{Role: role, Content: contentText(msg.Content)}}, nil
+}
+
+func sanitizeOpenAIToolMessagePairing(messages []openAIMessage) []openAIMessage {
+	drop := map[int]bool{}
+	for index, msg := range messages {
+		if msg.Role != "tool" {
+			continue
+		}
+		precedingIndex := -1
+		for scan := index - 1; scan >= 0; scan-- {
+			if messages[scan].Role != "tool" {
+				precedingIndex = scan
+				break
+			}
+		}
+		if precedingIndex < 0 || messages[precedingIndex].Role != "assistant" {
+			continue
+		}
+		if !openAIMessageHasToolCallID(messages[precedingIndex], msg.ToolCallID) {
+			drop[index] = true
+		}
+	}
+	if len(drop) == 0 {
+		return messages
+	}
+	out := make([]openAIMessage, 0, len(messages)-len(drop))
+	for index, msg := range messages {
+		if !drop[index] {
+			out = append(out, msg)
+		}
+	}
+	return out
+}
+
+func openAIMessageHasToolCallID(msg openAIMessage, id string) bool {
+	for _, call := range msg.ToolCalls {
+		if call.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func contentText(blocks []ContentBlock) string {

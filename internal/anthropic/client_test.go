@@ -212,6 +212,81 @@ func TestOpenAICompatibleToolResultsOmitIsErrorForKimiModels(t *testing.T) {
 	}
 }
 
+func TestSanitizeOpenAIToolMessagePairing(t *testing.T) {
+	valid := []openAIMessage{
+		{
+			Role: "assistant",
+			ToolCalls: []openAIToolCall{{
+				ID:   "call_1",
+				Type: "function",
+				Function: openAIFunctionCall{
+					Name:      "search",
+					Arguments: "{}",
+				},
+			}},
+		},
+		{Role: "tool", ToolCallID: "call_1", Content: "result"},
+	}
+	require.Len(t, sanitizeOpenAIToolMessagePairing(valid), 2)
+
+	orphaned := []openAIMessage{
+		{Role: "assistant", Content: "hello"},
+		{Role: "tool", ToolCallID: "call_2", Content: "orphaned"},
+	}
+	sanitized := sanitizeOpenAIToolMessagePairing(orphaned)
+	require.Len(t, sanitized, 1)
+	require.Equal(t, "assistant", sanitized[0].Role)
+
+	mismatched := []openAIMessage{
+		{
+			Role: "assistant",
+			ToolCalls: []openAIToolCall{{
+				ID:   "call_3",
+				Type: "function",
+				Function: openAIFunctionCall{
+					Name:      "read_file",
+					Arguments: "{}",
+				},
+			}},
+		},
+		{Role: "tool", ToolCallID: "call_wrong", Content: "bad"},
+	}
+	require.Len(t, sanitizeOpenAIToolMessagePairing(mismatched), 1)
+
+	twoResults := []openAIMessage{
+		{
+			Role: "assistant",
+			ToolCalls: []openAIToolCall{
+				{ID: "call_a", Type: "function", Function: openAIFunctionCall{Name: "a", Arguments: "{}"}},
+				{ID: "call_b", Type: "function", Function: openAIFunctionCall{Name: "b", Arguments: "{}"}},
+			},
+		},
+		{Role: "tool", ToolCallID: "call_a", Content: "a"},
+		{Role: "tool", ToolCallID: "call_b", Content: "b"},
+	}
+	require.Len(t, sanitizeOpenAIToolMessagePairing(twoResults), 3)
+
+	userPreceding := []openAIMessage{
+		{Role: "user", Content: "mixed content"},
+		{Role: "tool", ToolCallID: "call_mixed", Content: "kept"},
+	}
+	require.Len(t, sanitizeOpenAIToolMessagePairing(userPreceding), 2)
+}
+
+func TestOpenAIRequestDropsAssistantOrphanedToolResults(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "gpt-4o",
+		MaxTokens: 64,
+		Messages: []Message{
+			TextMessage("assistant", "hello"),
+			ToolResultMessage("call_orphan", "orphaned", true),
+		},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Len(t, wire.Messages, 1)
+	require.Equal(t, "assistant", wire.Messages[0].Role)
+}
+
 func TestClientStreamsOpenAICompatibleToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
