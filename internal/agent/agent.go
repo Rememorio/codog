@@ -15168,7 +15168,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve` and use initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -15187,7 +15187,7 @@ func buildACPStatusReport() acpStatusReport {
 			StableStatusSurface:       "codog acp --output-format json",
 			UnsupportedInvocationKind: "unsupported_acp_invocation",
 		},
-		Aliases: []string{"acp", "--acp", "-acp"},
+		Aliases: []string{"acp", "--acp", "-acp", "serve", "start", "stdio"},
 	}
 }
 
@@ -15232,7 +15232,7 @@ func parseACPRequest(args []string) (acpRequest, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
-		case arg == "serve":
+		case isACPServeAlias(arg):
 			if serveSeen {
 				req.Unsupported = append(req.Unsupported, arg)
 			}
@@ -15262,11 +15262,20 @@ func parseACPRequest(args []string) (acpRequest, error) {
 
 func acpServeRequested(args []string) bool {
 	for _, arg := range args {
-		if arg == "serve" {
+		if isACPServeAlias(arg) {
 			return true
 		}
 	}
 	return false
+}
+
+func isACPServeAlias(arg string) bool {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "serve", "start", "stdio":
+		return true
+	default:
+		return false
+	}
 }
 
 func stringPtr(value string) *string {

@@ -1202,9 +1202,17 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Equal(t, "unsupported_acp_invocation", report.Contracts.UnsupportedInvocationKind)
 	require.Contains(t, report.Contracts.BlockingGates, "prompt")
 	require.Contains(t, report.Aliases, "--acp")
+	require.Contains(t, report.Aliases, "start")
 	out.Reset()
 
-	err := renderACPStatus(&out, []string{"start", "--json"})
+	require.NoError(t, renderACPStatus(&out, []string{"start", "--output-format", "json"}))
+	var startReport acpStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &startReport))
+	require.Equal(t, "acp", startReport.Kind)
+	require.Equal(t, "ok", startReport.Status)
+	out.Reset()
+
+	err := renderACPStatus(&out, []string{"bogus", "--json"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported_acp_invocation")
 	var unsupported acpUnsupportedReport
@@ -1212,7 +1220,7 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Equal(t, "unsupported_acp_invocation", unsupported.Kind)
 	require.Equal(t, "error", unsupported.Status)
 	require.False(t, unsupported.Supported)
-	require.Equal(t, []string{"start", "--json"}, unsupported.Invocation)
+	require.Equal(t, []string{"bogus", "--json"}, unsupported.Invocation)
 }
 
 func TestACPServeExposesSessionQueries(t *testing.T) {
@@ -1282,6 +1290,34 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.Equal(t, "renamed-acp-session", deleteResult["session_id"])
 }
 
+func TestACPServeAliasesStartAndStdio(t *testing.T) {
+	for _, alias := range []string{"start", "stdio"} {
+		t.Run(alias, func(t *testing.T) {
+			workspace := t.TempDir()
+			store := session.NewWorkspaceStore(t.TempDir(), workspace)
+			input := strings.Join([]string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+				`{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}`,
+				"",
+			}, "\n")
+			var out bytes.Buffer
+			app := &App{
+				Workspace: workspace,
+				Sessions:  store,
+				In:        strings.NewReader(input),
+				Out:       &out,
+				Err:       io.Discard,
+			}
+
+			require.NoError(t, app.ACP(context.Background(), []string{alias}))
+			responses := decodeJSONRPCResponses(t, out.String())
+			require.Len(t, responses, 2)
+			result := responses[0]["result"].(map[string]any)
+			require.Equal(t, "codog-acp-0.1", result["protocolVersion"])
+		})
+	}
+}
+
 func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T) {
 	args, ok, err := parseACPGlobalInvocation([]string{"--output-format", "json", "acp", "serve"})
 	require.NoError(t, err)
@@ -1297,6 +1333,12 @@ func TestParseACPGlobalInvocationSupportsOutputFormatBeforeCommand(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"--output-format=json"}, args)
+
+	args, ok, err = parseACPGlobalInvocation([]string{"--output-format=json", "acp", "start"})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []string{"--output-format=json", "start"}, args)
+	require.True(t, acpServeRequested(args))
 
 	args, ok, err = parseACPGlobalInvocation([]string{"--json", "prompt", "hello"})
 	require.NoError(t, err)
