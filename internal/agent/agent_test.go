@@ -1084,6 +1084,18 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	gitAvailable := false
+	if _, err := exec.LookPath("git"); err == nil {
+		gitAvailable = true
+		runGit(t, workspace, "init")
+		runGit(t, workspace, "config", "user.email", "codog@example.test")
+		runGit(t, workspace, "config", "user.name", "Codog Test")
+		trackedPath := filepath.Join(workspace, "tracked.txt")
+		require.NoError(t, os.WriteFile(trackedPath, []byte("before\n"), 0o644))
+		runGit(t, workspace, "add", "tracked.txt")
+		runGit(t, workspace, "commit", "-m", "initial")
+		require.NoError(t, os.WriteFile(trackedPath, []byte("before\nafter\n"), 0o644))
+	}
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	data, err := json.Marshal(map[string]any{
 		"config_home":           configHome,
@@ -1101,6 +1113,15 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Chdir(workspace))
 	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	runResumedJSON := func(command string, args ...string) (string, error) {
+		t.Helper()
+		cliArgs := []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", command}
+		cliArgs = append(cliArgs, args...)
+		return captureStdout(t, func() error {
+			return RunCLI(context.Background(), cliArgs, config.FlagOverrides{})
+		})
+	}
 
 	out, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/status"}, config.FlagOverrides{})
@@ -1183,6 +1204,113 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "resume-test-clipboard", copyReport.Clipboard)
 	require.Equal(t, "four\n", string(copied))
 
+	out, err = runResumedJSON("/help", "status")
+	require.NoError(t, err)
+	var resumedHelp helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHelp))
+	require.Equal(t, "help", resumedHelp.Kind)
+	require.Equal(t, "status", resumedHelp.Topic)
+	require.Equal(t, "status", resumedHelp.Command)
+
+	out, err = runResumedJSON("/version")
+	require.NoError(t, err)
+	var resumedVersion struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVersion))
+	require.Equal(t, "version", resumedVersion.Kind)
+	require.Equal(t, "show", resumedVersion.Action)
+	require.Equal(t, "ok", resumedVersion.Status)
+
+	out, err = runResumedJSON("/config", "paths")
+	require.NoError(t, err)
+	var configPaths struct {
+		Paths []string `json:"paths"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &configPaths))
+	require.NotEmpty(t, configPaths.Paths)
+
+	out, err = runResumedJSON("/settings", "paths")
+	require.NoError(t, err)
+	var settingsPaths struct {
+		Paths []string `json:"paths"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &settingsPaths))
+	require.Equal(t, configPaths.Paths, settingsPaths.Paths)
+
+	out, err = runResumedJSON("/sandbox")
+	require.NoError(t, err)
+	var resumedSandbox sandboxReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandbox))
+	require.Equal(t, "sandbox", resumedSandbox.Kind)
+	require.Equal(t, "show", resumedSandbox.Action)
+
+	out, err = runResumedJSON("/mcp", "list")
+	require.NoError(t, err)
+	var resumedMCP mcpListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMCP))
+	require.Equal(t, "mcp", resumedMCP.Kind)
+	require.Equal(t, "list", resumedMCP.Action)
+
+	out, err = runResumedJSON("/skills", "list")
+	require.NoError(t, err)
+	var resumedSkills struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Skills []any  `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkills))
+	require.Equal(t, "skills", resumedSkills.Kind)
+	require.Equal(t, "list", resumedSkills.Action)
+	require.NotNil(t, resumedSkills.Skills)
+
+	out, err = runResumedJSON("/commands", "list")
+	require.NoError(t, err)
+	var resumedCommands struct {
+		Kind     string `json:"kind"`
+		Commands []any  `json:"commands"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCommands))
+	require.Equal(t, "commands", resumedCommands.Kind)
+	require.NotNil(t, resumedCommands.Commands)
+
+	out, err = runResumedJSON("/templates", "list")
+	require.NoError(t, err)
+	var resumedTemplates struct {
+		Kind      string `json:"kind"`
+		Templates []any  `json:"templates"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTemplates))
+	require.Equal(t, "templates", resumedTemplates.Kind)
+	require.NotNil(t, resumedTemplates.Templates)
+
+	out, err = runResumedJSON("/todos", "list")
+	require.NoError(t, err)
+	var resumedTodos todos.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTodos))
+	require.Equal(t, "todos", resumedTodos.Kind)
+	require.Equal(t, "list", resumedTodos.Action)
+
+	if gitAvailable {
+		out, err = runResumedJSON("/diff")
+		require.NoError(t, err)
+		var resumedDiff diffReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedDiff))
+		require.Equal(t, "diff", resumedDiff.Kind)
+		require.False(t, resumedDiff.Empty)
+		require.Contains(t, resumedDiff.Diff, "+after")
+
+		out, err = runResumedJSON("/git", "status")
+		require.NoError(t, err)
+		var resumedGitStatus gitStatusReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedGitStatus))
+		require.Equal(t, "git_status", resumedGitStatus.Kind)
+		require.False(t, resumedGitStatus.Clean)
+		require.NotEmpty(t, resumedGitStatus.Entries)
+	}
+
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/clear"}, config.FlagOverrides{})
 	})
@@ -1226,6 +1354,7 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/commit", slashReport.Command)
+	require.Contains(t, slashReport.Hint, "/help")
 }
 
 func TestInvalidPermissionModeJSONContract(t *testing.T) {

@@ -17660,10 +17660,32 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		resumed.Resume = "latest"
 	}
 	switch name {
+	case "/help":
+		return renderHelpCommand(a.Out, resumeSlashArgs("help", args, format))
+	case "/version":
+		return renderVersion(a.Out, a.Workspace, resumeSlashArgs("version", args, format))
+	case "/config", "/settings":
+		return a.ConfigCommand(resumeSlashArgs("config", args, format))
 	case "/status":
 		return a.Status(resumeSlashArgs("status", args, format), resumed)
 	case "/statusline":
 		return a.Statusline(resumeSlashArgs("statusline", args, format), resumed)
+	case "/sandbox":
+		return a.Sandbox()
+	case "/mcp":
+		return a.MCP(ctx, resumeSlashArgs("mcp", args, format))
+	case "/skills":
+		return a.Skills(resumeSlashArgs("skills", args, format))
+	case "/commands":
+		return a.Commands(resumeSlashArgs("commands", args, format))
+	case "/templates":
+		return a.Templates(resumeSlashArgs("templates", args, format))
+	case "/todos":
+		return a.Todos(resumeSlashArgs("todos", args, format))
+	case "/diff":
+		return a.Diff(resumeSlashArgs("diff", args, format))
+	case "/git":
+		return a.Git(resumeSlashArgs("git", args, format))
 	case "/clear":
 		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
@@ -17769,7 +17791,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
