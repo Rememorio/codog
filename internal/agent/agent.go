@@ -29908,7 +29908,7 @@ func (a *App) Skills(args []string) error {
 		return a.skillSources(rest)
 	case "help":
 		return renderCommandHelpTopic(a.Out, "skills", rest, "text")
-	case "show":
+	case "show", "info", "describe":
 		format, remaining, err := parseTemplateOutputArgs("skills show", rest)
 		if err != nil {
 			return err
@@ -30062,7 +30062,7 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list`, `codog skills show NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills add SOURCE`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
+		Hint:      "Supported: `codog skills list`, `codog skills show|info|describe NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills add SOURCE`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
 	}, format)
 }
 
@@ -36104,8 +36104,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skill|skills [list|sources|show|invoke|add|install|uninstall|help]",
-			"Skills\n\nUsage:\n  codog skills [list|sources|show|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
+			"codog skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall|help]",
+			"Skills\n\nUsage:\n  codog skills [list|sources|show|info|describe|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `info` and `describe` are aliases for `show`; `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
 			[]string{"skills", "roots", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
 			[]string{"ok", "error"},
 			true,
@@ -36314,7 +36314,7 @@ Usage:
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID]
-  %s [flags] skill|skills [list|sources|show|invoke|add|install|uninstall]
+  %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]

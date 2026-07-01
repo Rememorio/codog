@@ -11327,6 +11327,45 @@ func TestSkillsInstallAndUninstallCommands(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(workspace, ".claude", "skills", "team", "audit-copy"))
 }
 
+func TestSkillsInfoAndDescribeAliasShow(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte(`---
+description: Review changes.
+---
+Review body.
+`), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "info", "review"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Review body.")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skill", "describe", "review"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var skill skills.Skill
+	require.NoError(t, json.Unmarshal([]byte(out), &skill))
+	require.Equal(t, "review", skill.Name)
+	require.Equal(t, "Review changes.", skill.Description)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "info", "missing"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var report actionErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "skills", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "skill_not_found", report.ErrorKind)
+}
+
 func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -11363,6 +11402,7 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.Equal(t, "unsupported_skills_action", report.ErrorKind)
 	require.Contains(t, report.Message, "unsupported skills action")
 	require.Contains(t, report.Hint, "codog skills list")
+	require.Contains(t, report.Hint, "show|info|describe")
 	require.Contains(t, report.Hint, "codog skills add")
 	require.Contains(t, report.Hint, "codog skills help")
 
@@ -11385,8 +11425,11 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.Equal(t, "skills", help.Topic)
 	require.Equal(t, "skills", help.Command)
 	require.Contains(t, help.Usage, "sources")
+	require.Contains(t, help.Usage, "info")
+	require.Contains(t, help.Usage, "describe")
 	require.Contains(t, help.Usage, "help")
 	require.Contains(t, help.Help, "roots")
+	require.Contains(t, help.Help, "aliases for `show`")
 	require.Contains(t, help.Help, "codog skills help")
 }
 
