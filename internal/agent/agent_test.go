@@ -1147,6 +1147,29 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	codePath := filepath.Join(workspace, "main.go")
+	require.NoError(t, os.WriteFile(codePath, []byte(`package main
+
+func main() {
+	println(helper())
+}
+
+func helper() string {
+	return "ok"
+}
+`), 0o644))
+	signalPath := filepath.Join(workspace, "signals.go")
+	require.NoError(t, os.WriteFile(signalPath, []byte(`package main
+
+import "os"
+
+func risky(value any) {
+	_ = os.WriteFile("tmp.txt", []byte("before"), 0o644)
+	var secret = "1234567890abcdef"
+	println(secret)
+	println(value.(string))
+}
+`), 0o644))
 	gitAvailable := false
 	if _, err := exec.LookPath("git"); err == nil {
 		gitAvailable = true
@@ -1155,9 +1178,21 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		runGit(t, workspace, "config", "user.name", "Codog Test")
 		trackedPath := filepath.Join(workspace, "tracked.txt")
 		require.NoError(t, os.WriteFile(trackedPath, []byte("before\n"), 0o644))
-		runGit(t, workspace, "add", "tracked.txt")
+		runGit(t, workspace, "add", "tracked.txt", "main.go", "signals.go")
 		runGit(t, workspace, "commit", "-m", "initial")
 		require.NoError(t, os.WriteFile(trackedPath, []byte("before\nafter\n"), 0o644))
+		require.NoError(t, os.WriteFile(signalPath, []byte(`package main
+
+import "os"
+
+func risky(value any) {
+	_ = os.WriteFile("tmp.txt", []byte("after"), 0o644)
+	var secret = "1234567890abcdef"
+	println(secret)
+	println(value.(string))
+	panic("boom")
+}
+`), 0o644))
 	}
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	data, err := json.Marshal(map[string]any{
@@ -1681,6 +1716,111 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTasks))
 	require.Empty(t, resumedTasks)
 
+	out, err = runResumedJSON("/files", "--glob", "*.go", "--limit", "5")
+	require.NoError(t, err)
+	var resumedFiles struct {
+		Kind  string `json:"kind"`
+		Files []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFiles))
+	require.Equal(t, "files", resumedFiles.Kind)
+	resumedFilePaths := []string{}
+	for _, file := range resumedFiles.Files {
+		resumedFilePaths = append(resumedFilePaths, file.Path)
+	}
+	require.Contains(t, resumedFilePaths, "main.go")
+
+	out, err = runResumedJSON("/search", "helper", "--glob", "*.go")
+	require.NoError(t, err)
+	var resumedSearch searchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSearch))
+	require.Equal(t, "search", resumedSearch.Kind)
+	require.GreaterOrEqual(t, resumedSearch.Total, 1)
+
+	out, err = runResumedJSON("/security-review", "--limit", "20")
+	require.NoError(t, err)
+	var resumedSecurity struct {
+		Kind  string `json:"kind"`
+		Total int    `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSecurity))
+	require.Equal(t, "security_review", resumedSecurity.Kind)
+	require.GreaterOrEqual(t, resumedSecurity.Total, 1)
+
+	out, err = runResumedJSON("/bughunter", ".", "--limit", "20")
+	require.NoError(t, err)
+	var resumedBughunter struct {
+		Kind  string `json:"kind"`
+		Total int    `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBughunter))
+	require.Equal(t, "bughunter", resumedBughunter.Kind)
+	require.GreaterOrEqual(t, resumedBughunter.Total, 1)
+
+	out, err = runResumedJSON("/symbols")
+	require.NoError(t, err)
+	var resumedSymbols symbolsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSymbols))
+	require.Equal(t, "symbols", resumedSymbols.Kind)
+	require.GreaterOrEqual(t, resumedSymbols.Total, 2)
+
+	out, err = runResumedJSON("/map", "--depth", "1")
+	require.NoError(t, err)
+	var resumedMap mapReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMap))
+	require.Equal(t, "map", resumedMap.Kind)
+	require.GreaterOrEqual(t, resumedMap.Total, 1)
+
+	out, err = runResumedJSON("/definition", "helper")
+	require.NoError(t, err)
+	var resumedDefinition definitionReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDefinition))
+	require.Equal(t, "definition", resumedDefinition.Kind)
+	require.True(t, resumedDefinition.Found)
+
+	out, err = runResumedJSON("/references", "helper")
+	require.NoError(t, err)
+	var resumedReferences referencesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedReferences))
+	require.Equal(t, "references", resumedReferences.Kind)
+	require.GreaterOrEqual(t, resumedReferences.Total, 1)
+
+	out, err = runResumedJSON("/hover", "helper")
+	require.NoError(t, err)
+	var resumedHover struct {
+		Kind  string `json:"kind"`
+		Hover struct {
+			Found bool `json:"found"`
+		} `json:"hover"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHover))
+	require.Equal(t, "hover", resumedHover.Kind)
+	require.True(t, resumedHover.Hover.Found)
+
+	out, err = runResumedJSON("/completion", "hel")
+	require.NoError(t, err)
+	var resumedCompletion completionReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCompletion))
+	require.Equal(t, "completion", resumedCompletion.Kind)
+	require.GreaterOrEqual(t, resumedCompletion.Total, 1)
+
+	out, err = runResumedJSON("/teleport", "main.go")
+	require.NoError(t, err)
+	var resumedTeleport teleportReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeleport))
+	require.Equal(t, "teleport", resumedTeleport.Kind)
+	require.True(t, resumedTeleport.Found)
+	require.Equal(t, "file", resumedTeleport.Mode)
+
+	out, err = runResumedJSON("/format", "main.go")
+	require.NoError(t, err)
+	var resumedFormat formatReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFormat))
+	require.Equal(t, "format", resumedFormat.Kind)
+	require.False(t, resumedFormat.Write)
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
@@ -1708,6 +1848,7 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
+		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
 		require.Error(t, err, guarded.Command)
@@ -1743,6 +1884,18 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		require.Equal(t, "git_status", resumedGitStatus.Kind)
 		require.False(t, resumedGitStatus.Clean)
 		require.NotEmpty(t, resumedGitStatus.Entries)
+
+		out, err = runResumedJSON("/review", "--limit", "20")
+		require.NoError(t, err)
+		var resumedReview struct {
+			Kind    string `json:"kind"`
+			Summary struct {
+				Files int `json:"files"`
+			} `json:"summary"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedReview))
+		require.Equal(t, "review", resumedReview.Kind)
+		require.GreaterOrEqual(t, resumedReview.Summary.Files, 1)
 	}
 
 	out, err = captureStdout(t, func() error {

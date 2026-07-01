@@ -17752,6 +17752,34 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedMarketplaceSlash(resumeSlashArgs("plugins", args, format), format)
 	case "/background", "/tasks", "/bashes":
 		return a.runResumedBackgroundSlash(args, resumed, format)
+	case "/files":
+		return a.Files(resumeSlashArgs("files", args, format))
+	case "/search":
+		return a.Search(ctx, resumeSlashArgs("search", args, format))
+	case "/security-review":
+		return a.SecurityReview(resumeSlashArgs("security-review", args, format))
+	case "/bughunter":
+		return a.Bughunter(resumeSlashArgs("bughunter", args, format))
+	case "/review", "/ultrareview":
+		return a.Review(resumeSlashArgs("review", args, format))
+	case "/symbols":
+		return a.Symbols(resumeSlashArgs("symbols", args, format))
+	case "/diagnostics":
+		return a.Diagnostics(ctx, resumeSlashArgs("diagnostics", args, format))
+	case "/map":
+		return a.Map(resumeSlashArgs("map", args, format))
+	case "/references":
+		return a.References(resumeSlashArgs("references", args, format))
+	case "/definition":
+		return a.Definition(resumeSlashArgs("definition", args, format))
+	case "/hover":
+		return a.Hover(resumeSlashArgs("hover", args, format))
+	case "/teleport":
+		return a.Teleport(resumeSlashArgs("teleport", args, format))
+	case "/completion":
+		return a.Completion(resumeSlashArgs("completion", args, format))
+	case "/format":
+		return a.runResumedFormatSlash(resumeSlashArgs("format", args, format), format)
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/git":
@@ -17846,6 +17874,17 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
 	}
+}
+
+func (a *App) runResumedFormatSlash(args []string, format string) error {
+	_, _, write, err := parseFormatArgs(args)
+	if err != nil {
+		return err
+	}
+	if write {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/format", "write"), format)
+	}
+	return a.Format(args)
 }
 
 func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverrides, format string) error {
@@ -18150,7 +18189,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /output-style, /theme, /language, /effort, /fast, /vim, /chrome, /notifications, /privacy-settings, /telemetry, /keybindings, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /output-style, /theme, /language, /effort, /fast, /vim, /chrome, /notifications, /privacy-settings, /telemetry, /keybindings, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /files, /search, /security-review, /bughunter, /review, /symbols, /diagnostics, /map, /references, /definition, /hover, /teleport, /completion, /format, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
