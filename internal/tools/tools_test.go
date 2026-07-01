@@ -1201,6 +1201,56 @@ func requirePathAliasRequirement(t *testing.T, schema map[string]any) {
 	require.True(t, seen["file_path"])
 }
 
+func TestTaskToolSchemasDeclareAcceptedTaskIDAliases(t *testing.T) {
+	registry := NewRegistry(t.TempDir())
+	tests := []struct {
+		name     string
+		aliases  []string
+		required []string
+	}{
+		{name: "task_status", aliases: []string{"id", "task_id", "taskId"}},
+		{name: "task_get", aliases: []string{"id", "task_id", "taskId"}},
+		{name: "task_output", aliases: []string{"id", "task_id", "taskId"}},
+		{name: "task_update", aliases: []string{"id", "task_id", "taskId"}, required: []string{"message"}},
+		{name: "task_stop", aliases: []string{"id", "task_id", "taskId", "shell_id"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, ok := registry.Info(tt.name)
+			require.True(t, ok)
+			requireTaskIDAliasRequirement(t, info.InputSchema, tt.aliases...)
+			required, ok := info.InputSchema["required"].([]string)
+			if len(tt.required) == 0 {
+				require.False(t, ok)
+				return
+			}
+			require.True(t, ok)
+			require.ElementsMatch(t, tt.required, required)
+			for _, alias := range tt.aliases {
+				require.NotContains(t, required, alias)
+			}
+		})
+	}
+}
+
+func requireTaskIDAliasRequirement(t *testing.T, schema map[string]any, aliases ...string) {
+	t.Helper()
+	options, ok := schema["anyOf"].([]map[string]any)
+	require.True(t, ok)
+
+	seen := map[string]bool{}
+	for _, option := range options {
+		required, ok := option["required"].([]string)
+		require.True(t, ok)
+		if len(required) == 1 {
+			seen[required[0]] = true
+		}
+	}
+	for _, alias := range aliases {
+		require.True(t, seen[alias], "missing task id alias %q", alias)
+	}
+}
+
 func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("alpha\n"), 0o644))

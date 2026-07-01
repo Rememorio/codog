@@ -6621,6 +6621,15 @@ func (t TaskListTool) Execute(_ context.Context, input json.RawMessage) (string,
 	return pretty(map[string]any{"tasks": tasks, "total": len(tasks)}), nil
 }
 
+func taskIDRequirement(extra ...string) []map[string]any {
+	fields := append([]string{"id", "task_id", "taskId"}, extra...)
+	options := make([]map[string]any, 0, len(fields))
+	for _, field := range fields {
+		options = append(options, map[string]any{"required": []string{field}})
+	}
+	return options
+}
+
 type TaskStatusTool struct {
 	Workspace  string
 	ConfigHome string
@@ -6633,9 +6642,11 @@ func (TaskStatusTool) Definition() anthropic.ToolDefinition {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"id": map[string]any{"type": "string"},
+				"id":      map[string]any{"type": "string"},
+				"task_id": map[string]any{"type": "string"},
+				"taskId":  map[string]any{"type": "string"},
 			},
-			"required":             []string{"id"},
+			"anyOf":                taskIDRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -6679,7 +6690,7 @@ func (TaskGetTool) Definition() anthropic.ToolDefinition {
 				"taskId":  map[string]any{"type": "string"},
 				"id":      map[string]any{"type": "string"},
 			},
-			"required":             []string{"task_id"},
+			"anyOf":                taskIDRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -6724,7 +6735,8 @@ func (TaskUpdateTool) Definition() anthropic.ToolDefinition {
 				"id":      map[string]any{"type": "string"},
 				"message": map[string]any{"type": "string"},
 			},
-			"required":             []string{"task_id", "message"},
+			"required":             []string{"message"},
+			"anyOf":                taskIDRequirement(),
 			"additionalProperties": false,
 		},
 	}
@@ -6779,7 +6791,7 @@ func (TaskStopTool) Definition() anthropic.ToolDefinition {
 				"taskId":   map[string]any{"type": "string"},
 				"shell_id": map[string]any{"type": "string"},
 			},
-			"required":             []string{"id"},
+			"anyOf":                taskIDRequirement("shell_id"),
 			"additionalProperties": false,
 		},
 	}
@@ -6830,7 +6842,7 @@ func (TaskOutputTool) Definition() anthropic.ToolDefinition {
 				"timeout":     map[string]any{"type": "integer", "minimum": 0},
 				"timeout_ms":  map[string]any{"type": "integer", "minimum": 0},
 			},
-			"required":             []string{"id"},
+			"anyOf":                taskIDRequirement(),
 			"additionalProperties": false,
 		},
 	}
