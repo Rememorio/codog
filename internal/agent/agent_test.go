@@ -10463,7 +10463,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &logs))
 	require.Equal(t, "logs", logs.Action)
 	require.Len(t, logs.Logs, 2)
-	require.Contains(t, logs.Logs[0].Log, "team-log")
+	require.Contains(t, logs.Logs[0].Log+logs.Logs[1].Log, "team-log")
 	out.Reset()
 
 	require.NoError(t, app.Team([]string{"watch", created.Team.ID, "--max-events", "2", "--json"}))

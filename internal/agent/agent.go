@@ -18138,6 +18138,7 @@ func codogCapabilityFeatures() []string {
 		"permission_confirmation",
 		"policy_engine",
 		"plugin_marketplace",
+		"powershell_output_contract",
 		"prompt_cache_stats",
 		"project_memory",
 		"notification_preferences",

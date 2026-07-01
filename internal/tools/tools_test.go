@@ -68,26 +68,86 @@ func TestPowerShellToolExecutesForegroundAndBackground(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
 	script := filepath.Join(t.TempDir(), "pwsh-shim")
-	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ps:%s\\n' \"$*\"\n"), 0o755))
+	require.NoError(t, os.WriteFile(script, []byte(`#!/bin/sh
+printf 'ps:%s\n' "$*"
+case "$*" in
+  *"Exit 7"*) exit 7 ;;
+  *"Start-Sleep"*) sleep 1 ;;
+esac
+`), 0o755))
 	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
 
-	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":20}`))
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":1000}`))
 	require.NoError(t, err)
-	require.Contains(t, out, `ps:-NoProfile -Command Write-Output ok`)
-	require.Contains(t, out, `"exit_code": 0`)
-	require.Contains(t, out, `"duration_ms":`)
+	require.Contains(t, out, `ps:-NoProfile -NonInteractive -Command Write-Output ok`)
+	var foreground struct {
+		Stdout                   string  `json:"stdout"`
+		Stderr                   string  `json:"stderr"`
+		ExitCode                 int     `json:"exit_code"`
+		DurationMS               int64   `json:"duration_ms"`
+		Interrupted              bool    `json:"interrupted"`
+		ReturnCodeInterpretation *string `json:"returnCodeInterpretation"`
+		NoOutputExpected         bool    `json:"noOutputExpected"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &foreground))
+	require.Contains(t, foreground.Stdout, "Write-Output ok")
+	require.Empty(t, foreground.Stderr)
+	require.Equal(t, 0, foreground.ExitCode)
+	require.GreaterOrEqual(t, foreground.DurationMS, int64(0))
+	require.False(t, foreground.Interrupted)
+	require.Nil(t, foreground.ReturnCodeInterpretation)
+	require.False(t, foreground.NoOutputExpected)
+
+	out, err = tool.Execute(context.Background(), []byte(`{"command":"Exit 7","timeout_ms":1000}`))
+	require.NoError(t, err)
+	var failed struct {
+		ExitCode                 int    `json:"exit_code"`
+		ReturnCodeInterpretation string `json:"returnCodeInterpretation"`
+		Interrupted              bool   `json:"interrupted"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &failed))
+	require.Equal(t, 7, failed.ExitCode)
+	require.Equal(t, "exit_code:7", failed.ReturnCodeInterpretation)
+	require.False(t, failed.Interrupted)
+
+	out, err = tool.Execute(context.Background(), []byte(`{"command":"Start-Sleep slow","timeout_ms":20}`))
+	require.NoError(t, err)
+	var timedOut struct {
+		ExitCode                 int              `json:"exit_code"`
+		Interrupted              bool             `json:"interrupted"`
+		ReturnCodeInterpretation string           `json:"returnCodeInterpretation"`
+		StructuredContent        []map[string]any `json:"structuredContent"`
+		Stderr                   string           `json:"stderr"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &timedOut))
+	require.Equal(t, -1, timedOut.ExitCode)
+	require.True(t, timedOut.Interrupted)
+	require.Equal(t, "timeout", timedOut.ReturnCodeInterpretation)
+	require.Contains(t, timedOut.Stderr, "Command exceeded timeout of 20 ms")
+	require.Len(t, timedOut.StructuredContent, 1)
+	require.Equal(t, "command.timeout", timedOut.StructuredContent[0]["event"])
 
 	out, err = tool.Execute(context.Background(), []byte(`{"command":"Write-Output bg","run_in_background":true}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"background": true`)
 	var payload struct {
-		Task background.Task `json:"task"`
+		Task                      background.Task `json:"task"`
+		BackgroundTaskID          string          `json:"backgroundTaskId"`
+		BackgroundedByUser        bool            `json:"backgroundedByUser"`
+		AssistantAutoBackgrounded bool            `json:"assistantAutoBackgrounded"`
+		NoOutputExpected          bool            `json:"noOutputExpected"`
+		Interrupted               bool            `json:"interrupted"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &payload))
 	require.NotEmpty(t, payload.Task.ID)
+	require.Equal(t, payload.Task.ID, payload.BackgroundTaskID)
+	require.True(t, payload.BackgroundedByUser)
+	require.False(t, payload.AssistantAutoBackgrounded)
+	require.True(t, payload.NoOutputExpected)
+	require.False(t, payload.Interrupted)
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(payload.Task.ID, 4096)
-		return err == nil && strings.Contains(logs, `ps:-NoProfile -Command Write-Output bg`)
+		return err == nil && strings.Contains(logs, `ps:-NoProfile -NonInteractive -Command Write-Output bg`)
 	}, 5*time.Second, 50*time.Millisecond)
 }
 

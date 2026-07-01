@@ -2820,6 +2820,7 @@ func (PowerShellTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"command":           map[string]any{"type": "string"},
 				"timeout":           map[string]any{"type": "integer", "minimum": 1},
+				"timeout_ms":        map[string]any{"type": "integer", "minimum": 1},
 				"description":       map[string]any{"type": "string"},
 				"run_in_background": map[string]any{"type": "boolean"},
 			},
@@ -2834,7 +2835,8 @@ func (PowerShellTool) Permission() Permission { return PermissionDanger }
 func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		Command         string `json:"command"`
-		TimeoutSeconds  int    `json:"timeout"`
+		Timeout         int    `json:"timeout"`
+		TimeoutMS       int    `json:"timeout_ms"`
 		RunInBackground bool   `json:"run_in_background"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
@@ -2852,7 +2854,7 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 		return "", err
 	}
 	if payload.RunInBackground {
-		command := strings.Join([]string{shellQuoteToolArg(executable), "-NoProfile", "-Command", shellQuoteToolArg(payload.Command)}, " ")
+		command := strings.Join([]string{shellQuoteToolArg(executable), "-NoProfile", "-NonInteractive", "-Command", shellQuoteToolArg(payload.Command)}, " ")
 		env, err := toolEnvironment(ctx, t.ConfigHome)
 		if err != nil {
 			return "", err
@@ -2861,19 +2863,29 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"background": true, "task": task}), nil
+		result := bashOutputContractFields(false)
+		result["background"] = true
+		result["task"] = task
+		result["backgroundTaskId"] = task.ID
+		result["backgroundedByUser"] = true
+		result["assistantAutoBackgrounded"] = false
+		result["noOutputExpected"] = true
+		result["interrupted"] = false
+		return pretty(result), nil
 	}
-	timeout := time.Duration(payload.TimeoutSeconds) * time.Second
+	timeoutMS := firstPositiveInt(payload.TimeoutMS, payload.Timeout)
+	timeout := time.Duration(timeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
+		timeoutMS = int(timeout / time.Millisecond)
 	}
 	if timeout > 30*time.Minute {
-		return "", errors.New("timeout must be 1800 seconds or less")
+		return "", errors.New("timeout must be 1800000 ms or less")
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
-	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-Command", payload.Command)
+	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-NonInteractive", "-Command", payload.Command)
 	cmd.Dir = cwd
 	env, err := toolEnvironment(ctx, t.ConfigHome)
 	if err != nil {
@@ -2884,17 +2896,30 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
-	result := map[string]any{
-		"stdout":      stdout.String(),
-		"stderr":      stderr.String(),
-		"exit_code":   exitCode(err),
-		"duration_ms": time.Since(started).Milliseconds(),
-	}
+	exit := exitCode(err)
+	result := bashOutputContractFields(false)
+	result["stdout"] = stdout.String()
+	result["stderr"] = stderr.String()
+	result["exit_code"] = exit
+	result["duration_ms"] = time.Since(started).Milliseconds()
+	result["noOutputExpected"] = bashNoOutputExpected(stdout.String(), stderr.String())
 	if ctx.Err() == context.DeadlineExceeded {
+		interpretation := bashReturnCodeInterpretation(-1, true, payload.Command)
+		if strings.TrimSpace(stderr.String()) == "" {
+			result["stderr"] = fmt.Sprintf("Command exceeded timeout of %d ms", timeoutMS)
+		} else {
+			result["stderr"] = strings.TrimRight(stderr.String(), "\r\n") + "\nCommand exceeded timeout of " + strconv.Itoa(timeoutMS) + " ms"
+		}
 		result["interrupted"] = true
 		result["error"] = "timeout"
 		result["exit_code"] = -1
+		result["returnCodeInterpretation"] = interpretation
+		result["noOutputExpected"] = bashNoOutputExpected(fmt.Sprint(result["stdout"]), fmt.Sprint(result["stderr"]))
+		result["structuredContent"] = bashTimeoutStructuredContent(payload.Command, timeoutMS, interpretation)
 		return pretty(result), nil
+	}
+	if interpretation := bashReturnCodeInterpretation(exit, false, payload.Command); interpretation != "" {
+		result["returnCodeInterpretation"] = interpretation
 	}
 	if err != nil {
 		result["error"] = err.Error()
