@@ -22653,6 +22653,38 @@ type commandHelpSpec struct {
 	CheckNames              []string
 }
 
+func localCommandHelpSpec(topic, command, usage, text string, fields, statuses []string, mutates bool) commandHelpSpec {
+	return commandHelpSpec{
+		Topic:                   topic,
+		Command:                 command,
+		Usage:                   usage,
+		Text:                    text,
+		LocalOnly:               true,
+		RequiresCredentials:     false,
+		RequiresProviderRequest: false,
+		RequiresSessionResume:   false,
+		MutatesWorkspace:        mutates,
+		OutputFields:            fields,
+		StatusValues:            statuses,
+	}
+}
+
+func providerCommandHelpSpec(topic, command, usage, text string, fields, statuses []string) commandHelpSpec {
+	return commandHelpSpec{
+		Topic:                   topic,
+		Command:                 command,
+		Usage:                   usage,
+		Text:                    text,
+		LocalOnly:               false,
+		RequiresCredentials:     true,
+		RequiresProviderRequest: true,
+		RequiresSessionResume:   false,
+		MutatesWorkspace:        true,
+		OutputFields:            fields,
+		StatusValues:            statuses,
+	}
+}
+
 func renderGlobalResumeHelp(out io.Writer, args []string) (bool, error) {
 	if len(args) < 2 || args[0] != "--resume" || !isHelpFlag(args[1]) {
 		return false, nil
@@ -22750,6 +22782,209 @@ func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) e
 
 func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 	switch strings.ToLower(strings.TrimSpace(topic)) {
+	case "prompt", "p", "print":
+		return providerCommandHelpSpec(
+			"prompt",
+			"prompt",
+			`codog [flags] prompt "MESSAGE" [--json|--output-format text|json|stream-json]`,
+			"Prompt\n\nUsage:\n  codog [flags] prompt \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session.\n",
+			[]string{"session_id", "message", "tool_calls", "usage", "cost"},
+			[]string{"ok", "error"},
+		), true
+	case "repl":
+		return providerCommandHelpSpec(
+			"repl",
+			"repl",
+			"codog [flags] repl",
+			"REPL\n\nUsage:\n  codog [flags] repl\n\nStarts an interactive provider-backed session with slash commands, prompt history, permissions, hooks, and JSONL resume support.\n",
+			[]string{"session_id", "message", "tool_calls", "usage"},
+			[]string{"ok", "error"},
+		), true
+	case "tui":
+		return providerCommandHelpSpec(
+			"tui",
+			"tui",
+			"codog [flags] tui",
+			"TUI\n\nUsage:\n  codog [flags] tui\n\nStarts the Bubble Tea prompt composer for an interactive provider-backed Codog session.\n",
+			[]string{"session_id", "message", "tool_calls", "usage"},
+			[]string{"ok", "error"},
+		), true
+	case "status":
+		return localCommandHelpSpec(
+			"status",
+			"status",
+			"codog status [--output-format text|json]",
+			"Status\n\nUsage:\n  codog status [--output-format text|json]\n\nShows local workspace, session, config, git, hook, MCP, and runtime status without making a provider request.\n",
+			[]string{"workspace", "session_id", "model", "permission_mode", "git", "hooks", "mcp"},
+			[]string{"ok", "warn", "error"},
+			false,
+		), true
+	case "statusline":
+		return localCommandHelpSpec(
+			"statusline",
+			"statusline",
+			"codog statusline [--output-format text|json]",
+			"Statusline\n\nUsage:\n  codog statusline [--output-format text|json]\n\nPrints a compact one-line local workspace status for shell prompts and editor integrations.\n",
+			[]string{"workspace", "session_id", "model", "permission_mode", "git_branch"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "context":
+		return localCommandHelpSpec(
+			"context",
+			"context",
+			"codog context [--session ID|--resume ID|latest] [--output-format text|json]",
+			"Context\n\nUsage:\n  codog context [--session ID|--resume ID|latest] [--output-format text|json]\n\nShows the prompt preflight context assembled from memory, focused files, session history, skills, and token estimates.\n",
+			[]string{"session_id", "memory", "focus", "messages", "token_estimate"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "ctx_viz", "context-viz":
+		return localCommandHelpSpec(
+			"ctx_viz",
+			"ctx_viz",
+			"codog ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--output-format text|json]",
+			"Context Visualization\n\nUsage:\n  codog ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--output-format text|json]\n\nWrites an HTML context report that visualizes prompt inputs and session state.\n",
+			[]string{"path", "session_id", "nodes", "edges"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "files":
+		return localCommandHelpSpec(
+			"files",
+			"files",
+			"codog files [PATH] [--glob GLOB] [--limit N] [--hidden] [--output-format text|json]",
+			"Files\n\nUsage:\n  codog files [PATH] [--glob GLOB] [--limit N] [--hidden] [--output-format text|json]\n\nLists workspace-scoped files with optional glob filtering.\n",
+			[]string{"root", "files", "count", "truncated"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "search":
+		return localCommandHelpSpec(
+			"search",
+			"search",
+			"codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--output-format text|json]",
+			"Search\n\nUsage:\n  codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--output-format text|json]\n\nSearches workspace files with grep-style output and JSON result metadata.\n",
+			[]string{"pattern", "matches", "count", "truncated"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "config":
+		return localCommandHelpSpec(
+			"config",
+			"config",
+			"codog config [get SECTION|paths|set KEY VALUE|unset KEY] [--output-format text|json]",
+			"Config\n\nUsage:\n  codog config [get SECTION|paths|set KEY VALUE|unset KEY] [--output-format text|json]\n\nInspects merged configuration and updates user, project, or local config files.\n",
+			[]string{"paths", "config", "key", "value", "target"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "model":
+		return localCommandHelpSpec(
+			"model",
+			"model",
+			"codog model [MODEL]",
+			"Model\n\nUsage:\n  codog model [MODEL]\n\nShows or changes the configured default model for future provider requests.\n",
+			[]string{"model", "previous", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "permissions":
+		return localCommandHelpSpec(
+			"permissions",
+			"permissions",
+			"codog permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]",
+			"Permissions\n\nUsage:\n  codog permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]\n\nShows or changes the default tool permission mode.\n",
+			[]string{"permission_mode", "previous", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "capabilities":
+		return localCommandHelpSpec(
+			"capabilities",
+			"capabilities",
+			"codog capabilities [--output-format text|json]",
+			"Capabilities\n\nUsage:\n  codog capabilities [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build.\n",
+			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "hooks":
+		return localCommandHelpSpec(
+			"hooks",
+			"hooks",
+			"codog hooks [list|health EVENT|run EVENT] [--output-format text|json]",
+			"Hooks\n\nUsage:\n  codog hooks [list|health EVENT|run EVENT] [--output-format text|json]\n\nLists configured hooks, reports hook health, or runs a hook event with supplied local metadata.\n",
+			[]string{"event", "hooks", "health", "results"},
+			[]string{"ok", "warn", "error"},
+			true,
+		), true
+	case "mcp":
+		return localCommandHelpSpec(
+			"mcp",
+			"mcp",
+			"codog mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]",
+			"MCP\n\nUsage:\n  codog mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]\n\nServes Codog tools over stdio MCP and manages configured stdio MCP clients, tools, resources, and prompts.\n",
+			[]string{"servers", "tools", "resources", "prompts", "result"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "skills":
+		return localCommandHelpSpec(
+			"skills",
+			"skills",
+			"codog skills [list|show|invoke|install|uninstall]",
+			"Skills\n\nUsage:\n  codog skills [list|show|invoke|install|uninstall]\n\nLists, renders, invokes, installs, or removes Markdown skills from user, workspace, and compatible Claude directories.\n",
+			[]string{"skills", "name", "path", "body"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "commands":
+		return localCommandHelpSpec(
+			"commands",
+			"commands",
+			"codog commands [list|show|run]",
+			"Commands\n\nUsage:\n  codog commands [list|show|run]\n\nLists, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories.\n",
+			[]string{"commands", "name", "path", "body"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "templates":
+		return localCommandHelpSpec(
+			"templates",
+			"templates",
+			"codog templates [list|show|apply]",
+			"Templates\n\nUsage:\n  codog templates [list|show|apply]\n\nLists, shows, or renders parameterized prompt templates.\n",
+			[]string{"templates", "name", "path", "body"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "voice", "listen":
+		spec := localCommandHelpSpec(
+			"voice",
+			"voice",
+			"codog voice [status|set-command|on|off|toggle|test|listen|transcribe|clear] [--input TEXT] [--output-format text|json]",
+			"Voice\n\nUsage:\n  codog voice [status|set-command|on|off|toggle|test|listen|transcribe|clear] [--input TEXT] [--output-format text|json]\n  codog listen [--input TEXT]\n\nConfigures and runs an external speech-to-text command for voice input.\n",
+			[]string{"enabled", "command_configured", "command_available", "transcript", "exit_code"},
+			[]string{"ok", "error"},
+			true,
+		)
+		if strings.EqualFold(strings.TrimSpace(topic), "listen") {
+			spec.Topic = "listen"
+			spec.Command = "listen"
+			spec.Usage = "codog listen [--input TEXT] [--output-format text|json]"
+		}
+		return spec, true
+	case "speak":
+		return localCommandHelpSpec(
+			"speak",
+			"speak",
+			"codog speak [TEXT|last|status|set-command|clear] [--session ID|--resume latest] [--nth N] [--input TEXT] [--output-format text|json]",
+			"Speak\n\nUsage:\n  codog speak [TEXT|last|status|set-command|clear] [--session ID|--resume latest] [--nth N] [--input TEXT] [--output-format text|json]\n\nConfigures and runs an external text-to-speech command for explicit text or the latest assistant response.\n",
+			[]string{"command_configured", "command_available", "session_id", "nth", "text_preview", "exit_code"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "doctor":
 		return commandHelpSpec{
 			Topic:                   "doctor",

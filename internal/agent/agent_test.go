@@ -128,6 +128,35 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "checks")
 	require.Contains(t, report.StatusValues, "warn")
 	require.Contains(t, report.CheckNames, "Auth")
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"prompt", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prompt", report.Topic)
+	require.Equal(t, "prompt", report.Command)
+	require.Contains(t, report.Usage, "stream-json")
+	require.NotNil(t, report.LocalOnly)
+	require.False(t, *report.LocalOnly)
+	require.NotNil(t, report.RequiresCredentials)
+	require.True(t, *report.RequiresCredentials)
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.True(t, *report.RequiresProviderRequest)
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
+	require.Contains(t, report.OutputFields, "tool_calls")
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"speak", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "speak", report.Topic)
+	require.Equal(t, "speak", report.Command)
+	require.Contains(t, report.Help, "text-to-speech")
+	require.NotNil(t, report.LocalOnly)
+	require.True(t, *report.LocalOnly)
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
+	require.Contains(t, report.OutputFields, "text_preview")
+	require.Contains(t, report.StatusValues, "error")
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -158,6 +187,21 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			name:  "resume global flag",
 			args:  []string{"--resume", "--help", "--output-format", "json"},
 			topic: "resume",
+		},
+		{
+			name:  "prompt provider help",
+			args:  []string{"--config", configPath, "prompt", "--help", "--output-format", "json"},
+			topic: "prompt",
+		},
+		{
+			name:  "speak local help",
+			args:  []string{"--config", configPath, "speak", "--help", "--output-format", "json"},
+			topic: "speak",
+		},
+		{
+			name:  "mcp local help",
+			args:  []string{"--config", configPath, "mcp", "--help", "--output-format", "json"},
+			topic: "mcp",
 		},
 	}
 	for _, tc := range cases {
