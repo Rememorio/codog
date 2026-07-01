@@ -1,5 +1,6 @@
 /codog
 *.test
+*.out
 *.coverprofile
 *.prof
 coverage.out
@@ -24,4 +25,5 @@ coverage.out
 **/.codog/worktrees/
 **/.codog/context-viz.html
 **/.codog/think-back-*.html
+/internal/agent/audit/
 .DS_Store
