@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/laneevents"
 )
 
 type TaskReceipt struct {
@@ -21,29 +23,36 @@ type TaskReceipt struct {
 	ObjectivePreview  string   `json:"objective_preview"`
 }
 
-type Event struct {
-	Type         string    `json:"type"`
-	Message      string    `json:"message,omitempty"`
-	FinishReason string    `json:"finish_reason,omitempty"`
-	TokensOutput int64     `json:"tokens_output,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+type Event = laneevents.Event
+
+type TerminalOutcome struct {
+	Fingerprint             string    `json:"fingerprint"`
+	LaneEvent               string    `json:"lane_event"`
+	Type                    string    `json:"type"`
+	Status                  string    `json:"status"`
+	FinishReason            string    `json:"finish_reason,omitempty"`
+	Sequence                int64     `json:"sequence"`
+	DuplicateCount          int       `json:"duplicate_count"`
+	MaterialDifferenceCount int       `json:"material_difference_count"`
+	UpdatedAt               time.Time `json:"updated_at"`
 }
 
 type Worker struct {
-	ID                           string       `json:"worker_id"`
-	CWD                          string       `json:"cwd"`
-	TrustedRoots                 []string     `json:"trusted_roots,omitempty"`
-	AutoRecoverPromptMisdelivery bool         `json:"auto_recover_prompt_misdelivery"`
-	Status                       string       `json:"status"`
-	ReadyForPrompt               bool         `json:"ready_for_prompt"`
-	TrustResolved                bool         `json:"trust_resolved"`
-	TaskID                       string       `json:"task_id,omitempty"`
-	TaskStatus                   string       `json:"task_status,omitempty"`
-	TaskReceipt                  *TaskReceipt `json:"task_receipt,omitempty"`
-	LastError                    string       `json:"last_error,omitempty"`
-	Events                       []Event      `json:"events,omitempty"`
-	CreatedAt                    time.Time    `json:"created_at"`
-	UpdatedAt                    time.Time    `json:"updated_at"`
+	ID                           string           `json:"worker_id"`
+	CWD                          string           `json:"cwd"`
+	TrustedRoots                 []string         `json:"trusted_roots,omitempty"`
+	AutoRecoverPromptMisdelivery bool             `json:"auto_recover_prompt_misdelivery"`
+	Status                       string           `json:"status"`
+	ReadyForPrompt               bool             `json:"ready_for_prompt"`
+	TrustResolved                bool             `json:"trust_resolved"`
+	TaskID                       string           `json:"task_id,omitempty"`
+	TaskStatus                   string           `json:"task_status,omitempty"`
+	TaskReceipt                  *TaskReceipt     `json:"task_receipt,omitempty"`
+	LastError                    string           `json:"last_error,omitempty"`
+	Events                       []Event          `json:"events,omitempty"`
+	Terminal                     *TerminalOutcome `json:"terminal,omitempty"`
+	CreatedAt                    time.Time        `json:"created_at"`
+	UpdatedAt                    time.Time        `json:"updated_at"`
 }
 
 type ReadySnapshot struct {
@@ -77,10 +86,10 @@ func (s Store) Create(cwd string, trustedRoots []string, autoRecover bool) (Work
 		Status:                       "ready_for_prompt",
 		ReadyForPrompt:               true,
 		TrustResolved:                true,
-		Events:                       []Event{{Type: "created", Message: "worker ready for prompt", CreatedAt: now}},
 		CreatedAt:                    now,
 		UpdatedAt:                    now,
 	}
+	appendEvent(&worker, Event{Type: "created", Message: "worker ready for prompt", CreatedAt: now})
 	if err := s.Save(worker); err != nil {
 		return Worker{}, err
 	}
@@ -167,7 +176,7 @@ func (s Store) Observe(id string, screenText string) (Worker, error) {
 		worker.Status = "ready_for_prompt"
 		eventType = "ready"
 	}
-	worker.Events = append(worker.Events, Event{Type: eventType, Message: screenText, CreatedAt: time.Now().UTC()})
+	appendEvent(&worker, Event{Type: eventType, Message: screenText, CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
 }
 
@@ -179,7 +188,7 @@ func (s Store) ResolveTrust(id string) (Worker, error) {
 	worker.TrustResolved = true
 	worker.ReadyForPrompt = true
 	worker.Status = "ready_for_prompt"
-	worker.Events = append(worker.Events, Event{Type: "trust_resolved", CreatedAt: time.Now().UTC()})
+	appendEvent(&worker, Event{Type: "trust_resolved", CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
 }
 
@@ -206,7 +215,7 @@ func (s Store) SendPrompt(id string, prompt string, receipt *TaskReceipt, taskID
 		worker.TaskStatus = "running"
 	}
 	worker.TaskReceipt = receipt
-	worker.Events = append(worker.Events, Event{Type: "prompt_sent", Message: strings.TrimSpace(prompt), CreatedAt: time.Now().UTC()})
+	appendEvent(&worker, Event{Type: "prompt_sent", Message: strings.TrimSpace(prompt), CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
 }
 
@@ -222,7 +231,7 @@ func (s Store) Restart(id string, taskID string) (Worker, error) {
 		worker.TaskStatus = "running"
 	}
 	worker.LastError = ""
-	worker.Events = append(worker.Events, Event{Type: "restarted", CreatedAt: time.Now().UTC()})
+	appendEvent(&worker, Event{Type: "restarted", CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
 }
 
@@ -236,7 +245,7 @@ func (s Store) Terminate(id string) (Worker, error) {
 	if worker.TaskID != "" {
 		worker.TaskStatus = "stopped"
 	}
-	worker.Events = append(worker.Events, Event{Type: "terminated", CreatedAt: time.Now().UTC()})
+	appendEvent(&worker, Event{Type: "terminated", CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
 }
 
@@ -255,8 +264,71 @@ func (s Store) Complete(id string, finishReason string, tokensOutput int64) (Wor
 		worker.LastError = finishReason
 	}
 	worker.ReadyForPrompt = false
-	worker.Events = append(worker.Events, Event{Type: "completed", FinishReason: finishReason, TokensOutput: tokensOutput, CreatedAt: time.Now().UTC()})
+	appendEvent(&worker, Event{Type: "completed", FinishReason: finishReason, TokensOutput: tokensOutput, CreatedAt: time.Now().UTC()})
 	return worker, s.Save(worker)
+}
+
+func appendEvent(worker *Worker, event Event) {
+	if worker == nil {
+		return
+	}
+	event.Sequence = nextSequence(worker.Events)
+	event.LaneID = worker.ID
+	event.TaskID = worker.TaskID
+	event.Status = worker.Status
+	event.Provenance = laneevents.NormalizeProvenance(event.Provenance)
+	if event.Provenance.Emitter == "codog" {
+		event.Provenance.Emitter = "codog-worker"
+	}
+	if worker.TaskReceipt != nil {
+		event.Binding.Scope = firstNonEmpty(worker.TaskReceipt.TaskKind, worker.TaskReceipt.SourceSurface)
+		event.Binding.Owner = strings.TrimSpace(worker.TaskReceipt.Repo)
+		event.Binding.WatcherAction = "act"
+	} else {
+		event.Binding.Scope = "worker"
+		event.Binding.WatcherAction = "observe"
+	}
+	projected := laneevents.Reconcile(append(worker.Events, event))
+	worker.Events = projected.Events
+	worker.Terminal = terminalOutcome(projected)
+}
+
+func terminalOutcome(projected laneevents.Projection) *TerminalOutcome {
+	if projected.ActionableTerminal == nil {
+		return nil
+	}
+	event := *projected.ActionableTerminal
+	return &TerminalOutcome{
+		Fingerprint:             event.Fingerprint,
+		LaneEvent:               event.LaneEvent,
+		Type:                    event.Type,
+		Status:                  event.Status,
+		FinishReason:            event.FinishReason,
+		Sequence:                event.Sequence,
+		DuplicateCount:          len(projected.DuplicateTerminals),
+		MaterialDifferenceCount: len(projected.MateriallyDifferentTerminals),
+		UpdatedAt:               event.CreatedAt,
+	}
+}
+
+func nextSequence(events []Event) int64 {
+	var maxSequence int64
+	for _, event := range events {
+		if event.Sequence > maxSequence {
+			maxSequence = event.Sequence
+		}
+	}
+	return maxSequence + 1
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s Store) dir() string {
