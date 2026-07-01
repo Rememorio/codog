@@ -334,6 +334,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.APIKey(rest)
 	case "advisor":
 		return app.Advisor(rest)
+	case "budget":
+		return app.Budget(rest)
 	case "max-tokens":
 		return app.MaxTokens(rest)
 	case "temperature":
@@ -14072,6 +14074,7 @@ func builtInCommandNames() []string {
 		"blame",
 		"branch",
 		"brief",
+		"budget",
 		"btw",
 		"bughunter",
 		"build",
@@ -17235,6 +17238,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Advisor(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/budget":
+		if err := a.Budget(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/max-tokens":
 		a.handleMaxTokensSlash(fields[1:])
 	case "/temperature":
@@ -18097,6 +18104,322 @@ func (a *App) handleModelSlash(args []string) {
 	}
 	a.Config.Model = model
 	fmt.Fprintf(a.Err, "model=%s\n", a.Config.Model)
+}
+
+type budgetRequest struct {
+	Action    string
+	Format    string
+	Target    string
+	Path      string
+	MaxTokens *int
+	MaxTurns  *int
+}
+
+type budgetSnapshot struct {
+	MaxTokens int `json:"max_tokens"`
+	MaxTurns  int `json:"max_turns"`
+}
+
+type budgetReport struct {
+	Kind      string          `json:"kind"`
+	Action    string          `json:"action"`
+	Status    string          `json:"status"`
+	MaxTokens int             `json:"max_tokens"`
+	MaxTurns  int             `json:"max_turns"`
+	Path      string          `json:"path,omitempty"`
+	Target    string          `json:"target,omitempty"`
+	Previous  *budgetSnapshot `json:"previous,omitempty"`
+	Message   string          `json:"message,omitempty"`
+}
+
+func (a *App) Budget(args []string) error {
+	req, err := parseBudgetArgs(args)
+	if err != nil {
+		return err
+	}
+	var previous *budgetSnapshot
+	switch req.Action {
+	case "show":
+	case "set":
+		if !req.hasSetValues() {
+			return errors.New("budget set requires at least one value")
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		req.Path = path
+		snapshot := effectiveBudget(a.Config)
+		previous = &snapshot
+		if req.MaxTokens != nil {
+			if _, err := config.SetFileValue(path, "max_tokens", *req.MaxTokens); err != nil {
+				return err
+			}
+			a.Config.MaxTokens = *req.MaxTokens
+		}
+		if req.MaxTurns != nil {
+			if _, err := config.SetFileValue(path, "max_turns", *req.MaxTurns); err != nil {
+				return err
+			}
+			a.Config.MaxTurns = *req.MaxTurns
+		}
+	case "reset":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		req.Path = path
+		snapshot := effectiveBudget(a.Config)
+		previous = &snapshot
+		if _, err := config.UnsetFileValue(path, "max_tokens"); err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "max_turns"); err != nil {
+			return err
+		}
+		a.Config.MaxTokens = 0
+		a.Config.MaxTurns = 0
+	default:
+		return fmt.Errorf("unknown budget action %q", req.Action)
+	}
+	report := buildBudgetReport(req, previous, a.Config)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBudgetReport(a.Out, report)
+	return nil
+}
+
+func (req budgetRequest) hasSetValues() bool {
+	return req.MaxTokens != nil || req.MaxTurns != nil
+}
+
+func parseBudgetArgs(args []string) (budgetRequest, error) {
+	req := budgetRequest{Action: "show", Format: "text", Target: "user"}
+	rest := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("budget output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("budget target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("budget config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--max-tokens" || arg == "--tokens":
+			index++
+			if index >= len(args) {
+				return req, errors.New("budget max tokens is required")
+			}
+			value, err := parsePositiveInt(args[index], "budget max tokens")
+			if err != nil {
+				return req, err
+			}
+			req.MaxTokens = &value
+		case strings.HasPrefix(arg, "--max-tokens="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-tokens="), "budget max tokens")
+			if err != nil {
+				return req, err
+			}
+			req.MaxTokens = &value
+		case strings.HasPrefix(arg, "--tokens="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--tokens="), "budget max tokens")
+			if err != nil {
+				return req, err
+			}
+			req.MaxTokens = &value
+		case arg == "--max-turns" || arg == "--turns":
+			index++
+			if index >= len(args) {
+				return req, errors.New("budget max turns is required")
+			}
+			value, err := parsePositiveInt(args[index], "budget max turns")
+			if err != nil {
+				return req, err
+			}
+			req.MaxTurns = &value
+		case strings.HasPrefix(arg, "--max-turns="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-turns="), "budget max turns")
+			if err != nil {
+				return req, err
+			}
+			req.MaxTurns = &value
+		case strings.HasPrefix(arg, "--turns="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--turns="), "budget max turns")
+			if err != nil {
+				return req, err
+			}
+			req.MaxTurns = &value
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown budget flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "budget"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		if req.hasSetValues() {
+			req.Action = "set"
+		}
+		return req, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(rest[0])) {
+	case "status", "show", "list":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected budget argument %q", rest[1])
+		}
+		if req.hasSetValues() {
+			return req, errors.New("budget status does not accept set values")
+		}
+		req.Action = "show"
+	case "set":
+		req.Action = "set"
+		if err := parseBudgetSetArgs(&req, rest[1:]); err != nil {
+			return req, err
+		}
+	case "reset", "clear", "default":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected budget argument %q", rest[1])
+		}
+		if req.hasSetValues() {
+			return req, errors.New("budget reset does not accept set values")
+		}
+		req.Action = "reset"
+	default:
+		if len(rest) == 1 {
+			value, err := parsePositiveInt(rest[0], "budget max tokens")
+			if err == nil {
+				req.Action = "set"
+				req.MaxTokens = &value
+				return req, nil
+			}
+		}
+		return req, fmt.Errorf("unknown budget action %q", rest[0])
+	}
+	return req, nil
+}
+
+func parseBudgetSetArgs(req *budgetRequest, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if len(args) == 1 {
+		value, err := parsePositiveInt(args[0], "budget max tokens")
+		if err != nil {
+			return err
+		}
+		req.MaxTokens = &value
+		return nil
+	}
+	for index := 0; index < len(args); index += 2 {
+		if index+1 >= len(args) {
+			return fmt.Errorf("budget value is required for %q", args[index])
+		}
+		if err := assignBudgetSetValue(req, args[index], args[index+1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assignBudgetSetValue(req *budgetRequest, key string, raw string) error {
+	normalized := strings.ToLower(strings.TrimSpace(strings.TrimLeft(key, "-")))
+	switch normalized {
+	case "max-tokens", "tokens":
+		value, err := parsePositiveInt(raw, "budget max tokens")
+		if err != nil {
+			return err
+		}
+		req.MaxTokens = &value
+	case "max-turns", "turns":
+		value, err := parsePositiveInt(raw, "budget max turns")
+		if err != nil {
+			return err
+		}
+		req.MaxTurns = &value
+	default:
+		return fmt.Errorf("unknown budget set field %q", key)
+	}
+	return nil
+}
+
+func buildBudgetReport(req budgetRequest, previous *budgetSnapshot, cfg config.Config) budgetReport {
+	current := effectiveBudget(cfg)
+	target := req.Target
+	if req.Path == "" {
+		target = ""
+	}
+	report := budgetReport{
+		Kind:      "budget",
+		Action:    req.Action,
+		Status:    "ok",
+		MaxTokens: current.MaxTokens,
+		MaxTurns:  current.MaxTurns,
+		Path:      req.Path,
+		Target:    target,
+		Previous:  previous,
+	}
+	switch req.Action {
+	case "set":
+		report.Message = "Token budget preference saved."
+	case "reset":
+		report.Message = "Token budget preference cleared; defaults or higher-priority config will be used."
+	default:
+		report.Message = "Effective token budget limits."
+	}
+	return report
+}
+
+func effectiveBudget(cfg config.Config) budgetSnapshot {
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+	maxTurns := cfg.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 8
+	}
+	return budgetSnapshot{MaxTokens: maxTokens, MaxTurns: maxTurns}
+}
+
+func renderBudgetReport(out io.Writer, report budgetReport) {
+	fmt.Fprintln(out, "Budget")
+	fmt.Fprintf(out, "  Max tokens       %d\n", report.MaxTokens)
+	fmt.Fprintf(out, "  Max turns        %d\n", report.MaxTurns)
+	if report.Previous != nil {
+		fmt.Fprintf(out, "  Previous tokens  %d\n", report.Previous.MaxTokens)
+		fmt.Fprintf(out, "  Previous turns   %d\n", report.Previous.MaxTurns)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
 }
 
 func (a *App) MaxTokens(args []string) error {
@@ -24165,7 +24488,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "bughunter", "cache", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
 		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
@@ -24600,6 +24923,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "budget":
+		return localCommandHelpSpec(
+			"budget",
+			"budget",
+			"codog budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--output-format text|json]",
+			"Budget\n\nUsage:\n  codog budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--output-format text|json]\n\nShows or changes token budget limits backed by `max_tokens` and `max_turns`.\n",
+			[]string{"max_tokens", "max_turns", "previous", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "rate-limit":
 		return localCommandHelpSpec(
 			"rate-limit",
@@ -24846,6 +25179,7 @@ Usage:
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]
   %s [flags] temperature [VALUE|set VALUE|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-turns [N]

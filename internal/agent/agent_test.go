@@ -177,6 +177,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "max_retries")
 	require.NotNil(t, report.MutatesWorkspace)
 	require.True(t, *report.MutatesWorkspace)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"budget", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "budget", report.Topic)
+	require.Equal(t, "budget", report.Command)
+	require.Contains(t, report.Help, "token budget")
+	require.Contains(t, report.OutputFields, "max_tokens")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -264,6 +274,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "rate-limit",
 		},
 		{
+			name:  "budget local help",
+			args:  []string{"--config", configPath, "budget", "--help", "--output-format", "json"},
+			topic: "budget",
+		},
+		{
 			name:  "rate-limit-options local help",
 			args:  []string{"--config", configPath, "rate-limit-options", "--help", "--output-format", "json"},
 			topic: "rate-limit-options",
@@ -331,6 +346,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "claude-test", report.Model)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
@@ -435,6 +451,57 @@ func TestRateLimitCommandSetsShowsAndResetsConfig(t *testing.T) {
 	stored, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.NotContains(t, string(stored), `"rate_limit"`)
+}
+
+func TestBudgetCommandSetsShowsAndResetsConfig(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"budget", "set",
+			"--path", configPath,
+			"--max-tokens", "8192",
+			"--max-turns", "12",
+			"--json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "budget"`)
+	require.Contains(t, out, `"action": "set"`)
+	require.Contains(t, out, `"max_tokens": 8192`)
+	require.Contains(t, out, `"max_turns": 12`)
+
+	stored, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"max_tokens": 8192`)
+	require.Contains(t, string(stored), `"max_turns": 12`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "budget", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "budget"`)
+	require.Contains(t, out, `"action": "show"`)
+	require.Contains(t, out, `"max_tokens": 8192`)
+	require.Contains(t, out, `"max_turns": 12`)
+	require.True(t, commandAcceptsGlobalOutputFormat("budget"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "budget", "reset", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "reset"`)
+	require.Contains(t, out, `"previous"`)
+
+	stored, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(stored), `"max_tokens"`)
+	require.NotContains(t, string(stored), `"max_turns"`)
 }
 
 func TestUnknownCommandOutputContract(t *testing.T) {
