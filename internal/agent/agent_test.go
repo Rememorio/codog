@@ -1068,6 +1068,17 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "interactive_only", slashReport.ErrorKind)
 	require.Equal(t, "/compact", slashReport.Command)
 	require.Contains(t, slashReport.Hint, "--resume")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/clear"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "interactive_only", slashReport.ErrorKind)
+	require.Equal(t, "/clear", slashReport.Command)
+	require.Contains(t, slashReport.Hint, "--resume")
 }
 
 func TestResumedSlashCLIContracts(t *testing.T) {
@@ -1173,13 +1184,45 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "four\n", string(copied))
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/commit"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/clear"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	var exitErr *ExitError
 	require.ErrorAs(t, err, &exitErr)
 	require.True(t, exitErr.Silent)
 	var slashReport slashErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "confirmation_required", slashReport.ErrorKind)
+	opened, err = store.Open("resume-slash")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 3)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/clear", "--confirm"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var clearReport clearResumedReport
+	require.NoError(t, json.Unmarshal([]byte(out), &clearReport))
+	require.Equal(t, "clear", clearReport.Kind)
+	require.Equal(t, "clear_session", clearReport.Action)
+	require.Equal(t, "resume-slash", clearReport.SessionID)
+	require.Equal(t, 3, clearReport.OriginalMessages)
+	require.Equal(t, 0, clearReport.RemainingMessages)
+	require.Equal(t, 3, clearReport.RemovedMessages)
+	require.FileExists(t, clearReport.Backup)
+	backupData, err := os.ReadFile(clearReport.Backup)
+	require.NoError(t, err)
+	require.Contains(t, string(backupData), `"text":"four"`)
+	opened, err = store.Open("resume-slash")
+	require.NoError(t, err)
+	require.Empty(t, opened.Messages)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/commit"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/commit", slashReport.Command)

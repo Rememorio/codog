@@ -17664,6 +17664,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Status(resumeSlashArgs("status", args, format), resumed)
 	case "/statusline":
 		return a.Statusline(resumeSlashArgs("statusline", args, format), resumed)
+	case "/clear":
+		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
 		return a.Compact(resumeSlashArgs("compact", args, format), resumed)
 	case "/session":
@@ -17767,7 +17769,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -17789,7 +17791,7 @@ func directSlashInteractiveOnly(name string) bool {
 
 func directSlashResumeSafe(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/compact", "/resume":
+	case "/clear", "/compact", "/resume":
 		return true
 	default:
 		return false
@@ -25269,6 +25271,24 @@ type clearCommandReport struct {
 	ContinueCommands []string `json:"continue_commands"`
 }
 
+type clearResumedRequest struct {
+	Format    string
+	SessionID string
+	Confirm   bool
+}
+
+type clearResumedReport struct {
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	SessionID         string `json:"session_id"`
+	Path              string `json:"path"`
+	Backup            string `json:"backup"`
+	OriginalMessages  int    `json:"original_messages"`
+	RemainingMessages int    `json:"remaining_messages"`
+	RemovedMessages   int    `json:"removed_messages"`
+}
+
 func (a *App) ClearCommand(args []string) error {
 	format, err := parseClearCommandFormat(args)
 	if err != nil {
@@ -25301,6 +25321,116 @@ func (a *App) ClearCommand(args []string) error {
 	}
 	renderClearCommand(a.Out, report)
 	return nil
+}
+
+func (a *App) ClearResumedSession(args []string, overrides config.FlagOverrides) error {
+	req, err := parseClearResumedArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if !req.Confirm {
+		return renderClearConfirmationRequired(a.Out, req.Format)
+	}
+	sess, err := a.Sessions.Open(req.SessionID)
+	if err != nil {
+		return err
+	}
+	backup, err := writeSessionClearBackup(sess.Path, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	result, err := a.Sessions.ReplaceMessages(sess, nil)
+	if err != nil {
+		return err
+	}
+	report := clearResumedReport{
+		Kind:              "clear",
+		Action:            "clear_session",
+		Status:            "ok",
+		SessionID:         result.SessionID,
+		Path:              result.Path,
+		Backup:            backup,
+		OriginalMessages:  result.OriginalMessages,
+		RemainingMessages: result.RemainingMessages,
+		RemovedMessages:   result.RemovedMessages,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderClearResumed(a.Out, report)
+	return nil
+}
+
+func parseClearResumedArgs(args []string, overrides config.FlagOverrides) (clearResumedRequest, error) {
+	req := clearResumedRequest{Format: "text", SessionID: "latest"}
+	if strings.TrimSpace(overrides.Resume) != "" {
+		req.SessionID = overrides.Resume
+	}
+	if strings.TrimSpace(overrides.SessionID) != "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--confirm":
+			req.Confirm = true
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("clear output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("clear session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("clear resume id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		default:
+			return req, fmt.Errorf("unknown clear argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "clear"); err != nil {
+		return req, err
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func renderClearConfirmationRequired(out io.Writer, format string) error {
+	report := slashErrorReport{
+		Kind:      "confirmation_required",
+		ErrorKind: "confirmation_required",
+		Status:    "error",
+		Command:   "/clear",
+		Message:   "resumed /clear requires --confirm before modifying the selected session",
+		Hint:      "Run `codog --resume SESSION /clear --confirm` to clear that saved session after writing a backup.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
 }
 
 func parseClearCommandFormat(args []string) (string, error) {
@@ -25343,6 +25473,51 @@ func renderClearCommand(out io.Writer, report clearCommandReport) {
 			fmt.Fprintf(out, "    %s\n", command)
 		}
 	}
+}
+
+func renderClearResumed(out io.Writer, report clearResumedReport) {
+	fmt.Fprintln(out, "Session Cleared")
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Original         %d\n", report.OriginalMessages)
+	fmt.Fprintf(out, "  Remaining        %d\n", report.RemainingMessages)
+	fmt.Fprintf(out, "  Removed          %d\n", report.RemovedMessages)
+	fmt.Fprintf(out, "  Backup           %s\n", report.Backup)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
+}
+
+func writeSessionClearBackup(path string, at time.Time) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for attempt := 0; attempt < 100; attempt++ {
+		backup := sessionClearBackupPath(path, at, attempt)
+		file, err := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, writeErr := file.Write(data)
+		closeErr := file.Close()
+		if writeErr != nil {
+			return "", writeErr
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+		return backup, nil
+	}
+	return "", fmt.Errorf("could not create a unique clear backup for %s", path)
+}
+
+func sessionClearBackupPath(path string, at time.Time, attempt int) string {
+	suffix := ".clear-backup-" + at.UTC().Format("20060102T150405Z")
+	if attempt > 0 {
+		suffix += fmt.Sprintf("-%d", attempt)
+	}
+	return path + suffix
 }
 
 func (a *App) BackfillSessions(args []string) error {
@@ -30524,7 +30699,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			Topic:                   "clear",
 			Command:                 "clear",
 			Usage:                   "codog clear [--confirm] [--output-format text|json]",
-			Text:                    "Clear\n\nUsage:\n  codog clear [--confirm] [--output-format text|json]\n\nCreates and reports a fresh empty local session id without deleting existing session JSONL files. In an interactive REPL, `/clear` switches the active conversation to a fresh session.\n",
+			Text:                    "Clear\n\nUsage:\n  codog clear [--confirm] [--output-format text|json]\n  codog --resume ID|latest /clear --confirm [--output-format text|json]\n\nCreates and reports a fresh empty local session id without deleting existing session JSONL files. In an interactive REPL, `/clear` switches the active conversation to a fresh session. With `--resume`, `/clear --confirm` clears that saved session after writing a backup.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -30545,7 +30720,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			Topic:                   "resume",
 			Command:                 "resume",
 			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session. Help is local and does not open a session.\n",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
