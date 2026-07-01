@@ -18103,6 +18103,7 @@ func codogCapabilityFeatures() []string {
 		"approval_tokens",
 		"auto_compaction",
 		"background_log_offsets",
+		"background_output_blocking",
 		"bash_output_contract",
 		"bash_output_runtime_fields",
 		"bash_persisted_output",

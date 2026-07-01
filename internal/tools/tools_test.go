@@ -348,6 +348,7 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 		Stdout           string `json:"stdout"`
 		Interrupted      bool   `json:"interrupted"`
 		NoOutputExpected bool   `json:"noOutputExpected"`
+		NextOffset       int64  `json:"nextOffset"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &outputPayload))
 	require.Equal(t, payload.Task.ID, outputPayload.BackgroundTaskID)
@@ -356,6 +357,23 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	require.Equal(t, outputPayload.Output, outputPayload.Stdout)
 	require.False(t, outputPayload.Interrupted)
 	require.False(t, outputPayload.NoOutputExpected)
+	out, err = registry.Execute(ctx, "BashOutput", []byte(fmt.Sprintf(`{"bash_id":%q,"offset":%d,"block":true,"timeout":20}`, payload.Task.ID, outputPayload.NextOffset)), nil)
+	require.NoError(t, err)
+	var timedOutOutput struct {
+		Stdout     string `json:"stdout"`
+		Offset     int64  `json:"offset"`
+		NextOffset int64  `json:"nextOffset"`
+		BytesRead  int    `json:"bytesRead"`
+		TimedOut   bool   `json:"timedOut"`
+		TimeoutMS  int    `json:"timeoutMs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &timedOutOutput))
+	require.Empty(t, timedOutOutput.Stdout)
+	require.Equal(t, outputPayload.NextOffset, timedOutOutput.Offset)
+	require.Equal(t, outputPayload.NextOffset, timedOutOutput.NextOffset)
+	require.Equal(t, 0, timedOutOutput.BytesRead)
+	require.True(t, timedOutOutput.TimedOut)
+	require.Equal(t, 20, timedOutOutput.TimeoutMS)
 	out, err = registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`","offset":0,"limit":4}`), nil)
 	require.NoError(t, err)
 	var offsetOutput struct {
@@ -369,6 +387,25 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	require.Equal(t, int64(0), offsetOutput.Offset)
 	require.Equal(t, int64(4), offsetOutput.NextOffset)
 	require.Equal(t, 4, offsetOutput.BytesRead)
+	out, err = registry.Execute(ctx, "Bash", []byte(`{"command":"sleep 0.1; printf delayed-bash","run_in_background":true}`), nil)
+	require.NoError(t, err)
+	var delayed struct {
+		Task background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &delayed))
+	out, err = registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+delayed.Task.ID+`","offset":0,"limit":64,"block":true,"timeout_ms":2000}`), nil)
+	require.NoError(t, err)
+	var blockedOutput struct {
+		Stdout     string `json:"stdout"`
+		NextOffset int64  `json:"nextOffset"`
+		TimedOut   bool   `json:"timedOut"`
+		TimeoutMS  int    `json:"timeoutMs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &blockedOutput))
+	require.Equal(t, "delayed-bash", blockedOutput.Stdout)
+	require.Greater(t, blockedOutput.NextOffset, int64(0))
+	require.False(t, blockedOutput.TimedOut)
+	require.Equal(t, 2000, blockedOutput.TimeoutMS)
 	out, err = registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`","limit_bytes":4}`), nil)
 	require.NoError(t, err)
 	var limitedOutput struct {
@@ -2116,6 +2153,24 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.Equal(t, int64(0), offsetOutput.Offset)
 	require.Equal(t, int64(4), offsetOutput.NextOffset)
 	require.Equal(t, 4, offsetOutput.BytesRead)
+
+	delayedOut, err := TaskCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"sleep 0.1; printf delayed-task","kind":"delayed","session_id":"session-2"}`))
+	require.NoError(t, err)
+	var delayedTask background.Task
+	require.NoError(t, json.Unmarshal([]byte(delayedOut), &delayedTask))
+	outputOut, err = TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+delayedTask.ID+`","offset":0,"limit":64,"block":true,"timeout_ms":2000}`))
+	require.NoError(t, err)
+	var blockedOutput struct {
+		Output     string `json:"output"`
+		NextOffset int64  `json:"nextOffset"`
+		TimedOut   bool   `json:"timedOut"`
+		TimeoutMS  int    `json:"timeoutMs"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(outputOut), &blockedOutput))
+	require.Equal(t, "delayed-task", blockedOutput.Output)
+	require.Greater(t, blockedOutput.NextOffset, int64(0))
+	require.False(t, blockedOutput.TimedOut)
+	require.Equal(t, 2000, blockedOutput.TimeoutMS)
 
 	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`","message":"review logs"}`))
 	require.NoError(t, err)

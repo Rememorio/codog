@@ -2526,6 +2526,9 @@ func (BashOutputTool) Definition() anthropic.ToolDefinition {
 				"limit_bytes": map[string]any{"type": "integer", "minimum": 1},
 				"limit":       map[string]any{"type": "integer", "minimum": 1},
 				"offset":      map[string]any{"type": "integer", "minimum": 0},
+				"block":       map[string]any{"type": "boolean"},
+				"timeout":     map[string]any{"type": "integer", "minimum": 0},
+				"timeout_ms":  map[string]any{"type": "integer", "minimum": 0},
 			},
 			"additionalProperties": false,
 		},
@@ -2542,6 +2545,9 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		LimitBytes int64  `json:"limit_bytes"`
 		Limit      int64  `json:"limit"`
 		Offset     *int64 `json:"offset"`
+		Block      bool   `json:"block"`
+		Timeout    int    `json:"timeout"`
+		TimeoutMS  int    `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -2565,28 +2571,16 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err := requireBashTask(task); err != nil {
 		return "", err
 	}
-	var output string
-	var appliedOffset, nextOffset, logSize int64
-	if info, statErr := os.Stat(task.LogPath); statErr == nil {
-		logSize = info.Size()
+	logRead, task, err := readBackgroundLog(store, id, task, backgroundLogReadOptions{
+		LimitBytes: limitBytes,
+		Offset:     payload.Offset,
+		Block:      payload.Block,
+		TimeoutMS:  firstPositiveInt(payload.TimeoutMS, payload.Timeout),
+	})
+	if err != nil {
+		return "", err
 	}
-	if payload.Offset != nil {
-		if *payload.Offset < 0 {
-			return "", errors.New("offset must be non-negative")
-		}
-		nextOffset, output, err = store.LogRange(id, *payload.Offset, limitBytes)
-		if err != nil {
-			return "", err
-		}
-		appliedOffset = nextOffset - int64(len([]byte(output)))
-	} else {
-		output, err = store.Logs(id, limitBytes)
-		if err != nil {
-			return "", err
-		}
-		nextOffset = logSize
-		appliedOffset = maxInt64(nextOffset-int64(len([]byte(output))), 0)
-	}
+	output := logRead.Output
 	outputText, outputTruncated := truncateBashOutput(output)
 	result := bashOutputContractFields(false)
 	result["bash_id"] = id
@@ -2600,9 +2594,11 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	result["rawOutputPath"] = task.LogPath
 	result["interrupted"] = task.Status == "stopped"
 	result["noOutputExpected"] = bashNoOutputExpected(outputText, "")
-	result["offset"] = appliedOffset
-	result["nextOffset"] = nextOffset
-	result["bytesRead"] = len([]byte(output))
+	result["offset"] = logRead.Offset
+	result["nextOffset"] = logRead.NextOffset
+	result["bytesRead"] = logRead.BytesRead
+	result["timedOut"] = logRead.TimedOut
+	result["timeoutMs"] = logRead.TimeoutMS
 	if task.ExitCode != nil {
 		result["exit_code"] = *task.ExitCode
 		if interpretation := bashReturnCodeInterpretation(*task.ExitCode, false, task.Command); interpretation != "" {
@@ -2692,6 +2688,102 @@ func requireBashTask(task background.Task) error {
 		return fmt.Errorf("task %s is not a bash task", task.ID)
 	}
 	return nil
+}
+
+type backgroundLogReadOptions struct {
+	LimitBytes int64
+	Offset     *int64
+	Block      bool
+	TimeoutMS  int
+}
+
+type backgroundLogReadResult struct {
+	Output     string
+	Offset     int64
+	NextOffset int64
+	BytesRead  int
+	TimedOut   bool
+	TimeoutMS  int
+}
+
+func readBackgroundLog(store background.Store, id string, task background.Task, options backgroundLogReadOptions) (backgroundLogReadResult, background.Task, error) {
+	if options.LimitBytes <= 0 {
+		options.LimitBytes = 64 * 1024
+	}
+	if options.Offset != nil && *options.Offset < 0 {
+		return backgroundLogReadResult{}, task, errors.New("offset must be non-negative")
+	}
+	if options.Block && options.TimeoutMS <= 0 {
+		options.TimeoutMS = 30_000
+	}
+	if options.TimeoutMS > 300_000 {
+		return backgroundLogReadResult{}, task, errors.New("timeout must be 300000 ms or less")
+	}
+
+	deadline := time.Time{}
+	if options.Block {
+		deadline = time.Now().Add(time.Duration(options.TimeoutMS) * time.Millisecond)
+	}
+	for {
+		result, err := readBackgroundLogOnce(store, id, task, options)
+		if err != nil {
+			return result, task, err
+		}
+		refreshed, statusErr := store.Status(id)
+		if statusErr == nil {
+			task = refreshed
+		}
+		result.TimeoutMS = options.TimeoutMS
+		if !options.Block || result.Output != "" || task.Status != "running" {
+			return result, task, nil
+		}
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			result.TimedOut = true
+			return result, task, nil
+		}
+		sleep := 50 * time.Millisecond
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				result.TimedOut = true
+				return result, task, nil
+			}
+			if remaining < sleep {
+				sleep = remaining
+			}
+		}
+		time.Sleep(sleep)
+	}
+}
+
+func readBackgroundLogOnce(store background.Store, id string, task background.Task, options backgroundLogReadOptions) (backgroundLogReadResult, error) {
+	var output string
+	var appliedOffset, nextOffset, logSize int64
+	if info, statErr := os.Stat(task.LogPath); statErr == nil {
+		logSize = info.Size()
+	}
+	if options.Offset != nil {
+		var err error
+		nextOffset, output, err = store.LogRange(id, *options.Offset, options.LimitBytes)
+		if err != nil {
+			return backgroundLogReadResult{}, err
+		}
+		appliedOffset = nextOffset - int64(len([]byte(output)))
+	} else {
+		var err error
+		output, err = store.Logs(id, options.LimitBytes)
+		if err != nil {
+			return backgroundLogReadResult{}, err
+		}
+		nextOffset = logSize
+		appliedOffset = maxInt64(nextOffset-int64(len([]byte(output))), 0)
+	}
+	return backgroundLogReadResult{
+		Output:     output,
+		Offset:     appliedOffset,
+		NextOffset: nextOffset,
+		BytesRead:  len([]byte(output)),
+	}, nil
 }
 
 func shellCommandLine(command string, args []string) string {
@@ -6732,6 +6824,7 @@ func (TaskOutputTool) Definition() anthropic.ToolDefinition {
 				"offset":      map[string]any{"type": "integer", "minimum": 0},
 				"block":       map[string]any{"type": "boolean"},
 				"timeout":     map[string]any{"type": "integer", "minimum": 0},
+				"timeout_ms":  map[string]any{"type": "integer", "minimum": 0},
 			},
 			"required":             []string{"id"},
 			"additionalProperties": false,
@@ -6749,6 +6842,9 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		LimitBytes int64  `json:"limit_bytes"`
 		Limit      int64  `json:"limit"`
 		Offset     *int64 `json:"offset"`
+		Block      bool   `json:"block"`
+		Timeout    int    `json:"timeout"`
+		TimeoutMS  int    `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -6769,27 +6865,14 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	var output string
-	var appliedOffset, nextOffset, logSize int64
-	if info, statErr := os.Stat(task.LogPath); statErr == nil {
-		logSize = info.Size()
-	}
-	if payload.Offset != nil {
-		if *payload.Offset < 0 {
-			return "", errors.New("offset must be non-negative")
-		}
-		nextOffset, output, err = store.LogRange(id, *payload.Offset, limitBytes)
-		if err != nil {
-			return "", err
-		}
-		appliedOffset = nextOffset - int64(len([]byte(output)))
-	} else {
-		output, err = store.Logs(id, limitBytes)
-		if err != nil {
-			return "", err
-		}
-		nextOffset = logSize
-		appliedOffset = maxInt64(nextOffset-int64(len([]byte(output))), 0)
+	logRead, task, err := readBackgroundLog(store, id, task, backgroundLogReadOptions{
+		LimitBytes: limitBytes,
+		Offset:     payload.Offset,
+		Block:      payload.Block,
+		TimeoutMS:  firstPositiveInt(payload.TimeoutMS, payload.Timeout),
+	})
+	if err != nil {
+		return "", err
 	}
 	return pretty(map[string]any{
 		"id":         id,
@@ -6797,10 +6880,12 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		"status":     task.Status,
 		"exit_code":  task.ExitCode,
 		"error":      task.Error,
-		"output":     output,
-		"offset":     appliedOffset,
-		"nextOffset": nextOffset,
-		"bytesRead":  len([]byte(output)),
+		"output":     logRead.Output,
+		"offset":     logRead.Offset,
+		"nextOffset": logRead.NextOffset,
+		"bytesRead":  logRead.BytesRead,
+		"timedOut":   logRead.TimedOut,
+		"timeoutMs":  logRead.TimeoutMS,
 	}), nil
 }
 
@@ -7740,6 +7825,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func imageMediaType(path string, data []byte) (string, bool) {
