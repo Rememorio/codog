@@ -51,6 +51,7 @@ import (
 	"github.com/Rememorio/codog/internal/sessionname"
 	"github.com/Rememorio/codog/internal/skills"
 	localstatus "github.com/Rememorio/codog/internal/status"
+	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/undo"
@@ -703,6 +704,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	toolDetailsSlash, ok := capabilityReportSlash(report, "/tool-details")
 	require.True(t, ok)
 	require.True(t, toolDetailsSlash.ResumeSupported)
+	cronSlash, ok := capabilityReportSlash(report, "/cron")
+	require.True(t, ok)
+	require.True(t, cronSlash.ResumeSupported)
+	teamSlash, ok := capabilityReportSlash(report, "/team")
+	require.True(t, ok)
+	require.True(t, teamSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1282,6 +1289,13 @@ func risky(value any) {
 	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("assistant", "two")))
 	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("user", "three")))
 	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("assistant", "four")))
+	cronEntry, err := cron.NewStore(configHome).Create("@daily", "resume cron", "daily check")
+	require.NoError(t, err)
+	teamEntry, err := team.NewStore(configHome).Create("resume-team", []team.TaskSpec{{
+		Prompt: "check missing worker",
+		TaskID: "missing-task",
+	}}, []string{"missing-task"})
+	require.NoError(t, err)
 
 	oldWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -1798,6 +1812,60 @@ func risky(value any) {
 	require.Empty(t, resumedTaskBoard.Blocked)
 	require.Empty(t, resumedTaskBoard.Finished)
 
+	out, err = runResumedJSON("/cron", "list")
+	require.NoError(t, err)
+	var resumedCronList cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCronList))
+	require.Equal(t, "cron", resumedCronList.Kind)
+	require.Equal(t, "list", resumedCronList.Action)
+	require.Equal(t, 1, resumedCronList.Count)
+	require.Equal(t, cronEntry.ID, resumedCronList.Entries[0].ID)
+
+	out, err = runResumedJSON("/cron", "due", "--now", "2026-07-01T00:00:00Z")
+	require.NoError(t, err)
+	var resumedCronDue cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCronDue))
+	require.Equal(t, "due", resumedCronDue.Action)
+	require.Equal(t, 1, resumedCronDue.Count)
+	require.Equal(t, cronEntry.ID, resumedCronDue.Entries[0].ID)
+
+	out, err = runResumedJSON("/team", "list")
+	require.NoError(t, err)
+	var resumedTeamList teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeamList))
+	require.Equal(t, "team", resumedTeamList.Kind)
+	require.Equal(t, "list", resumedTeamList.Action)
+	require.Equal(t, 1, resumedTeamList.Count)
+	require.Equal(t, teamEntry.ID, resumedTeamList.Teams[0].ID)
+
+	out, err = runResumedJSON("/team", "get", teamEntry.ID)
+	require.NoError(t, err)
+	var resumedTeamGet teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeamGet))
+	require.Equal(t, "get", resumedTeamGet.Action)
+	require.Equal(t, teamEntry.ID, resumedTeamGet.Team.ID)
+
+	out, err = runResumedJSON("/team", "status", teamEntry.ID)
+	require.NoError(t, err)
+	var resumedTeamStatus teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeamStatus))
+	require.Equal(t, "status", resumedTeamStatus.Action)
+	require.Equal(t, "degraded", resumedTeamStatus.Team.Status)
+	require.Equal(t, []string{"missing-task"}, resumedTeamStatus.MissingTasks)
+
+	out, err = runResumedJSON("/team", "logs", teamEntry.ID)
+	require.NoError(t, err)
+	var resumedTeamLogs teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeamLogs))
+	require.Equal(t, "logs", resumedTeamLogs.Action)
+	require.Len(t, resumedTeamLogs.Logs, 1)
+	require.NotEmpty(t, resumedTeamLogs.Logs[0].Error)
+
+	out, err = runResumedJSON("/team", "watch", teamEntry.ID, "--max-events", "1")
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind":"team_watch"`)
+	require.Contains(t, out, `"type":"error"`)
+
 	out, err = runResumedJSON("/metrics")
 	require.NoError(t, err)
 	var resumedMetrics metricsReport
@@ -2035,6 +2103,12 @@ func risky(value any) {
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
+		{Command: "/cron", Args: []string{"create", "@daily", "check"}, Report: "/cron create"},
+		{Command: "/cron", Args: []string{"delete", cronEntry.ID}, Report: "/cron delete"},
+		{Command: "/cron", Args: []string{"mark-run", cronEntry.ID}, Report: "/cron mark-run"},
+		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
+		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
+		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},

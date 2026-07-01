@@ -19867,6 +19867,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedMarketplaceSlash(resumeSlashArgs("plugins", args, format), format)
 	case "/background", "/tasks", "/bashes":
 		return a.runResumedBackgroundSlash(args, resumed, format)
+	case "/cron":
+		return a.runResumedCronSlash(resumeSlashArgs("cron", args, format), format)
+	case "/team":
+		return a.runResumedTeamSlash(resumeSlashArgs("team", args, format), format)
 	case "/files":
 		return a.Files(resumeSlashArgs("files", args, format))
 	case "/search":
@@ -20032,6 +20036,32 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 			command += " " + action
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func (a *App) runResumedCronSlash(args []string, format string) error {
+	req, err := parseCronArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "due":
+		return a.Cron(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/cron", req.Action), format)
+	}
+}
+
+func (a *App) runResumedTeamSlash(args []string, format string) error {
+	req, err := parseTeamArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "get", "status", "logs", "watch":
+		return a.Team(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/team", req.Action), format)
 	}
 }
 
