@@ -1,41 +1,32 @@
 # Codog
 
-Codog is a Go-native coding-agent CLI for working inside a repository. It aims
-to keep the Claude Code-style workflow familiar while making the runtime
-local-first, inspectable, and easy to ship as a single binary.
+Codog is a Go-native coding-agent CLI for repository work: ask a question,
+make an edit, inspect a diff, resume a session, or hand the same runtime to a
+TUI, MCP server, hook, or automation.
 
-Codog is independent software and is not affiliated with Anthropic. Claude
-Code compatibility is a product direction, not a promise that every behavior is
-identical today.
+It follows the broad shape of Claude Code while keeping the implementation
+local-first, auditable, and easy to ship as a single binary. Codog is
+independent software and is not affiliated with Anthropic.
+
+> Status: Codog is pre-1.0. The core loop works, but command names,
+> configuration schema, and advanced compatibility behavior can still change.
 
 ## Why Codog
 
-Most coding agents hide a lot of important behavior behind a large runtime.
-Codog takes the opposite shape:
+Most coding agents are useful but hard to inspect. Codog optimizes for a
+smaller, Go-native runtime with clear boundaries:
 
-- one binary for the main CLI, REPL, TUI, local tools, sessions, and extension
-  surfaces;
+- one binary for the CLI, REPL, TUI, local tools, sessions, MCP, hooks, and
+  extension surfaces;
 - explicit permission modes before tools read, write, edit, search, or run
   commands in a workspace;
 - durable JSONL sessions that can be resumed, exported, compacted, inspected,
   and used by automation;
-- Go package boundaries for provider IO, workspace IO, permissions, hooks,
+- package-level separation for provider IO, workspace IO, permissions, hooks,
   MCP, plugins, sessions, and terminal UI.
 
-The result is a coding-agent runtime that should be practical to use locally
-and practical to audit as it grows.
-
-## Current Status
-
-Codog is pre-1.0. The repository already contains the core agent loop, one-shot
-prompts, REPL, Bubble Tea TUI, Anthropic-compatible streaming,
-OpenAI-compatible provider configuration, local tools, permission checks,
-JSONL session storage, slash commands, hooks, skills, MCP, plugin loading, and
-several repository workflow helpers.
-
-Some advanced compatibility, sandboxing, editor, remote, multi-agent, and
-enterprise surfaces are still evolving. Treat command output and configuration
-schemas as unstable until the project cuts a 1.0 release.
+The goal is not to clone every surface at once. The goal is a coding-agent
+runtime that is practical to use locally and practical to audit as it grows.
 
 ## Quick Start
 
@@ -47,49 +38,53 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 codog -p "summarize this repository"
 ```
 
-For a checked-out copy:
+For a checkout:
 
 ```bash
 go build ./cmd/codog
 ./codog repl
 ```
 
-Useful entry points after installation:
+Common entry points:
 
+- `codog -p "..."` runs one prompt and exits.
 - `codog repl` starts an interactive repository session.
-- `codog tui` opens the terminal UI.
+- `codog tui` opens the Bubble Tea terminal UI.
 - `codog doctor` checks auth, config, git, hooks, MCP, and local runtime state.
-- `codog capabilities --json` reports the machine-readable command, tool, and
-  feature surface for this build.
 
-## Core Workflow
+Use `codog help` for command help and `codog capabilities --json` when another
+tool needs the machine-readable surface area.
 
-Codog keeps the agent loop deliberately small:
+## What Works Today
 
-1. Load configuration, repository instructions, selected workspace context, and
-   session state.
-2. Stream a model response from the configured provider.
-3. Execute approved tools for files, search, edits, shell commands, git, todos,
-   MCP, hooks, reviews, or background work.
-4. Append model and tool events to a local JSONL session.
+Codog already includes the main pieces needed for local agent work:
 
-That loop is the same whether the user starts from a one-shot prompt, a REPL
-session, the TUI, a slash command, or a local automation surface.
-
-## Capability Map
-
-| Area | What is in the codebase today |
+| Area | Highlights |
 | --- | --- |
-| Agent interfaces | One-shot prompts, side questions, REPL, Bubble Tea TUI, slash commands. |
-| Model providers | Anthropic-compatible streaming and OpenAI-compatible configuration. |
+| Interfaces | One-shot prompts, side questions, REPL, Bubble Tea TUI, slash commands. |
+| Providers | Anthropic-compatible streaming and OpenAI-compatible provider configuration. |
 | Workspace tools | Read, write, edit, multi-edit, grep, glob, bash, git, todo, diagnostics, context, and review helpers. |
 | Permissions | Read-only, workspace-write, prompt, allow rules, broad-CWD guards, audit events, and undo snapshots. |
-| Sessions | JSONL history, resume, list/show/fork/delete, export/share/copy, rewind, compaction, cost, usage, and metrics. |
-| Customization | Repository instructions, output styles, custom commands, prompt templates, skills, hooks, and plugins. |
-| Integrations | MCP client/server support, GitHub-oriented helpers, editor bridge surfaces, local API, background tasks, cron, and updater scaffolding. |
+| Sessions | JSONL history, resume, list/show/fork/delete, export/share/copy, rewind, compaction, cost, usage, metrics, and insights. |
+| Extensibility | Repository instructions, output styles, custom commands, prompt templates, skills, hooks, MCP, and plugins. |
+| Automation | Local API, background tasks, cron, team workers, GitHub PR helpers, editor bridge surfaces, and updater scaffolding. |
 
-The README intentionally does not mirror every CLI flag. Use `codog help` for
-human help and `codog capabilities --json` for automation.
+Some larger surfaces are intentionally still rough: deep IDE behavior, remote
+collaboration, marketplace UX, enterprise policy, sandbox parity, and complete
+Claude Code compatibility all need more hardening before a stable release.
+
+## Day-To-Day Flow
+
+A typical Codog session stays close to the repository:
+
+1. Open a project and set the permission mode you want.
+2. Ask from a one-shot prompt, the REPL, or the TUI.
+3. Review and approve tool actions when needed.
+4. Let Codog edit files, run checks, inspect git state, or update todos.
+5. Resume, export, compact, or rewind the JSONL session later.
+
+Codog does not require a database or hosted service for this loop. Session
+state and project-local customization stay on disk.
 
 ## Configuration
 
@@ -100,7 +95,7 @@ Configuration is layered from broad defaults to local overrides:
 3. uncommitted local overrides in `.codog.local.json`;
 4. environment variables and CLI flags.
 
-A small project config can be enough:
+Minimal project config:
 
 ```json
 {
@@ -114,9 +109,8 @@ A small project config can be enough:
 }
 ```
 
-Provider keys can be supplied through environment variables such as
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, through config files, or through the
-CLI configuration commands.
+Provider credentials can come from environment variables such as
+`ANTHROPIC_API_KEY`, from config files, or from `codog api-key`.
 
 ## Safety Model
 
@@ -125,11 +119,11 @@ Codog treats repository access as sensitive local automation.
 - `read-only` is for inspection, explanation, and review.
 - `workspace-write` allows edits inside the selected workspace.
 - `prompt` asks before risky tool actions.
-- `danger-full-access` is intentionally explicit and should be reserved for
-  trusted local workflows.
+- `danger-full-access` is explicit and should be reserved for trusted local
+  workflows.
 
 Permission rules, command validation, audit logs, undo snapshots, and workspace
-scope checks are meant to make tool execution visible and recoverable.
+scope checks are designed to make tool execution visible and recoverable.
 
 ## Extending Codog
 
@@ -144,8 +138,8 @@ Codog can be shaped by files that live with a repository:
 - plugins that bundle commands, skills, agents, hooks, MCP servers, tools, and
   marketplace metadata.
 
-These extension points are designed to keep project-specific behavior close to
-the project instead of burying it in a global agent profile.
+These extension points keep project-specific behavior close to the project
+instead of hiding it in a global agent profile.
 
 ## Repository Layout
 
@@ -158,11 +152,11 @@ the project instead of burying it in a global agent profile.
 | `internal/session` | JSONL session storage, resume, export, and compaction support. |
 | `internal/mcp`, `internal/mcpserver` | MCP client and server support. |
 | `internal/tui` | Bubble Tea terminal UI. |
-| `internal/control`, `internal/bridge` | Local API, remote-control, and editor bridge surfaces. |
+| `internal/control`, `internal/bridge` | Local API, remote control, and editor bridge surfaces. |
 
 ## Development
 
-The normal validation loop is short:
+The normal validation loop is intentionally short:
 
 ```bash
 go test ./...
