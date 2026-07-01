@@ -15223,6 +15223,7 @@ type memoryRequest struct {
 	Action string
 	Format string
 	Editor string
+	Limit  int
 	NoOpen bool
 	Rest   []string
 }
@@ -15269,6 +15270,20 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 			return nil
 		}
 		memory.RenderAppendReport(out, report)
+	case "search", "relevant":
+		if len(req.Rest) == 0 {
+			return errors.New("usage: codog memory search QUERY [--limit N] [--json]")
+		}
+		report, err := memory.Search(workspace, strings.Join(req.Rest, " "), req.Limit)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderSearchReport(out, report)
 	case "path":
 		report, err := memory.Path(workspace, strings.Join(req.Rest, " "))
 		if err != nil {
@@ -15309,7 +15324,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 }
 
 func parseMemoryArgs(args []string) (memoryRequest, error) {
-	req := memoryRequest{Action: "list", Format: "text"}
+	req := memoryRequest{Action: "list", Format: "text", Limit: 20}
 	actionSet := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -15326,6 +15341,22 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 			req.Editor = args[i]
 		case strings.HasPrefix(arg, "--editor="):
 			req.Editor = strings.TrimPrefix(arg, "--editor=")
+		case arg == "--limit":
+			if i+1 >= len(args) {
+				return req, errors.New("memory limit is required")
+			}
+			i++
+			limit, err := strconv.Atoi(args[i])
+			if err != nil || limit <= 0 {
+				return req, fmt.Errorf("memory limit must be a positive integer")
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil || limit <= 0 {
+				return req, fmt.Errorf("memory limit must be a positive integer")
+			}
+			req.Limit = limit
 		case arg == "--output-format":
 			if i+1 >= len(args) {
 				return req, errors.New("memory output format is required")
@@ -15340,7 +15371,7 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 			if !actionSet {
 				action := strings.ToLower(arg)
 				switch action {
-				case "list", "show", "add", "path", "ensure", "edit":
+				case "list", "show", "add", "search", "relevant", "path", "ensure", "edit":
 					req.Action = action
 					actionSet = true
 					continue
@@ -29434,6 +29465,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Usage = "codog context-noninteractive [--session ID|--resume ID|latest] [--output-format text|json]"
 		spec.Text = "Context Noninteractive\n\nUsage:\n  codog context-noninteractive [--session ID|--resume ID|latest] [--output-format text|json]\n\nAlias for `codog context`; prints the same local prompt preflight context without entering the REPL or making a provider request.\n"
 		return spec, true
+	case "memory":
+		return localCommandHelpSpec(
+			"memory",
+			"memory",
+			"codog memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--output-format text|json]",
+			"Memory\n\nUsage:\n  codog memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--output-format text|json]\n\nDiscovers project memory files, shows or edits them, appends guidance, and searches loaded memory lines for relevant instructions.\n",
+			[]string{"working_directory", "instruction_files", "files", "matches", "path"},
+			[]string{"ok", "ready", "created", "opened", "error"},
+			true,
+		), true
 	case "ctx_viz", "context-viz":
 		return localCommandHelpSpec(
 			"ctx_viz",
@@ -30163,7 +30204,7 @@ Usage:
   %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] onboarding [--path PATH] [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
-  %s [flags] memory [list|show|add|path|ensure|edit] [ARGS...] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
+  %s [flags] memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]

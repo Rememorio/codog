@@ -464,6 +464,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "workspace",
 		},
 		{
+			name:  "memory local help",
+			args:  []string{"--config", configPath, "memory", "--help", "--output-format", "json"},
+			topic: "memory",
+		},
+		{
 			name:  "language local help",
 			args:  []string{"--config", configPath, "language", "--help", "--output-format", "json"},
 			topic: "language",
@@ -3888,6 +3893,17 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), "Use focused tests.")
 	out.Reset()
 
+	require.NoError(t, app.Memory([]string{"search", "focused", "--limit", "1", "--json"}))
+	require.Contains(t, out.String(), `"action": "search"`)
+	require.Contains(t, out.String(), `"match_count": 1`)
+	require.Contains(t, out.String(), `"line": "Use focused tests."`)
+	out.Reset()
+
+	require.NoError(t, app.Memory([]string{"relevant", "focused", "--limit=1"}))
+	require.Contains(t, out.String(), "Memory Search")
+	require.Contains(t, out.String(), "Use focused tests.")
+	out.Reset()
+
 	require.NoError(t, app.Memory([]string{"path", "AGENTS.md", "--json"}))
 	require.Contains(t, out.String(), `"action": "path"`)
 	require.Contains(t, out.String(), "AGENTS.md")
@@ -3906,6 +3922,11 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/memory show AGENTS.md", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/memory search focused", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Memory Search")
+	require.Contains(t, out.String(), "Use focused tests.")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/memory edit --no-open", &session.Session{ID: "session"}))

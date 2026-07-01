@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode"
 )
 
 const MaxFileBytes = 64 * 1024
@@ -46,6 +48,26 @@ type Report struct {
 	WorkingDirectory string    `json:"working_directory"`
 	InstructionFiles int       `json:"instruction_files"`
 	Files            []Summary `json:"files"`
+}
+
+type SearchMatch struct {
+	Path         string   `json:"path"`
+	Name         string   `json:"name"`
+	Scope        string   `json:"scope"`
+	LineNumber   int      `json:"line_number"`
+	Line         string   `json:"line"`
+	Score        int      `json:"score"`
+	MatchedTerms []string `json:"matched_terms,omitempty"`
+}
+
+type SearchReport struct {
+	Kind             string        `json:"kind"`
+	Action           string        `json:"action"`
+	Status           string        `json:"status"`
+	WorkingDirectory string        `json:"working_directory"`
+	Query            string        `json:"query"`
+	MatchCount       int           `json:"match_count"`
+	Matches          []SearchMatch `json:"matches"`
 }
 
 type ShowReport struct {
@@ -269,6 +291,79 @@ func BuildReport(workspace string) (Report, error) {
 	}, nil
 }
 
+func Search(workspace string, query string, limit int) (SearchReport, error) {
+	absWorkspace, err := absWorkspacePath(workspace)
+	if err != nil {
+		return SearchReport{}, err
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return SearchReport{}, fmt.Errorf("memory search query is required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	files, err := Discover(absWorkspace)
+	if err != nil {
+		return SearchReport{}, err
+	}
+	terms := searchTerms(query)
+	type scoredMatch struct {
+		match     SearchMatch
+		fileIndex int
+	}
+	var matches []scoredMatch
+	lowerQuery := strings.ToLower(query)
+	for fileIndex, file := range files {
+		lines := strings.Split(file.Body, "\n")
+		for lineIndex, line := range lines {
+			score, matchedTerms := scoreMemoryLine(line, lowerQuery, terms)
+			if score == 0 {
+				continue
+			}
+			matches = append(matches, scoredMatch{
+				fileIndex: fileIndex,
+				match: SearchMatch{
+					Path:         file.Path,
+					Name:         file.Name,
+					Scope:        file.Scope,
+					LineNumber:   lineIndex + 1,
+					Line:         trimSearchLine(line),
+					Score:        score,
+					MatchedTerms: matchedTerms,
+				},
+			})
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		left := matches[i]
+		right := matches[j]
+		if left.match.Score != right.match.Score {
+			return left.match.Score > right.match.Score
+		}
+		if left.fileIndex != right.fileIndex {
+			return left.fileIndex < right.fileIndex
+		}
+		return left.match.LineNumber < right.match.LineNumber
+	})
+	out := make([]SearchMatch, 0, minInt(limit, len(matches)))
+	for index, match := range matches {
+		if index >= limit {
+			break
+		}
+		out = append(out, match.match)
+	}
+	return SearchReport{
+		Kind:             "memory",
+		Action:           "search",
+		Status:           "ok",
+		WorkingDirectory: canonicalPath(absWorkspace),
+		Query:            query,
+		MatchCount:       len(matches),
+		Matches:          out,
+	}, nil
+}
+
 func RenderShowReport(w io.Writer, report ShowReport) {
 	fmt.Fprintln(w, "Memory File")
 	fmt.Fprintf(w, "  Path             %s\n", report.File.Path)
@@ -288,6 +383,22 @@ func RenderAppendReport(w io.Writer, report AppendReport) {
 	fmt.Fprintln(w, "Memory Updated")
 	fmt.Fprintf(w, "  Path             %s\n", report.Path)
 	fmt.Fprintf(w, "  Bytes appended   %d\n", report.Bytes)
+}
+
+func RenderSearchReport(w io.Writer, report SearchReport) {
+	fmt.Fprintln(w, "Memory Search")
+	fmt.Fprintf(w, "  Working directory %s\n", report.WorkingDirectory)
+	fmt.Fprintf(w, "  Query             %s\n", report.Query)
+	fmt.Fprintf(w, "  Matches           %d\n", report.MatchCount)
+	if report.MatchCount == 0 {
+		fmt.Fprintln(w, "  No matching memory lines found.")
+		return
+	}
+	for i, match := range report.Matches {
+		fmt.Fprintf(w, "  %d. %s:%d\n", i+1, match.Path, match.LineNumber)
+		fmt.Fprintf(w, "     source=%s score=%d terms=%s\n", match.Name, match.Score, strings.Join(match.MatchedTerms, ","))
+		fmt.Fprintf(w, "     %s\n", match.Line)
+	}
 }
 
 func RenderFileReport(w io.Writer, report FileReport) {
@@ -444,6 +555,58 @@ func preview(body string) string {
 	return line
 }
 
+func searchTerms(query string) []string {
+	seen := map[string]bool{}
+	var terms []string
+	for _, term := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-'
+	}) {
+		term = strings.TrimSpace(term)
+		if term == "" || seen[term] {
+			continue
+		}
+		seen[term] = true
+		terms = append(terms, term)
+	}
+	if len(terms) == 0 {
+		terms = append(terms, strings.ToLower(strings.TrimSpace(query)))
+	}
+	return terms
+}
+
+func scoreMemoryLine(line string, lowerQuery string, terms []string) (int, []string) {
+	lowerLine := strings.ToLower(line)
+	score := 0
+	seen := map[string]bool{}
+	var matched []string
+	if lowerQuery != "" && strings.Contains(lowerLine, lowerQuery) {
+		score += 10
+		seen[lowerQuery] = true
+		matched = append(matched, lowerQuery)
+	}
+	for _, term := range terms {
+		if term == "" || !strings.Contains(lowerLine, term) {
+			continue
+		}
+		score += strings.Count(lowerLine, term)
+		if !seen[term] {
+			seen[term] = true
+			matched = append(matched, term)
+		}
+	}
+	return score, matched
+}
+
+func trimSearchLine(line string) string {
+	line = strings.TrimSpace(line)
+	const maxLineRunes = 240
+	runes := []rune(line)
+	if len(runes) <= maxLineRunes {
+		return line
+	}
+	return string(runes[:maxLineRunes]) + "..."
+}
+
 func dirsFromBoundary(workspace string, boundary string) []string {
 	var dirs []string
 	cursor := filepath.Clean(workspace)
@@ -528,4 +691,11 @@ func escapeAttr(value string) string {
 	value = strings.ReplaceAll(value, "\"", "&quot;")
 	value = strings.ReplaceAll(value, "<", "&lt;")
 	return value
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

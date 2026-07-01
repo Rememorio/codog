@@ -98,6 +98,36 @@ func TestBuildReportSummarizesMemoryFiles(t *testing.T) {
 	require.NotContains(t, string(data), "Second line")
 }
 
+func TestSearchFindsRelevantMemoryLines(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".codog"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Use focused tests.\nKeep docs concise.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".codog", "instructions.md"), []byte("Avoid broad rewrites unless asked.\n"), 0o644))
+
+	report, err := Search(root, "focused tests", 10)
+
+	require.NoError(t, err)
+	require.Equal(t, "memory", report.Kind)
+	require.Equal(t, "search", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "focused tests", report.Query)
+	require.Equal(t, 1, report.MatchCount)
+	require.Len(t, report.Matches, 1)
+	require.Equal(t, "AGENTS.md", report.Matches[0].Name)
+	require.Equal(t, 1, report.Matches[0].LineNumber)
+	require.Equal(t, "Use focused tests.", report.Matches[0].Line)
+	require.Contains(t, report.Matches[0].MatchedTerms, "focused tests")
+
+	report, err = Search(root, "docs rewrites", 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, report.MatchCount)
+	require.Len(t, report.Matches, 1)
+
+	_, err = Search(root, " ", 10)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "query is required")
+}
+
 func TestShowReturnsSelectedMemoryBody(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("First line\nSecond line\n"), 0o644))
@@ -177,6 +207,24 @@ func TestRenderReportWithAndWithoutFiles(t *testing.T) {
 	require.Contains(t, out.String(), "1. /repo/AGENTS.md")
 	require.Contains(t, out.String(), "source=AGENTS.md")
 	require.Contains(t, out.String(), "preview=First")
+	out.Reset()
+
+	RenderSearchReport(&out, SearchReport{
+		WorkingDirectory: "/repo",
+		Query:            "tests",
+		MatchCount:       1,
+		Matches: []SearchMatch{{
+			Path:         "/repo/AGENTS.md",
+			Name:         "AGENTS.md",
+			LineNumber:   3,
+			Line:         "Use focused tests.",
+			Score:        11,
+			MatchedTerms: []string{"tests"},
+		}},
+	})
+	require.Contains(t, out.String(), "Memory Search")
+	require.Contains(t, out.String(), "/repo/AGENTS.md:3")
+	require.Contains(t, out.String(), "Use focused tests.")
 }
 
 func runGit(t *testing.T, workspace string, args ...string) {
