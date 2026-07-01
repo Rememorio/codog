@@ -1,77 +1,97 @@
 # Codog
 
-Codog is a Go-native coding agent CLI for working inside a repository.
+Codog is a Go-native coding agent CLI for repository work. It keeps the core
+agent loop local and inspectable: one binary, JSONL sessions, permissioned
+workspace tools, resumable conversations, and file-based extension points.
 
-It is an independent implementation inspired by Claude Code-style local coding
-workflows: a terminal agent, a permissioned tool loop, resumable local sessions,
-and extension points that are easy to inspect because they live in ordinary
-files.
+Codog is an independent implementation inspired by Claude Code-style terminal
+workflows. It is not affiliated with Anthropic and is not a drop-in replacement
+for Claude Code.
 
-Codog is not affiliated with Anthropic.
+## Status
 
-> Codog is pre-1.0. The core local workflow is usable, but command names,
-> configuration fields, compatibility behavior, and extension surfaces can still
-> change.
+Codog is pre-1.0. The local workflow is usable, but command names,
+configuration fields, compatibility shims, and extension surfaces can still
+change.
 
-## Why Codog
+It is a good fit today if you want to:
 
-Most coding agents are useful because of the loop around the model, not just the
-model call itself. Codog focuses on making that loop small, local, and auditable:
+- experiment with a Go implementation of a coding-agent runtime;
+- inspect or modify the model/tool/session loop;
+- build local repository automation around permissioned tools;
+- prototype Claude Code-compatible workflows without depending on a hosted
+  runtime.
 
-- one Go binary for the normal terminal workflow;
-- JSONL sessions that can be resumed, exported, compacted, and inspected;
-- read, write, edit, grep, glob, shell, git, todo, notebook, and MCP-backed
-  tools behind workspace scope and permission checks;
-- project context from `AGENTS.md`, Codog config, memory, focused files, skills,
-  hooks, slash commands, and prompt templates;
-- extension surfaces for local commands, plugins, MCP servers, hooks, skills,
-  editor bridges, background work, and mock parity testing.
+It is still maturing if you need exact behavior parity, hardened enterprise
+policy controls, a large plugin marketplace, deep IDE collaboration, or remote
+multi-user operation.
 
-The goal is not to hide complexity behind a hosted product. The goal is to make a
-serious coding-agent runtime that can be understood, modified, and shipped as Go.
-
-## Current Fit
-
-Codog is a good fit today if you want to experiment with a local coding-agent
-runtime, inspect how the agent loop is implemented, or build Go-native tooling
-around repository automation.
-
-It is still evolving if you need a polished enterprise deployment story, a large
-plugin marketplace, deep IDE collaboration, remote multi-user sessions, or exact
-behavioral parity with every Claude Code surface.
-
-## Quick Start
+## Install
 
 Codog requires Go 1.24 or newer and an Anthropic-compatible API key.
 
 ```bash
 go install github.com/Rememorio/codog/cmd/codog@latest
 export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+From a checkout, build and test with:
+
+```bash
+go build ./cmd/codog
+go test ./...
+```
+
+## First Run
+
+Run a one-shot prompt from the repository you want Codog to inspect:
+
+```bash
 codog -p "summarize this repository"
 ```
 
-Run `codog repl` for an ongoing terminal session. Use `codog --help`,
-`codog help <topic>`, or `codog capabilities --json` when you need the complete
-local command and tool surface.
+Start an interactive terminal session:
+
+```bash
+codog repl
+```
+
+Use `codog --help` for the human CLI surface and `codog capabilities --json` for
+the machine-readable command, tool, protocol, and feature inventory.
+
+## What Codog Provides
+
+Codog is organized around a small set of local runtime concerns instead of a
+large remote product surface.
+
+| Area | Current capability |
+| --- | --- |
+| Agent loop | One-shot prompts, REPL, Bubble Tea TUI, streamed Anthropic-compatible responses |
+| Workspace tools | Read, write, edit, grep, glob, shell, git, todo, notebook, web, and code-intel tools |
+| Permissions | Workspace scope checks, allow/deny rules, prompt mode, read-only and write modes |
+| Sessions | JSONL storage, resume, fork, rename, rewind, export, summary, usage, and compaction |
+| Context | `AGENTS.md`, memory, focused files, prompt history, project config, templates, and output style |
+| Extensions | Slash commands, skills, hooks, plugins, MCP client/server, local agents, and background tasks |
+| Integrations | GitHub PR workflows, editor and remote-control bridges, OAuth profiles, sandbox toggles, and updater plumbing |
 
 ## How It Works
 
 Codog treats the current directory as the active workspace. Each turn follows the
-same basic shape:
+same basic path:
 
-1. assemble repository instructions, configuration, memory, focused files,
-   session history, skills, slash commands, and available tools;
-2. stream an Anthropic-compatible model response;
-3. route requested tool calls through workspace scope, permission mode,
-   allow/deny rules, and hooks;
-4. persist the conversation and tool results to a local JSONL session.
+1. load repository instructions, layered config, session history, memory, focus,
+   skills, slash commands, and available tools;
+2. send the assembled request to an Anthropic-compatible model endpoint;
+3. route tool calls through path scope, permission mode, allow/deny rules, and
+   hooks;
+4. append conversation events and tool results to a local JSONL session.
 
-That design keeps the important state close to the repository and makes agent
-behavior easier to debug than a mostly remote workflow.
+The design goal is to make the important state easy to find, diff, and debug in
+ordinary files.
 
-## Local Files
+## Project Files
 
-Codog reads repository-local files when present:
+Codog reads these repository-local files when present:
 
 | Path | Purpose |
 | --- | --- |
@@ -82,63 +102,33 @@ Codog reads repository-local files when present:
 | `.codog/templates` | reusable prompt templates |
 | `.codog/skills` | project skills |
 | `.codog/hooks` | local automation hooks |
-| `.codog/plugins` | local plugin manifests and extension content |
+| `.codog/plugins` | plugin manifests and packaged extension content |
 
 Compatible `.claude` instruction, command, and skill locations are loaded where
 the Go implementation supports them.
 
-## Extension Model
+## Development Map
 
-Codog's extension points are intentionally file-based first:
+The codebase keeps the CLI entry point thin and places behavior in focused
+internal packages:
 
-- slash commands are Markdown files with optional frontmatter;
-- skills are Markdown instruction bundles that can be invoked directly or loaded
-  by the agent;
-- hooks run local commands around lifecycle, tool, notification, and session
-  events;
-- plugins package commands, skills, hooks, tools, agents, and MCP servers behind
-  a manifest;
-- MCP can be used both as a client surface and as a way to expose Codog tools to
-  other local agents.
-
-These pieces are meant to be small enough to review before enabling them.
-
-## Configuration
-
-Configuration is layered from user defaults, project config, local overrides,
-environment variables, and CLI flags. The most common project-level settings are
-the model, permission mode, maximum turns, token budget, additional workspace
-directories, MCP servers, hooks, and allow/deny rules.
-
-Secrets should stay in environment variables or local config. Shared repository
-config should describe behavior, not developer machines.
-
-## Development
-
-The source tree is organized around a small CLI entry point and focused internal
-packages:
-
-- `cmd/codog` starts the CLI;
-- `internal/agent` dispatches commands and top-level workflows;
-- `internal/runloop` drives model turns and tool execution;
-- `internal/anthropic` contains the Anthropic-compatible client and protocol
-  types;
-- `internal/tools` implements workspace tools, permissions, aliases, and MCP
-  integration;
-- `internal/session` stores JSONL sessions;
-- `internal/config` loads layered configuration;
-- `internal/tui`, `internal/mcp`, `internal/hooks`, `internal/plugins`, and
-  `internal/bridge` provide optional integration surfaces.
-
-Build and test from a checkout with:
-
-```bash
-go test ./...
-go build ./cmd/codog
-```
+| Package | Role |
+| --- | --- |
+| `cmd/codog` | CLI entry point |
+| `internal/agent` | command dispatch and top-level workflows |
+| `internal/runloop` | model turns and tool execution |
+| `internal/anthropic` | Anthropic-compatible client and protocol types |
+| `internal/tools` | workspace tools, permissions, aliases, and MCP exposure |
+| `internal/session` | JSONL session storage and exports |
+| `internal/config` | layered configuration loading |
+| `internal/tui` | terminal UI |
+| `internal/mcp` | MCP client support |
+| `internal/hooks` | lifecycle and tool hook execution |
+| `internal/plugins` | plugin manifests, marketplace state, and extension loading |
+| `internal/bridge` | editor and remote-control bridge support |
 
 Keep generated state, machine-specific paths, local cache locations, secrets,
-and tool-generated attribution out of code, docs, commits, and examples.
+and tool attribution out of code, docs, commits, and examples.
 
 ## License
 
