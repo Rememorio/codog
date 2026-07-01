@@ -2113,6 +2113,9 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 		In:  strings.NewReader("2\n"),
 		Out: &out,
 	}
+	properties := tool.Definition().InputSchema["properties"].(map[string]any)
+	require.Contains(t, properties, "options")
+
 	result, err := tool.Execute(context.Background(), []byte(`{"question":"Pick one","choices":["alpha","beta"],"default":"alpha"}`))
 	require.NoError(t, err)
 	require.Contains(t, out.String(), "Pick one")
@@ -2124,6 +2127,13 @@ func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	result, err = tool.Execute(context.Background(), []byte(`{"question":"Continue?","default":"yes"}`))
 	require.NoError(t, err)
 	require.Contains(t, result, `"answer": "yes"`)
+
+	out.Reset()
+	tool.In = strings.NewReader("1\n")
+	result, err = tool.Execute(context.Background(), []byte(`{"question":"Use options?","options":["gamma","delta"]}`))
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "1. gamma")
+	require.Contains(t, result, `"answer": "gamma"`)
 }
 
 func TestBriefToolReturnsAttachmentMetadata(t *testing.T) {

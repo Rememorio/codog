@@ -7007,6 +7007,7 @@ func (AskUserQuestionTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"question": map[string]any{"type": "string"},
 				"choices":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"default":  map[string]any{"type": "string"},
 			},
 			"required":             []string{"question"},
@@ -7021,6 +7022,7 @@ func (t AskUserQuestionTool) Execute(ctx context.Context, input json.RawMessage)
 	var payload struct {
 		Question string   `json:"question"`
 		Choices  []string `json:"choices"`
+		Options  []string `json:"options"`
 		Default  string   `json:"default"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
@@ -7039,7 +7041,7 @@ func (t AskUserQuestionTool) Execute(ctx context.Context, input json.RawMessage)
 		out = os.Stderr
 	}
 	fmt.Fprintf(out, "\n%s\n", payload.Question)
-	choices := normalizeQuestionChoices(payload.Choices)
+	choices := normalizeQuestionChoices(append(payload.Choices, payload.Options...))
 	for index, choice := range choices {
 		fmt.Fprintf(out, "  %d. %s\n", index+1, choice)
 	}
