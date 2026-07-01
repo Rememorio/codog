@@ -260,6 +260,18 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "language")
 	require.NotNil(t, report.MutatesWorkspace)
 	require.True(t, *report.MutatesWorkspace)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"state", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "state", report.Topic)
+	require.Equal(t, "state", report.Command)
+	require.Contains(t, report.Help, "Produces state")
+	require.Contains(t, report.Help, "codog prompt <text>")
+	require.Contains(t, report.OutputFields, "worker_id")
+	require.Contains(t, report.StatusValues, "running")
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -505,6 +517,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			name:  "onboarding local help",
 			args:  []string{"--config", configPath, "onboarding", "--help", "--output-format", "json"},
 			topic: "onboarding",
+		},
+		{
+			name:  "state local help",
+			args:  []string{"--config", configPath, "state", "--help", "--output-format", "json"},
+			topic: "state",
 		},
 	}
 	for _, tc := range cases {
@@ -8032,6 +8049,41 @@ func TestStateCommandAndREPLWritesWorkerState(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/state", &session.Session{ID: "session-1"}))
 	require.Contains(t, out.String(), "State")
+}
+
+func TestStateCommandMissingStateReportsActionableErrors(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+
+	err := renderWorkerState(&out, workspace, nil)
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.False(t, exitErr.Silent)
+	require.Empty(t, out.String())
+	require.Contains(t, err.Error(), "no worker state file found")
+	require.Contains(t, err.Error(), "codog repl")
+	require.Contains(t, err.Error(), "codog prompt <text>")
+	require.Contains(t, err.Error(), "codog state [--json]")
+
+	out.Reset()
+	err = renderWorkerState(&out, workspace, []string{"--json"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report workerStateErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "worker_state", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "missing_worker_state", report.ErrorKind)
+	require.Equal(t, workerstate.Path(workspace), report.Path)
+	require.Contains(t, report.Message, "no worker state file found")
+	require.Contains(t, report.Hint, "codog repl")
+	require.Contains(t, report.Commands, "codog prompt <text>")
+	require.Contains(t, report.Commands, "codog state [--json]")
 }
 
 func TestHooksCommandAndSlash(t *testing.T) {

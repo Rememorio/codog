@@ -16965,6 +16965,10 @@ func renderWorkerState(out io.Writer, workspace string, args []string) error {
 	}
 	state, err := workerstate.Load(workspace)
 	if err != nil {
+		var missing workerstate.MissingError
+		if errors.As(err, &missing) {
+			return renderMissingWorkerState(out, missing, format)
+		}
 		return err
 	}
 	if format == "json" {
@@ -16974,6 +16978,41 @@ func renderWorkerState(out io.Writer, workspace string, args []string) error {
 	}
 	workerstate.RenderText(out, state)
 	return nil
+}
+
+type workerStateErrorReport struct {
+	Kind      string   `json:"kind"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	ErrorKind string   `json:"error_kind"`
+	Path      string   `json:"path"`
+	Message   string   `json:"message"`
+	Hint      string   `json:"hint"`
+	Commands  []string `json:"commands"`
+}
+
+func renderMissingWorkerState(out io.Writer, missing workerstate.MissingError, format string) error {
+	report := workerStateErrorReport{
+		Kind:      "worker_state",
+		Action:    "show",
+		Status:    "error",
+		ErrorKind: "missing_worker_state",
+		Path:      missing.Path,
+		Message:   fmt.Sprintf("no worker state file found at %s", missing.Path),
+		Hint:      "Worker state is written by `codog repl` or `codog prompt <text>`. Run one of those commands, then rerun `codog state [--json]`.",
+		Commands: []string{
+			"codog repl",
+			"codog prompt <text>",
+			"codog state [--json]",
+		},
+	}
+	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: exitErr, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: missing}
 }
 
 func (a *App) Status(args []string, overrides config.FlagOverrides) error {
@@ -32870,6 +32909,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Onboarding\n\nUsage:\n  codog onboarding [--path PATH] [--output-format text|json]\n\nInspects a repository for README, tests, language markers, Codog guidance, project config, and git metadata, then reports whether the workspace is ready for a productive Codog session.\n",
 			[]string{"workspace", "has_readme", "has_tests", "primary_language", "checks", "recommendations"},
 			[]string{"ready", "needs_setup", "error"},
+			false,
+		), true
+	case "state":
+		return localCommandHelpSpec(
+			"state",
+			"state",
+			"codog state [--output-format text|json]",
+			"State\n\nUsage:\n  codog state [--output-format text|json]\n\nShows the latest local worker state written by `codog repl` or `codog prompt <text>`. Produces state after an interactive REPL turn or a non-interactive prompt; if no state exists yet, rerun one of those commands first.\n",
+			[]string{"worker_id", "mode", "status", "session_id", "model", "permission_mode", "updated_at"},
+			[]string{"idle", "running", "completed", "error"},
 			false,
 		), true
 	case "context":
