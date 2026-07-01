@@ -7251,7 +7251,7 @@ func normalizeSandboxToggleAction(value string) (string, string, error) {
 		return "set", "detect", nil
 	case "off", "disable", "disabled", "none":
 		return "set", "off", nil
-	case "sandbox-exec", "bwrap", "unshare":
+	case "sandbox-exec", "bwrap", "unshare", "restricted-token":
 		return "set", strings.ToLower(strings.TrimSpace(value)), nil
 	default:
 		return "", "", fmt.Errorf("unknown sandbox-toggle strategy %q", value)
@@ -33460,7 +33460,7 @@ Usage:
   %s heapdump [PATH] [--no-gc] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
   %s remote serve [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
-  %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]

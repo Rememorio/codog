@@ -123,7 +123,17 @@ func candidateStrategies(goos string) []string {
 func probeStrategy(name string, inputs DetectionInputs) StrategyStatus {
 	switch name {
 	case "restricted-token":
-		return StrategyStatus{Name: name, Available: false, Reason: "restricted-token sandbox execution is not implemented"}
+		missing := []string{}
+		if !commandAvailableAny(inputs.CommandAvailable, "runas.exe", "runas") {
+			missing = append(missing, "runas.exe")
+		}
+		if !commandAvailableAny(inputs.CommandAvailable, windowsShellCandidates()...) {
+			missing = append(missing, "powershell.exe")
+		}
+		if len(missing) != 0 {
+			return StrategyStatus{Name: name, Available: false, Reason: "command not found: " + strings.Join(missing, ", ")}
+		}
+		return StrategyStatus{Name: name, Available: true}
 	case "unshare":
 		if !inputs.CommandAvailable("unshare") {
 			return StrategyStatus{Name: name, Available: false, Reason: "command not found"}
@@ -144,6 +154,15 @@ func strategyAvailable(strategies []StrategyStatus, name string) bool {
 	for _, strategy := range strategies {
 		if strategy.Name == name {
 			return strategy.Available
+		}
+	}
+	return false
+}
+
+func commandAvailableAny(commandAvailable func(string) bool, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if commandAvailable(candidate) {
+			return true
 		}
 	}
 	return false
@@ -246,9 +265,98 @@ func BuildShellCommand(strategy, workspace, command string) (string, []string, e
 		}, nil
 	case "unshare":
 		return "unshare", []string{"-Urn", "sh", "-lc", command}, nil
+	case "restricted-token":
+		return BuildWindowsRestrictedTokenCommand(absWorkspace, command, "")
 	default:
 		return "", nil, fmt.Errorf("unsupported sandbox strategy %q", strategy)
 	}
+}
+
+func BuildWindowsRestrictedTokenCommand(workspace, command, shell string) (string, []string, error) {
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", nil, err
+	}
+	shell = strings.TrimSpace(shell)
+	if shell == "" {
+		shell = defaultWindowsShell()
+	}
+	script := strings.Join([]string{
+		"$ErrorActionPreference = 'Stop'",
+		"$env:CODOG_SANDBOX_STRATEGY = 'restricted-token'",
+		"$env:CODOG_SANDBOX_WORKSPACE = " + powerShellLiteral(absWorkspace),
+		"Set-Location -LiteralPath " + powerShellLiteral(absWorkspace),
+		"& $env:ComSpec /d /s /c " + powerShellLiteral(command),
+		"exit $LASTEXITCODE",
+	}, "; ")
+	commandLine := windowsCommandLine(shell, []string{
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		script,
+	})
+	return "runas.exe", []string{"/trustlevel:0x20000", commandLine}, nil
+}
+
+func defaultWindowsShell() string {
+	for _, candidate := range windowsShellCandidates() {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "powershell.exe"
+}
+
+func windowsShellCandidates() []string {
+	return []string{"powershell.exe", "powershell", "pwsh.exe", "pwsh"}
+}
+
+func powerShellLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func windowsCommandLine(program string, args []string) string {
+	parts := []string{windowsCommandLineArg(program)}
+	for _, arg := range args {
+		parts = append(parts, windowsCommandLineArg(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func windowsCommandLineArg(arg string) string {
+	if arg == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(arg, " \t\n\v\"") {
+		return arg
+	}
+	var builder strings.Builder
+	builder.WriteByte('"')
+	backslashes := 0
+	for _, r := range arg {
+		switch r {
+		case '\\':
+			backslashes++
+		case '"':
+			builder.WriteString(strings.Repeat(`\`, backslashes*2+1))
+			builder.WriteRune(r)
+			backslashes = 0
+		default:
+			if backslashes > 0 {
+				builder.WriteString(strings.Repeat(`\`, backslashes))
+				backslashes = 0
+			}
+			builder.WriteRune(r)
+		}
+	}
+	if backslashes > 0 {
+		builder.WriteString(strings.Repeat(`\`, backslashes*2))
+	}
+	builder.WriteByte('"')
+	return builder.String()
 }
 
 func macOSSandboxProfile(workspace string) string {

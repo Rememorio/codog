@@ -42,6 +42,21 @@ func TestBuildShellCommandUnshare(t *testing.T) {
 	require.Equal(t, []string{"-Urn", "sh", "-lc", "pwd"}, args)
 }
 
+func TestBuildShellCommandRestrictedToken(t *testing.T) {
+	workspace := t.TempDir()
+	name, args, err := BuildWindowsRestrictedTokenCommand(workspace, "echo 'hi'", "powershell.exe")
+	require.NoError(t, err)
+	require.Equal(t, "runas.exe", name)
+	require.Len(t, args, 2)
+	require.Equal(t, "/trustlevel:0x20000", args[0])
+	require.Contains(t, args[1], "powershell.exe")
+	require.Contains(t, args[1], "CODOG_SANDBOX_STRATEGY")
+	require.Contains(t, args[1], "restricted-token")
+	require.Contains(t, args[1], "Set-Location -LiteralPath")
+	require.Contains(t, args[1], workspace)
+	require.Contains(t, args[1], "echo ''hi''")
+}
+
 func TestDetectForReportsContainerAndStrategyDetails(t *testing.T) {
 	status := DetectFor(DetectionInputs{
 		OS:                 "linux",
@@ -81,6 +96,36 @@ func TestDetectForReportsFallbackReasons(t *testing.T) {
 	require.Contains(t, status.FallbackReason, "bwrap: command not found")
 	require.Contains(t, status.FallbackReason, "unshare: command not found")
 	require.False(t, status.NamespaceSupported)
+}
+
+func TestDetectForWindowsRestrictedToken(t *testing.T) {
+	status := DetectFor(DetectionInputs{
+		OS: "windows",
+		CommandAvailable: func(name string) bool {
+			return name == "runas.exe" || name == "powershell.exe"
+		},
+	})
+
+	require.Equal(t, "windows", status.OS)
+	require.True(t, status.Available)
+	require.Equal(t, "restricted-token", status.Default)
+	require.Equal(t, []string{"restricted-token"}, status.Strategies)
+	require.Contains(t, status.StrategyStatuses, StrategyStatus{Name: "restricted-token", Available: true})
+	require.False(t, status.NamespaceSupported)
+	require.False(t, status.NetworkSupported)
+}
+
+func TestDetectForWindowsRestrictedTokenReportsMissingDependencies(t *testing.T) {
+	status := DetectFor(DetectionInputs{
+		OS:               "windows",
+		CommandAvailable: func(string) bool { return false },
+	})
+
+	require.False(t, status.Available)
+	require.Empty(t, status.Default)
+	require.Contains(t, status.FallbackReason, "restricted-token: command not found")
+	require.Contains(t, status.FallbackReason, "runas.exe")
+	require.Contains(t, status.FallbackReason, "powershell.exe")
 }
 
 func TestResolveStrategyReportForDetectAndUnavailable(t *testing.T) {

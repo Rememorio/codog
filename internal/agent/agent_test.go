@@ -3566,6 +3566,14 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.Empty(t, errOut.String())
 	out.Reset()
 
+	require.NoError(t, app.SandboxToggle([]string{"restricted-token", "--json"}))
+	require.Contains(t, out.String(), `"configured_strategy": "restricted-token"`)
+	require.Equal(t, "restricted-token", app.Config.Future.SandboxStrategy)
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"sandbox_strategy": "restricted-token"`)
+	out.Reset()
+
 	require.NoError(t, app.SandboxToggle([]string{"clear", "--json"}))
 	require.Contains(t, out.String(), `"configured_strategy": ""`)
 	require.Equal(t, "", app.Config.Future.SandboxStrategy)
