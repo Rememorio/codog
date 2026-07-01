@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "image/gif"
 	_ "image/jpeg"
@@ -2128,6 +2129,85 @@ func wrapCommandWithCWDProbe(command string, cwdFile string) string {
 	return command + "\n__codog_status=$?\npwd -P > " + shellQuoteToolArg(cwdFile) + "\nexit $__codog_status"
 }
 
+const maxBashOutputBytes = 16 * 1024
+
+func truncateBashOutput(value string) string {
+	if len(value) <= maxBashOutputBytes {
+		return value
+	}
+	end := maxBashOutputBytes
+	for end > 0 && !utf8.ValidString(value[:end]) {
+		end--
+	}
+	if end == 0 {
+		return "[output truncated - exceeded 16384 bytes]"
+	}
+	return value[:end] + "\n\n[output truncated - exceeded 16384 bytes]"
+}
+
+func bashNoOutputExpected(stdout, stderr string) bool {
+	return strings.TrimSpace(stdout) == "" && strings.TrimSpace(stderr) == ""
+}
+
+func bashReturnCodeInterpretation(exitCode int, interrupted bool, command string) string {
+	if interrupted {
+		if isBashTestCommand(command) {
+			return "test.hung"
+		}
+		return "timeout"
+	}
+	if exitCode == 0 {
+		return ""
+	}
+	return fmt.Sprintf("exit_code:%d", exitCode)
+}
+
+func isBashTestCommand(command string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(command), " "))
+	for _, needle := range []string{"cargo test", "cargo nextest", "npm test", "pnpm test", "yarn test", "pytest", "go test"} {
+		if strings.Contains(normalized, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func bashTimeoutStructuredContent(command string, timeoutMS int, interpretation string) []map[string]any {
+	failureClass := "timeout"
+	event := "command.timeout"
+	if interpretation == "test.hung" {
+		failureClass = "test_hang"
+		event = "test.hung"
+	}
+	return []map[string]any{{
+		"event":        event,
+		"failureClass": failureClass,
+		"data": map[string]any{
+			"command":        command,
+			"timeoutMs":      timeoutMS,
+			"provenance":     "bash.timeout",
+			"classification": interpretation,
+		},
+	}}
+}
+
+func bashOutputContractFields(dangerouslyDisable bool) map[string]any {
+	return map[string]any{
+		"rawOutputPath":             nil,
+		"interrupted":               false,
+		"isImage":                   nil,
+		"backgroundTaskId":          nil,
+		"backgroundedByUser":        nil,
+		"assistantAutoBackgrounded": nil,
+		"dangerouslyDisableSandbox": dangerouslyDisable,
+		"returnCodeInterpretation":  nil,
+		"noOutputExpected":          nil,
+		"structuredContent":         nil,
+		"persistedOutputPath":       nil,
+		"persistedOutputSize":       nil,
+	}
+}
+
 func bashSandboxStrategy(strategy string, cfg config.SandboxConfig, dangerouslyDisable bool) string {
 	if dangerouslyDisable {
 		return "off"
@@ -2270,7 +2350,13 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		if err != nil {
 			return "", err
 		}
-		result := map[string]any{"background": true, "task": task}
+		result := bashOutputContractFields(payload.DangerouslyDisableSandbox)
+		result["background"] = true
+		result["task"] = task
+		result["backgroundTaskId"] = task.ID
+		result["backgroundedByUser"] = false
+		result["assistantAutoBackgrounded"] = false
+		result["noOutputExpected"] = true
 		result["sandboxStatus"] = sandboxStatus
 		if effectiveSandbox != "" {
 			result["sandbox"] = effectiveSandbox
@@ -2284,6 +2370,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	timeout := time.Duration(timeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
+		timeoutMS = int(timeout / time.Millisecond)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -2299,6 +2386,8 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
+	stdoutText := truncateBashOutput(stdout.String())
+	stderrText := truncateBashOutput(stderr.String())
 	finalCWD := cwd
 	cwdChanged := false
 	if cwdProbePath != "" {
@@ -2309,12 +2398,16 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 			}
 		}
 	}
-	result := map[string]any{
-		"stdout":      stdout.String(),
-		"stderr":      stderr.String(),
-		"exit_code":   exitCode(err),
-		"duration_ms": time.Since(started).Milliseconds(),
-		"cwd":         finalCWD,
+	exit := exitCode(err)
+	result := bashOutputContractFields(payload.DangerouslyDisableSandbox)
+	result["stdout"] = stdoutText
+	result["stderr"] = stderrText
+	result["exit_code"] = exit
+	result["duration_ms"] = time.Since(started).Milliseconds()
+	result["cwd"] = finalCWD
+	result["noOutputExpected"] = bashNoOutputExpected(stdoutText, stderrText)
+	if interpretation := bashReturnCodeInterpretation(exit, false, payload.Command); interpretation != "" {
+		result["returnCodeInterpretation"] = interpretation
 	}
 	if cwdChanged {
 		result["old_cwd"] = cwd
@@ -2325,9 +2418,15 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		result["sandbox"] = effectiveSandbox
 	}
 	if ctx.Err() == context.DeadlineExceeded {
+		interpretation := bashReturnCodeInterpretation(-1, true, payload.Command)
+		result["stdout"] = ""
+		result["stderr"] = fmt.Sprintf("Command exceeded timeout of %d ms", timeoutMS)
 		result["interrupted"] = true
 		result["error"] = "timeout"
 		result["exit_code"] = -1
+		result["returnCodeInterpretation"] = interpretation
+		result["noOutputExpected"] = true
+		result["structuredContent"] = bashTimeoutStructuredContent(payload.Command, timeoutMS, interpretation)
 		return pretty(result), nil
 	}
 	if err != nil {

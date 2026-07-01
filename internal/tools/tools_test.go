@@ -100,25 +100,65 @@ func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
 	require.Contains(t, out, `"duration_ms":`)
 	require.Contains(t, out, `"error": "exit status 7"`)
 	var first struct {
-		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+		SandboxStatus             sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+		Interrupted               bool                           `json:"interrupted"`
+		DangerouslyDisableSandbox bool                           `json:"dangerouslyDisableSandbox"`
+		ReturnCodeInterpretation  *string                        `json:"returnCodeInterpretation"`
+		NoOutputExpected          bool                           `json:"noOutputExpected"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &first))
 	require.False(t, first.SandboxStatus.Enabled)
 	require.False(t, first.SandboxStatus.Active)
 	require.NotNil(t, first.SandboxStatus.AllowedMounts)
 	require.NotNil(t, first.SandboxStatus.Requested.AllowedMounts)
+	require.False(t, first.Interrupted)
+	require.False(t, first.DangerouslyDisableSandbox)
+	require.NotNil(t, first.ReturnCodeInterpretation)
+	require.Equal(t, "exit_code:7", *first.ReturnCodeInterpretation)
+	require.False(t, first.NoOutputExpected)
 
 	out, err = BashTool{Workspace: workspace, SandboxStrategy: "detect"}.Execute(context.Background(), []byte(`{"command":"printf bypass","timeout":1000,"dangerouslyDisableSandbox":true}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "bypass"`)
 	require.NotContains(t, out, `"sandbox":`)
 	var bypass struct {
-		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+		SandboxStatus             sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+		DangerouslyDisableSandbox bool                           `json:"dangerouslyDisableSandbox"`
+		ReturnCodeInterpretation  *string                        `json:"returnCodeInterpretation"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &bypass))
 	require.False(t, bypass.SandboxStatus.Enabled)
 	require.Equal(t, "disabled", bypass.SandboxStatus.ResolutionStatus)
 	require.True(t, bypass.SandboxStatus.Requested.NamespaceRestrictions)
+	require.True(t, bypass.DangerouslyDisableSandbox)
+	require.Nil(t, bypass.ReturnCodeInterpretation)
+}
+
+func TestBashToolReportsTimeoutAndTruncatesOutput(t *testing.T) {
+	workspace := t.TempDir()
+	out, err := BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"sleep 1","timeout_ms":20}`))
+	require.NoError(t, err)
+	var timeoutPayload struct {
+		Interrupted              bool             `json:"interrupted"`
+		ExitCode                 int              `json:"exit_code"`
+		ReturnCodeInterpretation string           `json:"returnCodeInterpretation"`
+		StructuredContent        []map[string]any `json:"structuredContent"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &timeoutPayload))
+	require.True(t, timeoutPayload.Interrupted)
+	require.Equal(t, -1, timeoutPayload.ExitCode)
+	require.Equal(t, "timeout", timeoutPayload.ReturnCodeInterpretation)
+	require.Len(t, timeoutPayload.StructuredContent, 1)
+	require.Equal(t, "command.timeout", timeoutPayload.StructuredContent[0]["event"])
+
+	out, err = BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"yes x | head -c 20000"}`))
+	require.NoError(t, err)
+	var truncPayload struct {
+		Stdout string `json:"stdout"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &truncPayload))
+	require.Less(t, len(truncPayload.Stdout), 20000)
+	require.Contains(t, truncPayload.Stdout, "[output truncated - exceeded 16384 bytes]")
 }
 
 func TestBashToolAcceptsSandboxRequestAliases(t *testing.T) {
@@ -247,10 +287,22 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	require.Contains(t, out, `"background": true`)
 	require.Contains(t, out, `"kind": "bash"`)
 	var payload struct {
-		Task background.Task `json:"task"`
+		Task                      background.Task `json:"task"`
+		BackgroundTaskID          string          `json:"backgroundTaskId"`
+		BackgroundedByUser        bool            `json:"backgroundedByUser"`
+		AssistantAutoBackgrounded bool            `json:"assistantAutoBackgrounded"`
+		NoOutputExpected          bool            `json:"noOutputExpected"`
+		Interrupted               bool            `json:"interrupted"`
+		DangerouslyDisableSandbox bool            `json:"dangerouslyDisableSandbox"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &payload))
 	require.NotEmpty(t, payload.Task.ID)
+	require.Equal(t, payload.Task.ID, payload.BackgroundTaskID)
+	require.False(t, payload.BackgroundedByUser)
+	require.False(t, payload.AssistantAutoBackgrounded)
+	require.True(t, payload.NoOutputExpected)
+	require.False(t, payload.Interrupted)
+	require.False(t, payload.DangerouslyDisableSandbox)
 	require.Eventually(t, func() bool {
 		output, err := registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 		return err == nil && strings.Contains(output, "bash-ready:hook-bg")
