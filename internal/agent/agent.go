@@ -402,6 +402,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Undo(rest)
 	case "extra-usage":
 		return app.ExtraUsage(rest)
+	case "rate-limit":
+		return app.RateLimit(rest)
 	case "rate-limit-options":
 		return app.RateLimitOptions(rest)
 	case "reset-limits":
@@ -14152,6 +14154,7 @@ func builtInCommandNames() []string {
 		"prompt-history",
 		"providers",
 		"python",
+		"rate-limit",
 		"rate-limit-options",
 		"reasoning",
 		"references",
@@ -17198,6 +17201,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/extra-usage":
 		if err := a.ExtraUsage(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/rate-limit":
+		if err := a.RateLimit(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/rate-limit-options":
@@ -22630,10 +22637,33 @@ type rateLimitOptionsReport struct {
 	RetryableStatuses []int  `json:"retryable_statuses"`
 }
 
+type rateLimitRequest struct {
+	Action           string
+	Format           string
+	Target           string
+	Path             string
+	MaxRetries       *int
+	InitialBackoffMS *int
+	MaxBackoffMS     *int
+}
+
 type resetLimitsRequest struct {
 	Format string
 	Target string
 	Path   string
+}
+
+type rateLimitReport struct {
+	Kind              string                  `json:"kind"`
+	Action            string                  `json:"action"`
+	Status            string                  `json:"status"`
+	Path              string                  `json:"path,omitempty"`
+	Target            string                  `json:"target,omitempty"`
+	MaxRetries        int                     `json:"max_retries"`
+	InitialBackoffMS  int                     `json:"initial_backoff_ms"`
+	MaxBackoffMS      int                     `json:"max_backoff_ms"`
+	RetryableStatuses []int                   `json:"retryable_statuses"`
+	Previous          *rateLimitOptionsReport `json:"previous,omitempty"`
 }
 
 type resetLimitsReport struct {
@@ -22644,6 +22674,71 @@ type resetLimitsReport struct {
 	Target   string                 `json:"target,omitempty"`
 	Previous rateLimitOptionsReport `json:"previous"`
 	Current  rateLimitOptionsReport `json:"current"`
+}
+
+func (a *App) RateLimit(args []string) error {
+	req, err := parseRateLimitArgs(args)
+	if err != nil {
+		return err
+	}
+	var previous *rateLimitOptionsReport
+	path := ""
+	switch req.Action {
+	case "show":
+	case "set":
+		if !req.hasSetValues() {
+			return errors.New("rate-limit set requires at least one value")
+		}
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		snapshot := buildRateLimitOptionsReport(a.Config.RateLimit)
+		previous = &snapshot
+		if req.MaxRetries != nil {
+			if _, err := config.SetFileValue(path, "rate_limit.max_retries", *req.MaxRetries); err != nil {
+				return err
+			}
+			a.Config.RateLimit.MaxRetries = *req.MaxRetries
+		}
+		if req.InitialBackoffMS != nil {
+			if _, err := config.SetFileValue(path, "rate_limit.initial_backoff_ms", *req.InitialBackoffMS); err != nil {
+				return err
+			}
+			a.Config.RateLimit.InitialBackoffMS = *req.InitialBackoffMS
+		}
+		if req.MaxBackoffMS != nil {
+			if _, err := config.SetFileValue(path, "rate_limit.max_backoff_ms", *req.MaxBackoffMS); err != nil {
+				return err
+			}
+			a.Config.RateLimit.MaxBackoffMS = *req.MaxBackoffMS
+		}
+	case "reset":
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		snapshot := buildRateLimitOptionsReport(a.Config.RateLimit)
+		previous = &snapshot
+		if _, err := config.UnsetFileValue(path, "rate_limit"); err != nil {
+			return err
+		}
+		a.Config.RateLimit = config.RateLimitConfig{}
+	default:
+		return fmt.Errorf("unknown rate-limit action %q", req.Action)
+	}
+	report := buildRateLimitReport(req.Action, req.Target, path, previous, a.Config.RateLimit)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderRateLimitReport(a.Out, report)
+	return nil
+}
+
+func (req rateLimitRequest) hasSetValues() bool {
+	return req.MaxRetries != nil || req.InitialBackoffMS != nil || req.MaxBackoffMS != nil
 }
 
 func (a *App) RateLimitOptions(args []string) error {
@@ -22659,6 +22754,210 @@ func (a *App) RateLimitOptions(args []string) error {
 	}
 	renderRateLimitOptionsReport(a.Out, report)
 	return nil
+}
+
+func parseRateLimitArgs(args []string) (rateLimitRequest, error) {
+	req := rateLimitRequest{Action: "show", Format: "text", Target: "user"}
+	rest := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rate-limit output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rate-limit target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rate-limit config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--max-retries" || arg == "--retries":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rate-limit max retries is required")
+			}
+			value, err := parseRateLimitPositiveInt(args[index], "rate-limit max retries")
+			if err != nil {
+				return req, err
+			}
+			req.MaxRetries = &value
+		case strings.HasPrefix(arg, "--max-retries="):
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-retries="), "rate-limit max retries")
+			if err != nil {
+				return req, err
+			}
+			req.MaxRetries = &value
+		case strings.HasPrefix(arg, "--retries="):
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--retries="), "rate-limit max retries")
+			if err != nil {
+				return req, err
+			}
+			req.MaxRetries = &value
+		case arg == "--initial-backoff-ms" || arg == "--initial-backoff":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rate-limit initial backoff is required")
+			}
+			value, err := parseRateLimitPositiveInt(args[index], "rate-limit initial backoff")
+			if err != nil {
+				return req, err
+			}
+			req.InitialBackoffMS = &value
+		case strings.HasPrefix(arg, "--initial-backoff-ms="):
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--initial-backoff-ms="), "rate-limit initial backoff")
+			if err != nil {
+				return req, err
+			}
+			req.InitialBackoffMS = &value
+		case strings.HasPrefix(arg, "--initial-backoff="):
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--initial-backoff="), "rate-limit initial backoff")
+			if err != nil {
+				return req, err
+			}
+			req.InitialBackoffMS = &value
+		case arg == "--max-backoff-ms" || arg == "--max-backoff":
+			index++
+			if index >= len(args) {
+				return req, errors.New("rate-limit max backoff is required")
+			}
+			value, err := parseRateLimitPositiveInt(args[index], "rate-limit max backoff")
+			if err != nil {
+				return req, err
+			}
+			req.MaxBackoffMS = &value
+		case strings.HasPrefix(arg, "--max-backoff-ms="):
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-backoff-ms="), "rate-limit max backoff")
+			if err != nil {
+				return req, err
+			}
+			req.MaxBackoffMS = &value
+		case strings.HasPrefix(arg, "--max-backoff="):
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-backoff="), "rate-limit max backoff")
+			if err != nil {
+				return req, err
+			}
+			req.MaxBackoffMS = &value
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown rate-limit flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "rate-limit"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		if req.hasSetValues() {
+			req.Action = "set"
+		}
+		return req, nil
+	}
+	action := strings.ToLower(strings.TrimSpace(rest[0]))
+	switch action {
+	case "status", "show", "options", "list":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected rate-limit argument %q", rest[1])
+		}
+		if req.hasSetValues() {
+			return req, errors.New("rate-limit status does not accept set values")
+		}
+		req.Action = "show"
+	case "set", "configure":
+		req.Action = "set"
+		if err := parseRateLimitSetArgs(&req, rest[1:]); err != nil {
+			return req, err
+		}
+	case "reset", "clear":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected rate-limit argument %q", rest[1])
+		}
+		if req.hasSetValues() {
+			return req, errors.New("rate-limit reset does not accept set values")
+		}
+		req.Action = "reset"
+	default:
+		if len(rest) == 1 {
+			value, err := parseRateLimitPositiveInt(rest[0], "rate-limit max retries")
+			if err == nil {
+				req.Action = "set"
+				req.MaxRetries = &value
+				return req, nil
+			}
+		}
+		return req, fmt.Errorf("unknown rate-limit action %q", rest[0])
+	}
+	return req, nil
+}
+
+func parseRateLimitSetArgs(req *rateLimitRequest, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if len(args) == 1 {
+		value, err := parseRateLimitPositiveInt(args[0], "rate-limit max retries")
+		if err != nil {
+			return err
+		}
+		req.MaxRetries = &value
+		return nil
+	}
+	for index := 0; index < len(args); index += 2 {
+		if index+1 >= len(args) {
+			return fmt.Errorf("rate-limit value is required for %q", args[index])
+		}
+		if err := assignRateLimitSetValue(req, args[index], args[index+1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assignRateLimitSetValue(req *rateLimitRequest, key string, raw string) error {
+	normalized := strings.ToLower(strings.TrimSpace(strings.TrimLeft(key, "-")))
+	switch normalized {
+	case "max-retries", "retries":
+		value, err := parseRateLimitPositiveInt(raw, "rate-limit max retries")
+		if err != nil {
+			return err
+		}
+		req.MaxRetries = &value
+	case "initial-backoff-ms", "initial-backoff":
+		value, err := parseRateLimitPositiveInt(raw, "rate-limit initial backoff")
+		if err != nil {
+			return err
+		}
+		req.InitialBackoffMS = &value
+	case "max-backoff-ms", "max-backoff":
+		value, err := parseRateLimitPositiveInt(raw, "rate-limit max backoff")
+		if err != nil {
+			return err
+		}
+		req.MaxBackoffMS = &value
+	default:
+		return fmt.Errorf("unknown rate-limit set field %q", key)
+	}
+	return nil
+}
+
+func parseRateLimitPositiveInt(value string, label string) (int, error) {
+	return parsePositiveInt(strings.TrimSpace(value), label)
 }
 
 func (a *App) ResetLimits(args []string) error {
@@ -22742,6 +23041,25 @@ func renderResetLimitsReport(out io.Writer, report resetLimitsReport) {
 	fmt.Fprintf(out, "  Current retries  %d\n", report.Current.MaxRetries)
 }
 
+func buildRateLimitReport(action string, target string, path string, previous *rateLimitOptionsReport, cfg config.RateLimitConfig) rateLimitReport {
+	current := buildRateLimitOptionsReport(cfg)
+	if path == "" {
+		target = ""
+	}
+	return rateLimitReport{
+		Kind:              "rate_limit",
+		Action:            action,
+		Status:            "ok",
+		Path:              path,
+		Target:            target,
+		MaxRetries:        current.MaxRetries,
+		InitialBackoffMS:  current.InitialBackoffMS,
+		MaxBackoffMS:      current.MaxBackoffMS,
+		RetryableStatuses: append([]int(nil), current.RetryableStatuses...),
+		Previous:          previous,
+	}
+}
+
 func buildRateLimitOptionsReport(cfg config.RateLimitConfig) rateLimitOptionsReport {
 	snapshot := anthropicRateLimitOptions(cfg).Report()
 	return rateLimitOptionsReport{
@@ -22753,6 +23071,21 @@ func buildRateLimitOptionsReport(cfg config.RateLimitConfig) rateLimitOptionsRep
 		MaxBackoffMS:      snapshot.MaxBackoffMS,
 		RetryableStatuses: append([]int(nil), snapshot.RetryableStatuses...),
 	}
+}
+
+func renderRateLimitReport(out io.Writer, report rateLimitReport) {
+	fmt.Fprintln(out, "Rate Limit")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Previous != nil {
+		fmt.Fprintf(out, "  Previous retries %d\n", report.Previous.MaxRetries)
+	}
+	fmt.Fprintf(out, "  Max retries      %d\n", report.MaxRetries)
+	fmt.Fprintf(out, "  Initial backoff  %dms\n", report.InitialBackoffMS)
+	fmt.Fprintf(out, "  Max backoff      %dms\n", report.MaxBackoffMS)
+	fmt.Fprintf(out, "  Retry statuses   %s\n", joinInts(report.RetryableStatuses))
 }
 
 func renderRateLimitOptionsReport(out io.Writer, report rateLimitOptionsReport) {
@@ -23838,7 +24171,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
-		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reasoning", "reload-plugins",
+		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
@@ -24267,6 +24600,36 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "rate-limit":
+		return localCommandHelpSpec(
+			"rate-limit",
+			"rate-limit",
+			"codog rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--output-format text|json]",
+			"Rate Limit\n\nUsage:\n  codog rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--output-format text|json]\n\nShows or changes provider retry and backoff settings stored under `rate_limit`.\n",
+			[]string{"max_retries", "initial_backoff_ms", "max_backoff_ms", "retryable_statuses", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "rate-limit-options":
+		return localCommandHelpSpec(
+			"rate-limit-options",
+			"rate-limit-options",
+			"codog rate-limit-options [--output-format text|json]",
+			"Rate Limit Options\n\nUsage:\n  codog rate-limit-options [--output-format text|json]\n\nShows effective provider retry and backoff settings.\n",
+			[]string{"max_retries", "initial_backoff_ms", "max_backoff_ms", "retryable_statuses"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "reset-limits":
+		return localCommandHelpSpec(
+			"reset-limits",
+			"reset-limits",
+			"codog reset-limits [--target user|project|local] [--path PATH] [--output-format text|json]",
+			"Reset Limits\n\nUsage:\n  codog reset-limits [--target user|project|local] [--path PATH] [--output-format text|json]\n\nClears local provider retry and backoff overrides stored under `rate_limit`.\n",
+			[]string{"previous", "current", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "notifications":
 		return localCommandHelpSpec(
 			"notifications",
@@ -24544,6 +24907,7 @@ Usage:
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] undo [--json|--output-format text|json]
+  %s [flags] rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] rate-limit-options [--json|--output-format text|json]
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]

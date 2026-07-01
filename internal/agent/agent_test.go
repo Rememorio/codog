@@ -167,6 +167,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "effort")
 	require.NotNil(t, report.LocalOnly)
 	require.True(t, *report.LocalOnly)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"rate-limit", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "rate-limit", report.Topic)
+	require.Equal(t, "rate-limit", report.Command)
+	require.Contains(t, report.Help, "retry and backoff")
+	require.Contains(t, report.OutputFields, "max_retries")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -248,6 +258,21 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "reasoning", "--help", "--output-format", "json"},
 			topic: "reasoning",
 		},
+		{
+			name:  "rate-limit local help",
+			args:  []string{"--config", configPath, "rate-limit", "--help", "--output-format", "json"},
+			topic: "rate-limit",
+		},
+		{
+			name:  "rate-limit-options local help",
+			args:  []string{"--config", configPath, "rate-limit-options", "--help", "--output-format", "json"},
+			topic: "rate-limit-options",
+		},
+		{
+			name:  "reset-limits local help",
+			args:  []string{"--config", configPath, "reset-limits", "--help", "--output-format", "json"},
+			topic: "reset-limits",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -307,6 +332,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
@@ -358,6 +384,57 @@ func TestReasoningCommandPersistsPreference(t *testing.T) {
 	require.Contains(t, out, `"kind": "reasoning"`)
 	require.Contains(t, out, `"effort": "high"`)
 	require.True(t, commandAcceptsGlobalOutputFormat("reasoning"))
+}
+
+func TestRateLimitCommandSetsShowsAndResetsConfig(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"rate-limit", "set",
+			"--path", configPath,
+			"--max-retries", "5",
+			"--initial-backoff-ms", "125",
+			"--max-backoff-ms", "750",
+			"--json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "rate_limit"`)
+	require.Contains(t, out, `"action": "set"`)
+	require.Contains(t, out, `"max_retries": 5`)
+
+	stored, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"rate_limit"`)
+	require.Contains(t, string(stored), `"max_retries": 5`)
+	require.Contains(t, string(stored), `"initial_backoff_ms": 125`)
+	require.Contains(t, string(stored), `"max_backoff_ms": 750`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "rate-limit", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "rate_limit"`)
+	require.Contains(t, out, `"action": "show"`)
+	require.Contains(t, out, `"max_retries": 5`)
+	require.True(t, commandAcceptsGlobalOutputFormat("rate-limit"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "rate-limit", "reset", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "reset"`)
+	require.Contains(t, out, `"previous"`)
+
+	stored, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(stored), `"rate_limit"`)
 }
 
 func TestUnknownCommandOutputContract(t *testing.T) {
@@ -3484,6 +3561,16 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"kind": "rate_limit_options"`)
 	require.Contains(t, out.String(), `"max_retries": 4`)
 	require.Contains(t, out.String(), `"initial_backoff_ms": 250`)
+	out.Reset()
+
+	require.NoError(t, app.RateLimit([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"kind": "rate_limit"`)
+	require.Contains(t, out.String(), `"max_retries": 4`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/rate-limit status", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Rate Limit")
+	require.Contains(t, out.String(), "Max retries      4")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/rate-limit-options", &session.Session{ID: "session"}))
