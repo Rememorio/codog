@@ -17676,6 +17676,30 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedProfileSlash(resumeSlashArgs("profile", args, format), format)
 	case "/budget":
 		return a.runResumedBudgetSlash(resumeSlashArgs("budget", args, format), format)
+	case "/output-style":
+		return a.runResumedOutputStyleSlash(resumeSlashArgs("output-style", args, format), format)
+	case "/theme", "/color":
+		return a.runResumedThemeSlash(resumeSlashArgs("theme", args, format), format)
+	case "/language":
+		return a.runResumedLanguageSlash(resumeSlashArgs("language", args, format), format)
+	case "/effort":
+		return a.runResumedEffortSlash(resumeSlashArgs("effort", args, format), "effort", format)
+	case "/reasoning":
+		return a.runResumedEffortSlash(resumeSlashArgs("reasoning", args, format), "reasoning", format)
+	case "/fast":
+		return a.runResumedFastSlash(resumeSlashArgs("fast", args, format), format)
+	case "/vim":
+		return a.runResumedVimSlash(resumeSlashArgs("vim", args, format), format)
+	case "/chrome":
+		return a.runResumedChromeSlash(resumeSlashArgs("chrome", args, format), format)
+	case "/notifications":
+		return a.runResumedNotificationsSlash(resumeSlashArgs("notifications", args, format), format)
+	case "/privacy-settings":
+		return a.runResumedPrivacySlash(resumeSlashArgs("privacy-settings", args, format), format)
+	case "/telemetry":
+		return a.runResumedTelemetrySlash(resumeSlashArgs("telemetry", args, format), format)
+	case "/keybindings":
+		return a.runResumedKeybindingsSlash(resumeSlashArgs("keybindings", args, format), format)
 	case "/max-tokens":
 		return a.ResumedMaxTokens(resumeSlashArgs("max-tokens", args, format))
 	case "/max-turns":
@@ -17904,6 +17928,144 @@ func (a *App) runResumedBudgetSlash(args []string, format string) error {
 	return a.Budget(args)
 }
 
+func (a *App) runResumedOutputStyleSlash(args []string, format string) error {
+	req, err := parseOutputStyleArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "show":
+		return a.OutputStyle(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/output-style", req.Action), format)
+	}
+}
+
+func (a *App) runResumedThemeSlash(args []string, format string) error {
+	req, err := parseThemeArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status", "list":
+		return a.Theme(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/theme", req.Action), format)
+	}
+}
+
+func (a *App) runResumedLanguageSlash(args []string, format string) error {
+	req, err := parseLanguageArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/language", req.Action), format)
+	}
+	return a.Language(args)
+}
+
+func (a *App) runResumedEffortSlash(args []string, command string, format string) error {
+	req, err := parseEffortArgs(args, command)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status", "list":
+		if command == "reasoning" {
+			return a.Reasoning(args)
+		}
+		return a.Effort(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/"+command, req.Action), format)
+	}
+}
+
+func (a *App) runResumedFastSlash(args []string, format string) error {
+	req, err := parseFastArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/fast", req.Action), format)
+	}
+	return a.Fast(args)
+}
+
+func (a *App) runResumedVimSlash(args []string, format string) error {
+	resumeArgs := args
+	if len(routeMeaningfulArgs(args)) == 0 {
+		resumeArgs = append(append([]string(nil), args...), "status")
+	}
+	req, err := parseVimArgs(resumeArgs)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/vim", req.Action), format)
+	}
+	return a.Vim(resumeArgs)
+}
+
+func (a *App) runResumedChromeSlash(args []string, format string) error {
+	req, err := parseChromeArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status", "install", "permissions", "reconnect":
+		return a.Chrome(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/chrome", req.Action), format)
+	}
+}
+
+func (a *App) runResumedNotificationsSlash(args []string, format string) error {
+	req, err := parseNotificationsArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/notifications", req.Action), format)
+	}
+	return a.Notifications(args)
+}
+
+func (a *App) runResumedPrivacySlash(args []string, format string) error {
+	req, err := parsePrivacyArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/privacy-settings", req.Action), format)
+	}
+	return a.PrivacySettings(args)
+}
+
+func (a *App) runResumedTelemetrySlash(args []string, format string) error {
+	req, err := parseTelemetryArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/telemetry", req.Action), format)
+	}
+	return a.Telemetry(args)
+}
+
+func (a *App) runResumedKeybindingsSlash(args []string, format string) error {
+	req, err := parseKeybindingsArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "show", "path", "validate", "resolve":
+		return a.Keybindings(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/keybindings", req.Action), format)
+	}
+}
+
 func (a *App) runResumedTemperatureSlash(args []string, format string) error {
 	req, err := parseTemperatureArgs(args)
 	if err != nil {
@@ -17988,7 +18150,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /output-style, /theme, /language, /effort, /fast, /vim, /chrome, /notifications, /privacy-settings, /telemetry, /keybindings, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {

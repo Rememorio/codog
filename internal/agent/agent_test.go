@@ -1175,6 +1175,19 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		"rate_limit": map[string]any{
 			"max_retries": 4,
 		},
+		"language":         "Japanese",
+		"theme":            "dark",
+		"reasoning_effort": "high",
+		"fast_mode":        true,
+		"editorMode":       "vim",
+		"privacy_settings": map[string]any{
+			"telemetry_enabled":      true,
+			"prompt_history_enabled": false,
+		},
+		"future": map[string]any{
+			"chrome_default_enabled": true,
+			"notifications_enabled":  false,
+		},
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
@@ -1441,6 +1454,108 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "list", resumedAllowedTools.Action)
 	require.Equal(t, []string{"read_file"}, resumedAllowedTools.Rules)
 
+	out, err = runResumedJSON("/output-style")
+	require.NoError(t, err)
+	var resumedOutputStyle outputstyle.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOutputStyle))
+	require.Equal(t, "output_style", resumedOutputStyle.Kind)
+	require.Equal(t, "list", resumedOutputStyle.Action)
+
+	out, err = runResumedJSON("/theme")
+	require.NoError(t, err)
+	var resumedTheme themeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTheme))
+	require.Equal(t, "theme", resumedTheme.Kind)
+	require.Equal(t, "status", resumedTheme.Action)
+	require.Equal(t, "dark", resumedTheme.Theme)
+
+	out, err = runResumedJSON("/color", "list")
+	require.NoError(t, err)
+	var resumedColor themeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedColor))
+	require.Equal(t, "theme", resumedColor.Kind)
+	require.Equal(t, "list", resumedColor.Action)
+
+	out, err = runResumedJSON("/language")
+	require.NoError(t, err)
+	var resumedLanguage languageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLanguage))
+	require.Equal(t, "language", resumedLanguage.Kind)
+	require.Equal(t, "status", resumedLanguage.Action)
+	require.Equal(t, "Japanese", resumedLanguage.Language)
+
+	out, err = runResumedJSON("/effort")
+	require.NoError(t, err)
+	var resumedEffort effortReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedEffort))
+	require.Equal(t, "effort", resumedEffort.Kind)
+	require.Equal(t, "status", resumedEffort.Action)
+	require.Equal(t, "high", resumedEffort.Effort)
+
+	out, err = runResumedJSON("/reasoning", "list")
+	require.NoError(t, err)
+	var resumedReasoning effortReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedReasoning))
+	require.Equal(t, "reasoning", resumedReasoning.Kind)
+	require.Equal(t, "list", resumedReasoning.Action)
+
+	out, err = runResumedJSON("/fast")
+	require.NoError(t, err)
+	var resumedFast fastReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFast))
+	require.Equal(t, "fast", resumedFast.Kind)
+	require.Equal(t, "status", resumedFast.Action)
+	require.True(t, resumedFast.Enabled)
+
+	out, err = runResumedJSON("/vim")
+	require.NoError(t, err)
+	var resumedVim vimReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVim))
+	require.Equal(t, "vim", resumedVim.Kind)
+	require.Equal(t, "status", resumedVim.Action)
+	require.True(t, resumedVim.Enabled)
+
+	out, err = runResumedJSON("/chrome", "permissions")
+	require.NoError(t, err)
+	var resumedChrome chromeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedChrome))
+	require.Equal(t, "chrome", resumedChrome.Kind)
+	require.Equal(t, "permissions", resumedChrome.Action)
+	require.True(t, resumedChrome.Enabled)
+
+	out, err = runResumedJSON("/notifications")
+	require.NoError(t, err)
+	var resumedNotifications notificationsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedNotifications))
+	require.Equal(t, "notifications", resumedNotifications.Kind)
+	require.Equal(t, "status", resumedNotifications.Action)
+	require.False(t, resumedNotifications.Enabled)
+
+	out, err = runResumedJSON("/privacy-settings")
+	require.NoError(t, err)
+	var resumedPrivacy privacyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPrivacy))
+	require.Equal(t, "privacy_settings", resumedPrivacy.Kind)
+	require.Equal(t, "show", resumedPrivacy.Action)
+	require.True(t, resumedPrivacy.Settings["telemetry_enabled"])
+	require.False(t, resumedPrivacy.Settings["prompt_history_enabled"])
+
+	out, err = runResumedJSON("/telemetry")
+	require.NoError(t, err)
+	var resumedTelemetry telemetryReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTelemetry))
+	require.Equal(t, "telemetry", resumedTelemetry.Kind)
+	require.Equal(t, "status", resumedTelemetry.Action)
+	require.True(t, resumedTelemetry.Enabled)
+
+	out, err = runResumedJSON("/keybindings", "path")
+	require.NoError(t, err)
+	var resumedKeybindings keybindingsFileReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedKeybindings))
+	require.Equal(t, "keybindings", resumedKeybindings.Kind)
+	require.Equal(t, "path", resumedKeybindings.Action)
+	require.NotEmpty(t, resumedKeybindings.Path)
+
 	out, err = runResumedJSON("/project")
 	require.NoError(t, err)
 	var resumedProject projectReport
@@ -1579,6 +1694,17 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		{Command: "/rate-limit", Args: []string{"set", "--max-retries", "2"}, Report: "/rate-limit set"},
 		{Command: "/permissions", Args: []string{"read-only"}, Report: "/permissions set"},
 		{Command: "/allowed-tools", Args: []string{"add", "bash"}, Report: "/allowed-tools add"},
+		{Command: "/output-style", Args: []string{"set", "concise"}, Report: "/output-style set"},
+		{Command: "/theme", Args: []string{"light"}, Report: "/theme set"},
+		{Command: "/language", Args: []string{"French"}, Report: "/language set"},
+		{Command: "/effort", Args: []string{"low"}, Report: "/effort set"},
+		{Command: "/fast", Args: []string{"toggle"}, Report: "/fast toggle"},
+		{Command: "/vim", Args: []string{"toggle"}, Report: "/vim toggle"},
+		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
+		{Command: "/notifications", Args: []string{"on"}, Report: "/notifications on"},
+		{Command: "/privacy-settings", Args: []string{"set", "telemetry", "off"}, Report: "/privacy-settings set"},
+		{Command: "/telemetry", Args: []string{"on"}, Report: "/telemetry on"},
+		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
