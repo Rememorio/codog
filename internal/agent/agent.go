@@ -930,6 +930,10 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 	if err != nil {
 		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
 	}
+	if hasMCPHelpArg(cleanArgs) {
+		renderMCPUsageReport(out, format, buildMCPUsageReport(mcpHelpUnexpected(cleanArgs)))
+		return nil
+	}
 	if len(cleanArgs) == 0 || cleanArgs[0] == "list" {
 		if len(cleanArgs) > 1 {
 			return renderCLIError(out, unexpectedExtraArgsError{
@@ -30668,6 +30672,10 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return err
 	}
 	args = cleanArgs
+	if hasMCPHelpArg(args) {
+		renderMCPUsageReport(a.Out, format, buildMCPUsageReport(mcpHelpUnexpected(args)))
+		return nil
+	}
 	if len(args) == 0 || args[0] == "list" {
 		if len(args) > 1 {
 			return errors.New("usage: codog mcp list")
@@ -30804,6 +30812,23 @@ type mcpShowReport struct {
 	InvalidServers      []localstatus.ValidationIssue `json:"invalid_servers,omitempty"`
 }
 
+type mcpUsageReport struct {
+	Kind       string        `json:"kind"`
+	Action     string        `json:"action"`
+	OK         bool          `json:"ok"`
+	Status     string        `json:"status"`
+	ErrorKind  *string       `json:"error_kind"`
+	Hint       *string       `json:"hint"`
+	Usage      mcpUsageBlock `json:"usage"`
+	Unexpected *string       `json:"unexpected"`
+}
+
+type mcpUsageBlock struct {
+	SlashCommand string   `json:"slash_command"`
+	DirectCLI    string   `json:"direct_cli"`
+	Sources      []string `json:"sources"`
+}
+
 func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPValidationStatus, configLoadError string, configLoadErrorKind string) mcpListReport {
 	if statuses == nil {
 		statuses = []mcp.ServerStatus{}
@@ -30833,6 +30858,84 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		ConfigLoadErrorKind: strings.TrimSpace(configLoadErrorKind),
 		Servers:             statuses,
 		InvalidServers:      append([]localstatus.ValidationIssue(nil), validation.InvalidServers...),
+	}
+}
+
+func buildMCPUsageReport(unexpected string) mcpUsageReport {
+	unexpected = strings.TrimSpace(unexpected)
+	status := "ok"
+	ok := true
+	var errorKind *string
+	var hint *string
+	var unexpectedValue *string
+	if unexpected != "" {
+		status = "error"
+		ok = false
+		value := "unknown_mcp_action"
+		errorKind = &value
+		hintValue := "Use: list, show <server>, or help"
+		hint = &hintValue
+		unexpectedValue = &unexpected
+	}
+	return mcpUsageReport{
+		Kind:      "mcp",
+		Action:    "help",
+		OK:        ok,
+		Status:    status,
+		ErrorKind: errorKind,
+		Hint:      hint,
+		Usage: mcpUsageBlock{
+			SlashCommand: "/mcp [list|show <server>|help]",
+			DirectCLI:    "codog mcp [list|show <server>|help]",
+			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
+		},
+		Unexpected: unexpectedValue,
+	}
+}
+
+func renderMCPUsageReport(out io.Writer, format string, report mcpUsageReport) {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return
+	}
+	fmt.Fprintln(out, "MCP")
+	fmt.Fprintf(out, "  Usage            %s\n", report.Usage.SlashCommand)
+	fmt.Fprintf(out, "  Direct CLI       %s\n", report.Usage.DirectCLI)
+	fmt.Fprintf(out, "  Sources          %s\n", strings.Join(report.Usage.Sources, ", "))
+	if report.Unexpected != nil {
+		fmt.Fprintf(out, "  Unexpected       %s\n", *report.Unexpected)
+	}
+}
+
+func hasMCPHelpArg(args []string) bool {
+	for _, arg := range args {
+		if isMCPHelpArg(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func mcpHelpUnexpected(args []string) string {
+	for index, arg := range args {
+		if !isMCPHelpArg(arg) {
+			continue
+		}
+		if index == 0 {
+			return ""
+		}
+		return strings.Join(args[:index], " ")
+	}
+	return ""
+}
+
+func isMCPHelpArg(arg string) bool {
+	switch strings.TrimSpace(arg) {
+	case "help", "-h", "--help":
+		return true
+	default:
+		return false
 	}
 }
 

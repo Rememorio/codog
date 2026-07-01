@@ -10017,6 +10017,42 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 	require.Contains(t, out.String(), `"server_count": 0`)
 }
 
+func TestMCPHelpCommand(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"help", "--json"}))
+	var report mcpUsageReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "mcp", report.Kind)
+	require.Equal(t, "help", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.OK)
+	require.Nil(t, report.ErrorKind)
+	require.Equal(t, "/mcp [list|show <server>|help]", report.Usage.SlashCommand)
+	require.Equal(t, "codog mcp [list|show <server>|help]", report.Usage.DirectCLI)
+	require.Contains(t, report.Usage.Sources, ".codog.json")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"show", "--help", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "error", report.Status)
+	require.False(t, report.OK)
+	require.NotNil(t, report.ErrorKind)
+	require.Equal(t, "unknown_mcp_action", *report.ErrorKind)
+	require.NotNil(t, report.Unexpected)
+	require.Equal(t, "show", *report.Unexpected)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/mcp help", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Usage")
+	require.Contains(t, out.String(), "/mcp [list|show <server>|help]")
+}
+
 func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "broken.json")
 	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
@@ -10070,6 +10106,17 @@ func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 	require.NotNil(t, showReport.ConfigLoadError)
 	require.Contains(t, *showReport.ConfigLoadError, "broken.json")
 	require.Equal(t, "config_load_failed", showReport.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "help"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var helpReport mcpUsageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &helpReport))
+	require.Equal(t, "mcp", helpReport.Kind)
+	require.Equal(t, "help", helpReport.Action)
+	require.Equal(t, "ok", helpReport.Status)
+	require.True(t, helpReport.OK)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "list", "extra"}, config.FlagOverrides{})
