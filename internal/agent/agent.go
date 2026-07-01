@@ -245,6 +245,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isConfigCommand(command) {
 			return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
+		if config.IsFileError(err) && isMCPCommand(command) {
+			return renderMCPWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
+		}
 		if config.IsFileError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -749,6 +752,15 @@ func isDoctorCommand(command string) bool {
 	}
 }
 
+func isMCPCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "mcp", "/mcp":
+		return true
+	default:
+		return false
+	}
+}
+
 func renderStatusWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
 	cfg, err := config.Default(overrides)
 	if err != nil {
@@ -857,6 +869,29 @@ func renderConfigWithConfigLoadError(out io.Writer, command string, rest []strin
 		return &ExitError{Code: 1, Err: exitErr, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: exitErr}
+}
+
+func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, originalArgs []string, loadErr error) error {
+	mcpArgs := append([]string(nil), rest...)
+	if !argsHaveOutputFormat(mcpArgs) {
+		mcpArgs = injectGlobalOutputFormat("mcp", mcpArgs, requestedOutputFormat(originalArgs))
+	}
+	cleanArgs, format, err := stripJSONOnlyOutputFormat("mcp", mcpArgs)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	if len(cleanArgs) == 0 || cleanArgs[0] == "list" {
+		if len(cleanArgs) > 1 {
+			return renderCLIError(out, unexpectedExtraArgsError{
+				Command: "mcp list",
+				Args:    append([]string(nil), cleanArgs[1:]...),
+				Usage:   "codog mcp list [--json|--output-format text|json]",
+			}, format)
+		}
+		renderMCPListReport(out, format, buildMCPListReport(nil, buildMCPValidation(nil), strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind))
+		return nil
+	}
+	return renderCLIError(out, loadErr, format)
 }
 
 func configInspectionFallbackPaths(configHome string, explicit string) []string {
@@ -18590,6 +18625,7 @@ func codogCapabilityFeatures() []string {
 		"jsonl_sessions",
 		"lane_event_projection",
 		"lsp",
+		"mcp_config_load_degraded",
 		"mcp_client",
 		"mcp_server",
 		"metrics",
@@ -29130,21 +29166,17 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		if len(args) > 1 {
 			return errors.New("usage: codog mcp list")
 		}
+		validation := buildMCPValidation(a.Config.MCPServers)
 		if len(a.Config.MCPServers) == 0 {
 			if format == "json" {
-				renderMCPList(a.Out, nil)
+				renderMCPListReport(a.Out, format, buildMCPListReport(nil, validation, "", ""))
 				return nil
 			}
 			fmt.Fprintln(a.Out, "No MCP servers configured.")
 			return nil
 		}
 		statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
-		if format == "json" {
-			renderMCPList(a.Out, statuses)
-			return nil
-		}
-		data, _ := json.MarshalIndent(statuses, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		renderMCPListReport(a.Out, format, buildMCPListReport(statuses, validation, "", ""))
 		return nil
 	}
 	switch args[0] {
@@ -29230,24 +29262,75 @@ func mcpRemoteAction(action string) bool {
 }
 
 type mcpListReport struct {
-	Kind        string             `json:"kind"`
-	Action      string             `json:"action"`
-	Status      string             `json:"status"`
-	ServerCount int                `json:"server_count"`
-	Servers     []mcp.ServerStatus `json:"servers"`
+	Kind                string                        `json:"kind"`
+	Action              string                        `json:"action"`
+	Status              string                        `json:"status"`
+	ServerCount         int                           `json:"server_count"`
+	ConfiguredServers   int                           `json:"configured_servers"`
+	TotalConfigured     int                           `json:"total_configured"`
+	ValidCount          int                           `json:"valid_count"`
+	InvalidCount        int                           `json:"invalid_count"`
+	ConfigLoadError     *string                       `json:"config_load_error"`
+	ConfigLoadErrorKind string                        `json:"config_load_error_kind,omitempty"`
+	Servers             []mcp.ServerStatus            `json:"servers"`
+	InvalidServers      []localstatus.ValidationIssue `json:"invalid_servers,omitempty"`
 }
 
-func renderMCPList(out io.Writer, statuses []mcp.ServerStatus) {
+func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPValidationStatus, configLoadError string, configLoadErrorKind string) mcpListReport {
 	if statuses == nil {
 		statuses = []mcp.ServerStatus{}
 	}
-	data, _ := json.MarshalIndent(mcpListReport{
-		Kind:        "mcp",
-		Action:      "list",
-		Status:      "ok",
-		ServerCount: len(statuses),
-		Servers:     statuses,
-	}, "", "  ")
+	status := "ok"
+	var loadError *string
+	if strings.TrimSpace(configLoadError) != "" {
+		status = "degraded"
+		value := strings.TrimSpace(configLoadError)
+		loadError = &value
+		if strings.TrimSpace(configLoadErrorKind) == "" {
+			configLoadErrorKind = "config_load_failed"
+		}
+	} else if validation.InvalidCount > 0 {
+		status = "degraded"
+	}
+	return mcpListReport{
+		Kind:                "mcp",
+		Action:              "list",
+		Status:              status,
+		ServerCount:         len(statuses),
+		ConfiguredServers:   validation.ValidCount,
+		TotalConfigured:     validation.TotalConfigured,
+		ValidCount:          validation.ValidCount,
+		InvalidCount:        validation.InvalidCount,
+		ConfigLoadError:     loadError,
+		ConfigLoadErrorKind: strings.TrimSpace(configLoadErrorKind),
+		Servers:             statuses,
+		InvalidServers:      append([]localstatus.ValidationIssue(nil), validation.InvalidServers...),
+	}
+}
+
+func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
+	if format == "text" {
+		if report.ConfigLoadError == nil {
+			data, _ := json.MarshalIndent(report.Servers, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return
+		}
+		fmt.Fprintln(out, "MCP")
+		fmt.Fprintf(out, "  Status           %s\n", report.Status)
+		fmt.Fprintf(out, "  Servers          %d\n", report.ServerCount)
+		if report.ConfigLoadError != nil {
+			fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
+			fmt.Fprintln(out, "  Hint             Fix the listed config file or run `codog doctor` for details.")
+		}
+		if report.InvalidCount > 0 {
+			fmt.Fprintf(out, "  Invalid servers  %d\n", report.InvalidCount)
+		}
+		if len(report.Servers) == 0 && report.ConfigLoadError == nil {
+			fmt.Fprintln(out, "  Result           no MCP servers configured")
+		}
+		return
+	}
+	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(out, string(data))
 }
 

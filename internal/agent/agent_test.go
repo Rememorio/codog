@@ -669,6 +669,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "interface_language")
 	require.Contains(t, report.Features, "lane_event_projection")
 	require.Contains(t, report.Features, "mcp_server")
+	require.Contains(t, report.Features, "mcp_config_load_degraded")
 	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "policy_engine")
 	require.Contains(t, report.Features, "sampling_temperature")
@@ -9126,6 +9127,55 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 	require.NoError(t, app.MCP(context.Background(), []string{"--output-format", "json"}))
 	require.Contains(t, out.String(), `"kind": "mcp"`)
 	require.Contains(t, out.String(), `"server_count": 0`)
+}
+
+func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report mcpListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "mcp", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, 0, report.ServerCount)
+	require.Equal(t, 0, report.ConfiguredServers)
+	require.Equal(t, 0, report.TotalConfigured)
+	require.Equal(t, 0, report.ValidCount)
+	require.Equal(t, 0, report.InvalidCount)
+	require.NotNil(t, report.ConfigLoadError)
+	require.Contains(t, *report.ConfigLoadError, "broken.json")
+	require.Contains(t, *report.ConfigLoadError, "unexpected end of JSON input")
+	require.Equal(t, "config_load_failed", report.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/mcp"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.NotNil(t, report.ConfigLoadError)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "text", "mcp"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "MCP")
+	require.Contains(t, out, "Config load")
+	require.Contains(t, out, "broken.json")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "list", "extra"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var errorReport cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
+	require.Equal(t, "unexpected_extra_args", errorReport.ErrorKind)
+	require.NotContains(t, out, "config_load_error")
 }
 
 func TestRegisterMCPToolsContinuesAfterBrokenServer(t *testing.T) {
