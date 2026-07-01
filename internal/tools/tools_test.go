@@ -263,6 +263,43 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Contains(t, out, `"line": 1`)
 	require.Contains(t, out, "b.py")
 	require.NotContains(t, out, "a.go")
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "context.go"), []byte("before one\nmatch target\nafter one\nafter two\nafter three\n"), 0o644))
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"target","output_mode":"content","-B":1,"-A":2}`), nil)
+	require.NoError(t, err)
+	var contextReport struct {
+		Matches []struct {
+			Path   string `json:"path"`
+			Line   int    `json:"line"`
+			Text   string `json:"text"`
+			Before []struct {
+				Line int    `json:"line"`
+				Text string `json:"text"`
+			} `json:"before"`
+			After []struct {
+				Line int    `json:"line"`
+				Text string `json:"text"`
+			} `json:"after"`
+		} `json:"matches"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &contextReport))
+	require.Len(t, contextReport.Matches, 1)
+	require.Equal(t, "context.go", contextReport.Matches[0].Path)
+	require.Equal(t, 2, contextReport.Matches[0].Line)
+	require.Equal(t, "match target", contextReport.Matches[0].Text)
+	require.Equal(t, []struct {
+		Line int    `json:"line"`
+		Text string `json:"text"`
+	}{{Line: 1, Text: "before one"}}, contextReport.Matches[0].Before)
+	require.Equal(t, []struct {
+		Line int    `json:"line"`
+		Text string `json:"text"`
+	}{{Line: 3, Text: "after one"}, {Line: 4, Text: "after two"}}, contextReport.Matches[0].After)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"target","output_mode":"content","context":1}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"before one"`)
+	require.Contains(t, out, `"after one"`)
 }
 
 func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {

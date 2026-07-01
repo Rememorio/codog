@@ -2562,6 +2562,10 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 				"path":        map[string]any{"type": "string"},
 				"glob":        map[string]any{"type": "string"},
 				"output_mode": map[string]any{"type": "string", "enum": []string{"content", "files_with_matches", "count"}},
+				"-B":          map[string]any{"type": "integer", "minimum": 0},
+				"-A":          map[string]any{"type": "integer", "minimum": 0},
+				"-C":          map[string]any{"type": "integer", "minimum": 0},
+				"context":     map[string]any{"type": "integer", "minimum": 0},
 				"-i":          map[string]any{"type": "boolean"},
 				"ignore_case": map[string]any{"type": "boolean"},
 				"type":        map[string]any{"type": "string"},
@@ -2583,6 +2587,10 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		Path           string `json:"path"`
 		Glob           string `json:"glob"`
 		OutputMode     string `json:"output_mode"`
+		Before         int    `json:"-B"`
+		After          int    `json:"-A"`
+		ContextShort   int    `json:"-C"`
+		Context        int    `json:"context"`
 		DashIgnoreCase bool   `json:"-i"`
 		IgnoreCase     bool   `json:"ignore_case"`
 		Type           string `json:"type"`
@@ -2626,6 +2634,18 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		limit = 100
 	}
 	offset := max(payload.Offset, 0)
+	contextLines := max(payload.Context, 0)
+	if contextLines == 0 {
+		contextLines = max(payload.ContextShort, 0)
+	}
+	beforeLines := max(payload.Before, 0)
+	if beforeLines == 0 {
+		beforeLines = contextLines
+	}
+	afterLines := max(payload.After, 0)
+	if afterLines == 0 {
+		afterLines = contextLines
+	}
 	seenFiles := map[string]bool{}
 	counts := map[string]int{}
 	var files []string
@@ -2685,7 +2705,14 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 					counts[display]++
 				default:
 					if seen >= offset {
-						matches = append(matches, map[string]any{"path": display, "line": i + 1, "text": line})
+						match := map[string]any{"path": display, "line": i + 1, "text": line}
+						if beforeLines > 0 {
+							match["before"] = grepContextLines(lines, i-beforeLines, i)
+						}
+						if afterLines > 0 {
+							match["after"] = grepContextLines(lines, i+1, i+afterLines+1)
+						}
+						matches = append(matches, match)
 					}
 					seen++
 					if len(matches) >= limit {
@@ -2721,6 +2748,19 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	default:
 		return pretty(map[string]any{"output_mode": mode, "matches": matches, "truncated": len(matches) >= limit, "offset": offset}), nil
 	}
+}
+
+func grepContextLines(lines []string, start int, end int) []map[string]any {
+	start = max(start, 0)
+	end = min(max(end, 0), len(lines))
+	if start >= end {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, end-start)
+	for index := start; index < end; index++ {
+		out = append(out, map[string]any{"line": index + 1, "text": lines[index]})
+	}
+	return out
 }
 
 func matchesGrepType(path string, fileType string) bool {
@@ -6678,7 +6718,11 @@ func displayPath(workspace string, path string) string {
 		if resolved, evalErr := filepath.EvalSymlinks(root); evalErr == nil {
 			root = resolved
 		}
-		if rel, relErr := filepath.Rel(root, path); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
+		displayCandidate := path
+		if resolved, evalErr := filepath.EvalSymlinks(path); evalErr == nil {
+			displayCandidate = resolved
+		}
+		if rel, relErr := filepath.Rel(root, displayCandidate); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel) {
 			return rel
 		}
 	}
