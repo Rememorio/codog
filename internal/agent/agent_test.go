@@ -302,6 +302,26 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.StatusValues, "running")
 	require.NotNil(t, report.RequiresProviderRequest)
 	require.False(t, *report.RequiresProviderRequest)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"code-intel", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "code-intel", report.Topic)
+	require.Equal(t, "code-intel", report.Command)
+	require.Contains(t, report.Help, "notebook-read")
+	require.Contains(t, report.Help, "lsp")
+	require.Contains(t, report.OutputFields, "symbols")
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"notebook-edit", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "notebook-edit", report.Topic)
+	require.Equal(t, "notebook-edit", report.Command)
+	require.Contains(t, report.Help, "code-intel notebook-edit")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -337,6 +357,16 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			name:  "prompt provider help",
 			args:  []string{"--config", configPath, "prompt", "--help", "--output-format", "json"},
 			topic: "prompt",
+		},
+		{
+			name:  "code intel help",
+			args:  []string{"--config", configPath, "code-intel", "--help", "--output-format", "json"},
+			topic: "code-intel",
+		},
+		{
+			name:  "slash notebook read help",
+			args:  []string{"--config", configPath, "/notebook-read", "--help", "--output-format", "json"},
+			topic: "notebook-read",
 		},
 		{
 			name:  "speak local help",
@@ -854,6 +884,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("ApiKeyStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 	require.True(t, commandAcceptsGlobalOutputFormat("CheckGitHubStep"))
+	require.True(t, commandAcceptsGlobalOutputFormat("code-intel"))
 	require.True(t, commandAcceptsGlobalOutputFormat("CreatingStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ExistingWorkflowStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
@@ -875,6 +906,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
+	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
+	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
 }
@@ -1336,6 +1369,12 @@ func helper() string {
 	return "ok"
 }
 `), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "analysis.ipynb"), []byte(`{
+  "cells": [
+    {"cell_type":"code","id":"resume-cell","metadata":{},"source":["print(1)\n"],"outputs":[],"execution_count":null}
+  ],
+  "metadata": {"kernelspec":{"language":"python"}}
+}`), 0o644))
 	signalPath := filepath.Join(workspace, "signals.go")
 	require.NoError(t, os.WriteFile(signalPath, []byte(`package main
 
@@ -2510,6 +2549,34 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedFormat))
 	require.Equal(t, "format", resumedFormat.Kind)
 	require.False(t, resumedFormat.Write)
+
+	out, err = runResumedJSON("/code-intel", "symbols")
+	require.NoError(t, err)
+	var resumedCodeIntelSymbols symbolsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCodeIntelSymbols))
+	require.Equal(t, "symbols", resumedCodeIntelSymbols.Kind)
+	require.GreaterOrEqual(t, resumedCodeIntelSymbols.Total, 2)
+
+	out, err = runResumedJSON("/code-intel", "notebook-read", "analysis.ipynb", "--cell-index", "0")
+	require.NoError(t, err)
+	var resumedCodeIntelNotebook codeIntelNotebookReadReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCodeIntelNotebook))
+	require.Equal(t, "notebook_read", resumedCodeIntelNotebook.Kind)
+	require.Equal(t, "analysis.ipynb", resumedCodeIntelNotebook.Result.Path)
+	require.Len(t, resumedCodeIntelNotebook.Result.Cells, 1)
+	require.Equal(t, "resume-cell", resumedCodeIntelNotebook.Result.Cells[0].CellID)
+
+	out, err = runResumedJSON("/notebook-read", "analysis.ipynb", "--cell-index", "0")
+	require.NoError(t, err)
+	var resumedNotebookRead codeIntelNotebookReadReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedNotebookRead))
+	require.Equal(t, "notebook_read", resumedNotebookRead.Kind)
+	require.Equal(t, "resume-cell", resumedNotebookRead.Result.Cells[0].CellID)
+
+	out, err = runResumedJSON("/code-intel", "notebook-edit", "analysis.ipynb", "--source", "changed")
+	require.Error(t, err)
+	require.Contains(t, out, `"kind": "unsupported_resumed_slash_command"`)
+	require.Contains(t, out, `"/code-intel notebook-edit"`)
 
 	out, err = runResumedJSON("/reset", "status")
 	require.NoError(t, err)
@@ -6103,6 +6170,11 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "runner.go")
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/code-intel symbols --json", sess))
+	require.Contains(t, out.String(), `"kind": "symbols"`)
+	require.Contains(t, out.String(), `"runner.go"`)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/teleport runner.go", sess))
 	require.Contains(t, out.String(), "Mode             file")
 	require.Contains(t, out.String(), "package intel")
@@ -6134,6 +6206,16 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"language": "python"`)
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/code-intel notebook-read analysis.ipynb --cell-index 0 --json", sess))
+	require.Contains(t, out.String(), `"kind": "notebook_read"`)
+	require.Contains(t, out.String(), `"cell_id": "cell-a"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/notebook-read analysis.ipynb --cell-index 0", sess))
+	require.Contains(t, out.String(), "Notebook Read")
+	require.Contains(t, out.String(), "Cell 0")
+	out.Reset()
+
 	require.NoError(t, app.CodeIntel([]string{"notebook-edit", "analysis.ipynb", "--cell-id", "cell-a", "--source", "print(2)\n", "--json"}))
 	require.Contains(t, out.String(), `"kind": "notebook_edit"`)
 	require.Contains(t, out.String(), `"cell_id": "cell-a"`)
@@ -6149,6 +6231,13 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Cell type        markdown")
 	out.Reset()
 
+	require.True(t, app.handleSlash(context.Background(), "/notebook-edit analysis.ipynb --mode insert --cell-id 1 --cell-type markdown --source=SlashNotes", sess))
+	require.Contains(t, out.String(), "Notebook Edit")
+	data, err = os.ReadFile(filepath.Join(workspace, "analysis.ipynb"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "SlashNotes")
+	out.Reset()
+
 	require.NoError(t, app.CodeIntel([]string{"notebook-read", "analysis.ipynb", "--cell-index", "1", "--limit", "1"}))
 	require.Contains(t, out.String(), "Notebook Read")
 	require.Contains(t, out.String(), "Cell 1")
@@ -6161,6 +6250,21 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "Legacy title")
 	require.NotContains(t, string(data), `"outputs": []`)
+
+	cliConfigPath := filepath.Join(t.TempDir(), "config.json")
+	cliConfig, err := json.Marshal(map[string]any{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cliConfigPath, cliConfig, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	defer func() { require.NoError(t, os.Chdir(oldWD)) }()
+	cliOut, cliErr := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", cliConfigPath, "--output-format", "json", "/notebook-read", "analysis.ipynb", "--cell-index", "0"}, config.FlagOverrides{})
+	})
+	require.NoError(t, cliErr)
+	require.Contains(t, cliOut, `"kind": "notebook_read"`)
+	require.Contains(t, cliOut, `"Legacy title"`)
 
 	_, err = parseCodeIntelNotebookEditArgs([]string{"analysis.ipynb", "--mode", "insert"})
 	require.Error(t, err)

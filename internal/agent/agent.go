@@ -200,7 +200,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		applyStoredOAuthToken(&cfg, time.Now().UTC())
 		return renderProvidersCommand(os.Stdout, cfg, paths, rest)
 	}
-	if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+	helpCommand := command
+	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) == "" {
+		if mapped := directSlashCommandName(command); mapped != "" {
+			helpCommand = mapped
+		}
+	}
+	if handled, err := renderCommandHelpRequest(os.Stdout, helpCommand, rest, requestedOutputFormat(originalArgs)); handled {
 		return err
 	}
 	if handled, err := renderLocalRouteGuard(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
@@ -685,6 +691,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Format(rest)
 	case "code-intel":
 		return app.CodeIntel(rest)
+	case "notebook-read":
+		return app.CodeIntel(append([]string{"notebook-read"}, rest...))
+	case "notebook-edit":
+		return app.CodeIntel(append([]string{"notebook-edit"}, rest...))
 	case "remote":
 		return app.Remote(rest)
 	case "remote-env":
@@ -19190,6 +19200,8 @@ func builtInCommandNames() []string {
 		"model",
 		"node",
 		"notifications",
+		"notebook-edit",
+		"notebook-read",
 		"oauth",
 		"oauth-refresh",
 		"OAuthFlowStep",
@@ -19992,6 +20004,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Completion(resumeSlashArgs("completion", args, format))
 	case "/format":
 		return a.runResumedFormatSlash(resumeSlashArgs("format", args, format), format)
+	case "/code-intel":
+		return a.runResumedCodeIntelSlash(ctx, args, format)
+	case "/notebook-read":
+		return a.CodeIntel(resumeSlashArgs("notebook-read", append([]string{"notebook-read"}, args...), format))
 	case "/metrics":
 		return a.Metrics(resumeSlashArgs("metrics", args, format), resumed)
 	case "/insights":
@@ -20381,6 +20397,47 @@ func (a *App) runResumedFormatSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/format", "write"), format)
 	}
 	return a.Format(args)
+}
+
+func (a *App) runResumedCodeIntelSlash(ctx context.Context, args []string, format string) error {
+	if len(args) == 0 || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
+		return a.Symbols(resumeSlashArgs("symbols", args, format))
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	rest := args[1:]
+	switch action {
+	case "symbols":
+		return a.Symbols(resumeSlashArgs("symbols", rest, format))
+	case "diagnostics":
+		return a.Diagnostics(ctx, resumeSlashArgs("diagnostics", rest, format))
+	case "completion", "completions":
+		return a.Completion(resumeSlashArgs("completion", rest, format))
+	case "format", "formatting":
+		return a.runResumedFormatSlash(resumeSlashArgs("format", rest, format), format)
+	case "notebook", "notebook-read":
+		return a.CodeIntel(resumeSlashArgs("notebook-read", append([]string{"notebook-read"}, rest...), format))
+	case "notebook-edit":
+		return renderUnsupportedResumedSlashCommand(a.Out, "/code-intel notebook-edit", format)
+	case "lsp":
+		return a.runResumedCodeIntelLSPSlash(rest, format)
+	default:
+		return fmt.Errorf("unknown code-intel command %q", args[0])
+	}
+}
+
+func (a *App) runResumedCodeIntelLSPSlash(args []string, format string) error {
+	if len(args) == 0 || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
+		return a.CodeIntelLSP(args)
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	switch action {
+	case "list", "discover", "status", "query", "request":
+		return a.CodeIntelLSP(args)
+	case "start", "stop":
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/code-intel lsp", action), format)
+	default:
+		return fmt.Errorf("unknown code-intel lsp command %q", args[0])
+	}
 }
 
 func (a *App) runResumedPerfIssueSlash(args []string, format string) error {
@@ -22557,35 +22614,24 @@ func parsePositiveInt(value string, label string) (int, error) {
 }
 
 func (a *App) CodeIntel(args []string) error {
-	if len(args) == 0 || args[0] == "symbols" {
-		symbols, err := codeintel.GoSymbols(a.Workspace)
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(symbols, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
+	if len(args) == 0 || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
+		return a.Symbols(args)
 	}
-	if args[0] == "diagnostics" {
-		diagnostics, err := codeintel.GoDiagnostics(context.Background(), a.Workspace, args[1:])
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(diagnostics, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return nil
-	}
-	if args[0] == "completion" || args[0] == "completions" {
-		return a.Completion(args[1:])
-	}
-	if args[0] == "format" || args[0] == "formatting" {
-		return a.Format(args[1:])
-	}
-	if args[0] == "lsp" {
-		return a.CodeIntelLSP(args[1:])
-	}
-	if args[0] == "notebook-read" || args[0] == "notebook" {
-		req, err := parseCodeIntelNotebookReadArgs(args[1:])
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	rest := args[1:]
+	switch action {
+	case "symbols":
+		return a.Symbols(rest)
+	case "diagnostics":
+		return a.Diagnostics(context.Background(), rest)
+	case "completion", "completions":
+		return a.Completion(rest)
+	case "format", "formatting":
+		return a.Format(rest)
+	case "lsp":
+		return a.CodeIntelLSP(rest)
+	case "notebook-read", "notebook":
+		req, err := parseCodeIntelNotebookReadArgs(rest)
 		if err != nil {
 			return err
 		}
@@ -22615,9 +22661,8 @@ func (a *App) CodeIntel(args []string) error {
 		}
 		renderCodeIntelNotebookRead(a.Out, report)
 		return nil
-	}
-	if args[0] == "notebook-edit" {
-		req, err := parseCodeIntelNotebookEditArgs(args[1:])
+	case "notebook-edit":
+		req, err := parseCodeIntelNotebookEditArgs(rest)
 		if err != nil {
 			return err
 		}
@@ -22652,8 +22697,9 @@ func (a *App) CodeIntel(args []string) error {
 		}
 		renderCodeIntelNotebookEdit(a.Out, report)
 		return nil
+	default:
+		return fmt.Errorf("unknown code-intel command %q", args[0])
 	}
-	return fmt.Errorf("unknown code-intel command %q", args[0])
 }
 
 type codeIntelNotebookReadRequest struct {
@@ -24244,6 +24290,18 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/format":
 		if err := a.Format(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/code-intel":
+		if err := a.CodeIntel(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/notebook-read":
+		if err := a.CodeIntel(append([]string{"notebook-read"}, fields[1:]...)); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/notebook-edit":
+		if err := a.CodeIntel(append([]string{"notebook-edit"}, fields[1:]...)); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/export":
@@ -34636,11 +34694,11 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
-		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
+		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
@@ -35009,6 +35067,36 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"worker_id", "mode", "status", "session_id", "model", "permission_mode", "updated_at"},
 			[]string{"idle", "running", "completed", "error"},
 			false,
+		), true
+	case "code-intel":
+		return localCommandHelpSpec(
+			"code-intel",
+			"code-intel",
+			"codog code-intel [symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp] [ARGS...] [--output-format text|json]",
+			"Code Intel\n\nUsage:\n  codog code-intel symbols [--output-format text|json]\n  codog code-intel diagnostics [patterns...] [--output-format text|json]\n  codog code-intel completion PREFIX [--output-format text|json]\n  codog code-intel format PATH [--write] [--output-format text|json]\n  codog code-intel notebook-read NOTEBOOK [--cell-index N] [--include-outputs] [--output-format text|json]\n  codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]\n  codog code-intel lsp [discover|list|status|query|start|stop]\n\nRuns local code intelligence helpers, notebook inspection/editing, and LSP bridge operations without making a provider request.\n",
+			[]string{"kind", "total", "symbols", "diagnostics", "result", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "notebook-read":
+		return localCommandHelpSpec(
+			"notebook-read",
+			"notebook-read",
+			"codog notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--output-format text|json]",
+			"Notebook Read\n\nUsage:\n  codog notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--output-format text|json]\n  codog code-intel notebook-read NOTEBOOK [same flags]\n\nReads Jupyter notebook metadata and cell source through the code intelligence notebook reader.\n",
+			[]string{"path", "cell_count", "cells", "source_lines"},
+			[]string{"ok", "error"},
+			false,
+		), true
+	case "notebook-edit":
+		return localCommandHelpSpec(
+			"notebook-edit",
+			"notebook-edit",
+			"codog notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]",
+			"Notebook Edit\n\nUsage:\n  codog notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]\n  codog code-intel notebook-edit NOTEBOOK [same flags]\n\nEdits Jupyter notebook cells through the code intelligence notebook writer.\n",
+			[]string{"path", "mode", "cell_index", "cell_type", "cell_count", "source_lines"},
+			[]string{"ok", "error"},
+			true,
 		), true
 	case "context":
 		return localCommandHelpSpec(
