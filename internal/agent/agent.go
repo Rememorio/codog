@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -411,6 +413,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ShowCost(overrides)
 	case "cache":
 		return app.Cache(rest, overrides)
+	case "break-cache":
+		return app.BreakCache(rest, overrides)
 	case "usage":
 		return app.Usage(rest, overrides)
 	case "stats":
@@ -14746,6 +14750,7 @@ func builtInCommandNames() []string {
 		"branch",
 		"bridge",
 		"bridge-kick",
+		"break-cache",
 		"brief",
 		"bug",
 		"budget",
@@ -17900,6 +17905,17 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Cache(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/break-cache":
+		if err := a.BreakCache(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			break
+		}
+		next, err := a.Sessions.Open(sess.ID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			break
+		}
+		*sess = *next
 	case "/usage":
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -23854,6 +23870,183 @@ func renderCacheReport(out io.Writer, report cacheReport) {
 	}
 }
 
+type breakCacheRequest struct {
+	Format    string
+	SessionID string
+	Message   string
+}
+
+type breakCacheReport struct {
+	Kind           string `json:"kind"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	SessionID      string `json:"session_id"`
+	MessageCount   int    `json:"message_count"`
+	Path           string `json:"path"`
+	Nonce          string `json:"nonce"`
+	Marker         string `json:"marker"`
+	CreatedSession bool   `json:"created_session"`
+}
+
+func (a *App) BreakCache(args []string, overrides config.FlagOverrides) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parseBreakCacheArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	sess, created, err := a.breakCacheSession(req.SessionID)
+	if err != nil {
+		return err
+	}
+	nonce, err := newCacheBreakerNonce()
+	if err != nil {
+		return err
+	}
+	marker := strings.TrimSpace(req.Message)
+	if marker == "" {
+		marker = "Codog cache breaker nonce: " + nonce
+	}
+	if !strings.Contains(marker, nonce) {
+		marker = strings.TrimSpace(marker + "\n\nCodog cache breaker nonce: " + nonce)
+	}
+	if err := a.Sessions.Append(sess.ID, anthropic.TextMessage("user", marker)); err != nil {
+		return err
+	}
+	report := breakCacheReport{
+		Kind:           "break_cache",
+		Action:         "append_marker",
+		Status:         "ok",
+		SessionID:      sess.ID,
+		MessageCount:   len(sess.Messages) + 1,
+		Path:           sess.Path,
+		Nonce:          nonce,
+		Marker:         marker,
+		CreatedSession: created,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBreakCacheReport(a.Out, report)
+	return nil
+}
+
+func parseBreakCacheArgs(args []string, overrides config.FlagOverrides) (breakCacheRequest, error) {
+	req := breakCacheRequest{Format: "text"}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+		if req.SessionID == "true" {
+			req.SessionID = "latest"
+		}
+	}
+	if req.SessionID == "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("break-cache output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("break-cache session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("break-cache resume id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--message":
+			index++
+			if index >= len(args) {
+				return req, errors.New("break-cache message is required")
+			}
+			req.Message = args[index]
+		case strings.HasPrefix(arg, "--message="):
+			req.Message = strings.TrimPrefix(arg, "--message=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown break-cache flag %q", arg)
+		default:
+			if req.Message == "" {
+				req.Message = strings.Join(args[index:], " ")
+				index = len(args)
+				continue
+			}
+			return req, fmt.Errorf("unexpected break-cache argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "break-cache"); err != nil {
+		return req, err
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func (a *App) breakCacheSession(id string) (*session.Session, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = "latest"
+	}
+	if id == "latest" {
+		latest, err := a.Sessions.LatestID()
+		if errors.Is(err, session.ErrNoSessions) {
+			created, createErr := a.Sessions.Create("")
+			return created, true, createErr
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		id = latest
+	}
+	exists, err := a.Sessions.Exists(id)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		created, createErr := a.Sessions.Create(id)
+		return created, true, createErr
+	}
+	opened, err := a.Sessions.Open(id)
+	return opened, false, err
+}
+
+func newCacheBreakerNonce() (string, error) {
+	var bytes [8]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes[:]), nil
+}
+
+func renderBreakCacheReport(out io.Writer, report breakCacheReport) {
+	fmt.Fprintln(out, "Break Cache")
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Created session  %t\n", report.CreatedSession)
+	fmt.Fprintf(out, "  Nonce            %s\n", report.Nonce)
+	fmt.Fprintf(out, "  Path             %s\n", report.Path)
+}
+
 type metricsRequest struct {
 	Format    string
 	Limit     int
@@ -26049,7 +26242,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
-		"bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
+		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
@@ -26523,6 +26716,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "break-cache":
+		return localCommandHelpSpec(
+			"break-cache",
+			"break-cache",
+			"codog break-cache [--session ID|--resume ID|latest] [MESSAGE] [--output-format text|json]",
+			"Break Cache\n\nUsage:\n  codog break-cache [--session ID|--resume ID|latest] [MESSAGE] [--output-format text|json]\n\nAppends a local cache-breaker user message with a random nonce to the selected session so the next provider request has a different prompt prefix.\n",
+			[]string{"session_id", "message_count", "nonce", "marker", "created_session"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "metrics":
 		return localCommandHelpSpec(
 			"metrics",
@@ -26873,6 +27076,7 @@ Usage:
   %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] break-cache [--session ID|--resume ID|latest] [MESSAGE] [--json|--output-format text|json]
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] metrics [--session ID|--resume ID|latest] [--limit N] [--json|--output-format text|json]

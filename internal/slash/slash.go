@@ -67,6 +67,7 @@ func Specs() []Spec {
 		{Name: "/doctor", Usage: "/doctor", Description: "Run local auth, config, workspace, and runtime diagnostics."},
 		{Name: "/cost", Usage: "/cost", Description: "Estimate token usage and cost for the current session."},
 		{Name: "/cache", Usage: "/cache", Description: "Show prompt cache statistics for the current session."},
+		{Name: "/break-cache", Usage: "/break-cache [MESSAGE]", Description: "Append a cache-breaker marker to the current session."},
 		{Name: "/usage", Usage: "/usage", Description: "Show detailed token, role, block, and tool usage for the current session."},
 		{Name: "/stats", Usage: "/stats", Description: "Alias for /usage."},
 		{Name: "/metrics", Usage: "/metrics", Description: "Show workspace and session usage metrics."},

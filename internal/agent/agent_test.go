@@ -301,6 +301,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "cache",
 		},
 		{
+			name:  "break-cache local help",
+			args:  []string{"--config", configPath, "break-cache", "--help", "--output-format", "json"},
+			topic: "break-cache",
+		},
+		{
 			name:  "notifications local help",
 			args:  []string{"--config", configPath, "notifications", "--help", "--output-format", "json"},
 			topic: "notifications",
@@ -438,6 +443,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "claude-test", report.Model)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
@@ -1897,6 +1903,24 @@ func TestClearCommandReportsFreshSessionWithoutDeletingHistory(t *testing.T) {
 	require.NoError(t, app.ClearCommand(nil))
 	require.Contains(t, out.String(), "Clear Session")
 	require.Contains(t, out.String(), "Messages          0")
+}
+
+func TestBreakCacheCreatesSessionWhenNoLatestExists(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.BreakCache([]string{"--json"}, config.FlagOverrides{}))
+	var report breakCacheReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "break_cache", report.Kind)
+	require.True(t, report.CreatedSession)
+	require.NotEmpty(t, report.SessionID)
+	require.NotEmpty(t, report.Nonce)
+	opened, err := store.Open(report.SessionID)
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 1)
+	require.Contains(t, opened.Messages[0].Content[0].Text, report.Nonce)
 }
 
 func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
@@ -3865,6 +3889,24 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Equal(t, "actual", cache.Source)
 	out.Reset()
 
+	require.NoError(t, app.BreakCache([]string{"--session", "usage-session", "--message", "force a new provider prompt prefix", "--json"}, config.FlagOverrides{}))
+	var breakReport breakCacheReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &breakReport))
+	require.Equal(t, "break_cache", breakReport.Kind)
+	require.Equal(t, "append_marker", breakReport.Action)
+	require.Equal(t, "ok", breakReport.Status)
+	require.Equal(t, "usage-session", breakReport.SessionID)
+	require.False(t, breakReport.CreatedSession)
+	require.NotEmpty(t, breakReport.Nonce)
+	require.Contains(t, breakReport.Marker, "force a new provider prompt prefix")
+	require.Contains(t, breakReport.Marker, breakReport.Nonce)
+	breakSession, err := store.Open("usage-session")
+	require.NoError(t, err)
+	require.Len(t, breakSession.Messages, 4)
+	require.Equal(t, "user", breakSession.Messages[3].Role)
+	require.Contains(t, breakSession.Messages[3].Content[0].Text, breakReport.Nonce)
+	out.Reset()
+
 	require.NoError(t, app.Metrics([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
 	var metrics metricsReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &metrics))
@@ -3913,6 +3955,12 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Cache created    6")
 	require.Contains(t, out.String(), "Cache read       4")
 	require.Contains(t, out.String(), "Hit ratio        6.67%")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/break-cache slash marker", sess))
+	require.Contains(t, out.String(), "Break Cache")
+	require.Len(t, sess.Messages, 5)
+	require.Contains(t, sess.Messages[4].Content[0].Text, "slash marker")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/metrics --limit 1", sess))
