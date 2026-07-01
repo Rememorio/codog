@@ -133,6 +133,8 @@ func Specs() []Spec {
 		{Name: "/security-review", Usage: "/security-review [--limit N]", Description: "Run a local security heuristic scan."},
 		{Name: "/bughunter", Usage: "/bughunter [PATH] [--limit N]", Description: "Scan for likely correctness bugs."},
 		{Name: "/review", Usage: "/review [--staged|--base REF]", Description: "Review changed files with diff summary and security findings."},
+		{Name: "/reviewRemote", Usage: "/reviewRemote [PR] [--repo OWNER/REPO]", Description: "Combine local changed-file review with GitHub PR comments."},
+		{Name: "/review-remote", Usage: "/review-remote [PR] [--repo OWNER/REPO]", Description: "Alias for /reviewRemote."},
 		{Name: "/ultrareview", Usage: "/ultrareview [--staged|--base REF]", Description: "Alias for local branch review."},
 		{Name: "/feedback", Usage: "/feedback [MESSAGE]", Description: "Write a local feedback report with workspace diagnostics."},
 		{Name: "/bug", Usage: "/bug [MESSAGE]", Description: "Alias for /feedback."},

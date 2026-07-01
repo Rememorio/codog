@@ -473,6 +473,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ReleaseNotes(rest)
 	case "review", "ultrareview":
 		return app.Review(rest)
+	case "reviewRemote", "review-remote":
+		return app.ReviewRemote(ctx, rest)
 	case "feedback", "bug":
 		return app.Feedback(rest, overrides)
 	case "pr":
@@ -11581,6 +11583,27 @@ type reviewRequest struct {
 	Limit  int
 }
 
+type reviewRemoteRequest struct {
+	Format string
+	Base   string
+	Staged bool
+	Limit  int
+	PR     string
+	Repo   string
+}
+
+type reviewRemoteReport struct {
+	Kind        string                `json:"kind"`
+	Action      string                `json:"action"`
+	Status      string                `json:"status"`
+	Repository  string                `json:"repository,omitempty"`
+	PullRequest int                   `json:"pull_request,omitempty"`
+	URL         string                `json:"url,omitempty"`
+	Local       localreview.Report    `json:"local_review"`
+	Remote      githubcomments.Report `json:"remote_comments"`
+	Signals     []string              `json:"signals,omitempty"`
+}
+
 func (a *App) Review(args []string) error {
 	req, err := parseReviewArgs(args)
 	if err != nil {
@@ -11600,6 +11623,38 @@ func (a *App) Review(args []string) error {
 		return nil
 	}
 	localreview.RenderText(a.Out, report)
+	return nil
+}
+
+func (a *App) ReviewRemote(ctx context.Context, args []string) error {
+	req, err := parseReviewRemoteArgs(args)
+	if err != nil {
+		return err
+	}
+	localReport, err := localreview.Run(a.Workspace, localreview.Options{
+		Base:   req.Base,
+		Staged: req.Staged,
+		Limit:  req.Limit,
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	remoteReport, err := githubcomments.Fetch(ctx, githubcomments.Options{
+		PR:   req.PR,
+		Repo: req.Repo,
+	})
+	if err != nil {
+		return err
+	}
+	report := buildReviewRemoteReport(localReport, remoteReport)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderReviewRemoteReport(a.Out, report)
 	return nil
 }
 
@@ -11654,6 +11709,135 @@ func parseReviewArgs(args []string) (reviewRequest, error) {
 	default:
 		return reviewRequest{}, fmt.Errorf("unknown review output format %q", req.Format)
 	}
+}
+
+func parseReviewRemoteArgs(args []string) (reviewRemoteRequest, error) {
+	req := reviewRemoteRequest{Format: "text", Limit: 200}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--staged":
+			req.Staged = true
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reviewRemote output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--base":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reviewRemote base ref is required")
+			}
+			req.Base = args[index]
+		case strings.HasPrefix(arg, "--base="):
+			req.Base = strings.TrimPrefix(arg, "--base=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reviewRemote limit is required")
+			}
+			limit, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case arg == "--repo":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reviewRemote repository is required")
+			}
+			req.Repo = args[index]
+		case strings.HasPrefix(arg, "--repo="):
+			req.Repo = strings.TrimPrefix(arg, "--repo=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown reviewRemote argument %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "reviewRemote"); err != nil {
+		return req, err
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected reviewRemote argument %q", rest[1])
+	}
+	if len(rest) == 1 {
+		req.PR = rest[0]
+	}
+	return req, nil
+}
+
+func buildReviewRemoteReport(localReport localreview.Report, remoteReport githubcomments.Report) reviewRemoteReport {
+	report := reviewRemoteReport{
+		Kind:        "review_remote",
+		Action:      "scan",
+		Status:      "ok",
+		Repository:  remoteReport.Repository,
+		PullRequest: remoteReport.Number,
+		URL:         remoteReport.URL,
+		Local:       localReport,
+		Remote:      remoteReport,
+	}
+	if localReport.Status == "clean" && remoteReport.Total == 0 {
+		report.Status = "clean"
+	}
+	if remoteReport.Total != 0 {
+		report.Status = "comments"
+	}
+	if len(localReport.SecurityFindings) != 0 || localReport.Status == "findings" {
+		report.Status = "findings"
+		report.Signals = append(report.Signals, "local security findings")
+	}
+	if len(remoteReport.ReviewComments) != 0 {
+		report.Signals = append(report.Signals, "remote review comments")
+	}
+	if len(remoteReport.IssueComments) != 0 {
+		report.Signals = append(report.Signals, "remote issue comments")
+	}
+	if len(localReport.Files) != 0 {
+		report.Signals = append(report.Signals, "local changed files")
+	}
+	return report
+}
+
+func renderReviewRemoteReport(out io.Writer, report reviewRemoteReport) {
+	fmt.Fprintln(out, "Remote Review")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.Repository != "" {
+		fmt.Fprintf(out, "  Repository       %s\n", report.Repository)
+	}
+	if report.PullRequest != 0 {
+		fmt.Fprintf(out, "  Pull request     #%d\n", report.PullRequest)
+	}
+	if report.URL != "" {
+		fmt.Fprintf(out, "  URL              %s\n", report.URL)
+	}
+	fmt.Fprintf(out, "  Local files      %d\n", report.Local.Summary.Files)
+	fmt.Fprintf(out, "  Local findings   %d\n", len(report.Local.SecurityFindings))
+	fmt.Fprintf(out, "  Remote comments  %d\n", report.Remote.Total)
+	if len(report.Signals) != 0 {
+		fmt.Fprintln(out, "Signals")
+		for _, signal := range report.Signals {
+			fmt.Fprintf(out, "  - %s\n", signal)
+		}
+	}
+	fmt.Fprintln(out)
+	localreview.RenderText(out, report.Local)
+	fmt.Fprintln(out)
+	githubcomments.RenderText(out, report.Remote)
 }
 
 type feedbackRequest struct {
@@ -15103,6 +15287,7 @@ func builtInCommandNames() []string {
 		"reset-limits",
 		"resume",
 		"review",
+		"reviewRemote",
 		"rewind",
 		"rc",
 		"run",
@@ -15334,7 +15519,7 @@ func commandRequiresBroadCWDGuard(command string, args []string) bool {
 	switch command {
 	case "", "repl", "tui", "prompt", "btw", "debug-tool-call":
 		return true
-	case "run", "test", "build", "lint", "node", "python", "review", "ultrareview", "security-review", "bughunter", "files", "search", "context", "ctx_viz":
+	case "run", "test", "build", "lint", "node", "python", "review", "reviewremote", "review-remote", "ultrareview", "security-review", "bughunter", "files", "search", "context", "ctx_viz":
 		return true
 	case "agents":
 		return firstMeaningfulArg(args) == "run"
@@ -18017,6 +18202,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/review", "/ultrareview":
 		if err := a.Review(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/reviewRemote", "/review-remote":
+		if err := a.ReviewRemote(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/feedback", "/bug":
@@ -26498,7 +26687,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote-env", "remote-setup", "reset", "reset-limits", "review", "sandbox-toggle",
+		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
@@ -27149,6 +27338,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "reviewremote", "review-remote":
+		return localCommandHelpSpec(
+			"reviewRemote",
+			"reviewRemote",
+			"codog reviewRemote [PR|URL|NUMBER] [--repo OWNER/REPO] [--staged] [--base REF] [--limit N] [--output-format text|json]",
+			"Review Remote\n\nUsage:\n  codog reviewRemote [PR|URL|NUMBER] [--repo OWNER/REPO] [--staged] [--base REF] [--limit N] [--output-format text|json]\n\nRuns the local changed-file review and fetches GitHub pull request issue/review comments through `gh`, then returns a combined local and remote review report.\n",
+			[]string{"local_review", "remote_comments", "repository", "pull_request", "signals"},
+			[]string{"ok", "clean", "comments", "findings", "error"},
+			false,
+		), true
 	case "install-github-app":
 		return localCommandHelpSpec(
 			"install-github-app",
@@ -27383,6 +27582,7 @@ Usage:
   %s [flags] security-review [--limit N] [--json|--output-format text|json]
   %s [flags] bughunter [PATH] [--limit N] [--json|--output-format text|json]
   %s [flags] review|ultrareview [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
+  %s [flags] reviewRemote [PR|URL|NUMBER] [--repo OWNER/REPO] [--staged] [--base REF] [--limit N] [--json|--output-format text|json]
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] commit-push-pr MESSAGE [--title TITLE] [--body BODY] [--branch NAME] [--base REF] [--remote NAME] [--staged] [--draft] [--no-pr] [--dry-run] [--json|--output-format text|json]

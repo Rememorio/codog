@@ -323,6 +323,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "validation",
 		},
 		{
+			name:  "reviewRemote local help",
+			args:  []string{"--config", configPath, "reviewRemote", "--help", "--output-format", "json"},
+			topic: "reviewRemote",
+		},
+		{
 			name:  "context-noninteractive local help",
 			args:  []string{"--config", configPath, "context-noninteractive", "--help", "--output-format", "json"},
 			topic: "context-noninteractive",
@@ -496,6 +501,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "context-noninteractive")
 	require.Contains(t, report.Commands, "conversation")
 	require.Contains(t, report.Commands, "validation")
+	require.Contains(t, report.Commands, "reviewRemote")
 	require.Contains(t, report.Commands, "permissions")
 	require.Contains(t, report.Commands, "plan")
 	require.Contains(t, report.Commands, "teleport")
@@ -5288,6 +5294,74 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Review")
 	require.Contains(t, out.String(), "Security findings")
 	require.Contains(t, out.String(), "script.sh")
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	fakeBin := t.TempDir()
+	fakeGH := filepath.Join(fakeBin, "gh")
+	require.NoError(t, os.WriteFile(fakeGH, []byte(`#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  cat <<'JSON'
+{"number":42,"url":"https://github.com/acme/widgets/pull/42","headRepository":{"nameWithOwner":"acme/widgets"}}
+JSON
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$4" in
+    repos/acme/widgets/issues/42/comments)
+      cat <<'JSON'
+[{"id":2,"body":"please update the summary","created_at":"2026-01-02T00:00:00Z","html_url":"https://example.test/issue","user":{"login":"alice"}}]
+JSON
+      exit 0
+      ;;
+    repos/acme/widgets/pulls/42/comments)
+      cat <<'JSON'
+[{"id":1,"body":"inline fix needed","path":"script.sh","line":2,"original_line":2,"diff_hunk":"@@ -1 +1 @@\n-old\n+new","created_at":"2026-01-01T00:00:00Z","html_url":"https://example.test/review","user":{"login":"bob"}}]
+JSON
+      exit 0
+      ;;
+  esac
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`), 0o755))
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	require.NoError(t, app.ReviewRemote(context.Background(), []string{"42", "--repo", "acme/widgets", "--json"}))
+	var remote reviewRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &remote))
+	require.Equal(t, "review_remote", remote.Kind)
+	require.Equal(t, "findings", remote.Status)
+	require.Equal(t, "acme/widgets", remote.Repository)
+	require.Equal(t, 42, remote.PullRequest)
+	require.Equal(t, 2, remote.Remote.Total)
+	require.Len(t, remote.Local.SecurityFindings, 1)
+	require.Contains(t, remote.Signals, "remote review comments")
+	require.Contains(t, remote.Signals, "remote issue comments")
+	out.Reset()
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "reviewRemote", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "review_remote"`)
+	require.Contains(t, cliOut, `"remote_comments"`)
+	require.Contains(t, cliOut, `"total": 2`)
+
+	require.True(t, app.handleSlash(context.Background(), "/reviewRemote 42 --repo acme/widgets", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Remote Review")
+	require.Contains(t, out.String(), "Remote comments  2")
+	require.Contains(t, out.String(), "script.sh:2")
+	require.Contains(t, out.String(), "inline fix needed")
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/review-remote 42 --repo acme/widgets", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Remote Review")
+	require.Contains(t, out.String(), "PR Comments")
 	require.Empty(t, errOut.String())
 }
 
