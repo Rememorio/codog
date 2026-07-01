@@ -53,6 +53,7 @@ import (
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/terminalsetup"
+	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/undo"
@@ -762,6 +763,15 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	passesSlash, ok := capabilityReportSlash(report, "/passes")
 	require.True(t, ok)
 	require.True(t, passesSlash.ResumeSupported)
+	thinkBackSlash, ok := capabilityReportSlash(report, "/think-back")
+	require.True(t, ok)
+	require.True(t, thinkBackSlash.ResumeSupported)
+	thinkbackSlash, ok := capabilityReportSlash(report, "/thinkback")
+	require.True(t, ok)
+	require.True(t, thinkbackSlash.ResumeSupported)
+	thinkbackPlaySlash, ok := capabilityReportSlash(report, "/thinkback-play")
+	require.True(t, ok)
+	require.True(t, thinkbackPlaySlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -2062,6 +2072,27 @@ func risky(value any) {
 	require.Equal(t, "perf_issue", resumedPerfIssue.Kind)
 	require.Empty(t, resumedPerfIssue.File)
 
+	thinkBackPath := filepath.Join(workspace, "resume-think-back.html")
+	out, err = runResumedJSON("/think-back", "--year", "2026", "--output", thinkBackPath)
+	require.NoError(t, err)
+	var resumedThinkBack thinkback.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedThinkBack))
+	require.Equal(t, "think_back", resumedThinkBack.Kind)
+	require.Equal(t, 2026, resumedThinkBack.Year)
+	require.Equal(t, thinkBackPath, resumedThinkBack.Output)
+	require.True(t, resumedThinkBack.Written)
+	require.GreaterOrEqual(t, resumedThinkBack.Insights.Sessions, 1)
+	require.FileExists(t, thinkBackPath)
+
+	thinkbackPlayPath := filepath.Join(workspace, "resume-thinkback-play.html")
+	out, err = runResumedJSON("/thinkback-play", "--year", "2026", "--output", thinkbackPlayPath)
+	require.NoError(t, err)
+	var resumedThinkbackPlay thinkback.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedThinkbackPlay))
+	require.Equal(t, "think_back", resumedThinkbackPlay.Kind)
+	require.True(t, resumedThinkbackPlay.Written)
+	require.FileExists(t, thinkbackPlayPath)
+
 	out, err = runResumedJSON("/desktop")
 	require.NoError(t, err)
 	var resumedDesktop desktopHandoffReport
@@ -2421,6 +2452,8 @@ func risky(value any) {
 		{Command: "/ultraplan", Args: []string{"inspect"}, Report: "/ultraplan"},
 		{Command: "/exit-plan", Args: nil, Report: "/exit-plan"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
+		{Command: "/think-back", Args: []string{"--year", "2026"}, Report: "/think-back default-output"},
+		{Command: "/thinkback", Args: nil, Report: "/thinkback default-output"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},

@@ -19919,6 +19919,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Insights(resumeSlashArgs("insights", args, format))
 	case "/perf-issue":
 		return a.runResumedPerfIssueSlash(resumeSlashArgs("perf-issue", args, format), format)
+	case "/think-back", "/thinkback", "/thinkback-play":
+		return a.runResumedThinkBackSlash(name, resumeSlashArgs("think-back", args, format), format)
 	case "/desktop", "/app":
 		return a.Desktop(resumeSlashArgs("desktop", args, format), resumed)
 	case "/mobile":
@@ -20263,6 +20265,17 @@ func (a *App) runResumedPerfIssueSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/perf-issue", "write"), format)
 	}
 	return a.PerfIssue(args)
+}
+
+func (a *App) runResumedThinkBackSlash(command string, args []string, format string) error {
+	req, err := parseThinkBackArgs(args)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Output) == "" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, "default-output"), format)
+	}
+	return a.ThinkBack(args)
 }
 
 func (a *App) runResumedIDESlash(args []string, format string) error {
