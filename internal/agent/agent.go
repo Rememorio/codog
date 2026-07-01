@@ -86,6 +86,7 @@ import (
 	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/trustresolver"
 	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/updater"
@@ -539,6 +540,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.BranchLock(rest)
 	case "stale-base", "base-check":
 		return app.StaleBase(rest)
+	case "trust":
+		return app.Trust(rest)
 	case "tag":
 		return app.Tag(rest)
 	case "stash":
@@ -19287,6 +19290,7 @@ func codogCapabilityFeatures() []string {
 		"task_metadata_persistence",
 		"task_output_runtime_fields",
 		"tool_search_select_query",
+		"trust_resolver",
 		"typed_task_packets",
 		"updater",
 		"voice_listen",
@@ -19529,6 +19533,7 @@ func builtInCommandNames() []string {
 		"tool-details",
 		"todos",
 		"tokens",
+		"trust",
 		"tui",
 		"UltrareviewOverageDialog",
 		"ultraplan",
@@ -20340,6 +20345,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.BranchLock(resumeSlashArgs("branch-lock", args, format))
 	case "/stale-base", "/base-check":
 		return a.StaleBase(resumeSlashArgs("stale-base", args, format))
+	case "/trust":
+		return a.Trust(resumeSlashArgs("trust", args, format))
 	case "/tag":
 		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
 	case "/stash":
@@ -24588,6 +24595,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.StaleBase(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/trust":
+		if err := a.Trust(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/tag":
 		if err := a.Tag(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -28614,6 +28625,193 @@ func renderStaleBaseReport(out io.Writer, report staleBaseReport) {
 	}
 	if check.Warning != "" {
 		fmt.Fprintf(out, "  Warning          %s\n", check.Warning)
+	}
+}
+
+type trustRequest struct {
+	Format   string
+	Action   string
+	CWD      string
+	Worktree string
+	Screen   string
+	Allow    []string
+	Deny     []string
+	NoEvents bool
+}
+
+type trustReport struct {
+	Kind     string                 `json:"kind"`
+	Action   string                 `json:"action"`
+	Status   string                 `json:"status"`
+	CWD      string                 `json:"cwd"`
+	Worktree string                 `json:"worktree,omitempty"`
+	Decision trustresolver.Decision `json:"decision"`
+}
+
+func (a *App) Trust(args []string) error {
+	req, err := parseTrustArgs(args, a.Workspace)
+	if err != nil {
+		return err
+	}
+	cfg := trustresolver.Config{
+		Allowlisted: trustAllowlistEntries(req.Allow),
+		Denied:      append([]string(nil), req.Deny...),
+		EmitEvents:  true,
+	}
+	resolver := trustresolver.New(cfg)
+	if req.NoEvents {
+		resolver = trustresolver.NewWithoutEvents(cfg)
+	}
+	decision := resolver.Resolve(req.CWD, req.Worktree, req.Screen)
+	report := trustReport{
+		Kind:     "trust",
+		Action:   req.Action,
+		Status:   decision.Status,
+		CWD:      req.CWD,
+		Worktree: req.Worktree,
+		Decision: decision,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTrustReport(a.Out, report)
+	return nil
+}
+
+func parseTrustArgs(args []string, defaultCWD string) (trustRequest, error) {
+	req := trustRequest{Format: "text", Action: "resolve", CWD: strings.TrimSpace(defaultCWD)}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("trust output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--cwd":
+			i++
+			if i >= len(args) {
+				return req, errors.New("trust cwd is required")
+			}
+			req.CWD = args[i]
+		case strings.HasPrefix(arg, "--cwd="):
+			req.CWD = strings.TrimPrefix(arg, "--cwd=")
+		case arg == "--worktree":
+			i++
+			if i >= len(args) {
+				return req, errors.New("trust worktree is required")
+			}
+			req.Worktree = args[i]
+		case strings.HasPrefix(arg, "--worktree="):
+			req.Worktree = strings.TrimPrefix(arg, "--worktree=")
+		case arg == "--screen":
+			i++
+			if i >= len(args) {
+				return req, errors.New("trust screen text is required")
+			}
+			req.Screen = args[i]
+		case strings.HasPrefix(arg, "--screen="):
+			req.Screen = strings.TrimPrefix(arg, "--screen=")
+		case arg == "--allow":
+			i++
+			if i >= len(args) {
+				return req, errors.New("trust allow pattern is required")
+			}
+			req.Allow = append(req.Allow, args[i])
+		case strings.HasPrefix(arg, "--allow="):
+			req.Allow = append(req.Allow, strings.TrimPrefix(arg, "--allow="))
+		case arg == "--deny":
+			i++
+			if i >= len(args) {
+				return req, errors.New("trust deny root is required")
+			}
+			req.Deny = append(req.Deny, args[i])
+		case strings.HasPrefix(arg, "--deny="):
+			req.Deny = append(req.Deny, strings.TrimPrefix(arg, "--deny="))
+		case arg == "--no-events":
+			req.NoEvents = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown trust flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "trust")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+		if action == "resolve" || action == "check" || action == "status" {
+			req.Action = "resolve"
+			positionals = positionals[1:]
+		}
+	}
+	if strings.TrimSpace(req.Screen) == "" && len(positionals) > 0 {
+		req.Screen = strings.Join(positionals, " ")
+	}
+	if strings.TrimSpace(req.CWD) == "" {
+		return req, errors.New("trust cwd is required")
+	}
+	return req, nil
+}
+
+func trustAllowlistEntries(patterns []string) []trustresolver.AllowlistEntry {
+	entries := make([]trustresolver.AllowlistEntry, 0, len(patterns))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		entries = append(entries, trustresolver.AllowlistEntry{Pattern: pattern})
+	}
+	return entries
+}
+
+func renderTrustReport(out io.Writer, report trustReport) {
+	decision := report.Decision
+	fmt.Fprintln(out, "Trust")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", decision.Status)
+	fmt.Fprintf(out, "  CWD              %s\n", report.CWD)
+	if report.Worktree != "" {
+		fmt.Fprintf(out, "  Worktree         %s\n", report.Worktree)
+	}
+	fmt.Fprintf(out, "  Prompt detected  %t\n", decision.PromptDetected)
+	fmt.Fprintf(out, "  Trusted          %t\n", decision.Trusted)
+	if decision.Policy != "" {
+		fmt.Fprintf(out, "  Policy           %s\n", decision.Policy)
+	}
+	if decision.Resolution != "" {
+		fmt.Fprintf(out, "  Resolution       %s\n", decision.Resolution)
+	}
+	if decision.MatchedPattern != "" {
+		fmt.Fprintf(out, "  Matched          %s\n", decision.MatchedPattern)
+	}
+	if len(decision.Events) > 0 {
+		fmt.Fprintln(out, "  Events")
+		for _, event := range decision.Events {
+			fmt.Fprintf(out, "    - %s", event.Type)
+			if event.Policy != "" {
+				fmt.Fprintf(out, " policy=%s", event.Policy)
+			}
+			if event.Resolution != "" {
+				fmt.Fprintf(out, " resolution=%s", event.Resolution)
+			}
+			if event.Reason != "" {
+				fmt.Fprintf(out, " reason=%s", event.Reason)
+			}
+			fmt.Fprintln(out)
+		}
 	}
 }
 
@@ -36092,7 +36290,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
-		"stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details",
+		"stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
@@ -36425,6 +36623,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Stale Base\n\nUsage:\n  codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--output-format text|json]\n  codog base-check [same flags]\n\nChecks whether the current worktree HEAD still matches an expected base commit. The expected base is resolved from `--base-commit`, `.codog-base`, or compatible `.claw-base` in that order.\n",
 			[]string{"status", "matches", "source", "expected", "actual", "warning"},
 			[]string{"matches", "diverged", "no_expected_base", "not_git_repo", "error"},
+			false,
+		), true
+	case "trust":
+		return localCommandHelpSpec(
+			"trust",
+			"trust",
+			"codog trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--screen TEXT] [--allow PATTERN] [--deny PATH] [--no-events] [--output-format text|json]",
+			"Trust\n\nUsage:\n  codog trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--screen TEXT] [--allow PATTERN] [--deny PATH] [--no-events] [--output-format text|json]\n\nResolves a detected workspace trust prompt against explicit allow and deny rules. This command reports the decision only; it does not change permissions or write trust state.\n",
+			[]string{"status", "prompt_detected", "trusted", "policy", "resolution", "events"},
+			[]string{"not_required", "auto_trusted", "requires_approval", "denied", "error"},
 			false,
 		), true
 	case "acp":
@@ -37408,6 +37616,7 @@ Usage:
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
   %s [flags] stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]
+  %s [flags] trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--allow PATTERN] [--deny PATH] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]
   %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE [--json|--output-format text|json]

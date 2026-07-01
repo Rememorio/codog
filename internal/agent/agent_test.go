@@ -5390,6 +5390,29 @@ func TestStaleBaseCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestTrustCommandAndSlash(t *testing.T) {
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "repo-a")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Trust([]string{"resolve", "--screen", "Do you trust the files in this folder?", "--allow", parent, "--json"}))
+	require.Contains(t, out.String(), `"kind": "trust"`)
+	require.Contains(t, out.String(), `"status": "auto_trusted"`)
+	require.Contains(t, out.String(), `"trusted": true`)
+	require.Contains(t, out.String(), `"policy": "auto_trust"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/trust Do you trust this folder? --deny "+workspace, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Trust")
+	require.Contains(t, out.String(), "Status           denied")
+	require.Contains(t, out.String(), "Policy           deny")
+	require.Contains(t, out.String(), "trust_denied")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))
