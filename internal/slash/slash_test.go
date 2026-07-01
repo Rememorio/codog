@@ -237,6 +237,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/compact")
 	require.Contains(t, names, "/session")
 	require.Contains(t, names, "/cron")
+	require.Contains(t, names, "/hooks")
 	require.Contains(t, names, "/system-prompt")
 	require.Contains(t, names, "/team")
 	require.Contains(t, names, "/tool-details")

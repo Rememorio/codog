@@ -19861,6 +19861,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Templates(resumeSlashArgs("templates", args, format))
 	case "/todos":
 		return a.Todos(resumeSlashArgs("todos", args, format))
+	case "/hooks":
+		return a.runResumedHooksSlash(ctx, resumeSlashArgs("hooks", args, format), format)
 	case "/agents":
 		return a.runResumedAgentsSlash(resumeSlashArgs("agents", args, format), resumed, format)
 	case "/plugin", "/plugins", "/marketplace":
@@ -20036,6 +20038,19 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 			command += " " + action
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func (a *App) runResumedHooksSlash(ctx context.Context, args []string, format string) error {
+	req, err := parseHooksArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "health":
+		return a.Hooks(ctx, args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/hooks", req.Action), format)
 	}
 }
 

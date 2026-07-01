@@ -710,6 +710,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	teamSlash, ok := capabilityReportSlash(report, "/team")
 	require.True(t, ok)
 	require.True(t, teamSlash.ResumeSupported)
+	hooksSlash, ok := capabilityReportSlash(report, "/hooks")
+	require.True(t, ok)
+	require.True(t, hooksSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1784,6 +1787,22 @@ func risky(value any) {
 	require.Equal(t, "todos", resumedTodos.Kind)
 	require.Equal(t, "list", resumedTodos.Action)
 
+	out, err = runResumedJSON("/hooks", "list")
+	require.NoError(t, err)
+	var resumedHooksList hooksListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHooksList))
+	require.Equal(t, "hooks", resumedHooksList.Kind)
+	require.Equal(t, "list", resumedHooksList.Action)
+
+	out, err = runResumedJSON("/hooks", "health", "pre", "--tool", "read_file")
+	require.NoError(t, err)
+	var resumedHooksHealth hooksHealthReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHooksHealth))
+	require.Equal(t, "hooks", resumedHooksHealth.Kind)
+	require.Equal(t, "health", resumedHooksHealth.Action)
+	require.Equal(t, "pre_tool_use", resumedHooksHealth.Event)
+	require.Equal(t, "read_file", resumedHooksHealth.MatcherTarget)
+
 	out, err = runResumedJSON("/agents", "list")
 	require.NoError(t, err)
 	var resumedAgents agentsListReport
@@ -2103,6 +2122,7 @@ func risky(value any) {
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
+		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
 		{Command: "/cron", Args: []string{"create", "@daily", "check"}, Report: "/cron create"},
 		{Command: "/cron", Args: []string{"delete", cronEntry.ID}, Report: "/cron delete"},
 		{Command: "/cron", Args: []string{"mark-run", cronEntry.ID}, Report: "/cron mark-run"},
