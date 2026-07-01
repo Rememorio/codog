@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,52 @@ import (
 )
 
 const anthropicVersion = "2023-06-01"
+
+var anthropicCredentialEnvVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+
+var foreignProviderCredentialHints = []struct {
+	EnvVar   string
+	Provider string
+	Hint     string
+}{
+	{
+		EnvVar:   "OPENAI_API_KEY",
+		Provider: "OpenAI-compatible",
+		Hint:     "prefix your model name with `openai/` (for example `--model openai/gpt-4.1-mini`) so prefix routing selects the OpenAI-compatible provider, and set `OPENAI_BASE_URL` if you are pointing at OpenRouter, Ollama, or a local server",
+	},
+	{
+		EnvVar:   "XAI_API_KEY",
+		Provider: "xAI",
+		Hint:     "use an xAI model alias (for example `--model grok` or `--model grok-mini`) so prefix routing selects the xAI backend",
+	},
+	{
+		EnvVar:   "DASHSCOPE_API_KEY",
+		Provider: "Alibaba DashScope",
+		Hint:     "prefix your model name with `qwen/` or `qwen-` (for example `--model qwen-plus`) so prefix routing selects the DashScope backend",
+	},
+}
+
+type MissingCredentialsError struct {
+	Provider string
+	EnvVars  []string
+	Hint     string
+}
+
+func (e MissingCredentialsError) Error() string {
+	provider := strings.TrimSpace(e.Provider)
+	if provider == "" {
+		provider = "provider"
+	}
+	envVars := strings.Join(e.EnvVars, " or ")
+	if envVars == "" {
+		envVars = "provider credentials"
+	}
+	message := fmt.Sprintf("missing_credentials: %s credentials are not configured. Set %s.", provider, envVars)
+	if hint := strings.TrimSpace(e.Hint); hint != "" {
+		message += "\n" + hint
+	}
+	return message
+}
 
 type Client struct {
 	HTTP      *http.Client
@@ -83,6 +130,9 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 	if modelrouting.IsOpenAICompatibleModel(resolvedReq.Model) {
 		return c.streamOpenAICompatible(ctx, resolvedReq, onText)
 	}
+	if !c.anthropicCredentialsConfigured() {
+		return AssistantMessage{}, anthropicMissingCredentialsError()
+	}
 	resolvedReq.Stream = true
 	body, err := json.Marshal(resolvedReq)
 	if err != nil {
@@ -125,6 +175,28 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 		return AssistantMessage{}, statusErr
 	}
 	return AssistantMessage{}, lastErr
+}
+
+func (c *Client) anthropicCredentialsConfigured() bool {
+	return strings.TrimSpace(c.APIKey) != "" || strings.TrimSpace(c.AuthToken) != ""
+}
+
+func anthropicMissingCredentialsError() MissingCredentialsError {
+	return MissingCredentialsError{
+		Provider: "Anthropic",
+		EnvVars:  append([]string(nil), anthropicCredentialEnvVars...),
+		Hint:     anthropicMissingCredentialsHint(),
+	}
+}
+
+func anthropicMissingCredentialsHint() string {
+	for _, candidate := range foreignProviderCredentialHints {
+		if strings.TrimSpace(os.Getenv(candidate.EnvVar)) == "" {
+			continue
+		}
+		return fmt.Sprintf("I see %s is set; if you meant to use the %s provider, %s.", candidate.EnvVar, candidate.Provider, candidate.Hint)
+	}
+	return ""
 }
 
 func (c *Client) newRequest(ctx context.Context, body []byte) (*http.Request, error) {

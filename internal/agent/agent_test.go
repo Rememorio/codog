@@ -3519,6 +3519,20 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 	require.NotContains(t, out, "missing_credentials")
 }
 
+func TestBuildCLIErrorReportMissingCredentials(t *testing.T) {
+	report := buildCLIErrorReport(anthropic.MissingCredentialsError{
+		Provider: "Anthropic",
+		EnvVars:  []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+		Hint:     "I see OPENAI_API_KEY is set; use an OpenAI-compatible model prefix.",
+	})
+
+	require.Equal(t, "missing_credentials", report.ErrorKind)
+	require.Equal(t, "Anthropic", report.Provider)
+	require.ElementsMatch(t, []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}, report.EnvVars)
+	require.Contains(t, report.Message, "Anthropic credentials")
+	require.Contains(t, report.Hint, "OPENAI_API_KEY")
+}
+
 func TestConfigDegradesOnMalformedConfigFile(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "broken.json")
 	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))

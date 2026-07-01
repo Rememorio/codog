@@ -122,6 +122,109 @@ func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 	require.Equal(t, 2, msg.Usage.OutputTokens)
 }
 
+func TestClientReturnsMissingCredentialsForAnthropicWithoutAuth(t *testing.T) {
+	unsetForeignProviderCredentialEnv(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "", "")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	var missing MissingCredentialsError
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, "Anthropic", missing.Provider)
+	require.ElementsMatch(t, []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}, missing.EnvVars)
+	require.Empty(t, missing.Hint)
+	require.Equal(t, 0, requests)
+	require.Contains(t, err.Error(), "missing_credentials")
+	require.Contains(t, err.Error(), "ANTHROPIC_API_KEY")
+	require.Contains(t, err.Error(), "ANTHROPIC_AUTH_TOKEN")
+}
+
+func TestClientMissingCredentialsHintDetectsForeignProviderEnv(t *testing.T) {
+	tests := []struct {
+		name     string
+		envVar   string
+		contains []string
+	}{
+		{
+			name:   "openai",
+			envVar: "OPENAI_API_KEY",
+			contains: []string{
+				"OPENAI_API_KEY",
+				"OpenAI-compatible",
+				"openai/",
+				"OPENAI_BASE_URL",
+			},
+		},
+		{
+			name:   "xai",
+			envVar: "XAI_API_KEY",
+			contains: []string{
+				"XAI_API_KEY",
+				"xAI",
+				"grok",
+			},
+		},
+		{
+			name:   "dashscope",
+			envVar: "DASHSCOPE_API_KEY",
+			contains: []string{
+				"DASHSCOPE_API_KEY",
+				"DashScope",
+				"qwen",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unsetForeignProviderCredentialEnv(t)
+			t.Setenv(tt.envVar, "configured")
+
+			hint := anthropicMissingCredentialsHint()
+			for _, expected := range tt.contains {
+				require.Contains(t, hint, expected)
+			}
+		})
+	}
+}
+
+func TestClientOpenAICompatibleAllowsMissingCredentialsForLocalGateway(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.Empty(t, r.Header.Get("authorization"))
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "test-model", body["model"])
+		w.Header().Set("content-type", "text/event-stream")
+		writeOpenAISSE(t, w, map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "ok"}}}})
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "", "")
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "local/test-model",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, requests)
+	require.Len(t, msg.Blocks, 1)
+	require.Equal(t, "ok", msg.Blocks[0].Text)
+}
+
 func TestClientStreamsGPTModelThroughOpenAICompatibleRoute(t *testing.T) {
 	assertOpenAICompatibleRequestModel(t, "gpt-4.1-mini", "gpt-4.1-mini")
 }
@@ -440,4 +543,11 @@ func writeOpenAISSE(t *testing.T, w http.ResponseWriter, payloads ...any) {
 	}
 	_, err := fmt.Fprint(w, "data: [DONE]\n\n")
 	require.NoError(t, err)
+}
+
+func unsetForeignProviderCredentialEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("XAI_API_KEY", "")
+	t.Setenv("DASHSCOPE_API_KEY", "")
 }

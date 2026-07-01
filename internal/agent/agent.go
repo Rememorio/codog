@@ -19597,6 +19597,8 @@ type cliErrorReport struct {
 	Option      string            `json:"option,omitempty"`
 	Message     string            `json:"message"`
 	Hint        string            `json:"hint"`
+	Provider    string            `json:"provider,omitempty"`
+	EnvVars     []string          `json:"env_vars,omitempty"`
 	Value       string            `json:"value,omitempty"`
 	Expected    []string          `json:"expected,omitempty"`
 	Argument    string            `json:"argument,omitempty"`
@@ -19937,6 +19939,30 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      "Use `--output-format json` or `--output-format text`.",
 			Value:     formatErr.Value,
 			Expected:  expected,
+		}
+	}
+	var credentialsErr anthropic.MissingCredentialsError
+	if errors.As(err, &credentialsErr) {
+		provider := strings.TrimSpace(credentialsErr.Provider)
+		if provider == "" {
+			provider = "provider"
+		}
+		envVars := append([]string(nil), credentialsErr.EnvVars...)
+		if len(envVars) == 0 {
+			envVars = []string{"provider credentials"}
+		}
+		hint := strings.TrimSpace(credentialsErr.Hint)
+		if hint == "" {
+			hint = fmt.Sprintf("Set %s before using %s models.", strings.Join(envVars, " or "), provider)
+		}
+		return cliErrorReport{
+			Kind:      "missing_credentials",
+			ErrorKind: "missing_credentials",
+			Status:    "error",
+			Message:   fmt.Sprintf("%s credentials are not configured.", provider),
+			Hint:      hint,
+			Provider:  provider,
+			EnvVars:   envVars,
 		}
 	}
 	var missingErr missingArgumentError
