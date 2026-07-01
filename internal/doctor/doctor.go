@@ -16,6 +16,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/sandbox"
+	localstatus "github.com/Rememorio/codog/internal/status"
 )
 
 const (
@@ -34,6 +35,8 @@ type Options struct {
 	PermissionMode     string
 	ToolCount          int
 	MCPServerStatuses  []mcp.ServerStatus
+	MCPValidation      localstatus.MCPValidationStatus
+	HookValidation     localstatus.HookValidationStatus
 	SessionCount       int
 	MemoryFiles        []string
 	UserPromptSubmit   []string
@@ -102,9 +105,11 @@ func Run(opts Options) Report {
 		checkModel(opts.Model),
 		checkPermissions(opts.PermissionMode),
 		checkTools(opts.ToolCount),
+		checkMCPValidation(opts.MCPValidation),
 		checkMCP(opts.MCPServerStatuses),
 		checkSessions(opts.SessionCount),
 		checkHooks(opts),
+		checkHookValidation(opts.HookValidation),
 		checkGit(opts.Workspace),
 		checkSandbox(opts),
 		checkDeveloperToolchain(),
@@ -258,6 +263,44 @@ func checkTools(count int) Check {
 	return Check{Name: "Tools", Status: StatusOK, Summary: "Tool registry is populated.", Details: []string{fmt.Sprintf("Registered tools: %d", count)}}
 }
 
+func checkMCPValidation(summary localstatus.MCPValidationStatus) Check {
+	details := []string{
+		fmt.Sprintf("Total entries: %d", summary.TotalConfigured),
+		fmt.Sprintf("Valid entries: %d", summary.ValidCount),
+		fmt.Sprintf("Invalid entries: %d", summary.InvalidCount),
+	}
+	for _, issue := range summary.InvalidServers {
+		name := strings.TrimSpace(issue.Name)
+		if name == "" {
+			name = "<unnamed>"
+		}
+		details = append(details, fmt.Sprintf("Invalid server: %s (%s)", name, issue.Reason))
+	}
+	data := map[string]any{
+		"total_configured": summary.TotalConfigured,
+		"valid_count":      summary.ValidCount,
+		"invalid_count":    summary.InvalidCount,
+		"invalid_servers":  summary.InvalidServers,
+	}
+	if summary.InvalidCount > 0 {
+		return Check{
+			Name:    "MCP validation",
+			Status:  StatusWarn,
+			Summary: invalidEntriesSummary(summary.InvalidCount, "MCP server", summary.ValidCount),
+			Details: details,
+			Hint:    "Inspect `codog status --json` mcp_validation.invalid_servers and fix each rejected mcp_servers entry.",
+			Data:    data,
+		}
+	}
+	return Check{
+		Name:    "MCP validation",
+		Status:  StatusOK,
+		Summary: fmt.Sprintf("%d MCP server entries validated.", summary.ValidCount),
+		Details: details,
+		Data:    data,
+	}
+}
+
 func checkMCP(statuses []mcp.ServerStatus) Check {
 	if len(statuses) == 0 {
 		return Check{Name: "MCP", Status: StatusOK, Summary: "No MCP servers are configured.", Details: []string{"Configured servers: 0"}}
@@ -388,6 +431,54 @@ func checkHooks(opts Options) Check {
 		return Check{Name: "Hooks", Status: StatusWarn, Summary: "Some hook command paths could not be found.", Details: details, Hint: "Fix missing hook script paths or use a command available on PATH."}
 	}
 	return Check{Name: "Hooks", Status: StatusOK, Summary: "Hook configuration is runnable.", Details: details}
+}
+
+func checkHookValidation(summary localstatus.HookValidationStatus) Check {
+	details := []string{
+		fmt.Sprintf("Valid entries: %d", summary.ValidCount),
+		fmt.Sprintf("Invalid entries: %d", summary.InvalidCount),
+	}
+	for _, issue := range summary.InvalidHooks {
+		event := strings.TrimSpace(issue.Event)
+		if event == "" {
+			event = "<unknown>"
+		}
+		details = append(details, fmt.Sprintf("Invalid hook: %s (%s)", event, issue.Reason))
+	}
+	data := map[string]any{
+		"valid_count":   summary.ValidCount,
+		"invalid_count": summary.InvalidCount,
+		"invalid_hooks": summary.InvalidHooks,
+	}
+	if summary.InvalidCount > 0 {
+		return Check{
+			Name:    "Hook validation",
+			Status:  StatusWarn,
+			Summary: invalidEntriesSummary(summary.InvalidCount, "hook", summary.ValidCount),
+			Details: details,
+			Hint:    "Inspect `codog status --json` hook_validation.invalid_hooks and fix each rejected hooks entry.",
+			Data:    data,
+		}
+	}
+	return Check{
+		Name:    "Hook validation",
+		Status:  StatusOK,
+		Summary: fmt.Sprintf("%d hook entries validated.", summary.ValidCount),
+		Details: details,
+		Data:    data,
+	}
+}
+
+func invalidEntriesSummary(invalid int, subject string, valid int) string {
+	invalidNoun := subject + " entries are"
+	if invalid == 1 {
+		invalidNoun = subject + " entry is"
+	}
+	validNoun := "entries"
+	if valid == 1 {
+		validNoun = "entry"
+	}
+	return fmt.Sprintf("%d %s invalid; %d valid %s remain loaded.", invalid, invalidNoun, valid, validNoun)
 }
 
 func hookPathIssues(workspace string, event string, commands []string) []string {

@@ -18470,6 +18470,7 @@ func codogCapabilityFeatures() []string {
 		"config_layers",
 		"config_reset",
 		"cost_token_tracking",
+		"doctor_config_validation",
 		"doctor_sandbox_runtime_status",
 		"editor_bridge",
 		"git_workflows",
@@ -20813,6 +20814,8 @@ func (a *App) Doctor(args []string) error {
 	for _, file := range memoryFiles {
 		memoryPaths = append(memoryPaths, file.Path)
 	}
+	mcpValidation := buildMCPValidation(a.Config.MCPServers)
+	hookValidation := buildHookValidation(a.Config.Hooks)
 	mcpStatuses := mcp.PreflightAll(context.Background(), a.Config.MCPServers)
 	sandboxStatus := sandbox.Detect()
 	sandboxStrategy, sandboxOptions, err := sandboxReportRequestOptions(a.Config.Future)
@@ -20830,6 +20833,8 @@ func (a *App) Doctor(args []string) error {
 		PermissionMode:     a.Config.PermissionMode,
 		ToolCount:          toolCount,
 		MCPServerStatuses:  mcpStatuses,
+		MCPValidation:      mcpValidation,
+		HookValidation:     hookValidation,
 		SessionCount:       sessionCount,
 		MemoryFiles:        memoryPaths,
 		UserPromptSubmit:   a.Config.Hooks.UserPromptSubmit,

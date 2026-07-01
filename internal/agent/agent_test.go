@@ -662,6 +662,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_reset")
+	require.Contains(t, report.Features, "doctor_config_validation")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "interface_language")
 	require.Contains(t, report.Features, "lane_event_projection")
@@ -4848,6 +4849,48 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/doctor", sess))
 	require.Contains(t, out.String(), "Doctor")
 	require.NotContains(t, errOut.String(), "unknown slash command")
+}
+
+func TestDoctorReportsConfigValidationChecks(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			BaseURL:        "https://api.example.test",
+			APIKey:         "secret",
+			PermissionMode: "workspace-write",
+			MCPServers:     map[string]config.MCPServerConfig{"missing": {}},
+			Hooks:          config.HookConfig{PreToolUseCommands: []config.HookCommand{{Type: "http"}}},
+		},
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Doctor([]string{"--json"}))
+	var report doctor.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	mcpValidation := doctor.Check{}
+	hookValidation := doctor.Check{}
+	for _, check := range report.Checks {
+		switch check.Name {
+		case "MCP validation":
+			mcpValidation = check
+		case "Hook validation":
+			hookValidation = check
+		}
+	}
+	require.Equal(t, doctor.StatusWarn, mcpValidation.Status)
+	require.Equal(t, float64(1), mcpValidation.Data["invalid_count"])
+	require.Contains(t, strings.Join(mcpValidation.Details, "\n"), "missing command")
+	require.Equal(t, doctor.StatusWarn, hookValidation.Status)
+	require.Equal(t, float64(1), hookValidation.Data["invalid_count"])
+	require.Contains(t, strings.Join(hookValidation.Details, "\n"), "pre_tool_use")
 }
 
 func TestStatusCommandAndSlash(t *testing.T) {

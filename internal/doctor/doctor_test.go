@@ -10,6 +10,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/sandbox"
+	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/stretchr/testify/require"
 )
 
@@ -178,6 +179,61 @@ func TestRunWarnsForUnavailableMCPServer(t *testing.T) {
 	require.Equal(t, StatusWarn, check.Status)
 	require.Contains(t, check.Summary, "1 MCP server")
 	require.Contains(t, strings.Join(check.Details, "\n"), "missing: command_not_found")
+}
+
+func TestRunReportsConfigValidationChecks(t *testing.T) {
+	hookIndex := 0
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		MCPValidation: localstatus.MCPValidationStatus{
+			TotalConfigured: 2,
+			ValidCount:      1,
+			InvalidCount:    1,
+			InvalidServers: []localstatus.ValidationIssue{{
+				Name:       "missing",
+				Kind:       "missing_command",
+				ErrorField: "command",
+				Reason:     "missing command",
+			}},
+		},
+		HookValidation: localstatus.HookValidationStatus{
+			ValidCount:   1,
+			InvalidCount: 1,
+			InvalidHooks: []localstatus.ValidationIssue{{
+				Event:      "pre_tool_use",
+				Index:      &hookIndex,
+				HookIndex:  &hookIndex,
+				Kind:       "missing_command",
+				ErrorField: "command",
+				Reason:     "missing command",
+			}},
+		},
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	mcpValidation := findCheck(t, report, "MCP validation")
+	require.Equal(t, StatusWarn, mcpValidation.Status)
+	require.Contains(t, mcpValidation.Summary, "1 MCP server entry is invalid")
+	require.Equal(t, 2, mcpValidation.Data["total_configured"])
+	require.Equal(t, 1, mcpValidation.Data["invalid_count"])
+	require.Contains(t, strings.Join(mcpValidation.Details, "\n"), "Invalid server: missing")
+	require.Contains(t, mcpValidation.Hint, "mcp_validation.invalid_servers")
+
+	hookValidation := findCheck(t, report, "Hook validation")
+	require.Equal(t, StatusWarn, hookValidation.Status)
+	require.Contains(t, hookValidation.Summary, "1 hook entry is invalid")
+	require.Equal(t, 1, hookValidation.Data["invalid_count"])
+	require.Contains(t, strings.Join(hookValidation.Details, "\n"), "Invalid hook: pre_tool_use")
+	require.Contains(t, hookValidation.Hint, "hook_validation.invalid_hooks")
 }
 
 func TestRunReportsSandboxFallbackDetails(t *testing.T) {
