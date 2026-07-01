@@ -467,6 +467,14 @@ func sourceLabel(source string) string {
 		return "Workspace skills"
 	case source == "claude":
 		return "Claude-compatible workspace skills"
+	case source == "codex":
+		return "Codex-compatible project skills"
+	case source == "claw":
+		return "Claw-compatible project skills"
+	case source == "agents":
+		return "Agents-compatible project skills"
+	case source == "omc":
+		return "OMC-compatible project skills"
 	case strings.HasPrefix(source, "plugin:"):
 		return "Plugin skills"
 	default:
@@ -491,6 +499,7 @@ func roots(configHome, workspace string) []root {
 		legacyCommandsRoot(filepath.Join(workspace, ".codog", "commands"), "workspace"),
 		legacyCommandsRoot(filepath.Join(workspace, ".claude", "commands"), "claude"),
 	}
+	out = append(out, compatibilityProjectRoots(workspace)...)
 	manifests, err := plugins.Load(workspace)
 	if err != nil {
 		return out
@@ -499,6 +508,59 @@ func roots(configHome, workspace string) []root {
 		out = append(out, skillRootsForPlugin(manifest)...)
 	}
 	return out
+}
+
+func compatibilityProjectRoots(workspace string) []root {
+	out := []root{}
+	seen := map[string]bool{}
+	for _, ancestor := range workspaceAncestors(workspace) {
+		for _, prefix := range []struct {
+			dir    string
+			source string
+		}{
+			{dir: ".codex", source: "codex"},
+			{dir: ".claw", source: "claw"},
+			{dir: ".agents", source: "agents"},
+			{dir: ".omc", source: "omc"},
+		} {
+			skillsPath := filepath.Join(ancestor, prefix.dir, "skills")
+			if existingDir(skillsPath) && !seen[filepath.Clean(skillsPath)] {
+				out = append(out, skillRoot(skillsPath, prefix.source))
+				seen[filepath.Clean(skillsPath)] = true
+			}
+			commandsPath := filepath.Join(ancestor, prefix.dir, "commands")
+			if existingDir(commandsPath) && !seen[filepath.Clean(commandsPath)] {
+				out = append(out, legacyCommandsRoot(commandsPath, prefix.source))
+				seen[filepath.Clean(commandsPath)] = true
+			}
+		}
+	}
+	return out
+}
+
+func workspaceAncestors(workspace string) []string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	abs, err := filepath.Abs(workspace)
+	if err != nil {
+		abs = filepath.Clean(workspace)
+	}
+	out := []string{}
+	for current := abs; ; current = filepath.Dir(current) {
+		out = append(out, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return out
+}
+
+func existingDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func skillRoot(path string, source string) root {
@@ -1029,12 +1091,14 @@ func sourceRank(source string) int {
 		return 1
 	case source == "claude":
 		return 2
-	case strings.HasPrefix(source, "plugin:"):
+	case source == "codex", source == "claw", source == "agents", source == "omc":
 		return 3
-	case source == "bundled":
+	case strings.HasPrefix(source, "plugin:"):
 		return 4
-	default:
+	case source == "bundled":
 		return 5
+	default:
+		return 6
 	}
 }
 

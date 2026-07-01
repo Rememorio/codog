@@ -158,6 +158,46 @@ func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
 	require.Contains(t, RenderInvocation(debug, "failing test"), "User request: failing test")
 }
 
+func TestCompatibilityProjectSkillRoots(t *testing.T) {
+	configHome := t.TempDir()
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "repo", "app")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(parent, ".codex", "skills", "port"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".agents", "skills", "agent"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claw", "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(parent, ".codex", "skills", "port", "SKILL.md"), []byte("Codex port skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".agents", "skills", "agent", "SKILL.md"), []byte("Agent skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claw", "commands", "inspect.md"), []byte("Inspect command"), 0o644))
+
+	codexSkill, err := Find(configHome, workspace, "port")
+	require.NoError(t, err)
+	require.Equal(t, "codex", codexSkill.Source)
+	require.Equal(t, "Codex port skill", codexSkill.Body)
+	require.Equal(t, originSkillsDir, codexSkill.Origin.ID)
+
+	agentSkill, err := Find(configHome, workspace, "agent")
+	require.NoError(t, err)
+	require.Equal(t, "agents", agentSkill.Source)
+	require.Equal(t, "Agent skill", agentSkill.Body)
+
+	commandSkill, err := Find(configHome, workspace, "inspect")
+	require.NoError(t, err)
+	require.Equal(t, "claw", commandSkill.Source)
+	require.Equal(t, "Inspect command", commandSkill.Body)
+	require.Equal(t, originLegacyCommandsDir, commandSkill.Origin.ID)
+
+	sources := Sources(configHome, workspace)
+	codexSource := sourceByPath(sources, filepath.Join(parent, ".codex", "skills"))
+	require.Equal(t, "codex", codexSource.Source)
+	require.Equal(t, "Codex-compatible project skills", codexSource.Label)
+	require.True(t, codexSource.Exists)
+	clawCommandSource := sourceByPath(sources, filepath.Join(workspace, ".claw", "commands"))
+	require.Equal(t, "claw", clawCommandSource.Source)
+	require.Equal(t, originLegacyCommandsDir, clawCommandSource.Origin.ID)
+	require.True(t, clawCommandSource.Exists)
+}
+
 func TestRenderInvocationSubstitutesNamedAndIndexedArguments(t *testing.T) {
 	doc := `---
 description: Review a target.
