@@ -648,6 +648,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "mcp_server")
 	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "sampling_temperature")
+	require.Contains(t, report.Features, "recovery_recipes_ledger")
 	require.Contains(t, report.Features, "session_identity_metadata")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
@@ -4665,7 +4666,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
-	require.Contains(t, out.String(), "Tools            73")
+	require.Contains(t, out.String(), "Tools            76")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))

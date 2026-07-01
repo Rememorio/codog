@@ -37,6 +37,7 @@ import (
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/planmode"
+	"github.com/Rememorio/codog/internal/recovery"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/skills"
@@ -195,6 +196,12 @@ var claudeToolAliases = map[string]string{
 	"readtool":                     "read_file",
 	"readmcpresource":              "read_mcp_resource",
 	"readmcpresourcetool":          "read_mcp_resource",
+	"recoveryattempt":              "recovery_attempt",
+	"recoveryattempttool":          "recovery_attempt",
+	"recoveryrecipe":               "recovery_recipe",
+	"recoveryrecipetool":           "recovery_recipe",
+	"recoverystatus":               "recovery_status",
+	"recoverystatustool":           "recovery_status",
 	"repl":                         "repl",
 	"remotetrigger":                "remote_trigger",
 	"remotetriggertool":            "remote_trigger",
@@ -346,6 +353,12 @@ var claudeToolAliasDisplay = map[string]string{
 	"ReadMcpResource":              "read_mcp_resource",
 	"ReadMcpResourceTool":          "read_mcp_resource",
 	"ReadTool":                     "read_file",
+	"RecoveryAttempt":              "recovery_attempt",
+	"RecoveryAttemptTool":          "recovery_attempt",
+	"RecoveryRecipe":               "recovery_recipe",
+	"RecoveryRecipeTool":           "recovery_recipe",
+	"RecoveryStatus":               "recovery_status",
+	"RecoveryStatusTool":           "recovery_status",
 	"RemoteTrigger":                "remote_trigger",
 	"RemoteTriggerTool":            "remote_trigger",
 	"RunTaskPacket":                "run_task_packet",
@@ -535,6 +548,9 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(WorkerTerminateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerObserveCompletionTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerStartupTimeoutTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(RecoveryRecipeTool{ConfigHome: opts.ConfigHome})
+	r.Register(RecoveryAttemptTool{ConfigHome: opts.ConfigHome})
+	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
 	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -4846,6 +4862,146 @@ func buildTeamTaskCommand(executable string, prompt string) string {
 	return strings.Join([]string{shellQuoteToolArg(executable), "prompt", shellQuoteToolArg(prompt)}, " ")
 }
 
+type RecoveryRecipeTool struct {
+	ConfigHome string
+}
+
+func (RecoveryRecipeTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "recovery_recipe",
+		Description: "Return known automatic recovery recipes for common coding-agent failure scenarios.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"scenario": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (RecoveryRecipeTool) Permission() Permission { return PermissionReadOnly }
+
+func (RecoveryRecipeTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	scenario, hasScenario, err := parseOptionalRecoveryScenario(input)
+	if err != nil {
+		return "", err
+	}
+	if hasScenario {
+		recipe, err := recovery.RecipeFor(scenario)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "recovery_recipe", "recipe": recipe}), nil
+	}
+	recipes := []recovery.Recipe{}
+	for _, scenario := range recovery.AllScenarios() {
+		recipe, err := recovery.RecipeFor(scenario)
+		if err != nil {
+			return "", err
+		}
+		recipes = append(recipes, recipe)
+	}
+	return pretty(map[string]any{"kind": "recovery_recipes", "recipes": recipes}), nil
+}
+
+type RecoveryAttemptTool struct {
+	ConfigHome string
+}
+
+func (RecoveryAttemptTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "recovery_attempt",
+		Description: "Record one automatic recovery attempt for a failure scenario and update the recovery ledger.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"scenario":          map[string]any{"type": "string"},
+				"failure_summary":   map[string]any{"type": "string"},
+				"failed_step_index": map[string]any{"type": "integer", "minimum": 0},
+			},
+			"required": []string{"scenario"},
+		},
+	}
+}
+
+func (RecoveryAttemptTool) Permission() Permission { return PermissionReadOnly }
+
+func (t RecoveryAttemptTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Scenario        string `json:"scenario"`
+		FailureSummary  string `json:"failure_summary"`
+		FailedStepIndex *int   `json:"failed_step_index"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	scenario, err := recovery.ParseScenario(payload.Scenario)
+	if err != nil {
+		return "", err
+	}
+	if payload.FailedStepIndex != nil && *payload.FailedStepIndex < 0 {
+		return "", errors.New("failed_step_index must be non-negative")
+	}
+	report, err := recovery.NewStore(t.ConfigHome).Attempt(scenario, recovery.AttemptOptions{
+		FailureSummary:  payload.FailureSummary,
+		FailedStepIndex: payload.FailedStepIndex,
+	})
+	if err != nil {
+		return "", err
+	}
+	return pretty(report), nil
+}
+
+type RecoveryStatusTool struct {
+	ConfigHome string
+}
+
+func (RecoveryStatusTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "recovery_status",
+		Description: "Read recovery attempt status and ledger entries for automatic recovery recipes.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"scenario": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (RecoveryStatusTool) Permission() Permission { return PermissionReadOnly }
+
+func (t RecoveryStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	scenario, hasScenario, err := parseOptionalRecoveryScenario(input)
+	if err != nil {
+		return "", err
+	}
+	store := recovery.NewStore(t.ConfigHome)
+	if hasScenario {
+		status, err := store.Status(scenario)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "recovery_status", "status": status}), nil
+	}
+	entries, err := store.List()
+	if err != nil {
+		return "", err
+	}
+	statuses := []recovery.StatusReport{}
+	for _, scenario := range recovery.AllScenarios() {
+		status, err := store.Status(scenario)
+		if err != nil {
+			return "", err
+		}
+		statuses = append(statuses, status)
+	}
+	return pretty(map[string]any{"kind": "recovery_ledger", "statuses": statuses, "entries": entries}), nil
+}
+
 type WorkerCreateTool struct {
 	Workspace  string
 	ConfigHome string
@@ -5415,6 +5571,25 @@ func parseOptionalWorkerTime(value string, field string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("%s must be RFC3339: %w", field, err)
 	}
 	return parsed.UTC(), nil
+}
+
+func parseOptionalRecoveryScenario(input json.RawMessage) (recovery.Scenario, bool, error) {
+	var payload struct {
+		Scenario string `json:"scenario"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", false, err
+		}
+	}
+	if strings.TrimSpace(payload.Scenario) == "" {
+		return "", false, nil
+	}
+	scenario, err := recovery.ParseScenario(payload.Scenario)
+	if err != nil {
+		return "", false, err
+	}
+	return scenario, true, nil
 }
 
 func validateWorkerReceipt(receipt *workers.TaskReceipt) error {

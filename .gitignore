@@ -21,6 +21,7 @@ coverage.out
 **/.codog/autofix/
 **/.codog/drafts/
 **/.codog/perf/
+**/.codog/recovery/
 **/.codog/traces/
 **/.codog/worktrees/
 **/.codog/context-viz.html

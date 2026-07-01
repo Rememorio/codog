@@ -17957,6 +17957,7 @@ func codogCapabilityFeatures() []string {
 		"prompt_cache_stats",
 		"project_memory",
 		"notification_preferences",
+		"recovery_recipes_ledger",
 		"remote_control",
 		"repl",
 		"sandbox",

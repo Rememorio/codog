@@ -694,7 +694,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 73)
+	require.Len(t, infos, 76)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -748,6 +748,11 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("cron_list")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
+	for _, name := range []string{"recovery_recipe", "recovery_attempt", "recovery_status"} {
+		info, ok = registry.Info(name)
+		require.True(t, ok)
+		require.Equal(t, PermissionReadOnly, info.Permission)
+	}
 	info, ok = registry.Info("team_create")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -1085,6 +1090,12 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"WorkerStartupTimeoutTool":     "worker_startup_timeout",
 		"WorkerTerminate":              "worker_terminate",
 		"WorkerTerminateTool":          "worker_terminate",
+		"RecoveryRecipe":               "recovery_recipe",
+		"RecoveryRecipeTool":           "recovery_recipe",
+		"RecoveryAttempt":              "recovery_attempt",
+		"RecoveryAttemptTool":          "recovery_attempt",
+		"RecoveryStatus":               "recovery_status",
+		"RecoveryStatusTool":           "recovery_status",
 	} {
 		info, ok := registry.Info(alias)
 		require.True(t, ok, alias)
@@ -2090,6 +2101,65 @@ func TestWorkerStartupTimeoutToolRecordsEvidence(t *testing.T) {
 	require.Equal(t, "lane.blocked", event.LaneEvent)
 	require.Equal(t, "trust_required", event.Classification)
 	require.Equal(t, "trust_prompt", event.Evidence["last_lifecycle_state"])
+}
+
+func TestRecoveryToolsRecordLedger(t *testing.T) {
+	configHome := t.TempDir()
+
+	recipeOut, err := RecoveryRecipeTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"scenario":"stale_branch"}`))
+	require.NoError(t, err)
+	require.Contains(t, recipeOut, `"kind": "recovery_recipe"`)
+	require.Contains(t, recipeOut, `"kind": "merge_forward_branch"`)
+
+	statusOut, err := RecoveryStatusTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"scenario":"stale_branch"}`))
+	require.NoError(t, err)
+	require.Contains(t, statusOut, `"attempted": false`)
+	require.Contains(t, statusOut, `"attempts_remaining": 1`)
+
+	firstOut, err := RecoveryAttemptTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"scenario":"stale_branch"}`))
+	require.NoError(t, err)
+	var first struct {
+		Result struct {
+			Kind       string `json:"kind"`
+			StepsTaken int    `json:"steps_taken"`
+		} `json:"result"`
+		Entry struct {
+			State        string `json:"state"`
+			AttemptCount int    `json:"attempt_count"`
+		} `json:"entry"`
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(firstOut), &first))
+	require.Equal(t, "recovered", first.Result.Kind)
+	require.Equal(t, 2, first.Result.StepsTaken)
+	require.Equal(t, "succeeded", first.Entry.State)
+	require.Equal(t, 1, first.Entry.AttemptCount)
+	require.Equal(t, "recovery.succeeded", first.Events[len(first.Events)-1].Type)
+
+	secondOut, err := RecoveryAttemptTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"scenario":"stale_branch"}`))
+	require.NoError(t, err)
+	require.Contains(t, secondOut, `"kind": "escalation_required"`)
+	require.Contains(t, secondOut, `"state": "exhausted"`)
+	require.Contains(t, secondOut, "max recovery attempts")
+
+	listOut, err := RecoveryStatusTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "recovery_ledger"`)
+	require.Contains(t, listOut, `"scenario": "stale_branch"`)
+}
+
+func TestRecoveryAttemptToolRecordsFailedStep(t *testing.T) {
+	configHome := t.TempDir()
+
+	out, err := RecoveryAttemptTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"scenario":"partial_plugin_startup","failure_summary":"mcp still unhealthy","failed_step_index":1}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "partial_recovery"`)
+	require.Contains(t, out, `"state": "failed"`)
+	require.Contains(t, out, `"kind": "restart_plugin"`)
+	require.Contains(t, out, `"kind": "retry_mcp_handshake"`)
+	require.Contains(t, out, `"last_failure_summary": "mcp still unhealthy"`)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
