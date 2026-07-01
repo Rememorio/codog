@@ -97,6 +97,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/review-remote")
 	require.Contains(t, out.String(), "/ultrareview")
 	require.Contains(t, out.String(), "/commit-push-pr")
+	require.Contains(t, out.String(), "/autofix-pr")
 	require.Contains(t, out.String(), "/pr-comments")
 	require.Contains(t, out.String(), "/pr_comments")
 	require.Contains(t, out.String(), "/passes")
@@ -153,6 +154,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 
 func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, Candidates("/ac"), "/acp")
+	require.Contains(t, Candidates("/au"), "/autofix-pr")
 
 	candidates := Candidates("/co")
 	require.Contains(t, candidates, "/compact")

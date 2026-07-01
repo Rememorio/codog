@@ -25,6 +25,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/audit"
+	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/config"
@@ -328,6 +329,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "reviewRemote",
 		},
 		{
+			name:  "autofix-pr local help",
+			args:  []string{"--config", configPath, "autofix-pr", "--help", "--output-format", "json"},
+			topic: "autofix-pr",
+		},
+		{
 			name:  "context-noninteractive local help",
 			args:  []string{"--config", configPath, "context-noninteractive", "--help", "--output-format", "json"},
 			topic: "context-noninteractive",
@@ -495,6 +501,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "caches")
 	require.Contains(t, report.Commands, "extra-usage-core")
 	require.Contains(t, report.Commands, "extra-usage-noninteractive")
+	require.Contains(t, report.Commands, "autofix-pr")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
@@ -5362,6 +5369,93 @@ exit 1
 	require.True(t, app.handleSlash(context.Background(), "/review-remote 42 --repo acme/widgets", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Remote Review")
 	require.Contains(t, out.String(), "PR Comments")
+	require.Empty(t, errOut.String())
+}
+
+func TestAutofixPRCommandAndSlash(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := initGitRepo(t)
+	fakeBin := t.TempDir()
+	fakeGH := filepath.Join(fakeBin, "gh")
+	require.NoError(t, os.WriteFile(fakeGH, []byte(`#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  cat <<'JSON'
+{"number":42,"url":"https://github.com/acme/widgets/pull/42","headRepository":{"nameWithOwner":"acme/widgets"}}
+JSON
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$4" in
+    repos/acme/widgets/issues/42/comments)
+      cat <<'JSON'
+[{"id":2,"body":"please update the summary","created_at":"2026-01-02T00:00:00Z","html_url":"https://example.test/issue","user":{"login":"alice"}}]
+JSON
+      exit 0
+      ;;
+    repos/acme/widgets/pulls/42/comments)
+      cat <<'JSON'
+[{"id":1,"body":"inline fix needed","path":"script.sh","line":2,"original_line":2,"diff_hunk":"@@ -1 +1 @@\n-old\n+new","created_at":"2026-01-01T00:00:00Z","html_url":"https://example.test/review","user":{"login":"bob"}}]
+JSON
+      exit 0
+      ;;
+  esac
+fi
+echo "unexpected gh invocation: $*" >&2
+exit 1
+`), 0o755))
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}, Workspace: workspace, Out: &out, Err: &errOut}
+	require.NoError(t, app.AutofixPR(context.Background(), []string{"42", "--repo", "acme/widgets", "--json"}))
+	var report autofixpr.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "autofix_pr", report.Kind)
+	require.Equal(t, "ready", report.Status)
+	require.Equal(t, "acme/widgets", report.Repository)
+	require.Equal(t, 42, report.PullRequest)
+	require.Equal(t, 2, report.Total)
+	require.Equal(t, 2, report.Actionable)
+	require.Len(t, report.Items, 2)
+	require.Contains(t, report.Prompt, "Fix the GitHub pull request feedback")
+	require.Contains(t, report.Prompt, "script.sh:2")
+	out.Reset()
+
+	require.NoError(t, app.AutofixPR(context.Background(), []string{"42", "--repo", "acme/widgets", "--write"}))
+	require.Contains(t, out.String(), "Autofix PR")
+	require.Contains(t, out.String(), "File")
+	files, err := filepath.Glob(filepath.Join(workspace, ".codog", "autofix", "*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	data, err := os.ReadFile(files[0])
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Autofix PR Task")
+	require.Contains(t, string(data), "inline fix needed")
+	require.Contains(t, string(data), "please update the summary")
+	out.Reset()
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "autofix-pr", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "autofix_pr"`)
+	require.Contains(t, cliOut, `"actionable_comments": 2`)
+
+	require.True(t, app.handleSlash(context.Background(), "/autofix-pr 42 --repo acme/widgets", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Autofix PR")
+	require.Contains(t, out.String(), "Fix items")
 	require.Empty(t, errOut.String())
 }
 

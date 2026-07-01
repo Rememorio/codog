@@ -29,6 +29,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/audit"
+	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/bughunt"
@@ -481,6 +482,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.PullRequestDraft(rest, overrides)
 	case "commit-push-pr":
 		return app.CommitPushPR(ctx, rest)
+	case "autofix-pr":
+		return app.AutofixPR(ctx, rest)
 	case "pr-comments", "pr_comments":
 		return app.PRComments(ctx, rest)
 	case "install-github-app", "setupGitHubActions":
@@ -12375,6 +12378,54 @@ const guestPassDocsURL = "https://support.claude.com/en/articles/12875061-claude
 
 var openExternalURL = openSystemURL
 
+type autofixPRRequest struct {
+	Format string
+	PR     string
+	Repo   string
+	Output string
+	Limit  int
+	Write  bool
+}
+
+func (a *App) AutofixPR(ctx context.Context, args []string) error {
+	req, err := parseAutofixPRArgs(args)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	comments, err := githubcomments.Fetch(ctx, githubcomments.Options{
+		PR:   req.PR,
+		Repo: req.Repo,
+	})
+	if err != nil {
+		return err
+	}
+	report := autofixpr.Build(comments, req.Limit)
+	if req.Write || strings.TrimSpace(req.Output) != "" {
+		path := a.autofixPROutputPath(req.Output, report, time.Now().UTC())
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := session.ValidateExportOutputPath(path); err != nil {
+			return err
+		}
+		data := []byte(autofixpr.RenderMarkdown(report))
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return err
+		}
+		report.File = path
+		report.Bytes = len(data)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	autofixpr.RenderText(a.Out, report)
+	return nil
+}
+
 func (a *App) PRComments(ctx context.Context, args []string) error {
 	req, err := parsePRCommentsArgs(args)
 	if err != nil {
@@ -12436,6 +12487,94 @@ func parsePRCommentsArgs(args []string) (prCommentsRequest, error) {
 		req.PR = rest[0]
 	}
 	return req, nil
+}
+
+func parseAutofixPRArgs(args []string) (autofixPRRequest, error) {
+	req := autofixPRRequest{Format: "text", Limit: 100}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("autofix-pr output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--repo":
+			index++
+			if index >= len(args) {
+				return req, errors.New("autofix-pr repository is required")
+			}
+			req.Repo = args[index]
+		case strings.HasPrefix(arg, "--repo="):
+			req.Repo = strings.TrimPrefix(arg, "--repo=")
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, errors.New("autofix-pr output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--write":
+			req.Write = true
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("autofix-pr limit is required")
+			}
+			limit, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown autofix-pr argument %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "autofix-pr"); err != nil {
+		return req, err
+	}
+	if req.Limit < 0 {
+		return req, errors.New("autofix-pr limit must be non-negative")
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected autofix-pr argument %q", rest[1])
+	}
+	if len(rest) == 1 {
+		req.PR = rest[0]
+	}
+	return req, nil
+}
+
+func (a *App) autofixPROutputPath(output string, report autofixpr.Report, createdAt time.Time) string {
+	repo := strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(strings.TrimSpace(report.Repository))
+	if repo == "" {
+		repo = "pr"
+	}
+	filename := fmt.Sprintf("autofix-pr-%s-%d-%s-%d.md", repo, report.PullRequest, createdAt.Format("20060102T150405Z"), createdAt.UnixNano())
+	if strings.TrimSpace(output) == "" {
+		return filepath.Join(a.Workspace, ".codog", "autofix", filename)
+	}
+	path := a.resolveOutputPath(output)
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return path
+	}
+	return filepath.Join(path, filename)
 }
 
 func (a *App) InstallGitHubApp(args []string) error {
@@ -15162,6 +15301,7 @@ func builtInCommandNames() []string {
 		"api",
 		"api-key",
 		"app",
+		"autofix-pr",
 		"backfill-sessions",
 		"background",
 		"bashes",
@@ -15519,7 +15659,7 @@ func commandRequiresBroadCWDGuard(command string, args []string) bool {
 	switch command {
 	case "", "repl", "tui", "prompt", "btw", "debug-tool-call":
 		return true
-	case "run", "test", "build", "lint", "node", "python", "review", "reviewremote", "review-remote", "ultrareview", "security-review", "bughunter", "files", "search", "context", "ctx_viz":
+	case "run", "test", "build", "lint", "node", "python", "autofix-pr", "review", "reviewremote", "review-remote", "ultrareview", "security-review", "bughunter", "files", "search", "context", "ctx_viz":
 		return true
 	case "agents":
 		return firstMeaningfulArg(args) == "run"
@@ -18218,6 +18358,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/commit-push-pr":
 		if err := a.CommitPushPR(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/autofix-pr":
+		if err := a.AutofixPR(ctx, fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/pr-comments", "/pr_comments":
@@ -26680,7 +26824,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "api", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
@@ -27348,6 +27492,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "clean", "comments", "findings", "error"},
 			false,
 		), true
+	case "autofix-pr":
+		return localCommandHelpSpec(
+			"autofix-pr",
+			"autofix-pr",
+			"codog autofix-pr [PR|URL|NUMBER] [--repo OWNER/REPO] [--limit N] [--write|--output PATH] [--output-format text|json]",
+			"Autofix PR\n\nUsage:\n  codog autofix-pr [PR|URL|NUMBER] [--repo OWNER/REPO] [--limit N] [--write|--output PATH] [--output-format text|json]\n\nFetches GitHub pull request comments with `gh` and prepares a focused Codog fix prompt. Use `--write` or `--output PATH` to save the task package as Markdown under the workspace.\n",
+			[]string{"repository", "pull_request", "items", "prompt", "file"},
+			[]string{"ready", "no_comments", "error"},
+			true,
+		), true
 	case "install-github-app":
 		return localCommandHelpSpec(
 			"install-github-app",
@@ -27586,6 +27740,7 @@ Usage:
   %s [flags] feedback [MESSAGE...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] pr [CONTEXT...] [--session ID] [--output PATH] [--json|--output-format text|json]
   %s [flags] commit-push-pr MESSAGE [--title TITLE] [--body BODY] [--branch NAME] [--base REF] [--remote NAME] [--staged] [--draft] [--no-pr] [--dry-run] [--json|--output-format text|json]
+  %s [flags] autofix-pr [PR|URL|NUMBER] [--repo OWNER/REPO] [--limit N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]

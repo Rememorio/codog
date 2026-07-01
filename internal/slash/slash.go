@@ -140,6 +140,7 @@ func Specs() []Spec {
 		{Name: "/bug", Usage: "/bug [MESSAGE]", Description: "Alias for /feedback."},
 		{Name: "/pr", Usage: "/pr [CONTEXT]", Description: "Write a local pull request draft from git and session context."},
 		{Name: "/commit-push-pr", Usage: "/commit-push-pr MESSAGE [--dry-run]", Description: "Commit changes, push the branch, and create or update a GitHub PR."},
+		{Name: "/autofix-pr", Usage: "/autofix-pr [PR] [--repo OWNER/REPO]", Description: "Prepare a Codog fix prompt from GitHub PR comments."},
 		{Name: "/pr-comments", Usage: "/pr-comments [PR] [--repo OWNER/REPO]", Description: "Fetch GitHub pull request comments with gh."},
 		{Name: "/pr_comments", Usage: "/pr_comments [PR] [--repo OWNER/REPO]", Description: "Alias for /pr-comments."},
 		{Name: "/install-github-app", Usage: "/install-github-app [--workflow claude|review|all]", Description: "Create Claude Code GitHub Actions workflow files."},
