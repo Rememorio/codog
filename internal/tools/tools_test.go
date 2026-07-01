@@ -329,10 +329,41 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"bash_id": "`+payload.Task.ID+`"`)
 	require.Contains(t, out, `"kind": "bash"`)
+	var outputPayload struct {
+		BackgroundTaskID string `json:"backgroundTaskId"`
+		RawOutputPath    string `json:"rawOutputPath"`
+		Output           string `json:"output"`
+		Stdout           string `json:"stdout"`
+		Interrupted      bool   `json:"interrupted"`
+		NoOutputExpected bool   `json:"noOutputExpected"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &outputPayload))
+	require.Equal(t, payload.Task.ID, outputPayload.BackgroundTaskID)
+	require.FileExists(t, outputPayload.RawOutputPath)
+	require.Contains(t, outputPayload.Output, "bash-ready:hook-bg")
+	require.Equal(t, outputPayload.Output, outputPayload.Stdout)
+	require.False(t, outputPayload.Interrupted)
+	require.False(t, outputPayload.NoOutputExpected)
+	out, err = registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`","limit_bytes":4}`), nil)
+	require.NoError(t, err)
+	var limitedOutput struct {
+		PersistedOutputPath string `json:"persistedOutputPath"`
+		PersistedOutputSize int64  `json:"persistedOutputSize"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &limitedOutput))
+	require.Equal(t, outputPayload.RawOutputPath, limitedOutput.PersistedOutputPath)
+	require.Greater(t, limitedOutput.PersistedOutputSize, int64(4))
 
 	out, err = registry.Execute(ctx, "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 	require.NoError(t, err)
 	require.Contains(t, out, `"status": "stopped"`)
+	var killed struct {
+		BackgroundTaskID string `json:"backgroundTaskId"`
+		Interrupted      bool   `json:"interrupted"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &killed))
+	require.Equal(t, payload.Task.ID, killed.BackgroundTaskID)
+	require.True(t, killed.Interrupted)
 }
 
 func TestFileToolsAllowAdditionalDirs(t *testing.T) {

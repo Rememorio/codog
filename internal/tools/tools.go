@@ -2561,13 +2561,32 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{
-		"bash_id": id,
-		"id":      id,
-		"status":  task.Status,
-		"output":  output,
-		"task":    task,
-	}), nil
+	outputText, outputTruncated := truncateBashOutput(output)
+	result := bashOutputContractFields(false)
+	result["bash_id"] = id
+	result["id"] = id
+	result["backgroundTaskId"] = id
+	result["status"] = task.Status
+	result["output"] = outputText
+	result["stdout"] = outputText
+	result["stderr"] = ""
+	result["task"] = task
+	result["rawOutputPath"] = task.LogPath
+	result["interrupted"] = task.Status == "stopped"
+	result["noOutputExpected"] = bashNoOutputExpected(outputText, "")
+	if task.ExitCode != nil {
+		result["exit_code"] = *task.ExitCode
+		if interpretation := bashReturnCodeInterpretation(*task.ExitCode, false, task.Command); interpretation != "" {
+			result["returnCodeInterpretation"] = interpretation
+		}
+	}
+	if info, statErr := os.Stat(task.LogPath); statErr == nil {
+		if outputTruncated || int64(len([]byte(output))) < info.Size() {
+			result["persistedOutputPath"] = task.LogPath
+			result["persistedOutputSize"] = info.Size()
+		}
+	}
+	return pretty(result), nil
 }
 
 type KillBashTool struct {
@@ -2618,12 +2637,15 @@ func (t KillBashTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{
-		"bash_id": id,
-		"id":      id,
-		"status":  task.Status,
-		"task":    task,
-	}), nil
+	result := bashOutputContractFields(false)
+	result["bash_id"] = id
+	result["id"] = id
+	result["backgroundTaskId"] = id
+	result["status"] = task.Status
+	result["task"] = task
+	result["interrupted"] = true
+	result["noOutputExpected"] = true
+	return pretty(result), nil
 }
 
 func bashTaskID(values ...string) (string, error) {
