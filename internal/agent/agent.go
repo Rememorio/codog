@@ -19873,6 +19873,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedCronSlash(resumeSlashArgs("cron", args, format), format)
 	case "/team":
 		return a.runResumedTeamSlash(resumeSlashArgs("team", args, format), format)
+	case "/terminal-setup", "/terminalsetup":
+		return a.runResumedTerminalSetupSlash(resumeSlashArgs("terminal-setup", args, format), format)
 	case "/files":
 		return a.Files(resumeSlashArgs("files", args, format))
 	case "/search":
@@ -20077,6 +20079,19 @@ func (a *App) runResumedTeamSlash(args []string, format string) error {
 		return a.Team(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/team", req.Action), format)
+	}
+}
+
+func (a *App) runResumedTerminalSetupSlash(args []string, format string) error {
+	req, err := parseTerminalSetupArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status", "snippet", "print":
+		return a.TerminalSetup(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/terminal-setup", req.Action), format)
 	}
 }
 

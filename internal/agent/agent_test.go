@@ -52,6 +52,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/team"
+	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/undo"
@@ -713,6 +714,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	hooksSlash, ok := capabilityReportSlash(report, "/hooks")
 	require.True(t, ok)
 	require.True(t, hooksSlash.ResumeSupported)
+	terminalSetupSlash, ok := capabilityReportSlash(report, "/terminal-setup")
+	require.True(t, ok)
+	require.True(t, terminalSetupSlash.ResumeSupported)
+	terminalSetupAliasSlash, ok := capabilityReportSlash(report, "/terminalSetup")
+	require.True(t, ok)
+	require.True(t, terminalSetupAliasSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1718,6 +1725,34 @@ func risky(value any) {
 	require.Equal(t, "bash", resumedToolDetails.Tool.Name)
 	require.Contains(t, resumedToolDetails.Aliases, "Bash")
 
+	terminalProfilePath := filepath.Join(workspace, ".zshrc")
+	out, err = runResumedJSON("/terminal-setup", "status", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedTerminalSetup terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTerminalSetup))
+	require.Equal(t, "terminal_setup", resumedTerminalSetup.Kind)
+	require.Equal(t, "status", resumedTerminalSetup.Action)
+	require.Equal(t, "ok", resumedTerminalSetup.Status)
+	require.Equal(t, "zsh", resumedTerminalSetup.Shell)
+	require.Equal(t, terminalProfilePath, resumedTerminalSetup.Path)
+	require.False(t, resumedTerminalSetup.Installed)
+
+	out, err = runResumedJSON("/terminal-setup", "snippet", "--shell", "zsh")
+	require.NoError(t, err)
+	var resumedTerminalSnippet terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTerminalSnippet))
+	require.Equal(t, "terminal_setup", resumedTerminalSnippet.Kind)
+	require.Equal(t, "snippet", resumedTerminalSnippet.Action)
+	require.Equal(t, "zsh", resumedTerminalSnippet.Shell)
+	require.Contains(t, resumedTerminalSnippet.Snippet, "codog_statusline")
+
+	out, err = runResumedJSON("/terminalSetup", "status", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedTerminalAlias terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTerminalAlias))
+	require.Equal(t, "terminal_setup", resumedTerminalAlias.Kind)
+	require.Equal(t, "status", resumedTerminalAlias.Action)
+
 	out, err = runResumedJSON("/model")
 	require.NoError(t, err)
 	var resumedModel modelReport
@@ -2129,6 +2164,8 @@ func risky(value any) {
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
+		{Command: "/terminal-setup", Args: []string{"install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup install"},
+		{Command: "/terminal-setup", Args: []string{"uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup uninstall"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},

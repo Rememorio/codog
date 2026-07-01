@@ -328,6 +328,8 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/teleport":           true,
 	"/temperature":        true,
 	"/templates":          true,
+	"/terminal-setup":     true,
+	"/terminalsetup":      true,
 	"/theme":              true,
 	"/tool-details":       true,
 	"/todos":              true,
