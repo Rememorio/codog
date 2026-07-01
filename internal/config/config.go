@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/envfile"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/signing"
 )
@@ -1480,133 +1481,138 @@ func joinPromptAppend(existing string, next string) string {
 }
 
 func applyEnv(cfg *Config) {
-	genericBaseURLSet := strings.TrimSpace(os.Getenv("CODOG_BASE_URL")) != ""
-	genericAPIKeySet := strings.TrimSpace(os.Getenv("CODOG_API_KEY")) != ""
-	genericAuthTokenSet := strings.TrimSpace(os.Getenv("CODOG_AUTH_TOKEN")) != ""
+	dotenv := envfile.Current()
+	lookup := func(name string) string {
+		value, _ := envfile.Lookup(name, dotenv)
+		return value
+	}
+	genericBaseURLSet := strings.TrimSpace(lookup("CODOG_BASE_URL")) != ""
+	genericAPIKeySet := strings.TrimSpace(lookup("CODOG_API_KEY")) != ""
+	genericAuthTokenSet := strings.TrimSpace(lookup("CODOG_AUTH_TOKEN")) != ""
 	genericCredentialSet := genericAPIKeySet || genericAuthTokenSet
 
-	if value := os.Getenv("ANTHROPIC_API_KEY"); value != "" {
+	if value := lookup("ANTHROPIC_API_KEY"); value != "" {
 		cfg.APIKey = value
 	}
-	if value := os.Getenv("ANTHROPIC_AUTH_TOKEN"); value != "" {
+	if value := lookup("ANTHROPIC_AUTH_TOKEN"); value != "" {
 		cfg.AuthToken = value
 	}
-	if value := os.Getenv("ANTHROPIC_BASE_URL"); value != "" {
+	if value := lookup("ANTHROPIC_BASE_URL"); value != "" {
 		cfg.BaseURL = value
 	}
-	if value := os.Getenv("CODOG_BASE_URL"); value != "" {
+	if value := lookup("CODOG_BASE_URL"); value != "" {
 		cfg.BaseURL = value
 	}
-	if value := os.Getenv("CODOG_MODEL"); value != "" {
+	if value := lookup("CODOG_MODEL"); value != "" {
 		cfg.Model = value
 	}
-	if value := os.Getenv("CODOG_API_KEY"); value != "" {
+	if value := lookup("CODOG_API_KEY"); value != "" {
 		cfg.APIKey = value
 	}
-	if value := os.Getenv("CODOG_AUTH_TOKEN"); value != "" {
+	if value := lookup("CODOG_AUTH_TOKEN"); value != "" {
 		cfg.AuthToken = value
 	}
-	applyRoutedProviderEnv(cfg, genericBaseURLSet, genericCredentialSet)
-	if value := os.Getenv("CODOG_ADVISOR_MODEL"); value != "" {
+	applyRoutedProviderEnv(cfg, genericBaseURLSet, genericCredentialSet, lookup)
+	if value := lookup("CODOG_ADVISOR_MODEL"); value != "" {
 		cfg.AdvisorModel = value
 	}
-	if value := os.Getenv("CODOG_SYSTEM_PROMPT"); value != "" {
+	if value := lookup("CODOG_SYSTEM_PROMPT"); value != "" {
 		cfg.SystemPrompt = value
 	}
-	if value := os.Getenv("CODOG_APPEND_SYSTEM_PROMPT"); value != "" {
+	if value := lookup("CODOG_APPEND_SYSTEM_PROMPT"); value != "" {
 		cfg.AppendSystemPrompt = joinPromptAppend(cfg.AppendSystemPrompt, value)
 	}
-	if value := os.Getenv("CODOG_LANGUAGE"); value != "" {
+	if value := lookup("CODOG_LANGUAGE"); value != "" {
 		cfg.Language = value
 	}
-	if value := os.Getenv("CODOG_THEME"); value != "" {
+	if value := lookup("CODOG_THEME"); value != "" {
 		cfg.Theme = value
 	}
-	if value := os.Getenv("CODOG_EDITOR_MODE"); value != "" {
+	if value := lookup("CODOG_EDITOR_MODE"); value != "" {
 		cfg.EditorMode = value
 	}
-	if value := os.Getenv("CODOG_REASONING_EFFORT"); value != "" {
+	if value := lookup("CODOG_REASONING_EFFORT"); value != "" {
 		cfg.ReasoningEffort = value
 	}
-	if value := os.Getenv("CODOG_OAUTH_PROFILE"); value != "" {
+	if value := lookup("CODOG_OAUTH_PROFILE"); value != "" {
 		cfg.OAuthProfile = value
 	}
-	if value := os.Getenv("CODOG_TEMPERATURE"); value != "" {
+	if value := lookup("CODOG_TEMPERATURE"); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
 			cfg.Temperature = &parsed
 		}
 	}
-	if value, ok := parseBoolEnv("CODOG_FAST_MODE"); ok {
+	if value, ok := parseBoolEnv("CODOG_FAST_MODE", lookup); ok {
 		cfg.FastMode = &value
 	}
-	if value, ok := parseBoolEnv("CODOG_VOICE_ENABLED"); ok {
+	if value, ok := parseBoolEnv("CODOG_VOICE_ENABLED", lookup); ok {
 		cfg.VoiceEnabled = &value
 	}
-	if value := os.Getenv("CODOG_VOICE_COMMAND"); value != "" {
+	if value := lookup("CODOG_VOICE_COMMAND"); value != "" {
 		cfg.VoiceCommand = value
 	}
-	if value := os.Getenv("CODOG_SPEECH_COMMAND"); value != "" {
+	if value := lookup("CODOG_SPEECH_COMMAND"); value != "" {
 		cfg.SpeechCommand = value
 	}
-	if value := os.Getenv("CODOG_PERMISSION_MODE"); value != "" {
+	if value := lookup("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value
 	}
-	if value, ok := parseBoolEnv("CODOG_PRIVACY_TELEMETRY_ENABLED"); ok {
+	if value, ok := parseBoolEnv("CODOG_PRIVACY_TELEMETRY_ENABLED", lookup); ok {
 		cfg.Privacy.TelemetryEnabled = &value
 	}
-	if value, ok := parseBoolEnv("CODOG_PRIVACY_CRASH_REPORTS_ENABLED"); ok {
+	if value, ok := parseBoolEnv("CODOG_PRIVACY_CRASH_REPORTS_ENABLED", lookup); ok {
 		cfg.Privacy.CrashReportsEnabled = &value
 	}
-	if value, ok := parseBoolEnv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED"); ok {
+	if value, ok := parseBoolEnv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED", lookup); ok {
 		cfg.Privacy.PromptHistoryEnabled = &value
 	}
-	if value, ok := parseBoolEnv("CODOG_CHROME_DEFAULT_ENABLED"); ok {
+	if value, ok := parseBoolEnv("CODOG_CHROME_DEFAULT_ENABLED", lookup); ok {
 		cfg.Future.ChromeDefaultEnabled = &value
 	}
-	if value, ok := parseBoolEnv("CODOG_NOTIFICATIONS_ENABLED"); ok {
+	if value, ok := parseBoolEnv("CODOG_NOTIFICATIONS_ENABLED", lookup); ok {
 		cfg.Future.NotificationsEnabled = &value
 	}
-	if value := os.Getenv("CODOG_CONFIG_HOME"); value != "" {
+	if value := lookup("CODOG_CONFIG_HOME"); value != "" {
 		cfg.ConfigHome = expandHome(value)
 	}
-	if value := os.Getenv("CODOG_MAX_TURNS"); value != "" {
+	if value := lookup("CODOG_MAX_TURNS"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.MaxTurns = parsed
 		}
 	}
-	if value := os.Getenv("CODOG_RATE_LIMIT_MAX_RETRIES"); value != "" {
+	if value := lookup("CODOG_RATE_LIMIT_MAX_RETRIES"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.RateLimit.MaxRetries = parsed
 		}
 	}
-	if value := os.Getenv("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS"); value != "" {
+	if value := lookup("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.RateLimit.InitialBackoffMS = parsed
 		}
 	}
-	if value := os.Getenv("CODOG_RATE_LIMIT_MAX_BACKOFF_MS"); value != "" {
+	if value := lookup("CODOG_RATE_LIMIT_MAX_BACKOFF_MS"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.RateLimit.MaxBackoffMS = parsed
 		}
 	}
-	if value := os.Getenv("CODOG_ADDITIONAL_DIRS"); value != "" {
+	if value := lookup("CODOG_ADDITIONAL_DIRS"); value != "" {
 		cfg.AdditionalDirs = splitPathList(value)
 	}
 }
 
-func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool) {
+func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, lookup func(string) string) {
 	switch modelrouting.ProviderForModel(cfg.Model) {
 	case modelrouting.ProviderOpenAI:
 		if !genericCredentialSet {
 			cfg.AuthToken = ""
-			cfg.APIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+			cfg.APIKey = strings.TrimSpace(lookup("OPENAI_API_KEY"))
 		}
 		if !genericBaseURLSet {
 			switch {
-			case strings.TrimSpace(os.Getenv("OLLAMA_HOST")) != "":
-				cfg.BaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("OLLAMA_HOST")), "/") + "/v1"
-			case strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")) != "":
-				cfg.BaseURL = strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
+			case strings.TrimSpace(lookup("OLLAMA_HOST")) != "":
+				cfg.BaseURL = strings.TrimRight(strings.TrimSpace(lookup("OLLAMA_HOST")), "/") + "/v1"
+			case strings.TrimSpace(lookup("OPENAI_BASE_URL")) != "":
+				cfg.BaseURL = strings.TrimSpace(lookup("OPENAI_BASE_URL"))
 			default:
 				cfg.BaseURL = modelrouting.DefaultOpenAIBaseURL
 			}
@@ -1614,10 +1620,10 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 	case modelrouting.ProviderXAI:
 		if !genericCredentialSet {
 			cfg.AuthToken = ""
-			cfg.APIKey = strings.TrimSpace(os.Getenv("XAI_API_KEY"))
+			cfg.APIKey = strings.TrimSpace(lookup("XAI_API_KEY"))
 		}
 		if !genericBaseURLSet {
-			if value := strings.TrimSpace(os.Getenv("XAI_BASE_URL")); value != "" {
+			if value := strings.TrimSpace(lookup("XAI_BASE_URL")); value != "" {
 				cfg.BaseURL = value
 			} else {
 				cfg.BaseURL = modelrouting.DefaultXAIBaseURL
@@ -1626,10 +1632,10 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 	case modelrouting.ProviderDashScope:
 		if !genericCredentialSet {
 			cfg.AuthToken = ""
-			cfg.APIKey = strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY"))
+			cfg.APIKey = strings.TrimSpace(lookup("DASHSCOPE_API_KEY"))
 		}
 		if !genericBaseURLSet {
-			if value := strings.TrimSpace(os.Getenv("DASHSCOPE_BASE_URL")); value != "" {
+			if value := strings.TrimSpace(lookup("DASHSCOPE_BASE_URL")); value != "" {
 				cfg.BaseURL = value
 			} else {
 				cfg.BaseURL = modelrouting.DefaultDashScopeBaseURL
@@ -1832,8 +1838,8 @@ func splitPathList(value string) []string {
 	return out
 }
 
-func parseBoolEnv(name string) (bool, bool) {
-	value := strings.TrimSpace(os.Getenv(name))
+func parseBoolEnv(name string, lookup func(string) string) (bool, bool) {
+	value := strings.TrimSpace(lookup(name))
 	if value == "" {
 		return false, false
 	}

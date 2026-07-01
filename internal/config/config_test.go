@@ -179,6 +179,62 @@ func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8080/v1", cfg.BaseURL)
 }
 
+func TestLoadProviderEnvironmentFromDotenv(t *testing.T) {
+	unsetEnv(t,
+		"CODOG_MODEL",
+		"CODOG_BASE_URL",
+		"CODOG_API_KEY",
+		"CODOG_AUTH_TOKEN",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"OLLAMA_HOST",
+	)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte(`
+CODOG_MODEL=openai/gpt-4o-mini
+OPENAI_API_KEY='openai-dotenv-secret'
+OPENAI_BASE_URL="http://127.0.0.1:8088/v1"
+CODOG_FAST_MODE=true
+`), 0o600))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(dir, "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "openai/gpt-4o-mini", cfg.Model)
+	require.Equal(t, "openai-dotenv-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, "http://127.0.0.1:8088/v1", cfg.BaseURL)
+	require.NotNil(t, cfg.FastMode)
+	require.True(t, *cfg.FastMode)
+}
+
+func TestLoadProviderEnvironmentPrefersRealEnvOverDotenv(t *testing.T) {
+	unsetEnv(t,
+		"CODOG_MODEL",
+		"CODOG_BASE_URL",
+		"CODOG_API_KEY",
+		"CODOG_AUTH_TOKEN",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"OLLAMA_HOST",
+	)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte(`
+CODOG_MODEL=openai/gpt-4o-mini
+OPENAI_API_KEY=openai-dotenv-secret
+OPENAI_BASE_URL=http://127.0.0.1:8088/v1
+`), 0o600))
+	t.Setenv("OPENAI_API_KEY", "openai-env-secret")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(dir, "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "openai-env-secret", cfg.APIKey)
+	require.Equal(t, "http://127.0.0.1:8088/v1", cfg.BaseURL)
+}
+
 func TestLoadOpenAIEnvironmentForGPTModelOverridesAnthropicEnv(t *testing.T) {
 	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_BASE_URL", "OLLAMA_HOST")
 	t.Setenv("CODOG_MODEL", "gpt-4.1-mini")

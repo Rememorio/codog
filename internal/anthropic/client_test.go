@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -196,6 +198,18 @@ func TestClientMissingCredentialsHintDetectsForeignProviderEnv(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClientMissingCredentialsHintDetectsDotenvForeignProviderEnv(t *testing.T) {
+	unsetForeignProviderCredentialEnv(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("export OPENAI_API_KEY='openai-dotenv'\n"), 0o600))
+
+	hint := anthropicMissingCredentialsHint()
+
+	require.Contains(t, hint, "OPENAI_API_KEY")
+	require.Contains(t, hint, "openai/")
 }
 
 func TestClientOpenAICompatibleAllowsMissingCredentialsForLocalGateway(t *testing.T) {

@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/envfile"
 	"github.com/Rememorio/codog/internal/modelrouting"
 )
 
@@ -190,8 +190,9 @@ func anthropicMissingCredentialsError() MissingCredentialsError {
 }
 
 func anthropicMissingCredentialsHint() string {
+	dotenv := envfile.Current()
 	for _, candidate := range foreignProviderCredentialHints {
-		if strings.TrimSpace(os.Getenv(candidate.EnvVar)) == "" {
+		if _, ok := envfile.Lookup(candidate.EnvVar, dotenv); !ok {
 			continue
 		}
 		return fmt.Sprintf("I see %s is set; if you meant to use the %s provider, %s.", candidate.EnvVar, candidate.Provider, candidate.Hint)
