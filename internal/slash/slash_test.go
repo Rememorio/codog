@@ -16,6 +16,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/terminal-setup")
 	require.Contains(t, out.String(), "/terminalSetup")
 	require.Contains(t, out.String(), "/remote-env")
+	require.Contains(t, out.String(), "/api")
 	require.Contains(t, out.String(), "/memory")
 	require.Contains(t, out.String(), "/project")
 	require.Contains(t, out.String(), "/env")

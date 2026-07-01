@@ -349,6 +349,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Reset(rest)
 	case "model":
 		return app.Model(rest)
+	case "api":
+		return app.API(rest)
 	case "api-key":
 		return app.APIKey(rest)
 	case "advisor":
@@ -720,6 +722,178 @@ func (a *App) Remote(args []string) error {
 		Executable:  executable,
 		EditorToken: a.Config.Future.EditorBridgeToken,
 	}.Handler())
+}
+
+type apiRequest struct {
+	Action string
+	Format string
+	Addr   string
+}
+
+type apiReport struct {
+	Kind                string              `json:"kind"`
+	Action              string              `json:"action"`
+	Status              string              `json:"status"`
+	Workspace           string              `json:"workspace,omitempty"`
+	Enabled             bool                `json:"enabled"`
+	Ready               bool                `json:"ready"`
+	AuthTokenConfigured bool                `json:"auth_token_configured"`
+	AuthRequired        bool                `json:"auth_required"`
+	LeaseSeconds        int                 `json:"lease_seconds"`
+	RemoteCommand       string              `json:"remote_command"`
+	RemoteAddr          string              `json:"remote_addr"`
+	RemoteURL           string              `json:"remote_url"`
+	HealthURL           string              `json:"health_url"`
+	StateURL            string              `json:"state_url"`
+	RouteCount          int                 `json:"route_count"`
+	PublicRouteCount    int                 `json:"public_route_count"`
+	StreamingRouteCount int                 `json:"streaming_route_count"`
+	Routes              []control.RouteSpec `json:"routes"`
+	Messages            []string            `json:"messages,omitempty"`
+}
+
+func (a *App) API(args []string) error {
+	req, err := parseAPIArgs(args)
+	if err != nil {
+		return err
+	}
+	addr, remoteURL, err := normalizeRemoteHandoffAddr(req.Addr)
+	if err != nil {
+		return err
+	}
+	report := a.buildAPIReport(req, addr, remoteURL)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderAPIReport(a.Out, report)
+	return nil
+}
+
+func parseAPIArgs(args []string) (apiRequest, error) {
+	req := apiRequest{Action: "routes", Format: "text", Addr: "127.0.0.1:8791"}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("api output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--addr":
+			index++
+			if index >= len(args) {
+				return req, errors.New("api addr is required")
+			}
+			req.Addr = args[index]
+		case strings.HasPrefix(arg, "--addr="):
+			req.Addr = strings.TrimPrefix(arg, "--addr=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown api flag %q", arg)
+		default:
+			if actionSet {
+				return req, fmt.Errorf("unexpected api argument %q", arg)
+			}
+			switch strings.ToLower(arg) {
+			case "routes", "list", "show":
+				req.Action = "routes"
+			case "status":
+				req.Action = "status"
+			default:
+				return req, fmt.Errorf("unknown api command %q", arg)
+			}
+			actionSet = true
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "api"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func (a *App) buildAPIReport(req apiRequest, addr, remoteURL string) apiReport {
+	routes := control.RouteSpecs()
+	publicCount := 0
+	streamingCount := 0
+	for _, route := range routes {
+		if route.Public {
+			publicCount++
+		}
+		if route.Streaming {
+			streamingCount++
+		}
+	}
+	authConfigured := strings.TrimSpace(a.Config.Future.RemoteAuthToken) != ""
+	status := "disabled"
+	switch {
+	case a.Config.Future.RemoteEnabled && authConfigured:
+		status = "ready"
+	case a.Config.Future.RemoteEnabled:
+		status = "enabled_without_auth"
+	}
+	report := apiReport{
+		Kind:                "api",
+		Action:              req.Action,
+		Status:              status,
+		Workspace:           a.Workspace,
+		Enabled:             a.Config.Future.RemoteEnabled,
+		Ready:               a.Config.Future.RemoteEnabled,
+		AuthTokenConfigured: authConfigured,
+		AuthRequired:        authConfigured,
+		LeaseSeconds:        a.Config.Future.RemoteLeaseSeconds,
+		RemoteCommand:       "codog remote serve " + addr,
+		RemoteAddr:          addr,
+		RemoteURL:           remoteURL,
+		HealthURL:           strings.TrimRight(remoteURL, "/") + "/health",
+		StateURL:            strings.TrimRight(remoteURL, "/") + "/state",
+		RouteCount:          len(routes),
+		PublicRouteCount:    publicCount,
+		StreamingRouteCount: streamingCount,
+		Routes:              routes,
+	}
+	if !report.Enabled {
+		report.Messages = append(report.Messages, "Enable remote control with `codog remote-setup enable` before exposing the API to a client.")
+	}
+	if report.Enabled && !authConfigured {
+		report.Messages = append(report.Messages, "No auth token is configured; keep the listener on localhost or set one with `codog remote-setup enable --auth-token TOKEN`.")
+	}
+	return report
+}
+
+func renderAPIReport(out io.Writer, report apiReport) {
+	fmt.Fprintln(out, "Remote API")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Auth required    %t\n", report.AuthRequired)
+	fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
+	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
+	fmt.Fprintf(out, "  Remote URL       %s\n", report.RemoteURL)
+	fmt.Fprintf(out, "  Health URL       %s\n", report.HealthURL)
+	fmt.Fprintf(out, "  Routes           %d\n", report.RouteCount)
+	if len(report.Routes) != 0 {
+		fmt.Fprintln(out, "  Endpoints")
+		for _, route := range report.Routes {
+			auth := "auth"
+			if route.Public {
+				auth = "public"
+			}
+			streaming := ""
+			if route.Streaming {
+				streaming = " stream"
+			}
+			fmt.Fprintf(out, "    %-28s %-9s %s%s\n", route.Path, strings.Join(route.Methods, ","), auth, streaming)
+		}
+	}
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Note             %s\n", message)
+	}
 }
 
 type remoteEnvRequest struct {
@@ -14741,6 +14915,7 @@ func builtInCommandNames() []string {
 		"agents",
 		"allowed-tools",
 		"android",
+		"api",
 		"api-key",
 		"app",
 		"backfill-sessions",
@@ -17680,6 +17855,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/remote-env":
 		if err := a.RemoteEnv(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/api":
+		if err := a.API(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/remote-setup", "/web-setup":
@@ -26244,7 +26423,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "api", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
@@ -26666,6 +26845,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "api":
+		return localCommandHelpSpec(
+			"api",
+			"api",
+			"codog api [routes|status] [--addr ADDR] [--output-format text|json]",
+			"API\n\nUsage:\n  codog api [routes|status] [--addr ADDR] [--output-format text|json]\n\nReports the local remote-control HTTP API URL, auth state, startup command, and route manifest without starting a listener.\n",
+			[]string{"remote_url", "auth_required", "route_count", "routes", "remote_command"},
+			[]string{"disabled", "enabled_without_auth", "ready"},
+			false,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -27023,6 +27212,7 @@ Usage:
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
   %s reset [status|SECTION|all --confirm] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] api [routes|status] [--addr ADDR] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--json|--output-format text|json]

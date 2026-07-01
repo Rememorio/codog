@@ -29,6 +29,25 @@ func TestControlHealth(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
+	routes := RouteSpecs()
+	require.NotEmpty(t, routes)
+
+	byPath := map[string]RouteSpec{}
+	for _, route := range routes {
+		require.NotEmpty(t, route.Path)
+		require.NotEmpty(t, route.Methods)
+		byPath[route.Path] = route
+	}
+
+	require.True(t, byPath["/health"].Public)
+	require.Equal(t, []string{http.MethodGet}, byPath["/health"].Methods)
+	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/state"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/file/write"].Methods)
+	require.True(t, byPath["/background/{id}/watch"].Streaming)
+	require.Contains(t, byPath, "/editor/selection")
+}
+
 func TestControlAuth(t *testing.T) {
 	server := httptest.NewServer(Server{
 		Sessions:  &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},

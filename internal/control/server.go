@@ -35,6 +35,62 @@ type Server struct {
 	Now         func() time.Time
 }
 
+type RouteSpec struct {
+	Path        string   `json:"path"`
+	Methods     []string `json:"methods"`
+	Description string   `json:"description"`
+	Public      bool     `json:"public,omitempty"`
+	Streaming   bool     `json:"streaming,omitempty"`
+}
+
+func RouteSpecs() []RouteSpec {
+	return []RouteSpec{
+		{Path: "/health", Methods: []string{http.MethodGet}, Description: "Health check.", Public: true},
+		{Path: "/state", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update remote client heartbeat, failure, and lease state."},
+		{Path: "/sessions", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List sessions or create a new session."},
+		{Path: "/sessions/{id}", Methods: []string{http.MethodGet}, Description: "Read one session."},
+		{Path: "/sessions/{id}/messages", Methods: []string{http.MethodPost}, Description: "Append a message to a session."},
+		{Path: "/sessions/{id}/input", Methods: []string{http.MethodPost}, Description: "Append raw user input to a session."},
+		{Path: "/sessions/{id}/rewind", Methods: []string{http.MethodPost}, Description: "Rewind recent session messages."},
+		{Path: "/sessions/{id}/prompt", Methods: []string{http.MethodPost}, Description: "Start a background prompt turn for a session."},
+		{Path: "/sessions/{id}/background", Methods: []string{http.MethodGet}, Description: "List background tasks for a session."},
+		{Path: "/workspace/info", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read workspace metadata."},
+		{Path: "/workspace/files", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List workspace files."},
+		{Path: "/workspace/search", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Search workspace files."},
+		{Path: "/file/read", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read a workspace-scoped file."},
+		{Path: "/file/write", Methods: []string{http.MethodPost}, Description: "Write a workspace-scoped file."},
+		{Path: "/file/edit", Methods: []string{http.MethodPost}, Description: "Edit a workspace-scoped file."},
+		{Path: "/file/diff", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Preview a file edit diff."},
+		{Path: "/terminal", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List or start terminal tasks."},
+		{Path: "/terminal/{id}", Methods: []string{http.MethodGet}, Description: "Read a terminal task."},
+		{Path: "/terminal/{id}/restart", Methods: []string{http.MethodPost}, Description: "Restart a terminal task."},
+		{Path: "/terminal/{id}/stop", Methods: []string{http.MethodPost}, Description: "Stop a terminal task."},
+		{Path: "/terminal/{id}/logs", Methods: []string{http.MethodGet}, Description: "Read terminal task logs."},
+		{Path: "/terminal/{id}/watch", Methods: []string{http.MethodGet}, Description: "Stream terminal task events.", Streaming: true},
+		{Path: "/background", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List or start background tasks."},
+		{Path: "/background/prune", Methods: []string{http.MethodPost}, Description: "Prune old background tasks."},
+		{Path: "/background/supervise", Methods: []string{http.MethodPost}, Description: "Run one background supervision pass."},
+		{Path: "/background/{id}", Methods: []string{http.MethodGet}, Description: "Read a background task."},
+		{Path: "/background/{id}/restart", Methods: []string{http.MethodPost}, Description: "Restart a background task."},
+		{Path: "/background/{id}/stop", Methods: []string{http.MethodPost}, Description: "Stop a background task."},
+		{Path: "/background/{id}/logs", Methods: []string{http.MethodGet}, Description: "Read background task logs."},
+		{Path: "/background/{id}/watch", Methods: []string{http.MethodGet}, Description: "Stream background task events.", Streaming: true},
+		{Path: "/hooks/health", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Inspect hook matching without executing hooks."},
+		{Path: "/hooks/status", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Alias for hook health inspection."},
+		{Path: "/diagnostics/go", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Run Go diagnostics."},
+		{Path: "/code/symbols", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List Go symbols."},
+		{Path: "/code/references", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Find symbol references."},
+		{Path: "/code/definition", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Find a symbol definition."},
+		{Path: "/code/hover", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Return hover-style symbol context."},
+		{Path: "/code/completion", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Return symbol completions."},
+		{Path: "/code/format", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Format a Go file."},
+		{Path: "/editor/identify", Methods: []string{http.MethodPost}, Description: "Register or identify an editor bridge client."},
+		{Path: "/editor/state", Methods: []string{http.MethodGet}, Description: "Read editor bridge state."},
+		{Path: "/editor/open", Methods: []string{http.MethodPost}, Description: "Open a file through the editor bridge."},
+		{Path: "/editor/selection", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update editor selection."},
+	}
+}
+
 type Failure struct {
 	Code      string    `json:"code,omitempty"`
 	Message   string    `json:"message"`

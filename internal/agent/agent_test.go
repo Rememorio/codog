@@ -29,6 +29,7 @@ import (
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
+	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/cron"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
@@ -297,6 +298,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "mcp",
 		},
 		{
+			name:  "api local help",
+			args:  []string{"--config", configPath, "api", "--help", "--output-format", "json"},
+			topic: "api",
+		},
+		{
 			name:  "cache local help",
 			args:  []string{"--config", configPath, "cache", "--help", "--output-format", "json"},
 			topic: "cache",
@@ -459,6 +465,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "claude-test", report.Model)
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
+	require.Contains(t, report.Commands, "api")
 	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "caches")
 	require.Contains(t, report.Commands, "resume")
@@ -4853,6 +4860,75 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	require.Contains(t, out.String(), "127.0.0.1:8888")
 	require.Contains(t, out.String(), "web-session")
 	require.Empty(t, errOut.String())
+}
+
+func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Future: config.FutureConfig{
+				RemoteEnabled:      true,
+				RemoteAuthToken:    "secret-token",
+				RemoteLeaseSeconds: 90,
+			},
+		},
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.API([]string{"routes", "--addr", ":8799", "--json"}))
+	var report apiReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "api", report.Kind)
+	require.Equal(t, "routes", report.Action)
+	require.Equal(t, "ready", report.Status)
+	require.True(t, report.AuthRequired)
+	require.Equal(t, "http://127.0.0.1:8799", report.RemoteURL)
+	require.Equal(t, "codog remote serve :8799", report.RemoteCommand)
+	require.Equal(t, 90, report.LeaseSeconds)
+	require.Equal(t, len(control.RouteSpecs()), report.RouteCount)
+	require.NotEmpty(t, report.Routes)
+	require.Contains(t, out.String(), `"/file/write"`)
+	require.NotContains(t, out.String(), "secret-token")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/api status --addr 127.0.0.1:8800", &session.Session{ID: "active"}))
+	require.Contains(t, out.String(), "Remote API")
+	require.Contains(t, out.String(), "Remote URL       http://127.0.0.1:8800")
+	require.Contains(t, out.String(), "/health")
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]any{
+		"config_home": configHome,
+		"future": map[string]any{
+			"remote_enabled":       true,
+			"remote_auth_token":    "secret-token",
+			"remote_lease_seconds": 90,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "api", "routes", "--addr", "127.0.0.1:8810"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &report))
+	require.Equal(t, "api", report.Kind)
+	require.Equal(t, "http://127.0.0.1:8810", report.RemoteURL)
+	require.True(t, report.AuthRequired)
+	require.NotContains(t, cliOut, "secret-token")
 }
 
 func TestRunCLIRoutesWebSetupAlias(t *testing.T) {
