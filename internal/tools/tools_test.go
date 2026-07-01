@@ -263,6 +263,23 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Contains(t, out, `"line": 1`)
 	require.Contains(t, out, "b.py")
 	require.NotContains(t, out, "a.go")
+	var contentReport struct {
+		Mode          string   `json:"mode"`
+		Filenames     []string `json:"filenames"`
+		NumFiles      int      `json:"numFiles"`
+		Content       string   `json:"content"`
+		NumLines      int      `json:"numLines"`
+		AppliedLimit  int      `json:"appliedLimit"`
+		AppliedOffset int      `json:"appliedOffset"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &contentReport))
+	require.Equal(t, "content", contentReport.Mode)
+	require.Equal(t, []string{"b.py"}, contentReport.Filenames)
+	require.Equal(t, 1, contentReport.NumFiles)
+	require.Equal(t, "b.py:1:needle", contentReport.Content)
+	require.Equal(t, 1, contentReport.NumLines)
+	require.Equal(t, 1, contentReport.AppliedLimit)
+	require.Equal(t, 1, contentReport.AppliedOffset)
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "context.go"), []byte("before one\nmatch target\nafter one\nafter two\nafter three\n"), 0o644))
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"target","output_mode":"content","-B":1,"-A":2}`), nil)
@@ -300,6 +317,11 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"before one"`)
 	require.Contains(t, out, `"after one"`)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"target","output_mode":"content","-n":false}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &contentReport))
+	require.Equal(t, "context.go:match target", contentReport.Content)
 }
 
 func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {

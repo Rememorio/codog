@@ -2566,6 +2566,7 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 				"-A":          map[string]any{"type": "integer", "minimum": 0},
 				"-C":          map[string]any{"type": "integer", "minimum": 0},
 				"context":     map[string]any{"type": "integer", "minimum": 0},
+				"-n":          map[string]any{"type": "boolean"},
 				"-i":          map[string]any{"type": "boolean"},
 				"ignore_case": map[string]any{"type": "boolean"},
 				"type":        map[string]any{"type": "string"},
@@ -2591,6 +2592,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		After          int    `json:"-A"`
 		ContextShort   int    `json:"-C"`
 		Context        int    `json:"context"`
+		LineNumbers    *bool  `json:"-n"`
 		DashIgnoreCase bool   `json:"-i"`
 		IgnoreCase     bool   `json:"ignore_case"`
 		Type           string `json:"type"`
@@ -2646,9 +2648,16 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if afterLines == 0 {
 		afterLines = contextLines
 	}
+	lineNumbers := true
+	if payload.LineNumbers != nil {
+		lineNumbers = *payload.LineNumbers
+	}
 	seenFiles := map[string]bool{}
 	counts := map[string]int{}
 	var files []string
+	contentFiles := map[string]bool{}
+	var contentFilenames []string
+	var contentLines []string
 	var matches []map[string]any
 	seen := 0
 	walkRoot := root
@@ -2706,11 +2715,24 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 				default:
 					if seen >= offset {
 						match := map[string]any{"path": display, "line": i + 1, "text": line}
-						if beforeLines > 0 {
-							match["before"] = grepContextLines(lines, i-beforeLines, i)
+						if !contentFiles[display] {
+							contentFiles[display] = true
+							contentFilenames = append(contentFilenames, display)
 						}
+						if beforeLines > 0 {
+							before := grepContextLines(lines, i-beforeLines, i)
+							match["before"] = before
+							for _, entry := range before {
+								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
+							}
+						}
+						contentLines = append(contentLines, formatGrepContentLine(display, i+1, line, lineNumbers))
 						if afterLines > 0 {
-							match["after"] = grepContextLines(lines, i+1, i+afterLines+1)
+							after := grepContextLines(lines, i+1, i+afterLines+1)
+							match["after"] = after
+							for _, entry := range after {
+								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
+							}
 						}
 						matches = append(matches, match)
 					}
@@ -2746,21 +2768,46 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"offset":      offset,
 		}), nil
 	default:
-		return pretty(map[string]any{"output_mode": mode, "matches": matches, "truncated": len(matches) >= limit, "offset": offset}), nil
+		sort.Strings(contentFilenames)
+		return pretty(map[string]any{
+			"output_mode":   mode,
+			"mode":          mode,
+			"matches":       matches,
+			"filenames":     contentFilenames,
+			"numFiles":      len(contentFilenames),
+			"content":       strings.Join(contentLines, "\n"),
+			"numLines":      len(contentLines),
+			"appliedLimit":  limit,
+			"appliedOffset": offset,
+			"truncated":     len(matches) >= limit,
+			"offset":        offset,
+		}), nil
 	}
 }
 
-func grepContextLines(lines []string, start int, end int) []map[string]any {
+type grepContextLine struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+func grepContextLines(lines []string, start int, end int) []grepContextLine {
 	start = max(start, 0)
 	end = min(max(end, 0), len(lines))
 	if start >= end {
-		return []map[string]any{}
+		return []grepContextLine{}
 	}
-	out := make([]map[string]any, 0, end-start)
+	out := make([]grepContextLine, 0, end-start)
 	for index := start; index < end; index++ {
-		out = append(out, map[string]any{"line": index + 1, "text": lines[index]})
+		out = append(out, grepContextLine{Line: index + 1, Text: lines[index]})
 	}
 	return out
+}
+
+func formatGrepContentLine(path string, line int, text string, lineNumbers bool) string {
+	if lineNumbers {
+		return fmt.Sprintf("%s:%d:%s", path, line, text)
+	}
+	return fmt.Sprintf("%s:%s", path, text)
 }
 
 func matchesGrepType(path string, fileType string) bool {
