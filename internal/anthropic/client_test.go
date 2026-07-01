@@ -172,6 +172,50 @@ func TestClientHintsWhenSKAntKeyIsSentAsBearerToken(t *testing.T) {
 	require.Contains(t, err.Error(), "not ANTHROPIC_AUTH_TOKEN")
 }
 
+func TestClientIncludesRequestIDAndParsedAnthropicError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("request-id", "req_primary_123")
+		w.Header().Set("x-request-id", "req_fallback_456")
+		w.WriteHeader(http.StatusForbidden)
+		_, err := fmt.Fprint(w, `{"error":{"type":"permission_error","message":"access denied"}}`)
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test", "")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "anthropic request failed: 403 Forbidden (permission_error) [trace req_primary_123]: access denied")
+	require.NotContains(t, err.Error(), "req_fallback_456")
+	require.NotContains(t, err.Error(), `{"error"`)
+}
+
+func TestClientIncludesFallbackRequestIDForOpenAICompatibleError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.Header().Set("x-request-id", "req_openai_123")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, err := fmt.Fprint(w, `{"error":{"type":"invalid_api_key","message":"bad key"}}`)
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "bad-key", "")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "openai/gpt-4o",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "openai-compatible request failed: 401 Unauthorized (invalid_api_key) [trace req_openai_123]: bad key")
+}
+
 func TestClientSuppressesSKAntBearerHintWhenAPIKeyHeaderIsPresent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "sk-ant-real", r.Header.Get("x-api-key"))

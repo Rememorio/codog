@@ -19,6 +19,8 @@ import (
 
 const anthropicVersion = "2023-06-01"
 const skAntBearerHint = "sk-ant-* keys go in ANTHROPIC_API_KEY (x-api-key header), not ANTHROPIC_AUTH_TOKEN (Bearer header). Move your key to ANTHROPIC_API_KEY."
+const requestIDHeader = "request-id"
+const alternateRequestIDHeader = "x-request-id"
 
 var anthropicCredentialEnvVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 
@@ -164,7 +166,7 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		retryAfter := retryAfterDelay(resp.Header.Get("retry-after"), time.Now())
-		statusErr := c.anthropicStatusError(resp.Status, resp.StatusCode, string(data))
+		statusErr := c.anthropicStatusError(resp.Status, resp.StatusCode, string(data), resp.Header)
 		_ = resp.Body.Close()
 		lastErr = statusErr
 		if attempt < options.MaxRetries && retryableResponse(resp.StatusCode, string(data)) {
@@ -178,8 +180,8 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 	return AssistantMessage{}, lastErr
 }
 
-func (c *Client) anthropicStatusError(status string, statusCode int, body string) error {
-	message := fmt.Sprintf("anthropic request failed: %s: %s", status, strings.TrimSpace(body))
+func (c *Client) anthropicStatusError(status string, statusCode int, body string, headers http.Header) error {
+	message := providerStatusErrorMessage("anthropic", status, body, headers)
 	if c.shouldHintSKAntBearer(statusCode) {
 		message += "\n" + skAntBearerHint
 	}
@@ -310,7 +312,7 @@ func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText
 		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		retryAfter := retryAfterDelay(resp.Header.Get("retry-after"), time.Now())
-		statusErr := fmt.Errorf("openai-compatible request failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		statusErr := errors.New(providerStatusErrorMessage("openai-compatible", resp.Status, string(data), resp.Header))
 		_ = resp.Body.Close()
 		lastErr = statusErr
 		if attempt < options.MaxRetries && retryableResponse(resp.StatusCode, string(data)) {
@@ -578,6 +580,43 @@ func retryableResponse(status int, body string) bool {
 		strings.Contains(lowered, "connection reset") ||
 		strings.Contains(lowered, "broken pipe") ||
 		strings.Contains(lowered, "empty reply from server")
+}
+
+type providerErrorEnvelope struct {
+	Error struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func providerStatusErrorMessage(provider string, status string, body string, headers http.Header) string {
+	message := fmt.Sprintf("%s request failed: %s", provider, strings.TrimSpace(status))
+	errorType, errorMessage := providerErrorParts(body)
+	if errorType != "" {
+		message += " (" + errorType + ")"
+	}
+	if requestID := requestIDFromHeaders(headers); requestID != "" {
+		message += " [trace " + requestID + "]"
+	}
+	if errorMessage != "" {
+		return message + ": " + errorMessage
+	}
+	return message + ": " + strings.TrimSpace(body)
+}
+
+func providerErrorParts(body string) (string, string) {
+	var envelope providerErrorEnvelope
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(envelope.Error.Type), strings.TrimSpace(envelope.Error.Message)
+}
+
+func requestIDFromHeaders(headers http.Header) string {
+	if value := strings.TrimSpace(headers.Get(requestIDHeader)); value != "" {
+		return value
+	}
+	return strings.TrimSpace(headers.Get(alternateRequestIDHeader))
 }
 
 func backoffDelay(options RateLimitOptions, attempt int, retryAfter time.Duration) time.Duration {
