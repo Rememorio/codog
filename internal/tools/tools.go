@@ -2573,6 +2573,7 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 				"limit":       map[string]any{"type": "integer", "minimum": 1},
 				"head_limit":  map[string]any{"type": "integer", "minimum": 0},
 				"offset":      map[string]any{"type": "integer", "minimum": 0},
+				"multiline":   map[string]any{"type": "boolean"},
 			},
 			"required":             []string{"pattern"},
 			"additionalProperties": false,
@@ -2599,6 +2600,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		Limit          int    `json:"limit"`
 		HeadLimit      int    `json:"head_limit"`
 		Offset         int    `json:"offset"`
+		Multiline      bool   `json:"multiline"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -2607,8 +2609,15 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		return "", errors.New("pattern is required")
 	}
 	pattern := payload.Pattern
+	flags := ""
 	if payload.IgnoreCase || payload.DashIgnoreCase {
-		pattern = "(?i)" + pattern
+		flags += "i"
+	}
+	if payload.Multiline {
+		flags += "s"
+	}
+	if flags != "" {
+		pattern = "(?" + flags + ")" + pattern
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -2695,6 +2704,66 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		data, err := os.ReadFile(path)
 		if err != nil || bytes.Contains(data[:min(len(data), 4096)], []byte{0}) {
 			return nil
+		}
+		if payload.Multiline {
+			display := displayPath(t.Workspace, path)
+			text := string(data)
+			locations := re.FindAllStringIndex(text, -1)
+			if len(locations) == 0 {
+				return nil
+			}
+			switch mode {
+			case "files_with_matches":
+				if !seenFiles[display] {
+					seenFiles[display] = true
+					if seen >= offset {
+						files = append(files, display)
+					}
+					seen++
+				}
+				return nil
+			case "count":
+				counts[display] += len(locations)
+				return nil
+			default:
+				lines := strings.Split(text, "\n")
+				lineStarts := grepLineStartOffsets(text)
+				for _, location := range locations {
+					if seen >= offset {
+						if !contentFiles[display] {
+							contentFiles[display] = true
+							contentFilenames = append(contentFilenames, display)
+						}
+						startLine := grepLineForOffset(lineStarts, location[0])
+						endLine := grepLineForOffset(lineStarts, max(location[1]-1, location[0]))
+						matchText := text[location[0]:location[1]]
+						match := map[string]any{"path": display, "line": startLine + 1, "end_line": endLine + 1, "text": matchText}
+						if beforeLines > 0 {
+							before := grepContextLines(lines, startLine-beforeLines, startLine)
+							match["before"] = before
+							for _, entry := range before {
+								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
+							}
+						}
+						for _, entry := range grepContextLines(lines, startLine, endLine+1) {
+							contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
+						}
+						if afterLines > 0 {
+							after := grepContextLines(lines, endLine+1, endLine+afterLines+2)
+							match["after"] = after
+							for _, entry := range after {
+								contentLines = append(contentLines, formatGrepContentLine(display, entry.Line, entry.Text, lineNumbers))
+							}
+						}
+						matches = append(matches, match)
+					}
+					seen++
+					if len(matches) >= limit {
+						return filepath.SkipAll
+					}
+				}
+				return nil
+			}
 		}
 		lines := strings.Split(string(data), "\n")
 		for i, line := range lines {
@@ -2801,6 +2870,30 @@ func grepContextLines(lines []string, start int, end int) []grepContextLine {
 		out = append(out, grepContextLine{Line: index + 1, Text: lines[index]})
 	}
 	return out
+}
+
+func grepLineStartOffsets(text string) []int {
+	offsets := []int{0}
+	for index, r := range text {
+		if r == '\n' {
+			offsets = append(offsets, index+1)
+		}
+	}
+	return offsets
+}
+
+func grepLineForOffset(lineStarts []int, offset int) int {
+	if len(lineStarts) == 0 {
+		return 0
+	}
+	offset = max(offset, 0)
+	index := sort.Search(len(lineStarts), func(i int) bool {
+		return lineStarts[i] > offset
+	}) - 1
+	if index < 0 {
+		return 0
+	}
+	return min(index, len(lineStarts)-1)
 }
 
 func formatGrepContentLine(path string, line int, text string, lineNumbers bool) string {

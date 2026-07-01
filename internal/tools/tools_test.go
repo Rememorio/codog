@@ -322,6 +322,37 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(out), &contentReport))
 	require.Equal(t, "context.go:match target", contentReport.Content)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "multi.go"), []byte("alpha start\nmiddle\nomega end\n"), 0o644))
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"alpha.*omega","glob":"multi.go","output_mode":"content"}`), nil)
+	require.NoError(t, err)
+	var multiReport struct {
+		Filenames []string `json:"filenames"`
+		Content   string   `json:"content"`
+		Matches   []struct {
+			Line    int    `json:"line"`
+			EndLine int    `json:"end_line"`
+			Text    string `json:"text"`
+		} `json:"matches"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &multiReport))
+	require.Empty(t, multiReport.Matches)
+	require.Empty(t, multiReport.Content)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"alpha.*omega","glob":"multi.go","output_mode":"content","multiline":true}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &multiReport))
+	require.Equal(t, []string{"multi.go"}, multiReport.Filenames)
+	require.Equal(t, "multi.go:1:alpha start\nmulti.go:2:middle\nmulti.go:3:omega end", multiReport.Content)
+	require.Len(t, multiReport.Matches, 1)
+	require.Equal(t, 1, multiReport.Matches[0].Line)
+	require.Equal(t, 3, multiReport.Matches[0].EndLine)
+	require.Equal(t, "alpha start\nmiddle\nomega", multiReport.Matches[0].Text)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"alpha.*omega","glob":"multi.go","output_mode":"count","multiline":true}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "multi.go")
+	require.Contains(t, out, `"count": 1`)
 }
 
 func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {
