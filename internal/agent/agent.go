@@ -154,7 +154,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if command == "acp" && !acpServeRequested(rest) {
 		return renderACPStatus(os.Stdout, rest)
 	}
-	if command == "config" {
+	if command == "config" || command == "settings" {
+		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+			return err
+		}
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
 			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
@@ -268,6 +271,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 		command, rest = mappedCommand, mappedRest
+		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+			return err
+		}
 	}
 
 	switch command {
@@ -307,6 +313,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ACP(ctx, rest)
 	case "btw":
 		return app.BTW(ctx, rest, overrides, nil)
+	case "config":
+		return app.ConfigCommand(rest)
 	case "sessions":
 		return app.SessionsCommand(rest)
 	case "backfill-sessions":
@@ -317,7 +325,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.History(rest, overrides)
 	case "summary":
 		return app.Summary(rest, overrides)
-	case "rewind":
+	case "rewind", "checkpoint":
 		return app.Rewind(rest, overrides)
 	case "todos":
 		return app.Todos(rest)
@@ -449,7 +457,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ReleaseNotes(rest)
 	case "review", "ultrareview":
 		return app.Review(rest)
-	case "feedback":
+	case "feedback", "bug":
 		return app.Feedback(rest, overrides)
 	case "pr":
 		return app.PullRequestDraft(rest, overrides)
@@ -569,7 +577,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RemoteEnv(rest)
 	case "remote-setup", "web-setup":
 		return app.RemoteSetup(rest, overrides)
-	case "bridge", "remote-control":
+	case "bridge", "remote-control", "rc":
 		return app.Bridge(rest)
 	case "bridge-kick":
 		return app.BridgeKick(rest)
@@ -4869,6 +4877,15 @@ type providerCommandRequest struct {
 	Model   string
 	Path    string
 	Target  string
+}
+
+func (a *App) ConfigCommand(args []string) error {
+	paths := []string{
+		filepath.Join(a.Config.ConfigHome, "config.json"),
+		".codog.json",
+		".codog.local.json",
+	}
+	return renderConfigInspection(a.Out, redactedConfig(a.Config), paths, args)
 }
 
 func (a *App) Providers(args []string) error {
@@ -14723,6 +14740,7 @@ func builtInCommandNames() []string {
 		"blame",
 		"branch",
 		"brief",
+		"bug",
 		"budget",
 		"btw",
 		"bughunter",
@@ -14730,6 +14748,7 @@ func builtInCommandNames() []string {
 		"cache",
 		"capabilities",
 		"changelog",
+		"checkpoint",
 		"chrome",
 		"code-intel",
 		"color",
@@ -14826,12 +14845,14 @@ func builtInCommandNames() []string {
 		"reset-limits",
 		"review",
 		"rewind",
+		"rc",
 		"run",
 		"sandbox",
 		"sandbox-toggle",
 		"search",
 		"security-review",
 		"self-test",
+		"settings",
 		"setup",
 		"sessions",
 		"share",
@@ -15310,6 +15331,14 @@ func directSlashCommandName(name string) string {
 		return "cost"
 	case "/session":
 		return "sessions"
+	case "/settings":
+		return "config"
+	case "/bug":
+		return "feedback"
+	case "/checkpoint":
+		return "rewind"
+	case "/rc":
+		return "remote-control"
 	}
 	if _, ok := slash.Lookup(name); !ok {
 		return ""
@@ -15319,7 +15348,7 @@ func directSlashCommandName(name string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/deny", "/no", "/clear", "/resume", "/exit", "/compact", "/commit", "/pr", "/issue", "/bughunter", "/ultraplan":
+	case "/approve", "/yes", "/deny", "/no", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/commit", "/pr", "/issue", "/bughunter", "/ultraplan":
 		return true
 	default:
 		return false
@@ -17635,7 +17664,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/bridge", "/remote-control":
+	case "/bridge", "/remote-control", "/rc":
 		if err := a.Bridge(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -17725,7 +17754,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Review(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/feedback":
+	case "/feedback", "/bug":
 		if err := a.Feedback(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -17901,7 +17930,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Plan(append([]string{"exit"}, fields[1:]...)); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/config":
+	case "/config", "/settings":
 		a.handleConfigSlash(fields[1:])
 	case "/api-key":
 		if err := a.APIKey(fields[1:]); err != nil {
@@ -18177,11 +18206,11 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.BackfillSessions(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
-	case "/clear":
+	case "/clear", "/new":
 		a.handleClearSlash(ctx, fields[1:], sess)
 	case "/resume":
 		a.handleResumeSlash(ctx, fields[1:], sess)
-	case "/rewind":
+	case "/rewind", "/checkpoint":
 		a.handleRewindSlash(fields[1:], sess)
 	default:
 		if a.handleCustomSlash(ctx, line, sess) {
@@ -25850,17 +25879,17 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
-		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
+		"bug", "checkpoint", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "sandbox-toggle",
-		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "settings", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
-		"ultrareview", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd":
+		"ultrareview", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
 		return true
 	default:
 		return false
@@ -26210,12 +26239,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
-	case "config":
+	case "config", "settings":
+		helpTopic := "config"
+		if strings.EqualFold(strings.TrimSpace(topic), "settings") {
+			helpTopic = "settings"
+		}
 		return localCommandHelpSpec(
+			helpTopic,
 			"config",
-			"config",
-			"codog config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]",
-			"Config\n\nUsage:\n  codog config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n\nInspects merged configuration and updates user, project, or local config files.\n",
+			"codog config|settings [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]",
+			"Config\n\nUsage:\n  codog config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n  codog settings [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION]\n\nInspects merged configuration and updates user, project, or local config files.\n",
 			[]string{"paths", "config", "key", "value", "target"},
 			[]string{"ok", "error"},
 			true,

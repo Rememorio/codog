@@ -346,6 +346,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "reset",
 		},
 		{
+			name:  "settings alias help",
+			args:  []string{"--config", configPath, "settings", "--help", "--output-format", "json"},
+			topic: "settings",
+		},
+		{
 			name:  "workspace local help",
 			args:  []string{"--config", configPath, "workspace", "--help", "--output-format", "json"},
 			topic: "workspace",
@@ -425,12 +430,16 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "bug")
+	require.Contains(t, report.Commands, "checkpoint")
 	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "metrics")
 	require.Contains(t, report.Commands, "profile")
+	require.Contains(t, report.Commands, "rc")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
 	require.Contains(t, report.Commands, "reset")
+	require.Contains(t, report.Commands, "settings")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Commands, "workspace")
@@ -455,11 +464,20 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, 3, report.MCP.LocalPromptCount)
 	require.Greater(t, report.MCP.ExposedToolCount, 10)
 	require.True(t, capabilityReportHasTool(report, "read_file"))
+	require.True(t, capabilityReportHasSlash(report, "/bug"))
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
+	require.True(t, capabilityReportHasSlash(report, "/checkpoint"))
+	require.True(t, capabilityReportHasSlash(report, "/new"))
+	require.True(t, capabilityReportHasSlash(report, "/quit"))
+	require.True(t, capabilityReportHasSlash(report, "/rc"))
+	require.True(t, capabilityReportHasSlash(report, "/settings"))
 	require.True(t, capabilityReportHasSlash(report, "/workspace"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
+	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
+	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
+	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
 }
@@ -743,6 +761,23 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &statusReport))
 	require.Equal(t, "status", statusReport["kind"])
 
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/settings", "paths"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var settingsReport map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &settingsReport))
+	require.NotEmpty(t, settingsReport["paths"])
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/settings", "--help"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var settingsHelp helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &settingsHelp))
+	require.Equal(t, "config", settingsHelp.Topic)
+	require.Equal(t, "config", settingsHelp.Command)
+
 	for _, command := range []string{"/version", "/sandbox", "/diff"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
@@ -778,7 +813,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
-	for _, command := range []string{"/commit", "/pr", "/issue", "/bughunter", "/ultraplan"} {
+	for _, command := range []string{"/commit", "/pr", "/issue", "/bughunter", "/new", "/quit", "/ultraplan"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
@@ -2925,6 +2960,22 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model", "--output-format", "text"}))
 	require.Contains(t, out.String(), "Config")
 	require.Contains(t, out.String(), "model-a")
+}
+
+func TestSettingsAliasRunsConfigInspection(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome, "model": "claude-test"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "settings", "paths", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.NotEmpty(t, report["paths"])
 }
 
 func TestRenderConfigInspectionMutatesConfigFile(t *testing.T) {
