@@ -179,6 +179,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 		"theme": "dark",
 		"editorMode": "vim",
 		"advisor_model": "claude-opus-test",
+		"oauth_profile": "default",
 		"reasoning_effort": "high",
 		"fast_mode": true,
 		"voice_enabled": true,
@@ -205,6 +206,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "dark", cfg.Theme)
 	require.Equal(t, "vim", cfg.EditorMode)
 	require.Equal(t, "claude-opus-test", cfg.AdvisorModel)
+	require.Equal(t, "default", cfg.OAuthProfile)
 	require.Equal(t, "high", cfg.ReasoningEffort)
 	require.NotNil(t, cfg.FastMode)
 	require.True(t, *cfg.FastMode)
@@ -231,6 +233,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	t.Setenv("CODOG_THEME", "light")
 	t.Setenv("CODOG_EDITOR_MODE", "default")
 	t.Setenv("CODOG_ADVISOR_MODEL", "claude-sonnet-advisor")
+	t.Setenv("CODOG_OAUTH_PROFILE", "work")
 	t.Setenv("CODOG_REASONING_EFFORT", "low")
 	t.Setenv("CODOG_FAST_MODE", "false")
 	t.Setenv("CODOG_VOICE_ENABLED", "false")
@@ -243,6 +246,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "light", cfg.Theme)
 	require.Equal(t, "default", cfg.EditorMode)
 	require.Equal(t, "claude-sonnet-advisor", cfg.AdvisorModel)
+	require.Equal(t, "work", cfg.OAuthProfile)
 	require.Equal(t, "low", cfg.ReasoningEffort)
 	require.NotNil(t, cfg.FastMode)
 	require.False(t, *cfg.FastMode)

@@ -187,6 +187,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFields, "max_tokens")
 	require.NotNil(t, report.MutatesWorkspace)
 	require.True(t, *report.MutatesWorkspace)
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"profile", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "profile", report.Topic)
+	require.Equal(t, "profile", report.Command)
+	require.Contains(t, report.Help, "OAuth provider profile")
+	require.Contains(t, report.OutputFields, "active_profile")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -279,6 +289,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "budget",
 		},
 		{
+			name:  "profile local help",
+			args:  []string{"--config", configPath, "profile", "--help", "--output-format", "json"},
+			topic: "profile",
+		},
+		{
 			name:  "rate-limit-options local help",
 			args:  []string{"--config", configPath, "rate-limit-options", "--help", "--output-format", "json"},
 			topic: "rate-limit-options",
@@ -348,6 +363,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
 	require.Contains(t, report.Commands, "temperature")
@@ -7652,6 +7668,60 @@ func TestOAuthProviderCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
+func TestProfileCommandSetsShowsAndClearsActiveOAuthProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"token_endpoint":"https://auth.example/token"}`))
+	}))
+	defer server.Close()
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-default", []string{"profile"})
+	require.NoError(t, err)
+	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", server.URL, "client-work", []string{"profile", "email"})
+	require.NoError(t, err)
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "profile", "set", "work", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "profile"`)
+	require.Contains(t, out, `"action": "set"`)
+	require.Contains(t, out, `"active_profile": "work"`)
+	require.Contains(t, out, `"client_id": "client-work"`)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"oauth_profile": "work"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "profile", "show"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"active_profile": "work"`)
+	require.Contains(t, out, `"name": "work"`)
+	require.True(t, commandAcceptsGlobalOutputFormat("profile"))
+
+	var buffer bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome, OAuthProfile: "work"},
+		Out:    &buffer,
+		Err:    &errOut,
+	}
+	require.True(t, app.handleSlash(context.Background(), "/profile clear --path "+configPath, &session.Session{ID: "session"}))
+	require.Contains(t, buffer.String(), "Profile")
+	require.Empty(t, errOut.String())
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"oauth_profile"`)
+}
+
 func TestProvidersStatusRedactsAuth(t *testing.T) {
 	configHome := t.TempDir()
 	_, err := oauth.SaveToken(configHome, oauth.Token{AccessToken: "stored-access-token"})
@@ -7911,6 +7981,46 @@ func TestApplyStoredOAuthTokenRefreshesExpiredToken(t *testing.T) {
 	cfg := config.Config{ConfigHome: configHome}
 	applyStoredOAuthToken(&cfg, now)
 	require.Equal(t, "refreshed-access", cfg.AuthToken)
+}
+
+func TestApplyStoredOAuthTokenUsesSelectedProfile(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"token_endpoint":"` + server.URL + `/token"}`))
+		case "/token":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "refresh_token", r.Form.Get("grant_type"))
+			switch r.Form.Get("client_id") {
+			case "client-work":
+				_, _ = w.Write([]byte(`{"access_token":"work-access","refresh_token":"refresh-2","expires_in":3600}`))
+			default:
+				_, _ = w.Write([]byte(`{"access_token":"default-access","refresh_token":"refresh-2","expires_in":3600}`))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	configHome := t.TempDir()
+	now := time.Now().UTC()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-default", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", server.URL, "client-work", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "expired-access",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    now.Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	cfg := config.Config{ConfigHome: configHome, OAuthProfile: "work"}
+	applyStoredOAuthToken(&cfg, now)
+	require.Equal(t, "work-access", cfg.AuthToken)
 }
 
 func oauthRefreshTestServer(t *testing.T) *httptest.Server {

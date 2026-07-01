@@ -368,6 +368,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Chrome(rest)
 	case "privacy-settings":
 		return app.PrivacySettings(rest)
+	case "profile":
+		return app.Profile(rest)
 	case "telemetry":
 		return app.Telemetry(rest)
 	case "keybindings":
@@ -624,7 +626,7 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 		if token.RefreshToken == "" {
 			return
 		}
-		refreshed, err := oauth.RefreshStoredToken(context.Background(), cfg.ConfigHome, "")
+		refreshed, err := oauth.RefreshStoredToken(context.Background(), cfg.ConfigHome, cfg.OAuthProfile)
 		if err != nil || refreshed.Expired(now) {
 			return
 		}
@@ -4534,6 +4536,265 @@ func (a *App) oauthProvider(args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type profileRequest struct {
+	Action string
+	Name   string
+	Format string
+	Target string
+	Path   string
+}
+
+type profileReport struct {
+	Kind          string                 `json:"kind"`
+	Action        string                 `json:"action"`
+	Status        string                 `json:"status"`
+	ActiveProfile string                 `json:"active_profile,omitempty"`
+	Profile       *oauthProviderSummary  `json:"profile,omitempty"`
+	Profiles      []oauthProviderSummary `json:"profiles,omitempty"`
+	OAuthStatus   *oauth.Status          `json:"oauth_status,omitempty"`
+	Path          string                 `json:"path,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+}
+
+func (a *App) Profile(args []string) error {
+	req, err := parseProfileArgs(args)
+	if err != nil {
+		return err
+	}
+	var selected *oauth.ProviderProfile
+	path := ""
+	switch req.Action {
+	case "list":
+	case "show":
+		if strings.TrimSpace(req.Name) != "" {
+			profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, req.Name)
+			if err != nil {
+				return err
+			}
+			selected = &profile
+		} else if strings.TrimSpace(a.Config.OAuthProfile) != "" {
+			profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, a.Config.OAuthProfile)
+			if err != nil {
+				return err
+			}
+			selected = &profile
+		} else if profile, err := oauth.ResolveProviderProfile(a.Config.ConfigHome, ""); err == nil {
+			selected = &profile
+		}
+	case "set":
+		if strings.TrimSpace(req.Name) == "" {
+			return errors.New("profile name is required")
+		}
+		profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, req.Name)
+		if err != nil {
+			return err
+		}
+		selected = &profile
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "oauth_profile", profile.Name); err != nil {
+			return err
+		}
+		a.Config.OAuthProfile = profile.Name
+	case "clear":
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "oauth_profile"); err != nil {
+			return err
+		}
+		a.Config.OAuthProfile = ""
+	default:
+		return fmt.Errorf("unknown profile action %q", req.Action)
+	}
+	report, err := a.buildProfileReport(req.Action, path, selected)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderProfileReport(a.Out, report)
+	return nil
+}
+
+func parseProfileArgs(args []string) (profileRequest, error) {
+	req := profileRequest{Action: "show", Format: "text", Target: "user"}
+	rest := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("profile output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("profile target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("profile config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown profile flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "profile"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(rest[0])) {
+	case "status", "show", "current":
+		req.Action = "show"
+		if len(rest) > 1 {
+			req.Name = rest[1]
+		}
+		if len(rest) > 2 {
+			return req, fmt.Errorf("unexpected profile argument %q", rest[2])
+		}
+	case "list":
+		req.Action = "list"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected profile argument %q", rest[1])
+		}
+	case "set", "switch", "use":
+		req.Action = "set"
+		if len(rest) < 2 {
+			return req, errors.New("profile name is required")
+		}
+		req.Name = rest[1]
+		if len(rest) > 2 {
+			return req, fmt.Errorf("unexpected profile argument %q", rest[2])
+		}
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected profile argument %q", rest[1])
+		}
+	default:
+		req.Action = "set"
+		req.Name = rest[0]
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected profile argument %q", rest[1])
+		}
+	}
+	return req, nil
+}
+
+func (a *App) buildProfileReport(action string, path string, selected *oauth.ProviderProfile) (profileReport, error) {
+	profiles, err := oauth.ListProviderProfiles(a.Config.ConfigHome)
+	if err != nil {
+		return profileReport{}, err
+	}
+	summaries := make([]oauthProviderSummary, 0, len(profiles))
+	for _, profile := range profiles {
+		summaries = append(summaries, oauthProfileSummary(profile))
+	}
+	var summary *oauthProviderSummary
+	var status *oauth.Status
+	if selected != nil {
+		value := oauthProfileSummary(*selected)
+		summary = &value
+		inspected := oauth.InspectStatus(a.Config.ConfigHome, selected.Name, time.Now().UTC())
+		status = &inspected
+	}
+	report := profileReport{
+		Kind:          "profile",
+		Action:        action,
+		Status:        "ok",
+		ActiveProfile: a.Config.OAuthProfile,
+		Profile:       summary,
+		Profiles:      summaries,
+		OAuthStatus:   status,
+		Path:          path,
+	}
+	switch action {
+	case "set":
+		report.Message = "Active OAuth profile saved."
+	case "clear":
+		report.Message = "Active OAuth profile cleared; default profile resolution will be used."
+	case "list":
+		report.Message = "Configured OAuth provider profiles."
+	case "show":
+		if summary == nil {
+			report.Message = "No active OAuth profile is selected."
+		} else {
+			report.Message = "Active or resolved OAuth profile."
+		}
+	}
+	return report, nil
+}
+
+func oauthProfileSummary(profile oauth.ProviderProfile) oauthProviderSummary {
+	return oauthProviderSummary{
+		Name:     profile.Name,
+		Issuer:   profile.Issuer,
+		ClientID: profile.ClientID,
+		Scopes:   append([]string(nil), profile.Scopes...),
+	}
+}
+
+func renderProfileReport(out io.Writer, report profileReport) {
+	fmt.Fprintln(out, "Profile")
+	if report.ActiveProfile != "" {
+		fmt.Fprintf(out, "  Active profile   %s\n", report.ActiveProfile)
+	} else {
+		fmt.Fprintln(out, "  Active profile   unset")
+	}
+	if report.Profile != nil {
+		fmt.Fprintf(out, "  Resolved profile %s\n", report.Profile.Name)
+		if report.Profile.Issuer != "" {
+			fmt.Fprintf(out, "  Issuer           %s\n", report.Profile.Issuer)
+		}
+		if report.Profile.ClientID != "" {
+			fmt.Fprintf(out, "  Client ID        %s\n", report.Profile.ClientID)
+		}
+	}
+	if len(report.Profiles) != 0 {
+		fmt.Fprintln(out, "  Profiles")
+		for _, profile := range report.Profiles {
+			fmt.Fprintf(out, "    %s", profile.Name)
+			if profile.Issuer != "" {
+				fmt.Fprintf(out, "  %s", profile.Issuer)
+			}
+			fmt.Fprintln(out)
+		}
+	}
+	if report.OAuthStatus != nil {
+		fmt.Fprintf(out, "  Token ready      %t\n", report.OAuthStatus.Ready)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
 }
 
 type providerPreset struct {
@@ -14152,6 +14413,7 @@ func builtInCommandNames() []string {
 		"pr",
 		"pr-comments",
 		"privacy-settings",
+		"profile",
 		"project",
 		"prompt",
 		"prompt-history",
@@ -17164,6 +17426,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/privacy-settings":
 		if err := a.PrivacySettings(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/profile":
+		if err := a.Profile(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/telemetry":
@@ -24494,7 +24760,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
-		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
@@ -24853,6 +25119,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "profile":
+		return localCommandHelpSpec(
+			"profile",
+			"profile",
+			"codog profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--output-format text|json]",
+			"Profile\n\nUsage:\n  codog profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--output-format text|json]\n\nShows or switches the active OAuth provider profile used for stored-token refresh.\n",
+			[]string{"active_profile", "profile", "profiles", "oauth_status", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -25162,6 +25438,7 @@ Usage:
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|rename|delete]
@@ -25307,7 +25584,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	return strings.ReplaceAll(help, "%s", exe)
 }

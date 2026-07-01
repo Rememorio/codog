@@ -287,6 +287,7 @@ type ManagedPolicy struct {
 type Config struct {
 	APIKey              string                     `json:"api_key,omitempty"`
 	AuthToken           string                     `json:"auth_token,omitempty"`
+	OAuthProfile        string                     `json:"oauth_profile,omitempty"`
 	BaseURL             string                     `json:"base_url,omitempty"`
 	Model               string                     `json:"model,omitempty"`
 	AdvisorModel        string                     `json:"advisor_model,omitempty"`
@@ -848,6 +849,9 @@ func merge(dst *Config, src Config) {
 	if src.AuthToken != "" {
 		dst.AuthToken = src.AuthToken
 	}
+	if src.OAuthProfile != "" {
+		dst.OAuthProfile = src.OAuthProfile
+	}
 	if src.BaseURL != "" {
 		dst.BaseURL = src.BaseURL
 	}
@@ -1272,6 +1276,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_REASONING_EFFORT"); value != "" {
 		cfg.ReasoningEffort = value
+	}
+	if value := os.Getenv("CODOG_OAUTH_PROFILE"); value != "" {
+		cfg.OAuthProfile = value
 	}
 	if value := os.Getenv("CODOG_TEMPERATURE"); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
