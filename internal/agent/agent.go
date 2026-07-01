@@ -45,6 +45,7 @@ import (
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/fileinventory"
 	"github.com/Rememorio/codog/internal/focus"
+	"github.com/Rememorio/codog/internal/g004conformance"
 	"github.com/Rememorio/codog/internal/githubcomments"
 	"github.com/Rememorio/codog/internal/githubsetup"
 	"github.com/Rememorio/codog/internal/gitops"
@@ -544,6 +545,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.StaleBase(rest)
 	case "green-contract", "green":
 		return app.GreenContract(rest)
+	case "g004-conformance", "g004":
+		return app.G004Conformance(rest)
 	case "report-schema":
 		return app.ReportSchema(rest)
 	case "trust":
@@ -19241,6 +19244,7 @@ func codogCapabilityFeatures() []string {
 		"doctor_config_validation",
 		"doctor_sandbox_runtime_status",
 		"editor_bridge",
+		"g004_conformance",
 		"git_workflows",
 		"green_contract",
 		"hooks",
@@ -19406,6 +19410,8 @@ func builtInCommandNames() []string {
 		"files",
 		"focus",
 		"format",
+		"g004",
+		"g004-conformance",
 		"generateSessionName",
 		"git",
 		"good-claude",
@@ -20358,6 +20364,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.StaleBase(resumeSlashArgs("stale-base", args, format))
 	case "/green-contract", "/green":
 		return a.GreenContract(resumeSlashArgs("green-contract", args, format))
+	case "/g004-conformance", "/g004":
+		return a.G004Conformance(resumeSlashArgs("g004-conformance", args, format))
 	case "/report-schema":
 		return a.ReportSchema(resumeSlashArgs("report-schema", args, format))
 	case "/trust":
@@ -24612,6 +24620,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/green-contract", "/green":
 		if err := a.GreenContract(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/g004-conformance", "/g004":
+		if err := a.G004Conformance(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/report-schema":
@@ -28886,6 +28898,162 @@ func renderGreenContractReport(out io.Writer, report greenContractReport) {
 		for _, flake := range report.Outcome.BlockingFlakes {
 			fmt.Fprintf(out, "    - %s\n", flake.TestName)
 		}
+	}
+}
+
+type g004ConformanceRequest struct {
+	Format string
+	Action string
+	Input  string
+	File   string
+	Stdin  bool
+}
+
+type g004ConformanceReport struct {
+	Kind       string                  `json:"kind"`
+	Action     string                  `json:"action"`
+	Status     string                  `json:"status"`
+	Schema     string                  `json:"schema"`
+	Valid      bool                    `json:"valid"`
+	ErrorCount int                     `json:"error_count"`
+	Errors     []g004conformance.Error `json:"errors,omitempty"`
+}
+
+func (a *App) G004Conformance(args []string) error {
+	req, err := parseG004ConformanceArgs(args)
+	if err != nil {
+		return err
+	}
+	data, err := readG004ConformanceInput(req, a.In)
+	if err != nil {
+		return err
+	}
+	result, err := g004conformance.ValidateJSON(data)
+	if err != nil {
+		return err
+	}
+	status := "invalid"
+	if result.Valid {
+		status = "ok"
+	}
+	report := g004ConformanceReport{
+		Kind:       "g004_conformance",
+		Action:     req.Action,
+		Status:     status,
+		Schema:     result.Schema,
+		Valid:      result.Valid,
+		ErrorCount: result.ErrorCount,
+		Errors:     result.Errors,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderG004ConformanceReport(a.Out, report)
+	return nil
+}
+
+func parseG004ConformanceArgs(args []string) (g004ConformanceRequest, error) {
+	req := g004ConformanceRequest{Format: "text", Action: "validate"}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("g004-conformance output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--input":
+			i++
+			if i >= len(args) {
+				return req, errors.New("g004-conformance input JSON is required")
+			}
+			req.Input = args[i]
+		case strings.HasPrefix(arg, "--input="):
+			req.Input = strings.TrimPrefix(arg, "--input=")
+		case arg == "--file" || arg == "-f":
+			i++
+			if i >= len(args) {
+				return req, errors.New("g004-conformance file is required")
+			}
+			req.File = args[i]
+		case strings.HasPrefix(arg, "--file="):
+			req.File = strings.TrimPrefix(arg, "--file=")
+		case arg == "--stdin":
+			req.Stdin = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown g004-conformance flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "g004-conformance")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) > 0 {
+		action := strings.ToLower(strings.TrimSpace(positionals[0]))
+		if action == "validate" || action == "check" || action == "verify" {
+			req.Action = "validate"
+			positionals = positionals[1:]
+		}
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--output-format text|json]")
+	}
+	if len(positionals) == 1 {
+		value := strings.TrimSpace(positionals[0])
+		if strings.HasPrefix(value, "{") {
+			req.Input = value
+		} else {
+			req.File = value
+		}
+	}
+	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
+		return req, errors.New("g004-conformance accepts only one of --input or --file")
+	}
+	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
+		return req, errors.New("g004-conformance accepts --stdin only without --input or --file")
+	}
+	if strings.TrimSpace(req.Input) == "" && strings.TrimSpace(req.File) == "" && !req.Stdin {
+		return req, errors.New("g004-conformance input is required")
+	}
+	return req, nil
+}
+
+func readG004ConformanceInput(req g004ConformanceRequest, stdin io.Reader) ([]byte, error) {
+	switch {
+	case strings.TrimSpace(req.Input) != "":
+		return []byte(req.Input), nil
+	case strings.TrimSpace(req.File) != "":
+		return os.ReadFile(req.File)
+	case req.Stdin:
+		if stdin == nil {
+			return nil, errors.New("g004-conformance stdin is not available")
+		}
+		return io.ReadAll(stdin)
+	default:
+		return nil, errors.New("g004-conformance input is required")
+	}
+}
+
+func renderG004ConformanceReport(out io.Writer, report g004ConformanceReport) {
+	fmt.Fprintln(out, "G004 Conformance")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Schema           %s\n", report.Schema)
+	fmt.Fprintf(out, "  Valid            %t\n", report.Valid)
+	fmt.Fprintf(out, "  Errors           %d\n", report.ErrorCount)
+	for _, err := range report.Errors {
+		fmt.Fprintf(out, "  - %s: %s\n", err.Path, err.Message)
 	}
 }
 
@@ -36814,7 +36982,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
@@ -37163,6 +37331,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Green Contract\n\nUsage:\n  codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--output-format text|json]\n  codog green [same flags]\n\nEvaluates structured evidence against a green/merge-ready contract. `--merge-ready` requires a passing test command, fresh base branch evidence, recovery attempt context, and no blocking known flakes.\n",
 			[]string{"status", "contract", "evidence", "outcome", "missing", "blocking_flakes"},
 			[]string{"satisfied", "unsatisfied", "error"},
+			false,
+		), true
+	case "g004-conformance", "g004":
+		return localCommandHelpSpec(
+			"g004-conformance",
+			"g004-conformance",
+			"codog g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--output-format text|json]",
+			"G004 Conformance\n\nUsage:\n  codog g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--output-format text|json]\n  codog g004 [same flags]\n\nValidates a G004 contract bundle with laneEvents, reports, and approvalTokens sections. The validator checks stable event metadata, terminal event fingerprints, report schema/projection/redaction fields, finding labels, field deltas, one-time approval tokens, and delegation-chain provenance.\n",
+			[]string{"valid", "schema", "error_count", "errors", "path", "message"},
+			[]string{"ok", "invalid", "error"},
 			false,
 		), true
 	case "report-schema":
@@ -38167,6 +38345,7 @@ Usage:
   %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
   %s [flags] stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]
   %s [flags] green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--json|--output-format text|json]
+  %s [flags] g004-conformance [validate] [FILE|JSON] [--input JSON|--file PATH|--stdin] [--json|--output-format text|json]
   %s [flags] report-schema [registry|canonicalize|project] [--input JSON|--file PATH|--stdin] [--json|--output-format text|json]
   %s [flags] trust [resolve] [SCREEN_TEXT] [--cwd PATH] [--worktree PATH] [--allow PATTERN] [--deny PATH] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]

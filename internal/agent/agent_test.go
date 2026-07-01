@@ -5469,6 +5469,28 @@ func TestReportSchemaCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestG004ConformanceCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	valid := `{"schemaVersion":"g004.contract.bundle.v1","laneEvents":[{"event":"lane.started","status":"running","emittedAt":"2026-05-14T00:00:00Z","metadata":{"seq":1,"provenance":"worker","emitterIdentity":"codog","environmentLabel":"test"}},{"event":"lane.finished","status":"ok","emittedAt":"2026-05-14T00:01:00Z","metadata":{"seq":2,"provenance":"worker","emitterIdentity":"codog","environmentLabel":"test","eventFingerprint":"finish-2"}}],"reports":[{"schemaVersion":"g004.report.v1","reportId":"report-1","identity":{"contentHash":"hash"},"projection":{"provenance":"projection-policy"},"redaction":{"provenance":"redaction-policy"},"consumerCapabilities":["claims"],"findings":[{"kind":"fact","confidence":"high","statement":"finished"}],"fieldDeltas":[{"field":"status","previousHash":"old","currentHash":"new","attribution":"worker"}]}],"approvalTokens":[{"tokenId":"token-1","owner":"operator","scope":"workspace-write","issuedAt":"2026-05-14T00:00:00Z","oneTimeUse":true,"replayPreventionNonce":"nonce","delegationChain":[{"from":"operator","to":"worker","action":"grant","at":"2026-05-14T00:00:01Z"}]}]}`
+
+	require.NoError(t, app.G004Conformance([]string{"validate", "--input", valid, "--json"}))
+	require.Contains(t, out.String(), `"kind": "g004_conformance"`)
+	require.Contains(t, out.String(), `"status": "ok"`)
+	require.Contains(t, out.String(), `"valid": true`)
+	out.Reset()
+
+	invalidPath := filepath.Join(workspace, "invalid-g004.json")
+	require.NoError(t, os.WriteFile(invalidPath, []byte(`{"schemaVersion":"g004.contract.bundle.v1","laneEvents":[]}`), 0o644))
+	require.True(t, app.handleSlash(context.Background(), "/g004-conformance validate "+invalidPath, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "G004 Conformance")
+	require.Contains(t, out.String(), "Status           invalid")
+	require.Contains(t, out.String(), "/laneEvents: array must not be empty")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))
