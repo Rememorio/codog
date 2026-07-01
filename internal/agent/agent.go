@@ -13219,26 +13219,29 @@ func (a *App) Review(args []string) error {
 }
 
 type reviewCompatibilityReport struct {
-	Kind                string `json:"kind"`
-	Action              string `json:"action"`
-	Status              string `json:"status"`
-	Command             string `json:"command"`
-	Workspace           string `json:"workspace"`
-	Enabled             bool   `json:"enabled"`
-	Configured          bool   `json:"configured,omitempty"`
-	Previous            bool   `json:"previous,omitempty"`
-	LocalReviewCommand  string `json:"local_review_command"`
-	RemoteReviewCommand string `json:"remote_review_command"`
-	DefaultLimit        int    `json:"default_limit"`
-	RequestedLimit      int    `json:"requested_limit,omitempty"`
-	Overage             bool   `json:"overage,omitempty"`
-	ChangedFiles        int    `json:"changed_files,omitempty"`
-	ChangedLines        int    `json:"changed_lines,omitempty"`
-	ReviewStatus        string `json:"review_status,omitempty"`
-	Path                string `json:"path,omitempty"`
-	ProviderRequestMade bool   `json:"provider_request_made"`
-	WorkspaceWillMutate bool   `json:"workspace_will_mutate"`
-	Message             string `json:"message"`
+	Kind                string              `json:"kind"`
+	Action              string              `json:"action"`
+	Status              string              `json:"status"`
+	Command             string              `json:"command"`
+	Workspace           string              `json:"workspace"`
+	Enabled             bool                `json:"enabled"`
+	Configured          bool                `json:"configured,omitempty"`
+	Previous            bool                `json:"previous,omitempty"`
+	LocalReviewCommand  string              `json:"local_review_command"`
+	RemoteReviewCommand string              `json:"remote_review_command"`
+	DefaultLimit        int                 `json:"default_limit"`
+	RequestedLimit      int                 `json:"requested_limit,omitempty"`
+	Overage             bool                `json:"overage,omitempty"`
+	ChangedFiles        int                 `json:"changed_files,omitempty"`
+	ChangedLines        int                 `json:"changed_lines,omitempty"`
+	SecurityFindings    int                 `json:"security_findings,omitempty"`
+	ReviewStatus        string              `json:"review_status,omitempty"`
+	ReviewSignals       []string            `json:"review_signals,omitempty"`
+	LocalReview         *localreview.Report `json:"local_review,omitempty"`
+	Path                string              `json:"path,omitempty"`
+	ProviderRequestMade bool                `json:"provider_request_made"`
+	WorkspaceWillMutate bool                `json:"workspace_will_mutate"`
+	Message             string              `json:"message"`
 }
 
 func (a *App) ReviewCompatibility(command string, args []string) error {
@@ -13281,15 +13284,34 @@ func (a *App) ReviewCompatibility(command string, args []string) error {
 		report.ChangedFiles = reviewReport.Summary.Files
 		report.ChangedLines = reviewReport.Summary.Additions + reviewReport.Summary.Deletions
 		report.ReviewStatus = reviewReport.Status
+		report.SecurityFindings = len(reviewReport.SecurityFindings)
+		report.ReviewSignals = append([]string(nil), reviewReport.Signals...)
+		report.LocalReview = &reviewReport
 		report.Overage = report.ChangedLines > req.Limit
 		if report.Overage {
 			report.Status = "warn"
 			report.Message = "Changed line count is above the requested review threshold; narrow the diff or raise --limit for a broader local review."
 		} else {
+			report.Status = reviewCompatibilityStatus(reviewReport)
 			report.Message = "Changed line count is within the requested review threshold."
 		}
 	default:
-		report.Message = "Review compatibility report generated."
+		reviewReport, err := localreview.Run(a.Workspace, localreview.Options{
+			Base:   req.Base,
+			Staged: req.Staged,
+			Limit:  req.Limit,
+		})
+		if err != nil {
+			return err
+		}
+		report.ChangedFiles = reviewReport.Summary.Files
+		report.ChangedLines = reviewReport.Summary.Additions + reviewReport.Summary.Deletions
+		report.ReviewStatus = reviewReport.Status
+		report.SecurityFindings = len(reviewReport.SecurityFindings)
+		report.ReviewSignals = append([]string(nil), reviewReport.Signals...)
+		report.LocalReview = &reviewReport
+		report.Status = reviewCompatibilityStatus(reviewReport)
+		report.Message = "Local review scanner ran for the requested diff and returned a compatibility summary."
 	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -13450,6 +13472,15 @@ func ultraReviewEnabled(value *bool) bool {
 	return value == nil || *value
 }
 
+func reviewCompatibilityStatus(report localreview.Report) string {
+	switch report.Status {
+	case "clean", "findings":
+		return report.Status
+	default:
+		return "ok"
+	}
+}
+
 func renderReviewCompatibilityReport(out io.Writer, report reviewCompatibilityReport) {
 	fmt.Fprintln(out, "Review Compatibility")
 	fmt.Fprintf(out, "  Command          %s\n", report.Command)
@@ -13460,10 +13491,26 @@ func renderReviewCompatibilityReport(out io.Writer, report reviewCompatibilityRe
 		fmt.Fprintf(out, "  Changed files    %d\n", report.ChangedFiles)
 		fmt.Fprintf(out, "  Changed lines    %d\n", report.ChangedLines)
 	}
+	if report.ReviewStatus != "" {
+		fmt.Fprintf(out, "  Review status    %s\n", report.ReviewStatus)
+	}
+	if report.SecurityFindings != 0 {
+		fmt.Fprintf(out, "  Security findings %d\n", report.SecurityFindings)
+	}
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
 	}
 	fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	if len(report.ReviewSignals) != 0 {
+		fmt.Fprintln(out, "Signals")
+		for _, signal := range report.ReviewSignals {
+			fmt.Fprintf(out, "  - %s\n", signal)
+		}
+	}
+	if report.LocalReview != nil {
+		fmt.Fprintln(out)
+		localreview.RenderText(out, *report.LocalReview)
+	}
 }
 
 func reviewCompatibilityAction(command string) string {

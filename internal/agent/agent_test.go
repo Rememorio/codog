@@ -6794,6 +6794,22 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"kind": "review"`)
 	require.Contains(t, cliOut, `"rule": "pipe-to-shell"`)
 
+	out.Reset()
+	require.NoError(t, app.ReviewCompatibility("ultrareviewCommand", []string{"--json"}))
+	var compatibilityReport reviewCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &compatibilityReport))
+	require.Equal(t, "review_compatibility", compatibilityReport.Kind)
+	require.Equal(t, "show", compatibilityReport.Action)
+	require.Equal(t, "findings", compatibilityReport.Status)
+	require.Equal(t, "findings", compatibilityReport.ReviewStatus)
+	require.GreaterOrEqual(t, compatibilityReport.ChangedFiles, 1)
+	require.GreaterOrEqual(t, compatibilityReport.SecurityFindings, 1)
+	require.Contains(t, compatibilityReport.ReviewSignals, "security findings in changed files")
+	require.NotNil(t, compatibilityReport.LocalReview)
+	require.Equal(t, "review", compatibilityReport.LocalReview.Kind)
+	require.Equal(t, "pipe-to-shell", compatibilityReport.LocalReview.SecurityFindings[0].Rule)
+	out.Reset()
+
 	cliOut, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled"}, config.FlagOverrides{})
 	})
@@ -6848,6 +6864,8 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.True(t, overageReport.Overage)
 	require.Greater(t, overageReport.ChangedLines, overageReport.RequestedLimit)
 	require.Equal(t, "findings", overageReport.ReviewStatus)
+	require.NotNil(t, overageReport.LocalReview)
+	require.GreaterOrEqual(t, overageReport.SecurityFindings, 1)
 
 	require.True(t, app.handleSlash(context.Background(), "/review", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Review")
