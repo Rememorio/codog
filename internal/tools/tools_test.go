@@ -1555,6 +1555,115 @@ func TestFileToolsAcceptClaudeFilePathParameter(t *testing.T) {
 	require.Equal(t, "delta gamma delta\n", string(data))
 }
 
+func TestFileWriteAndEditReturnStructuredPatchMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	registry := NewRegistry(workspace)
+
+	type patchHunk struct {
+		OldStart int      `json:"oldStart"`
+		OldLines int      `json:"oldLines"`
+		NewStart int      `json:"newStart"`
+		NewLines int      `json:"newLines"`
+		Lines    []string `json:"lines"`
+	}
+	type writeReport struct {
+		Kind            string      `json:"kind"`
+		Type            string      `json:"type"`
+		FilePath        string      `json:"filePath"`
+		Content         string      `json:"content"`
+		OriginalFile    *string     `json:"originalFile"`
+		StructuredPatch []patchHunk `json:"structuredPatch"`
+	}
+	type editReport struct {
+		FilePath        string      `json:"filePath"`
+		OldString       string      `json:"oldString"`
+		NewString       string      `json:"newString"`
+		OriginalFile    string      `json:"originalFile"`
+		StructuredPatch []patchHunk `json:"structuredPatch"`
+		UserModified    bool        `json:"userModified"`
+		ReplaceAll      bool        `json:"replaceAll"`
+		Replacements    int         `json:"replacements"`
+	}
+	type multiEditReport struct {
+		FilePath        string      `json:"filePath"`
+		OriginalFile    string      `json:"originalFile"`
+		StructuredPatch []patchHunk `json:"structuredPatch"`
+		Edits           int         `json:"edits"`
+		Replacements    int         `json:"replacements"`
+	}
+
+	out, err := registry.Execute(context.Background(), "Write", []byte(`{"file_path":"notes.txt","content":"alpha\nbeta\n"}`), nil)
+	require.NoError(t, err)
+	expectedPath, err := filepath.EvalSymlinks(filepath.Join(workspace, "notes.txt"))
+	require.NoError(t, err)
+	var created writeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &created))
+	require.Equal(t, "create", created.Kind)
+	require.Equal(t, "create", created.Type)
+	require.Equal(t, expectedPath, created.FilePath)
+	require.Equal(t, "alpha\nbeta\n", created.Content)
+	require.Nil(t, created.OriginalFile)
+	require.Equal(t, []patchHunk{{
+		OldStart: 1,
+		OldLines: 0,
+		NewStart: 1,
+		NewLines: 2,
+		Lines:    []string{"+alpha", "+beta"},
+	}}, created.StructuredPatch)
+
+	out, err = registry.Execute(context.Background(), "Write", []byte(`{"file_path":"notes.txt","content":"gamma\n"}`), nil)
+	require.NoError(t, err)
+	var updated writeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &updated))
+	require.Equal(t, "update", updated.Kind)
+	require.Equal(t, "update", updated.Type)
+	require.Equal(t, expectedPath, updated.FilePath)
+	require.NotNil(t, updated.OriginalFile)
+	require.Equal(t, "alpha\nbeta\n", *updated.OriginalFile)
+	require.Equal(t, []patchHunk{{
+		OldStart: 1,
+		OldLines: 2,
+		NewStart: 1,
+		NewLines: 1,
+		Lines:    []string{"-alpha", "-beta", "+gamma"},
+	}}, updated.StructuredPatch)
+
+	out, err = registry.Execute(context.Background(), "Edit", []byte(`{"file_path":"notes.txt","old_string":"gamma","new_string":"delta"}`), nil)
+	require.NoError(t, err)
+	var edited editReport
+	require.NoError(t, json.Unmarshal([]byte(out), &edited))
+	require.Equal(t, expectedPath, edited.FilePath)
+	require.Equal(t, "gamma", edited.OldString)
+	require.Equal(t, "delta", edited.NewString)
+	require.Equal(t, "gamma\n", edited.OriginalFile)
+	require.False(t, edited.UserModified)
+	require.False(t, edited.ReplaceAll)
+	require.Equal(t, 1, edited.Replacements)
+	require.Equal(t, []patchHunk{{
+		OldStart: 1,
+		OldLines: 1,
+		NewStart: 1,
+		NewLines: 1,
+		Lines:    []string{"-gamma", "+delta"},
+	}}, edited.StructuredPatch)
+
+	out, err = registry.Execute(context.Background(), "MultiEdit", []byte(`{"file_path":"notes.txt","edits":[{"old_string":"delta","new_string":"omega"},{"old_string":"omega","new_string":"done"}]}`), nil)
+	require.NoError(t, err)
+	var multiEdited multiEditReport
+	require.NoError(t, json.Unmarshal([]byte(out), &multiEdited))
+	require.Equal(t, expectedPath, multiEdited.FilePath)
+	require.Equal(t, "delta\n", multiEdited.OriginalFile)
+	require.Equal(t, 2, multiEdited.Edits)
+	require.Equal(t, 2, multiEdited.Replacements)
+	require.Equal(t, []patchHunk{{
+		OldStart: 1,
+		OldLines: 1,
+		NewStart: 1,
+		NewLines: 1,
+		Lines:    []string{"-delta", "+done"},
+	}}, multiEdited.StructuredPatch)
+}
+
 func TestFileToolsRecordUndoSnapshots(t *testing.T) {
 	workspace := t.TempDir()
 	registry := NewRegistry(workspace)

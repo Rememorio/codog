@@ -3129,7 +3129,21 @@ func (t WriteFileTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err := os.WriteFile(path, []byte(payload.Content), 0o644); err != nil {
 		return "", err
 	}
-	result := map[string]any{"path": path, "kind": kind, "bytes": len(payload.Content)}
+	var originalFile any
+	if existed && original != nil {
+		originalFile = string(original)
+	}
+	result := map[string]any{
+		"path":            path,
+		"kind":            kind,
+		"type":            kind,
+		"filePath":        path,
+		"content":         payload.Content,
+		"bytes":           len(payload.Content),
+		"structuredPatch": makeStructuredPatch(string(original), payload.Content),
+		"originalFile":    originalFile,
+		"gitDiff":         nil,
+	}
 	addUndoFields(result, undoAvailable, undoID)
 	return pretty(result), nil
 }
@@ -3212,7 +3226,20 @@ func (t EditFileTool) Execute(_ context.Context, input json.RawMessage) (string,
 	if payload.ReplaceAll {
 		replaced = count
 	}
-	return pretty(map[string]any{"path": path, "replacements": replaced, "undo_available": true, "undo_id": record.ID}), nil
+	return pretty(map[string]any{
+		"path":            path,
+		"filePath":        path,
+		"oldString":       payload.OldString,
+		"newString":       payload.NewString,
+		"originalFile":    content,
+		"structuredPatch": makeStructuredPatch(content, next),
+		"userModified":    false,
+		"replaceAll":      payload.ReplaceAll,
+		"gitDiff":         nil,
+		"replacements":    replaced,
+		"undo_available":  true,
+		"undo_id":         record.ID,
+	}), nil
 }
 
 type MultiEditTool struct {
@@ -3311,7 +3338,17 @@ func (t MultiEditTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", err
 	}
-	return pretty(map[string]any{"path": path, "edits": len(payload.Edits), "replacements": total, "undo_available": true, "undo_id": record.ID}), nil
+	return pretty(map[string]any{
+		"path":            path,
+		"filePath":        path,
+		"originalFile":    string(data),
+		"structuredPatch": makeStructuredPatch(string(data), content),
+		"gitDiff":         nil,
+		"edits":           len(payload.Edits),
+		"replacements":    total,
+		"undo_available":  true,
+		"undo_id":         record.ID,
+	}), nil
 }
 
 func fileUndoSnapshot(path string) (bool, []byte, bool, error) {
@@ -3330,6 +3367,46 @@ func fileUndoSnapshot(path string) (bool, []byte, bool, error) {
 		return false, nil, false, err
 	}
 	return true, data, true, nil
+}
+
+type structuredPatchHunk struct {
+	OldStart int      `json:"oldStart"`
+	OldLines int      `json:"oldLines"`
+	NewStart int      `json:"newStart"`
+	NewLines int      `json:"newLines"`
+	Lines    []string `json:"lines"`
+}
+
+func makeStructuredPatch(original string, updated string) []structuredPatchHunk {
+	oldLines := structuredPatchContentLines(original)
+	newLines := structuredPatchContentLines(updated)
+	lines := make([]string, 0, len(oldLines)+len(newLines))
+	for _, line := range oldLines {
+		lines = append(lines, "-"+line)
+	}
+	for _, line := range newLines {
+		lines = append(lines, "+"+line)
+	}
+	return []structuredPatchHunk{{
+		OldStart: 1,
+		OldLines: len(oldLines),
+		NewStart: 1,
+		NewLines: len(newLines),
+		Lines:    lines,
+	}}
+}
+
+func structuredPatchContentLines(content string) []string {
+	if content == "" {
+		return nil
+	}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.TrimSuffix(content, "\n")
+	lines := strings.Split(content, "\n")
+	for index := range lines {
+		lines[index] = strings.TrimSuffix(lines[index], "\r")
+	}
+	return lines
 }
 
 func addUndoFields(result map[string]any, available bool, id string) {
