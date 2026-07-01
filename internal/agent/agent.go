@@ -19597,7 +19597,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 	modelInput := input
 	activeSkill := opts.Skill
 	if activeSkill == nil {
-		modelInput, activeSkill = a.expandSkillInvocationWithSkill(input)
+		modelInput, activeSkill = a.expandSkillInvocationWithSkill(input, sess.ID)
 	}
 	allowedTools := append([]string(nil), opts.AllowedTools...)
 	if activeSkill != nil {
@@ -19703,11 +19703,11 @@ func (a *App) expandPromptReferences(input string) string {
 }
 
 func (a *App) expandSkillInvocation(input string) string {
-	rendered, _ := a.expandSkillInvocationWithSkill(input)
+	rendered, _ := a.expandSkillInvocationWithSkill(input, "")
 	return rendered
 }
 
-func (a *App) expandSkillInvocationWithSkill(input string) (string, *skills.Skill) {
+func (a *App) expandSkillInvocationWithSkill(input string, sessionID string) (string, *skills.Skill) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" || strings.HasPrefix(trimmed, "/") {
 		return input, nil
@@ -19724,7 +19724,7 @@ func (a *App) expandSkillInvocationWithSkill(input string) (string, *skills.Skil
 		return input, nil
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
-	rendered := skills.RenderInvocation(skill, args)
+	rendered := skills.RenderInvocationWithSession(skill, args, sessionID)
 	return rendered, &skill
 }
 
@@ -20589,7 +20589,7 @@ func (a *App) handleSkillSlash(ctx context.Context, line string, sess *session.S
 		return false
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
-	rendered := skills.RenderInvocation(skill, args)
+	rendered := skills.RenderInvocationWithSession(skill, args, sess.ID)
 	if err := a.runSessionTurnWithOptions(ctx, "repl", sess, rendered, "idle", turnOptions{Skill: &skill}); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 	}
@@ -20610,7 +20610,7 @@ func (a *App) handleCustomSlash(ctx context.Context, line string, sess *session.
 		return true
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
-	rendered := customcommands.Render(command, args)
+	rendered := customcommands.RenderWithSession(command, args, sess.ID)
 	if strings.TrimSpace(rendered.Rendered) == "" {
 		fmt.Fprintf(a.Err, "custom command %s rendered an empty prompt\n", fields[0])
 		return true

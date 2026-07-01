@@ -86,6 +86,13 @@ Deploy ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA} $ARGUMENTS`), 0o644))
 	require.Equal(t, "Ops prod", Render(command, "prod").Rendered)
 }
 
+func TestRenderWithSessionSubstitutesSessionID(t *testing.T) {
+	command := Command{Body: "session=${CLAUDE_SESSION_ID} args=$ARGUMENTS"}
+
+	require.Equal(t, "session=${CLAUDE_SESSION_ID} args=target", Render(command, "target").Rendered)
+	require.Equal(t, "session=session-123 args=target", RenderWithSession(command, "target", "session-123").Rendered)
+}
+
 func commandNames(commands []Command) []string {
 	names := make([]string, 0, len(commands))
 	for _, command := range commands {

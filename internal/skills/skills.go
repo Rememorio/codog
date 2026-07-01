@@ -557,13 +557,18 @@ func Uninstall(name string, roots []string) (UninstallReport, error) {
 }
 
 func RenderInvocation(skill Skill, args string) string {
+	return RenderInvocationWithSession(skill, args, "")
+}
+
+func RenderInvocationWithSession(skill Skill, args string, sessionID string) string {
 	args = strings.TrimSpace(args)
 	renderedSkill := skill
 	renderedSkill.Body = argsub.Substitute(skill.Body, args, false, skill.Arguments)
-	renderedSkill.Body = argsub.SubstituteVariables(renderedSkill.Body, skillVariables(skill))
+	variables := skillVariablesWithSession(skill, sessionID)
+	renderedSkill.Body = argsub.SubstituteVariables(renderedSkill.Body, variables)
 	var builder strings.Builder
 	builder.WriteString("Use the following Codog skill for this request.\n\n")
-	builder.WriteString(RenderPromptBlock(renderedSkill))
+	builder.WriteString(renderPromptBlockWithVariables(renderedSkill, variables))
 	builder.WriteString("\n\n")
 	if args == "" {
 		builder.WriteString("User request: apply this skill.")
@@ -575,6 +580,10 @@ func RenderInvocation(skill Skill, args string) string {
 }
 
 func RenderPromptBlock(skill Skill) string {
+	return renderPromptBlockWithVariables(skill, skillVariables(skill))
+}
+
+func renderPromptBlockWithVariables(skill Skill, variables map[string]string) string {
 	var builder strings.Builder
 	builder.WriteString("<skill name=\"")
 	builder.WriteString(escapeAttr(skill.Name))
@@ -592,7 +601,7 @@ func RenderPromptBlock(skill Skill) string {
 		builder.WriteString(metadata)
 		builder.WriteString("</metadata>\n\n")
 	}
-	builder.WriteString(strings.TrimSpace(argsub.SubstituteVariables(skill.Body, skillVariables(skill))))
+	builder.WriteString(strings.TrimSpace(argsub.SubstituteVariables(skill.Body, variables)))
 	builder.WriteString("\n</skill>")
 	return builder.String()
 }
@@ -629,6 +638,10 @@ func parseDocumentWithContext(name string, path string, source string, skillRoot
 }
 
 func skillVariables(skill Skill) map[string]string {
+	return skillVariablesWithSession(skill, "")
+}
+
+func skillVariablesWithSession(skill Skill, sessionID string) map[string]string {
 	variables := map[string]string{}
 	if skill.SkillDir != "" {
 		variables["CLAUDE_SKILL_DIR"] = skill.SkillDir
@@ -638,6 +651,9 @@ func skillVariables(skill Skill) map[string]string {
 	}
 	if skill.PluginData != "" {
 		variables["CLAUDE_PLUGIN_DATA"] = skill.PluginData
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		variables["CLAUDE_SESSION_ID"] = strings.TrimSpace(sessionID)
 	}
 	return variables
 }

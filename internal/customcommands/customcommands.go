@@ -119,9 +119,13 @@ func Find(configHome, workspace, name string) (Command, error) {
 }
 
 func Render(command Command, args string) Rendered {
+	return RenderWithSession(command, args, "")
+}
+
+func RenderWithSession(command Command, args string, sessionID string) Rendered {
 	args = strings.TrimSpace(args)
 	rendered := argsub.Substitute(command.Body, args, true, command.Arguments)
-	rendered = argsub.SubstituteVariables(rendered, commandVariables(command))
+	rendered = argsub.SubstituteVariables(rendered, commandVariablesWithSession(command, sessionID))
 	return Rendered{
 		Name:         command.Name,
 		Path:         command.Path,
@@ -168,12 +172,19 @@ func parseCommandDocument(name string, path string, root root, text string) Comm
 }
 
 func commandVariables(command Command) map[string]string {
+	return commandVariablesWithSession(command, "")
+}
+
+func commandVariablesWithSession(command Command, sessionID string) map[string]string {
 	variables := map[string]string{}
 	if command.PluginRoot != "" {
 		variables["CLAUDE_PLUGIN_ROOT"] = command.PluginRoot
 	}
 	if command.PluginData != "" {
 		variables["CLAUDE_PLUGIN_DATA"] = command.PluginData
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		variables["CLAUDE_SESSION_ID"] = strings.TrimSpace(sessionID)
 	}
 	return variables
 }

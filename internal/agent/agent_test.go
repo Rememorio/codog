@@ -7988,7 +7988,7 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review skill body"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "review.md"), []byte("Review skill body ${CLAUDE_SESSION_ID}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte("Audit skill body"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -8019,7 +8019,7 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"show", "review"}))
-	require.Equal(t, "Review skill body\n", out.String())
+	require.Equal(t, "Review skill body ${CLAUDE_SESSION_ID}\n", out.String())
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"invoke", "debug", "failing test"}))
@@ -8042,7 +8042,7 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, loaded.Messages, 2)
 	require.Contains(t, loaded.Messages[0].Content[0].Text, `<skill name="review"`)
-	require.Contains(t, loaded.Messages[0].Content[0].Text, "Review skill body")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "Review skill body skill-session")
 	require.Contains(t, loaded.Messages[0].Content[0].Text, "User request: auth flow")
 	require.Contains(t, errOut.String(), "session: skill-session")
 }
@@ -8168,7 +8168,7 @@ func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands", "team"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "review.md"), []byte("Review this target: $ARGUMENTS"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "review.md"), []byte("Review this target: $ARGUMENTS (${CLAUDE_SESSION_ID})"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
@@ -8198,11 +8198,11 @@ func TestCustomSlashRunsRenderedPrompt(t *testing.T) {
 	require.Empty(t, errOut.String())
 	require.Len(t, sess.Messages, 2)
 	require.Equal(t, "user", sess.Messages[0].Role)
-	require.Equal(t, "Review this target: target.go", sess.Messages[0].Content[0].Text)
+	require.Equal(t, "Review this target: target.go (custom-slash)", sess.Messages[0].Content[0].Text)
 	history, err := app.Sessions.PromptHistory("custom-slash")
 	require.NoError(t, err)
 	require.Len(t, history, 1)
-	require.Equal(t, "Review this target: target.go", history[0].Text)
+	require.Equal(t, "Review this target: target.go (custom-slash)", history[0].Text)
 }
 
 func TestCustomSlashAllowedToolsApplyToActiveTurn(t *testing.T) {

@@ -121,6 +121,13 @@ Keep: $filename
 	require.Contains(t, rendered, `User request: main.go "race condition"`)
 }
 
+func TestRenderInvocationWithSessionSubstitutesSessionID(t *testing.T) {
+	skill := ParseDocument("review", filepath.Join("review", "SKILL.md"), "workspace", "Review session ${CLAUDE_SESSION_ID}.")
+
+	require.Contains(t, RenderInvocation(skill, ""), "Review session ${CLAUDE_SESSION_ID}.")
+	require.Contains(t, RenderInvocationWithSession(skill, "", "session-123"), "Review session session-123.")
+}
+
 func TestParseSkillFrontmatterMetadata(t *testing.T) {
 	doc := `---
 name: Review helper
