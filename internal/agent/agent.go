@@ -4542,7 +4542,14 @@ func (a *App) showAgent(name string, format string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("unknown agent %q", name)
+	return renderActionError(a.Out, actionErrorReport{
+		Kind:      "agents",
+		Action:    "show",
+		Status:    "error",
+		ErrorKind: "agent_not_found",
+		Message:   fmt.Sprintf("agent %q was not found", name),
+		Hint:      "Run `codog agents list` to see available agents.",
+	}, format)
 }
 
 func filterAgentDefinitions(defs []agentdefs.Definition, filter string) []agentdefs.Definition {
@@ -4580,9 +4587,16 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		return a.listAgents(format, filter)
 	}
-	if args[0] == "show" {
+	if args[0] == "show" || args[0] == "info" || args[0] == "describe" {
 		if len(args) < 2 {
-			return errors.New("usage: codog agents show NAME")
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "agents",
+				Action:    "show",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "agents show requires a name",
+				Hint:      "Usage: codog agents show NAME.",
+			}, format)
 		}
 		if len(args) > 2 {
 			return renderCLIError(a.Out, unexpectedExtraArgsError{
@@ -4627,7 +4641,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			Status:    "error",
 			ErrorKind: "unknown_agents_subcommand",
 			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
-			Hint:      "Use `codog agents list`, `codog agents show NAME`, `codog agents run NAME PROMPT`, or `codog agents worktrees`.",
+			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents run NAME PROMPT`, or `codog agents worktrees`.",
 		}, format)
 	}
 	req, err := parseAgentRunArgs(args[1:])
@@ -20762,7 +20776,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "worktrees":
+	case "", "list", "show", "info", "describe", "worktrees":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"
@@ -36423,7 +36437,7 @@ Usage:
   %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
-  %s agents list [FILTER] | agents show NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
+  %s agents list [FILTER] | agents show|info|describe NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]

@@ -11954,6 +11954,33 @@ func TestAgentsCommandAcceptsOutputFormatFlags(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
 	require.Equal(t, "show", showReport.Action)
 	require.Equal(t, "planner", showReport.Agent.Name)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"info", "planner"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"name": "planner"`)
+	require.Contains(t, out.String(), `"description": "plans work"`)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"describe", "reviewer", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "reviewer", showReport.Agent.Name)
+	out.Reset()
+
+	require.ErrorContains(t, app.AgentsWithOverrides([]string{"info", "missing", "--json"}, config.FlagOverrides{}), "agent_not_found")
+	var errorReport actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "agents", errorReport.Kind)
+	require.Equal(t, "show", errorReport.Action)
+	require.Equal(t, "agent_not_found", errorReport.ErrorKind)
+	require.Contains(t, errorReport.Hint, "codog agents list")
+	out.Reset()
+
+	require.ErrorContains(t, app.AgentsWithOverrides([]string{"describe", "--json"}, config.FlagOverrides{}), "missing_argument")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "show", errorReport.Action)
+	require.Equal(t, "missing_argument", errorReport.ErrorKind)
+	require.Contains(t, errorReport.Hint, "codog agents show")
 }
 
 func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
