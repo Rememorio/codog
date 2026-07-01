@@ -19947,6 +19947,14 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedAntTraceSlash(ctx, resumeSlashArgs("ant-trace", args, format), format)
 	case "/mock-limits":
 		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), format)
+	case "/extra-usage":
+		return a.runResumedExtraUsageSlash(resumeSlashArgs("extra-usage", args, format), format)
+	case "/install-slack-app":
+		return a.runResumedInstallSlackAppSlash(resumeSlashArgs("install-slack-app", args, format), format)
+	case "/stickers":
+		return a.runResumedStickersSlash(resumeSlashArgs("stickers", args, format), format)
+	case "/passes":
+		return a.runResumedPassesSlash(resumeSlashArgs("passes", args, format), format)
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/git":
@@ -20335,6 +20343,144 @@ func (a *App) runResumedMockLimitsSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/mock-limits", req.Action), format)
 	}
 	return a.MockLimits(args)
+}
+
+func (a *App) runResumedExtraUsageSlash(args []string, format string) error {
+	req, err := parseExtraUsageArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Open {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/extra-usage", "open"), format)
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	report := extraUsageReport{
+		Kind:       "extra_usage",
+		Action:     "show",
+		Status:     "ok",
+		Mode:       req.Mode,
+		URL:        extraUsageURL(req.Mode),
+		Opened:     false,
+		VisitCount: a.Config.Future.ExtraUsageVisitCount,
+		Path:       path,
+		Message:    extraUsageMessage(req.Mode),
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderExtraUsageReport(a.Out, report)
+	return nil
+}
+
+func (a *App) runResumedInstallSlackAppSlash(args []string, format string) error {
+	req, err := parseInstallSlackAppArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Open {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/install-slack-app", "open"), format)
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	report := installSlackAppReport{
+		Kind:         "install_slack_app",
+		Action:       "show",
+		Status:       "ok",
+		URL:          slackAppURL,
+		Opened:       false,
+		InstallCount: a.Config.Future.SlackAppInstallCount,
+		Path:         path,
+		Message:      "Visit the Slack Marketplace URL to install the Claude app.",
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderInstallSlackAppReport(a.Out, report)
+	return nil
+}
+
+func (a *App) runResumedStickersSlash(args []string, format string) error {
+	req, err := parseStickersArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Open {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/stickers", "open"), format)
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	report := stickersReport{
+		Kind:       "stickers",
+		Action:     "show",
+		Status:     "ok",
+		URL:        stickerOrderURL,
+		Opened:     false,
+		OrderCount: a.Config.Future.StickerOrderCount,
+		Path:       path,
+		Message:    "Visit the sticker page to order Claude Code stickers.",
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderStickersReport(a.Out, report)
+	return nil
+}
+
+func (a *App) runResumedPassesSlash(args []string, format string) error {
+	req, err := parsePassesArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "show":
+	case "open":
+		if req.Open {
+			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/passes", "open"), format)
+		}
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/passes", req.Action), format)
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	referralURL := firstNonEmpty(req.ReferralURL, a.Config.Future.GuestPassReferralURL)
+	report := passesReport{
+		Kind:        "passes",
+		Action:      "show",
+		Status:      "ok",
+		URL:         passesURL(referralURL, req.Docs),
+		DocsURL:     guestPassDocsURL,
+		ReferralURL: referralURL,
+		Opened:      false,
+		VisitCount:  a.Config.Future.GuestPassVisitCount,
+		Path:        path,
+	}
+	if report.ReferralURL == "" || req.Docs {
+		report.Message = "No guest pass referral URL is configured. Showing Claude Code guest pass documentation."
+	} else {
+		report.Message = "Showing configured guest pass referral URL."
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderPassesReport(a.Out, report)
+	return nil
 }
 
 func (a *App) runResumedBranchSlash(args []string, format string) error {

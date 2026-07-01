@@ -750,6 +750,18 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	voiceSlash, ok := capabilityReportSlash(report, "/voice")
 	require.True(t, ok)
 	require.True(t, voiceSlash.ResumeSupported)
+	extraUsageSlash, ok := capabilityReportSlash(report, "/extra-usage")
+	require.True(t, ok)
+	require.True(t, extraUsageSlash.ResumeSupported)
+	installSlackAppSlash, ok := capabilityReportSlash(report, "/install-slack-app")
+	require.True(t, ok)
+	require.True(t, installSlackAppSlash.ResumeSupported)
+	stickersSlash, ok := capabilityReportSlash(report, "/stickers")
+	require.True(t, ok)
+	require.True(t, stickersSlash.ResumeSupported)
+	passesSlash, ok := capabilityReportSlash(report, "/passes")
+	require.True(t, ok)
+	require.True(t, passesSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1361,6 +1373,13 @@ func risky(value any) {
 			return RunCLI(context.Background(), cliArgs, config.FlagOverrides{})
 		})
 	}
+	openedURL := ""
+	previousOpen := openExternalURL
+	openExternalURL = func(url string) (string, error) {
+		openedURL = url
+		return "test-open", nil
+	}
+	t.Cleanup(func() { openExternalURL = previousOpen })
 
 	out, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/status"}, config.FlagOverrides{})
@@ -2155,6 +2174,51 @@ func risky(value any) {
 	require.Equal(t, "mock_limits", resumedMockLimits.Kind)
 	require.Equal(t, "show", resumedMockLimits.Action)
 
+	out, err = runResumedJSON("/extra-usage", "--admin", "--no-open")
+	require.NoError(t, err)
+	var resumedExtraUsage extraUsageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedExtraUsage))
+	require.Equal(t, "extra_usage", resumedExtraUsage.Kind)
+	require.Equal(t, "show", resumedExtraUsage.Action)
+	require.Equal(t, "admin", resumedExtraUsage.Mode)
+	require.Equal(t, extraUsageAdminURL, resumedExtraUsage.URL)
+	require.False(t, resumedExtraUsage.Opened)
+	require.Equal(t, 0, resumedExtraUsage.VisitCount)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/install-slack-app", "--no-open")
+	require.NoError(t, err)
+	var resumedSlack installSlackAppReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSlack))
+	require.Equal(t, "install_slack_app", resumedSlack.Kind)
+	require.Equal(t, "show", resumedSlack.Action)
+	require.Equal(t, slackAppURL, resumedSlack.URL)
+	require.False(t, resumedSlack.Opened)
+	require.Equal(t, 0, resumedSlack.InstallCount)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/stickers", "--no-open")
+	require.NoError(t, err)
+	var resumedStickers stickersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedStickers))
+	require.Equal(t, "stickers", resumedStickers.Kind)
+	require.Equal(t, "show", resumedStickers.Action)
+	require.Equal(t, stickerOrderURL, resumedStickers.URL)
+	require.False(t, resumedStickers.Opened)
+	require.Equal(t, 0, resumedStickers.OrderCount)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/passes", "show")
+	require.NoError(t, err)
+	var resumedPasses passesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPasses))
+	require.Equal(t, "passes", resumedPasses.Kind)
+	require.Equal(t, "show", resumedPasses.Action)
+	require.Equal(t, guestPassDocsURL, resumedPasses.URL)
+	require.False(t, resumedPasses.Opened)
+	require.Equal(t, 0, resumedPasses.VisitCount)
+	require.Empty(t, openedURL)
+
 	out, err = runResumedJSON("/files", "--glob", "*.go", "--limit", "5")
 	require.NoError(t, err)
 	var resumedFiles struct {
@@ -2365,6 +2429,16 @@ func risky(value any) {
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/ant-trace", Args: []string{"--no-request", "--write"}, Report: "/ant-trace write"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
+		{Command: "/extra-usage", Args: nil, Report: "/extra-usage open"},
+		{Command: "/extra-usage", Args: []string{"--open"}, Report: "/extra-usage open"},
+		{Command: "/install-slack-app", Args: nil, Report: "/install-slack-app open"},
+		{Command: "/install-slack-app", Args: []string{"--open"}, Report: "/install-slack-app open"},
+		{Command: "/stickers", Args: nil, Report: "/stickers open"},
+		{Command: "/stickers", Args: []string{"--open"}, Report: "/stickers open"},
+		{Command: "/passes", Args: nil, Report: "/passes open"},
+		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
+		{Command: "/passes", Args: []string{"set-url", "https://example.test/guest"}, Report: "/passes set-url"},
+		{Command: "/passes", Args: []string{"clear-url"}, Report: "/passes clear-url"},
 		{Command: "/branch", Args: []string{"create", "resume-test"}, Report: "/branch create"},
 		{Command: "/tag", Args: []string{"create", "v9.9.9"}, Report: "/tag create"},
 		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},
