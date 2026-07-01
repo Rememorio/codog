@@ -213,6 +213,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "notifications", "--help", "--output-format", "json"},
 			topic: "notifications",
 		},
+		{
+			name:  "api-key local help",
+			args:  []string{"--config", configPath, "api-key", "--help", "--output-format", "json"},
+			topic: "api-key",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2247,6 +2252,57 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_tool_name")
 	require.NotContains(t, app.Config.PermissionRules.Allow, "teleport")
+}
+
+func TestAPIKeyCommandAndSlash(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("CODOG_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+		Err:    &errOut,
+	}
+
+	require.NoError(t, app.APIKey([]string{"status", "--json"}))
+	var status apiKeyReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "api_key", status.Kind)
+	require.False(t, status.Configured)
+	require.Empty(t, status.RedactedValue)
+	out.Reset()
+
+	require.NoError(t, app.APIKey([]string{"set", "sk-ant-test-secret", "--json"}))
+	require.NotContains(t, out.String(), "sk-ant-test-secret")
+	var setReport apiKeyReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &setReport))
+	require.True(t, setReport.Configured)
+	require.Equal(t, "config", setReport.Source)
+	require.NotEmpty(t, setReport.RedactedValue)
+	require.Equal(t, "sk-ant-test-secret", app.Config.APIKey)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var persisted config.Config
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.Equal(t, "sk-ant-test-secret", persisted.APIKey)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/api-key clear --json", &session.Session{ID: "session"}))
+	require.NotContains(t, out.String(), "sk-ant-test-secret")
+	var clearReport apiKeyReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &clearReport))
+	require.False(t, clearReport.Configured)
+	require.Empty(t, app.Config.APIKey)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "sk-ant-test-secret")
+	require.NotContains(t, string(data), "api_key")
+	require.Empty(t, errOut.String())
 }
 
 func TestAdvisorCommandAndSlash(t *testing.T) {

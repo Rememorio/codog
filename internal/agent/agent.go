@@ -330,6 +330,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.OutputStyle(rest)
 	case "model":
 		return app.Model(rest)
+	case "api-key":
+		return app.APIKey(rest)
 	case "advisor":
 		return app.Advisor(rest)
 	case "max-tokens":
@@ -13822,6 +13824,7 @@ func codogCapabilityFeatures() []string {
 	return sortedUniqueStrings([]string{
 		"acp_bridge",
 		"anthropic_streaming",
+		"api_key_management",
 		"auto_compaction",
 		"background_tasks",
 		"broad_cwd_guard",
@@ -13881,6 +13884,7 @@ func builtInCommandNames() []string {
 		"advisor",
 		"agents",
 		"allowed-tools",
+		"api-key",
 		"app",
 		"backfill-sessions",
 		"background",
@@ -17024,6 +17028,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/config":
 		a.handleConfigSlash(fields[1:])
+	case "/api-key":
+		if err := a.APIKey(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/model":
 		a.handleModelSlash(fields[1:])
 	case "/advisor":
@@ -17494,6 +17502,238 @@ func (a *App) Model(args []string) error {
 	a.Config.Model = model
 	fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
 	return nil
+}
+
+type apiKeyRequest struct {
+	Action string
+	Key    string
+	Format string
+	Target string
+	Path   string
+}
+
+type apiKeyReport struct {
+	Kind          string `json:"kind"`
+	Action        string `json:"action"`
+	Status        string `json:"status"`
+	Configured    bool   `json:"configured"`
+	RedactedValue string `json:"redacted_value,omitempty"`
+	Source        string `json:"source,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Message       string `json:"message,omitempty"`
+}
+
+func (a *App) APIKey(args []string) error {
+	req, err := parseAPIKeyArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+	case "set":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "api_key", req.Key); err != nil {
+			return err
+		}
+		a.Config.APIKey = req.Key
+		req.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "api_key"); err != nil {
+			return err
+		}
+		_, envValue := apiKeyEnvValue(a.Config.Model)
+		a.Config.APIKey = envValue
+		req.Path = path
+	default:
+		return fmt.Errorf("unknown api-key command %q", req.Action)
+	}
+	report := a.apiKeyReport(req.Action, req.Path)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderAPIKeyReport(a.Out, report)
+	return nil
+}
+
+func parseAPIKeyArgs(args []string) (apiKeyRequest, error) {
+	req := apiKeyRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("api-key output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("api-key target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("api-key config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--key":
+			index++
+			if index >= len(args) {
+				return req, errors.New("api key is required")
+			}
+			req.Key = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--key="):
+			req.Key = strings.TrimSpace(strings.TrimPrefix(arg, "--key="))
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown api-key flag %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "api-key"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		if req.Key != "" {
+			req.Action = "set"
+		}
+		return validateAPIKeyRequest(req)
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+		}
+	case "set":
+		req.Action = "set"
+		if req.Key == "" {
+			if len(rest) != 2 {
+				return req, errors.New("usage: codog api-key set KEY [--target user|project|local|--path PATH]")
+			}
+			req.Key = strings.TrimSpace(rest[1])
+		} else if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+		}
+	case "clear", "unset", "reset", "remove":
+		req.Action = "clear"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+		}
+	default:
+		req.Action = "set"
+		if req.Key != "" {
+			return req, fmt.Errorf("unexpected api-key argument %q", rest[0])
+		}
+		if len(rest) != 1 {
+			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+		}
+		req.Key = strings.TrimSpace(rest[0])
+	}
+	return validateAPIKeyRequest(req)
+}
+
+func validateAPIKeyRequest(req apiKeyRequest) (apiKeyRequest, error) {
+	if req.Action == "set" && strings.TrimSpace(req.Key) == "" {
+		return req, errors.New("api key is required")
+	}
+	if req.Action != "set" && strings.TrimSpace(req.Key) != "" {
+		return req, fmt.Errorf("api key cannot be provided with %s", req.Action)
+	}
+	return req, nil
+}
+
+func (a *App) apiKeyReport(action string, path string) apiKeyReport {
+	key := strings.TrimSpace(a.Config.APIKey)
+	envName, envValue := apiKeyEnvValue(a.Config.Model)
+	source := ""
+	if key != "" {
+		if envValue != "" && key == strings.TrimSpace(envValue) {
+			source = envName
+		} else {
+			source = "config"
+		}
+	}
+	report := apiKeyReport{
+		Kind:          "api_key",
+		Action:        action,
+		Status:        "ok",
+		Configured:    key != "",
+		RedactedValue: redact(key),
+		Source:        source,
+		Path:          path,
+	}
+	switch {
+	case action == "set":
+		report.Message = "API key preference saved. Command output redacts the stored value."
+	case action == "clear" && key != "":
+		report.Message = fmt.Sprintf("API key removed from config; %s is still active in the environment.", source)
+	case action == "clear":
+		report.Message = "API key removed from config."
+	case key != "":
+		report.Message = "API key is configured. Command output redacts the value."
+	default:
+		report.Message = "No API key is configured. Set ANTHROPIC_API_KEY or run `codog api-key set KEY`."
+	}
+	return report
+}
+
+func apiKeyEnvValue(model string) (string, string) {
+	name := ""
+	value := ""
+	if envValue := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); envValue != "" {
+		name = "ANTHROPIC_API_KEY"
+		value = envValue
+	}
+	if envValue := strings.TrimSpace(os.Getenv("CODOG_API_KEY")); envValue != "" {
+		name = "CODOG_API_KEY"
+		value = envValue
+	}
+	if strings.HasPrefix(strings.TrimSpace(model), "openai/") && value == "" {
+		if envValue := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); envValue != "" {
+			name = "OPENAI_API_KEY"
+			value = envValue
+		}
+	}
+	return name, value
+}
+
+func renderAPIKeyReport(out io.Writer, report apiKeyReport) {
+	fmt.Fprintln(out, "API Key")
+	fmt.Fprintf(out, "  Configured       %t\n", report.Configured)
+	if report.RedactedValue != "" {
+		fmt.Fprintf(out, "  Value            %s\n", report.RedactedValue)
+	}
+	if report.Source != "" {
+		fmt.Fprintf(out, "  Source           %s\n", report.Source)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
 }
 
 func (a *App) Advisor(args []string) error {
@@ -23187,7 +23427,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "background", "blame", "brief", "bughunter", "cache", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "bughunter", "cache", "capabilities", "changelog", "chrome",
 		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
@@ -23542,6 +23782,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "api-key":
+		return localCommandHelpSpec(
+			"api-key",
+			"api-key",
+			"codog api-key [status|set KEY|clear] [--target user|project|local] [--output-format text|json]",
+			"API Key\n\nUsage:\n  codog api-key [status|set KEY|clear] [--target user|project|local] [--output-format text|json]\n  codog api-key KEY\n\nShows, stores, or clears the configured API key. Text and JSON output always redact secret values.\n",
+			[]string{"configured", "redacted_value", "source", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "model":
 		return localCommandHelpSpec(
 			"model",
@@ -23775,6 +24025,7 @@ Usage:
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
+  %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] repl
   %s [flags] tui
   %s [flags] sessions [list|show|exists|fork|rename|delete]
