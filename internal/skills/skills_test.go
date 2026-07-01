@@ -26,8 +26,16 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 
 	all, err := Load(configHome, workspace)
 	require.NoError(t, err)
-	require.Len(t, all, 5)
-	require.Equal(t, []string{"demo:rewrite", "demo:summarize", "plain", "review", "team:audit"}, skillNames(all))
+	require.GreaterOrEqual(t, len(all), 21)
+	names := skillNames(all)
+	require.Contains(t, names, "batch")
+	require.Contains(t, names, "verify")
+	require.Contains(t, names, "verifyContent")
+	require.Contains(t, names, "demo:rewrite")
+	require.Contains(t, names, "demo:summarize")
+	require.Contains(t, names, "plain")
+	require.Contains(t, names, "review")
+	require.Contains(t, names, "team:audit")
 
 	skill, err := Find(configHome, workspace, "team:audit")
 	require.NoError(t, err)
@@ -49,6 +57,30 @@ func TestLoadFindAndRenderSkillInvocation(t *testing.T) {
 
 	_, err = Find(configHome, workspace, "missing")
 	require.True(t, errors.Is(err, ErrNotFound))
+}
+
+func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "skills"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "skills", "verify.md"), []byte("Project verify override."), 0o644))
+
+	bundled := Bundled()
+	require.GreaterOrEqual(t, len(bundled), 16)
+	require.Contains(t, skillNames(bundled), "claudeApi")
+	require.Contains(t, skillNames(bundled), "scheduleRemoteAgents")
+
+	verify, err := Find(configHome, workspace, "verify")
+	require.NoError(t, err)
+	require.Equal(t, "workspace", verify.Source)
+	require.Equal(t, "Project verify override.", verify.Body)
+
+	debug, err := Find(configHome, workspace, "debug")
+	require.NoError(t, err)
+	require.Equal(t, "bundled", debug.Source)
+	require.Equal(t, "builtin://skills/debug.md", debug.Path)
+	require.Contains(t, debug.Description, "Debug failing Codog behavior")
+	require.Contains(t, RenderInvocation(debug, "failing test"), "User request: failing test")
 }
 
 func TestParseSkillFrontmatterMetadata(t *testing.T) {

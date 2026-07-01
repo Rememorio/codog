@@ -56,6 +56,197 @@ type UninstallReport struct {
 
 var ErrNotFound = errors.New("skill not found")
 
+var bundledSkillDocuments = map[string]string{
+	"batch": `---
+description: Break a large request into a clear sequence of smaller coding tasks.
+argument-hint: GOAL
+---
+# Batch
+
+Use this skill when the user asks for broad implementation work that should be split into ordered, verifiable steps.
+
+Create a short task queue, group related edits together, call out validation for each group, and keep the current turn focused on one coherent batch of work.
+`,
+	"claudeApi": `---
+description: Work with Anthropic Claude-compatible API requests and responses.
+argument-hint: API_TASK
+allowed-tools:
+  - Read
+  - Grep
+  - Bash(go test:*)
+---
+# Claude API
+
+Use this skill for code paths that build, send, parse, retry, or test Anthropic Messages API compatible requests.
+
+Check request shape, streaming event handling, usage accounting, retry behavior, and error rendering before changing provider code.
+`,
+	"claudeApiContent": `---
+description: Inspect or transform Claude-compatible message content blocks.
+argument-hint: CONTENT_TASK
+allowed-tools:
+  - Read
+  - Grep
+---
+# Claude API Content
+
+Use this skill when working with text, tool_use, tool_result, image, or structured content blocks.
+
+Preserve block order, IDs, tool result pairing, and JSON compatibility. Prefer typed structures over string concatenation.
+`,
+	"claudeInChrome": `---
+description: Reason about browser-assisted Claude workflows and web handoff surfaces.
+argument-hint: BROWSER_TASK
+---
+# Claude In Chrome
+
+Use this skill for browser handoff, Chrome integration, or web-based assistant workflows.
+
+Keep local state explicit, avoid assuming a logged-in browser session, and make no-op or unavailable states visible to the user.
+`,
+	"debug": `---
+description: Debug failing Codog behavior with a narrow reproduce-inspect-fix loop.
+argument-hint: FAILURE
+allowed-tools:
+  - Read
+  - Grep
+  - Bash(go test:*)
+---
+# Debug
+
+Use this skill when a command, tool, session, provider call, or integration fails.
+
+Start from the smallest failing reproduction, inspect the code path that owns it, add a regression test when the failure is real, and validate the changed package before broader tests.
+`,
+	"keybindings": `---
+description: Work on shortcut parsing, validation, and keybinding resolution.
+argument-hint: SHORTCUT_TASK
+allowed-tools:
+  - Read
+  - Grep
+  - Bash(go test ./internal/agent:*)
+---
+# Keybindings
+
+Use this skill when changing shortcut config, key normalization, vim mode shortcuts, or command completion bindings.
+
+Normalize equivalent keys before comparing them, preserve reserved terminal behavior, and make resolution results inspectable.
+`,
+	"loop": `---
+description: Build a tight implementation loop with repeated validation.
+argument-hint: TASK
+---
+# Loop
+
+Use this skill for work that needs repeated inspect, edit, run, and refine cycles.
+
+Keep each iteration small, record what failed, update the implementation based on evidence, and stop only after the relevant validation passes or a real blocker is identified.
+`,
+	"loremIpsum": `---
+description: Generate neutral placeholder copy for local demos and tests.
+argument-hint: COPY_NEED
+---
+# Lorem Ipsum
+
+Use this skill when placeholder prose is needed for fixtures, examples, or UI smoke tests.
+
+Prefer short neutral text that is clearly sample content and avoid realistic secrets, credentials, personal data, or operational claims.
+`,
+	"remember": `---
+description: Capture durable project guidance in memory files.
+argument-hint: GUIDANCE
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+---
+# Remember
+
+Use this skill when the user gives a durable preference, workflow rule, or repository instruction that should affect future sessions.
+
+Store concise guidance in the appropriate project memory file, avoid transient task notes, and keep sensitive or machine-specific details out of committed files.
+`,
+	"scheduleRemoteAgents": `---
+description: Plan remote or background agent work with clear handoff boundaries.
+argument-hint: REMOTE_TASK
+---
+# Schedule Remote Agents
+
+Use this skill for remote sessions, background tasks, team workers, or delayed automation.
+
+Define the objective, workspace, trust boundary, timeout, expected artifacts, and how the result should be observed or stopped.
+`,
+	"simplify": `---
+description: Reduce unnecessary complexity while preserving behavior.
+argument-hint: TARGET
+---
+# Simplify
+
+Use this skill when code, docs, or command output has become too complex.
+
+Remove redundant branches, collapse repeated wording, preserve compatibility, and verify the behavior that matters before and after the simplification.
+`,
+	"skillify": `---
+description: Turn repeatable workflow knowledge into a reusable Codog skill.
+argument-hint: WORKFLOW
+---
+# Skillify
+
+Use this skill when a workflow should become a reusable Markdown skill.
+
+Capture when to use it, required tools, inputs, steps, and validation. Keep the body actionable and avoid embedding one-off task details.
+`,
+	"stuck": `---
+description: Recover when implementation progress stalls.
+argument-hint: BLOCKER
+---
+# Stuck
+
+Use this skill when the current approach is not producing progress.
+
+Restate the failure, list evidence already gathered, reduce the reproduction, inspect the owning boundary, and choose the next smallest reversible step.
+`,
+	"updateConfig": `---
+description: Update Codog configuration without losing existing user or project settings.
+argument-hint: CONFIG_CHANGE
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+---
+# Update Config
+
+Use this skill when editing user, project, or local Codog config.
+
+Preserve unrelated keys, respect config precedence, avoid writing secrets into project files, and prefer command helpers when they already express the change.
+`,
+	"verify": `---
+description: Choose and run validation that proves a change works.
+argument-hint: CHANGE
+allowed-tools:
+  - Read
+  - Grep
+  - Bash(go test:*)
+  - Bash(go build:*)
+---
+# Verify
+
+Use this skill after implementation or when assessing readiness.
+
+Identify the smallest tests that cover the changed behavior, add focused regression tests when needed, then run broader validation proportional to the risk.
+`,
+	"verifyContent": `---
+description: Validate generated or transformed content for accuracy and portability.
+argument-hint: CONTENT
+---
+# Verify Content
+
+Use this skill for docs, prompts, reports, exported sessions, generated Markdown, or user-facing text.
+
+Check that claims match current behavior, examples are portable, links or paths are appropriate, and no local-only or sensitive data leaked into the artifact.
+`,
+}
+
 type root struct {
 	path   string
 	source string
@@ -63,7 +254,7 @@ type root struct {
 }
 
 func Load(configHome, workspace string) ([]Skill, error) {
-	var out []Skill
+	out := Bundled()
 	for _, root := range roots(configHome, workspace) {
 		if _, err := os.Stat(root.path); err != nil {
 			if os.IsNotExist(err) {
@@ -99,8 +290,26 @@ func Load(configHome, workspace string) ([]Skill, error) {
 			return nil, err
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(out, func(i, j int) bool {
+		if strings.EqualFold(out[i].Name, out[j].Name) {
+			return sourceRank(out[i].Source) < sourceRank(out[j].Source)
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
 	return out, nil
+}
+
+func Bundled() []Skill {
+	out := make([]Skill, 0, len(bundledSkillDocuments))
+	names := make([]string, 0, len(bundledSkillDocuments))
+	for name := range bundledSkillDocuments {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out = append(out, ParseDocument(name, "builtin://skills/"+name+".md", "bundled", bundledSkillDocuments[name]))
+	}
+	return out
 }
 
 func roots(configHome, workspace string) []root {
@@ -164,10 +373,17 @@ func Find(configHome, workspace, name string) (Skill, error) {
 	if err != nil {
 		return Skill{}, err
 	}
+	var found *Skill
 	for _, skill := range all {
 		if strings.EqualFold(skill.Name, name) {
-			return skill, nil
+			candidate := skill
+			if found == nil || sourceRank(candidate.Source) < sourceRank(found.Source) {
+				found = &candidate
+			}
 		}
+	}
+	if found != nil {
+		return *found, nil
 	}
 	return Skill{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
@@ -539,6 +755,23 @@ func namespacePluginName(prefix string, name string) string {
 		return name
 	}
 	return prefix + ":" + name
+}
+
+func sourceRank(source string) int {
+	switch {
+	case source == "workspace":
+		return 0
+	case source == "user":
+		return 1
+	case source == "claude":
+		return 2
+	case strings.HasPrefix(source, "plugin:"):
+		return 3
+	case source == "bundled":
+		return 4
+	default:
+		return 5
+	}
 }
 
 func escapeAttr(value string) string {

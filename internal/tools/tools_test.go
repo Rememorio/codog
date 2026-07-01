@@ -1561,6 +1561,13 @@ func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 	require.Contains(t, out, `"skill": "review"`)
 	require.Contains(t, out, "Review skill body")
 	require.Contains(t, out, "User request: check auth")
+
+	out, err = SkillTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"skill":"verify","args":"recent change"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"skill": "verify"`)
+	require.Contains(t, out, `"source": "bundled"`)
+	require.Contains(t, out, "Choose and run validation")
+	require.Contains(t, out, "User request: recent change")
 }
 
 func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {

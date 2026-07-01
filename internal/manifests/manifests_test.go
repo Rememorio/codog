@@ -25,11 +25,15 @@ func TestBuildResolverManifest(t *testing.T) {
 	require.Greater(t, report.Commands, 0)
 	require.Greater(t, report.Tools, 0)
 	require.Equal(t, 1, report.Agents)
-	require.Equal(t, 1, report.Skills)
+	require.GreaterOrEqual(t, report.Skills, 17)
 	require.Contains(t, manifestCommandNames(report.CommandManifests), "/help")
 	require.Contains(t, manifestToolNames(report.ToolManifests), "bash")
 	require.Equal(t, "helper", report.AgentManifests[0].Name)
-	require.Equal(t, "review", report.SkillManifests[0].Name)
+	require.Equal(t, report.Skills, len(report.SkillManifests))
+	skillSources := manifestSkillSources(report.SkillManifests)
+	require.Equal(t, "user", skillSources["review"])
+	require.Equal(t, "bundled", skillSources["verify"])
+	require.Equal(t, "bundled", skillSources["debug"])
 }
 
 func manifestCommandNames(entries []CommandManifest) []string {
@@ -46,4 +50,12 @@ func manifestToolNames(entries []tools.ToolInfo) []string {
 		names = append(names, entry.Name)
 	}
 	return names
+}
+
+func manifestSkillSources(entries []SkillManifest) map[string]string {
+	out := map[string]string{}
+	for _, entry := range entries {
+		out[entry.Name] = entry.Source
+	}
+	return out
 }

@@ -30237,7 +30237,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"skills",
 			"skills",
 			"codog skills [list|show|invoke|install|uninstall]",
-			"Skills\n\nUsage:\n  codog skills [list|show|invoke|install|uninstall]\n\nLists, renders, invokes, installs, or removes Markdown skills from user, workspace, and compatible Claude directories.\n",
+			"Skills\n\nUsage:\n  codog skills [list|show|invoke|install|uninstall]\n\nLists, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills.\n",
 			[]string{"skills", "name", "path", "body"},
 			[]string{"ok", "error"},
 			true,

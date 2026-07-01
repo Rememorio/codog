@@ -8014,10 +8014,17 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 
 	require.NoError(t, app.Skills([]string{"list", "--json"}))
 	require.Contains(t, out.String(), `"name": "team:audit"`)
+	require.Contains(t, out.String(), `"name": "debug"`)
+	require.Contains(t, out.String(), `"source": "bundled"`)
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"show", "review"}))
 	require.Equal(t, "Review skill body\n", out.String())
+	out.Reset()
+
+	require.NoError(t, app.Skills([]string{"invoke", "debug", "failing test"}))
+	require.Contains(t, out.String(), `<skill name="debug" source="bundled"`)
+	require.Contains(t, out.String(), "User request: failing test")
 	out.Reset()
 
 	require.NoError(t, app.Skills([]string{"invoke", "team:audit", "auth"}))
