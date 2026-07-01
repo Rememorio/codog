@@ -2171,7 +2171,35 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	require.Contains(t, searchOut, `"title": "Example Result"`)
 	require.Contains(t, searchOut, `"url": "https://example.com/result"`)
 	require.Contains(t, searchOut, `"snippet": "A local search summary."`)
+	require.Contains(t, searchOut, `"tool_use_id": "web_search_1"`)
+	require.Contains(t, searchOut, `"hits":`)
 	require.Contains(t, searchOut, `"durationSeconds":`)
+	var searchReport struct {
+		Results []json.RawMessage `json:"results"`
+		Hits    []struct {
+			Title string `json:"title"`
+			URL   string `json:"url"`
+		} `json:"hits"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(searchOut), &searchReport))
+	require.Len(t, searchReport.Results, 2)
+	var commentary string
+	require.NoError(t, json.Unmarshal(searchReport.Results[0], &commentary))
+	require.Contains(t, commentary, "Search results for")
+	require.Contains(t, commentary, "Include a Sources section")
+	var searchBlock struct {
+		ToolUseID string `json:"tool_use_id"`
+		Content   []struct {
+			Title string `json:"title"`
+			URL   string `json:"url"`
+		} `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(searchReport.Results[1], &searchBlock))
+	require.Equal(t, "web_search_1", searchBlock.ToolUseID)
+	require.Equal(t, "Example Result", searchBlock.Content[0].Title)
+	require.Equal(t, len(searchBlock.Content), len(searchReport.Hits))
+	require.Equal(t, searchBlock.Content[0].Title, searchReport.Hits[0].Title)
+	require.Equal(t, searchBlock.Content[0].URL, searchReport.Hits[0].URL)
 
 	_, err = WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"x"}`))
 	require.Error(t, err)

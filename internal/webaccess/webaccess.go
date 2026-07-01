@@ -2,7 +2,9 @@ package webaccess
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -63,6 +65,33 @@ type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet,omitempty"`
+}
+
+type searchResultBlock struct {
+	ToolUseID string         `json:"tool_use_id"`
+	Content   []SearchResult `json:"content"`
+}
+
+func (o SearchOutput) MarshalJSON() ([]byte, error) {
+	type searchOutputJSON struct {
+		Query           string         `json:"query"`
+		SourceURL       string         `json:"source_url"`
+		Results         []any          `json:"results"`
+		Hits            []SearchResult `json:"hits"`
+		DurationMS      int64          `json:"duration_ms"`
+		DurationSeconds float64        `json:"durationSeconds"`
+	}
+	return json.Marshal(searchOutputJSON{
+		Query:     o.Query,
+		SourceURL: o.SourceURL,
+		Results: []any{
+			webSearchSummary(o.Query, o.Results),
+			searchResultBlock{ToolUseID: "web_search_1", Content: o.Results},
+		},
+		Hits:            o.Results,
+		DurationMS:      o.DurationMS,
+		DurationSeconds: o.DurationSeconds,
+	})
 }
 
 func Fetch(ctx context.Context, input FetchInput) (FetchOutput, error) {
@@ -172,6 +201,17 @@ func Search(ctx context.Context, input SearchInput) (SearchOutput, error) {
 		DurationMS:      duration.Milliseconds(),
 		DurationSeconds: duration.Seconds(),
 	}, nil
+}
+
+func webSearchSummary(query string, results []SearchResult) string {
+	if len(results) == 0 {
+		return fmt.Sprintf("No web search results matched the query %q.", query)
+	}
+	rendered := make([]string, 0, len(results))
+	for _, hit := range results {
+		rendered = append(rendered, fmt.Sprintf("- [%s](%s)", hit.Title, hit.URL))
+	}
+	return fmt.Sprintf("Search results for %q. Include a Sources section in the final answer.\n%s", query, strings.Join(rendered, "\n"))
 }
 
 func httpClient(timeoutMS int) *http.Client {

@@ -2,6 +2,7 @@ package webaccess
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +75,25 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 	require.Equal(t, "Fast Rust HTTP client docs.", out.Results[0].Snippet)
 	require.Contains(t, out.SourceURL, "/search?q=rust+web+search")
 	require.GreaterOrEqual(t, out.DurationSeconds, 0.0)
+	raw, err := json.Marshal(out)
+	require.NoError(t, err)
+	var encoded struct {
+		Results []json.RawMessage `json:"results"`
+		Hits    []SearchResult    `json:"hits"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &encoded))
+	require.Len(t, encoded.Results, 2)
+	var commentary string
+	require.NoError(t, json.Unmarshal(encoded.Results[0], &commentary))
+	require.Contains(t, commentary, "Include a Sources section")
+	var block struct {
+		ToolUseID string         `json:"tool_use_id"`
+		Content   []SearchResult `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(encoded.Results[1], &block))
+	require.Equal(t, "web_search_1", block.ToolUseID)
+	require.Equal(t, out.Results, block.Content)
+	require.Equal(t, out.Results, encoded.Hits)
 
 	out, err = Search(context.Background(), SearchInput{
 		Query:          "rust web search",
