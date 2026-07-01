@@ -7026,6 +7026,10 @@ func TestMiscCompatibilityCommands(t *testing.T) {
 	commandData, err := os.ReadFile(movedReport.CommandFile)
 	require.NoError(t, err)
 	require.Contains(t, string(commandData), "Arguments: $ARGUMENTS")
+	require.Contains(t, string(commandData), "migration adapter")
+	require.Contains(t, string(commandData), "codog commands show legacy-tool:legacy-tool")
+	require.Contains(t, string(commandData), "missing plugin implementation")
+	require.NotContains(t, string(commandData), "Replace this "+"body")
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"list", "--json"}))
@@ -7053,7 +7057,9 @@ func TestMiscCompatibilityCommands(t *testing.T) {
 	require.Equal(t, "legacy-tool:legacy-tool", commandReport.Name)
 	require.Equal(t, "plugin:legacy-tool", commandReport.Source)
 	require.NotEmpty(t, commandReport.PluginRoot)
-	require.Contains(t, commandReport.Body, "plugin-backed workflow")
+	require.Contains(t, commandReport.Body, "migration adapter")
+	require.Contains(t, commandReport.Body, "missing plugin implementation")
+	require.NotContains(t, commandReport.Body, "Replace this "+"body")
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"run", "legacy-tool:legacy-tool", "file.go"}))

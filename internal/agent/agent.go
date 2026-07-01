@@ -29086,7 +29086,7 @@ func movedPluginDraftFiles(command string, pluginID string, commandName string) 
 		return nil, nil, err
 	}
 	manifestData = append(manifestData, '\n')
-	description, _ := json.Marshal("Local migration draft for archived command " + displayName + ".")
+	description, _ := json.Marshal("Migration adapter for archived command " + displayName + ".")
 	argumentHint, _ := json.Marshal("[arguments]")
 	commandDoc := fmt.Sprintf(`---
 description: %s
@@ -29095,12 +29095,20 @@ argument-hint: %s
 
 # Migrated command: %s
 
-This command was scaffolded because the archived command is expected to live in a Codog plugin.
+This command is a local migration adapter for the archived command '%s'.
 
-Replace this body with the plugin-backed workflow for %s.
+Use the installed Codog plugin '%s' as the authoritative replacement surface.
+Treat $ARGUMENTS as the user arguments for '%s'.
+
+Execution workflow:
+
+1. Resolve plugin command '%s:%s' with 'codog commands show %s:%s' when command details are needed.
+2. Prefer tools, skills, hooks, and MCP servers declared by plugin '%s' when they match the request.
+3. If the plugin only contains this adapter and no concrete implementation is available, report the missing plugin implementation instead of inventing behavior.
+4. Preserve user arguments exactly unless a plugin command or tool documents a stricter schema.
 
 Arguments: $ARGUMENTS
-`, string(description), string(argumentHint), displayName, displayName)
+`, string(description), string(argumentHint), displayName, displayName, pluginID, displayName, pluginID, commandName, pluginID, commandName, pluginID)
 	return manifestData, []byte(commandDoc), nil
 }
 
