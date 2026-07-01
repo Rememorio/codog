@@ -672,6 +672,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "mcp_config_load_degraded")
 	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "policy_engine")
+	require.Contains(t, report.Features, "plugins_config_load_degraded")
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "recovery_recipes_ledger")
 	require.Contains(t, report.Features, "resume_safe_slash_metadata")
@@ -9170,6 +9171,72 @@ func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "list", "extra"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var errorReport cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
+	require.Equal(t, "unexpected_extra_args", errorReport.ErrorKind)
+	require.NotContains(t, out, "config_load_error")
+}
+
+func TestPluginsDegradeOnMalformedConfigFile(t *testing.T) {
+	workspace := t.TempDir()
+	pluginDir := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"id":"demo","name":"Demo","version":"0.1.0"}`), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "plugins"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report pluginsListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "plugin", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, 1, report.Summary.Total)
+	require.Equal(t, 1, report.Summary.Enabled)
+	require.Equal(t, 0, report.Summary.Disabled)
+	require.Len(t, report.Plugins, 1)
+	require.Equal(t, "demo", report.Plugins[0].ID)
+	require.NotNil(t, report.ConfigLoadError)
+	require.Contains(t, *report.ConfigLoadError, "broken.json")
+	require.Contains(t, *report.ConfigLoadError, "unexpected end of JSON input")
+	require.Equal(t, "config_load_failed", report.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/plugins"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.NotNil(t, report.ConfigLoadError)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "marketplace", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.NotNil(t, report.ConfigLoadError)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "text", "plugins"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Plugins")
+	require.Contains(t, out, "Config load")
+	require.Contains(t, out, "broken.json")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "plugins", "list", "extra"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
 	var errorReport cliErrorReport

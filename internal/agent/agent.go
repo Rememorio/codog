@@ -248,6 +248,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isMCPCommand(command) {
 			return renderMCPWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
 		}
+		if config.IsFileError(err) && isPluginsCommand(command) {
+			return renderPluginsWithConfigLoadError(os.Stdout, command, rest, originalArgs, err)
+		}
 		if config.IsFileError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -761,6 +764,15 @@ func isMCPCommand(command string) bool {
 	}
 }
 
+func isPluginsCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "plugin", "plugins", "marketplace", "/plugin", "/plugins", "/marketplace":
+		return true
+	default:
+		return false
+	}
+}
+
 func renderStatusWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
 	cfg, err := config.Default(overrides)
 	if err != nil {
@@ -889,6 +901,46 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 			}, format)
 		}
 		renderMCPListReport(out, format, buildMCPListReport(nil, buildMCPValidation(nil), strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind))
+		return nil
+	}
+	return renderCLIError(out, loadErr, format)
+}
+
+func renderPluginsWithConfigLoadError(out io.Writer, command string, rest []string, originalArgs []string, loadErr error) error {
+	pluginArgs := append([]string(nil), rest...)
+	if !argsHaveOutputFormat(pluginArgs) {
+		pluginArgs = injectGlobalOutputFormat("plugins", pluginArgs, requestedOutputFormat(originalArgs))
+	}
+	cleanArgs, format, err := stripJSONOnlyOutputFormat("plugins", pluginArgs)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	if len(cleanArgs) == 0 || cleanArgs[0] == "list" {
+		if len(cleanArgs) > 1 {
+			if option := firstFlagShapedArg(cleanArgs[1:]); option != "" {
+				return renderCLIError(out, unknownOptionError{
+					Kind:    "cli_parse",
+					Command: "plugins list",
+					Option:  option,
+					Usage:   "codog plugins list [--json|--output-format text|json]",
+				}, format)
+			}
+			return renderCLIError(out, unexpectedExtraArgsError{
+				Command: "plugins list",
+				Args:    append([]string(nil), cleanArgs[1:]...),
+				Usage:   "codog plugins list [--json|--output-format text|json]",
+			}, format)
+		}
+		workspace, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		manifests, err := plugins.Load(workspace)
+		if err != nil {
+			return err
+		}
+		report := buildPluginsListReport(manifests, strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind)
+		renderPluginsListReport(out, format, report)
 		return nil
 	}
 	return renderCLIError(out, loadErr, format)
@@ -4452,13 +4504,14 @@ type pluginsListSummary struct {
 }
 
 type pluginsListReport struct {
-	Kind            string              `json:"kind"`
-	Action          string              `json:"action"`
-	Status          string              `json:"status"`
-	Summary         pluginsListSummary  `json:"summary"`
-	Plugins         []plugins.Manifest  `json:"plugins"`
-	ConfigLoadError *string             `json:"config_load_error"`
-	LoadFailures    []map[string]string `json:"load_failures"`
+	Kind                string              `json:"kind"`
+	Action              string              `json:"action"`
+	Status              string              `json:"status"`
+	Summary             pluginsListSummary  `json:"summary"`
+	Plugins             []plugins.Manifest  `json:"plugins"`
+	ConfigLoadError     *string             `json:"config_load_error"`
+	ConfigLoadErrorKind string              `json:"config_load_error_kind,omitempty"`
+	LoadFailures        []map[string]string `json:"load_failures"`
 }
 
 type marketplaceSourceInfo struct {
@@ -4503,29 +4556,63 @@ func (a *App) listPlugins(format string) error {
 		return err
 	}
 	if format == "json" {
-		summary := pluginsListSummary{Total: len(manifests)}
-		for _, manifest := range manifests {
-			if manifest.Enabled {
-				summary.Enabled++
-			} else {
-				summary.Disabled++
-			}
-		}
-		data, _ := json.MarshalIndent(pluginsListReport{
-			Kind:            "plugin",
-			Action:          "list",
-			Status:          "ok",
-			Summary:         summary,
-			Plugins:         manifests,
-			ConfigLoadError: nil,
-			LoadFailures:    []map[string]string{},
-		}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		renderPluginsListReport(a.Out, format, buildPluginsListReport(manifests, "", ""))
 		return nil
 	}
 	data, _ := json.MarshalIndent(manifests, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func buildPluginsListReport(manifests []plugins.Manifest, configLoadError string, configLoadErrorKind string) pluginsListReport {
+	summary := pluginsListSummary{Total: len(manifests)}
+	for _, manifest := range manifests {
+		if manifest.Enabled {
+			summary.Enabled++
+		} else {
+			summary.Disabled++
+		}
+	}
+	status := "ok"
+	var loadError *string
+	if strings.TrimSpace(configLoadError) != "" {
+		status = "degraded"
+		value := strings.TrimSpace(configLoadError)
+		loadError = &value
+		if strings.TrimSpace(configLoadErrorKind) == "" {
+			configLoadErrorKind = "config_load_failed"
+		}
+	}
+	return pluginsListReport{
+		Kind:                "plugin",
+		Action:              "list",
+		Status:              status,
+		Summary:             summary,
+		Plugins:             append([]plugins.Manifest(nil), manifests...),
+		ConfigLoadError:     loadError,
+		ConfigLoadErrorKind: strings.TrimSpace(configLoadErrorKind),
+		LoadFailures:        []map[string]string{},
+	}
+}
+
+func renderPluginsListReport(out io.Writer, format string, report pluginsListReport) {
+	if format == "text" {
+		if report.ConfigLoadError == nil {
+			data, _ := json.MarshalIndent(report.Plugins, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return
+		}
+		fmt.Fprintln(out, "Plugins")
+		fmt.Fprintf(out, "  Status           %s\n", report.Status)
+		fmt.Fprintf(out, "  Total            %d\n", report.Summary.Total)
+		fmt.Fprintf(out, "  Enabled          %d\n", report.Summary.Enabled)
+		fmt.Fprintf(out, "  Disabled         %d\n", report.Summary.Disabled)
+		fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
+		fmt.Fprintln(out, "  Hint             Fix the listed config file or run `codog doctor` for details.")
+		return
+	}
+	data, _ := json.MarshalIndent(report, "", "  ")
+	fmt.Fprintln(out, string(data))
 }
 
 func (a *App) Marketplace(args []string) error {
@@ -18638,6 +18725,7 @@ func codogCapabilityFeatures() []string {
 		"permission_confirmation",
 		"policy_engine",
 		"plugin_marketplace",
+		"plugins_config_load_degraded",
 		"powershell_output_contract",
 		"prompt_cache_stats",
 		"project_memory",
