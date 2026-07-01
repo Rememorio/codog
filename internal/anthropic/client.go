@@ -121,7 +121,7 @@ func (o RateLimitOptions) Report() RateLimitReport {
 		MaxRetries:        o.MaxRetries,
 		InitialBackoffMS:  int(o.InitialBackoff / time.Millisecond),
 		MaxBackoffMS:      int(o.MaxBackoff / time.Millisecond),
-		RetryableStatuses: []int{429, 500, 502, 503, 504},
+		RetryableStatuses: []int{408, 409, 429, 500, 502, 503, 504},
 	}
 }
 
@@ -167,7 +167,7 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 		statusErr := c.anthropicStatusError(resp.Status, resp.StatusCode, string(data))
 		_ = resp.Body.Close()
 		lastErr = statusErr
-		if attempt < options.MaxRetries && retryableStatus(resp.StatusCode) {
+		if attempt < options.MaxRetries && retryableResponse(resp.StatusCode, string(data)) {
 			if sleepErr := c.sleep(ctx, backoffDelay(options, attempt, retryAfter)); sleepErr != nil {
 				return AssistantMessage{}, sleepErr
 			}
@@ -313,7 +313,7 @@ func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText
 		statusErr := fmt.Errorf("openai-compatible request failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
 		_ = resp.Body.Close()
 		lastErr = statusErr
-		if attempt < options.MaxRetries && retryableStatus(resp.StatusCode) {
+		if attempt < options.MaxRetries && retryableResponse(resp.StatusCode, string(data)) {
 			if sleepErr := c.sleep(ctx, backoffDelay(options, attempt, retryAfter)); sleepErr != nil {
 				return AssistantMessage{}, sleepErr
 			}
@@ -559,11 +559,25 @@ func normalizeRateLimit(options RateLimitOptions) RateLimitOptions {
 
 func retryableStatus(status int) bool {
 	switch status {
-	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false
 	}
+}
+
+func retryableResponse(status int, body string) bool {
+	if retryableStatus(status) {
+		return true
+	}
+	if status != http.StatusBadRequest {
+		return false
+	}
+	lowered := strings.ToLower(body)
+	return strings.Contains(lowered, "no parseable body") ||
+		strings.Contains(lowered, "connection reset") ||
+		strings.Contains(lowered, "broken pipe") ||
+		strings.Contains(lowered, "empty reply from server")
 }
 
 func backoffDelay(options RateLimitOptions, attempt int, retryAfter time.Duration) time.Duration {

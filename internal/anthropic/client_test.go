@@ -606,6 +606,79 @@ func TestClientRetriesRateLimitedRequests(t *testing.T) {
 	require.Contains(t, msg.Blocks[0].Text, "retry success")
 }
 
+func TestClientRetriesTransientGatewayBadRequest(t *testing.T) {
+	attempts := 0
+	success := mockanthropic.Server{Text: "gateway retry success"}.Handler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "HTTP 400 from backend (no parseable body)", http.StatusBadRequest)
+			return
+		}
+		success.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	var delays []time.Duration
+	client := NewWithRateLimit(server.URL, "test", "", RateLimitOptions{
+		MaxRetries:     2,
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     20 * time.Millisecond,
+	})
+	client.Sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "mock",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, attempts)
+	require.Len(t, delays, 1)
+	require.Contains(t, msg.Blocks[0].Text, "gateway retry success")
+}
+
+func TestClientDoesNotRetryOrdinaryBadRequest(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "invalid request payload", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewWithRateLimit(server.URL, "test", "", RateLimitOptions{
+		MaxRetries:     3,
+		InitialBackoff: 10 * time.Millisecond,
+		MaxBackoff:     20 * time.Millisecond,
+	})
+	client.Sleep = func(context.Context, time.Duration) error {
+		t.Fatal("ordinary bad requests must not be retried")
+		return nil
+	}
+
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "mock",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Equal(t, 1, attempts)
+	require.Contains(t, err.Error(), "invalid request payload")
+}
+
+func TestRateLimitReportIncludesRetryableClientConflictStatuses(t *testing.T) {
+	report := DefaultRateLimitOptions().Report()
+
+	require.Contains(t, report.RetryableStatuses, http.StatusRequestTimeout)
+	require.Contains(t, report.RetryableStatuses, http.StatusConflict)
+	require.Contains(t, report.RetryableStatuses, http.StatusTooManyRequests)
+}
+
 func writeOpenAISSE(t *testing.T, w http.ResponseWriter, payloads ...any) {
 	t.Helper()
 	for _, payload := range payloads {
