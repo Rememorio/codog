@@ -401,6 +401,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "stats":
 		return app.Usage(rest, overrides)
+	case "metrics":
+		return app.Metrics(rest, overrides)
 	case "insights":
 		return app.Insights(rest)
 	case "think-back", "thinkback", "thinkback-play":
@@ -14468,6 +14470,7 @@ func codogCapabilityFeatures() []string {
 		"lsp",
 		"mcp_client",
 		"mcp_server",
+		"metrics",
 		"mock_parity_harness",
 		"multi_agent",
 		"notebooks",
@@ -14587,6 +14590,7 @@ func builtInCommandNames() []string {
 		"max-turns",
 		"mcp",
 		"memory",
+		"metrics",
 		"mobile",
 		"mock-server",
 		"model",
@@ -17655,6 +17659,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/stats":
 		if err := a.Usage(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/metrics":
+		if err := a.Metrics(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/insights":
@@ -23443,6 +23451,358 @@ func renderCacheReport(out io.Writer, report cacheReport) {
 	}
 }
 
+type metricsRequest struct {
+	Format    string
+	Limit     int
+	Overrides config.FlagOverrides
+}
+
+type metricsReport struct {
+	Kind             string                 `json:"kind"`
+	Action           string                 `json:"action"`
+	Status           string                 `json:"status"`
+	Workspace        string                 `json:"workspace,omitempty"`
+	Model            string                 `json:"model,omitempty"`
+	Session          *metricsSessionReport  `json:"session,omitempty"`
+	WorkspaceMetrics metricsWorkspaceReport `json:"workspace_metrics"`
+	TopTools         []insights.ToolCount   `json:"top_tools,omitempty"`
+	RecentSessions   []metricsRecentSession `json:"recent_sessions,omitempty"`
+	Message          string                 `json:"message,omitempty"`
+}
+
+type metricsSessionReport struct {
+	ID                       string  `json:"id"`
+	MessageCount             int     `json:"message_count"`
+	UsageRecords             int     `json:"usage_records"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	TotalTokens              int     `json:"total_tokens"`
+	EstimatedUSD             float64 `json:"estimated_usd"`
+	TokenSource              string  `json:"token_source"`
+	ToolUses                 int     `json:"tool_uses"`
+	ToolResults              int     `json:"tool_results"`
+	ToolErrors               int     `json:"tool_errors"`
+	CacheHitRatio            float64 `json:"cache_hit_ratio"`
+}
+
+type metricsWorkspaceReport struct {
+	SessionCount             int     `json:"session_count"`
+	MessageCount             int     `json:"message_count"`
+	UserMessages             int     `json:"user_messages"`
+	AssistantMessages        int     `json:"assistant_messages"`
+	PromptCount              int     `json:"prompt_count"`
+	ToolUses                 int     `json:"tool_uses"`
+	UsageRecords             int     `json:"usage_records"`
+	InputTokens              int     `json:"input_tokens"`
+	OutputTokens             int     `json:"output_tokens"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	TotalTokens              int     `json:"total_tokens"`
+	EstimatedUSD             float64 `json:"estimated_usd"`
+	TokenSource              string  `json:"token_source,omitempty"`
+	AverageTokensPerSession  float64 `json:"average_tokens_per_session"`
+	AverageTokensPerPrompt   float64 `json:"average_tokens_per_prompt"`
+}
+
+type metricsRecentSession struct {
+	ID           string `json:"id"`
+	Messages     int    `json:"messages"`
+	Prompts      int    `json:"prompts"`
+	ToolUses     int    `json:"tool_uses"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	TotalTokens  int    `json:"total_tokens"`
+}
+
+func (a *App) Metrics(args []string, overrides config.FlagOverrides) error {
+	if a.Sessions == nil {
+		return errors.New("session store is not configured")
+	}
+	req, err := parseMetricsArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	report, err := a.buildMetricsReport(req)
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderMetricsReport(a.Out, report)
+	return nil
+}
+
+func parseMetricsArgs(args []string, overrides config.FlagOverrides) (metricsRequest, error) {
+	req := metricsRequest{Format: "text", Limit: 5, Overrides: overrides}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("metrics output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("metrics session id is required")
+			}
+			req.Overrides.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.Overrides.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("metrics resume session id is required")
+			}
+			req.Overrides.Resume = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.Overrides.Resume = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("metrics limit is required")
+			}
+			limit, err := parsePositiveInt(args[index], "metrics limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		case strings.HasPrefix(arg, "--limit="):
+			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "metrics limit")
+			if err != nil {
+				return req, err
+			}
+			req.Limit = limit
+		default:
+			return req, fmt.Errorf("unknown metrics argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "metrics"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func (a *App) buildMetricsReport(req metricsRequest) (metricsReport, error) {
+	insight, err := insights.Build(a.Sessions, insights.Options{Limit: req.Limit})
+	if err != nil {
+		return metricsReport{}, err
+	}
+	allUsages, usageRecords, err := a.workspaceUsageValues()
+	if err != nil {
+		return metricsReport{}, err
+	}
+	workspace := metricsWorkspaceFromInsights(insight, allUsages, usageRecords, a.Config.Model)
+	report := metricsReport{
+		Kind:             "metrics",
+		Action:           "show",
+		Status:           "ok",
+		Workspace:        a.Workspace,
+		Model:            a.Config.Model,
+		WorkspaceMetrics: workspace,
+		TopTools:         append([]insights.ToolCount(nil), insight.TopTools...),
+		RecentSessions:   metricsRecentSessions(insight.RecentSessions),
+	}
+	sess, err := a.metricsSession(req.Overrides)
+	if err != nil {
+		return metricsReport{}, err
+	}
+	if sess == nil {
+		report.Message = "No saved sessions were found. Run a prompt or REPL turn to collect session metrics."
+		return report, nil
+	}
+	sessionReport, err := a.metricsForSession(sess)
+	if err != nil {
+		return metricsReport{}, err
+	}
+	report.Session = &sessionReport
+	return report, nil
+}
+
+func (a *App) workspaceUsageValues() ([]anthropic.Usage, int, error) {
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		return nil, 0, err
+	}
+	usages := []anthropic.Usage{}
+	records := 0
+	for _, sess := range sessions {
+		entries, err := a.Sessions.Usage(sess.ID)
+		if err != nil {
+			return nil, 0, err
+		}
+		records += len(entries)
+		for _, entry := range entries {
+			usages = append(usages, entry.Usage)
+		}
+	}
+	return usages, records, nil
+}
+
+func metricsWorkspaceFromInsights(report insights.Report, actual []anthropic.Usage, usageRecords int, model string) metricsWorkspaceReport {
+	out := metricsWorkspaceReport{
+		SessionCount:      report.Sessions,
+		MessageCount:      report.Messages,
+		UserMessages:      report.UserMessages,
+		AssistantMessages: report.AssistantMessages,
+		PromptCount:       report.Prompts,
+		ToolUses:          report.ToolUses,
+		UsageRecords:      usageRecords,
+		InputTokens:       report.Usage.Input,
+		OutputTokens:      report.Usage.Output,
+	}
+	if summary, ok := usage.ActualSummary(actual, model); ok {
+		out.InputTokens = summary.InputTokens
+		out.OutputTokens = summary.OutputTokens
+		out.CacheCreationInputTokens = summary.CacheCreationInputTokens
+		out.CacheReadInputTokens = summary.CacheReadInputTokens
+		out.TotalTokens = summary.TotalTokens
+		out.EstimatedUSD = summary.EstimatedUSD
+		out.TokenSource = summary.Source
+	} else {
+		out.CacheCreationInputTokens = report.Usage.CacheCreation
+		out.CacheReadInputTokens = report.Usage.CacheRead
+		out.TotalTokens = report.Usage.Input + report.Usage.Output + report.Usage.CacheCreation + report.Usage.CacheRead
+		if out.TotalTokens > 0 {
+			out.TokenSource = "actual"
+		}
+	}
+	if report.Sessions > 0 {
+		out.AverageTokensPerSession = roundedRatio(out.TotalTokens, report.Sessions)
+	}
+	if report.Prompts > 0 {
+		out.AverageTokensPerPrompt = roundedRatio(out.TotalTokens, report.Prompts)
+	}
+	return out
+}
+
+func metricsRecentSessions(sessions []insights.SessionSummary) []metricsRecentSession {
+	out := make([]metricsRecentSession, 0, len(sessions))
+	for _, sess := range sessions {
+		total := sess.Usage.Input + sess.Usage.Output + sess.Usage.CacheCreation + sess.Usage.CacheRead
+		out = append(out, metricsRecentSession{
+			ID:           sess.ID,
+			Messages:     sess.Messages,
+			Prompts:      sess.Prompts,
+			ToolUses:     sess.ToolUses,
+			InputTokens:  sess.Usage.Input,
+			OutputTokens: sess.Usage.Output,
+			TotalTokens:  total,
+		})
+	}
+	return out
+}
+
+func (a *App) metricsSession(overrides config.FlagOverrides) (*session.Session, error) {
+	if strings.TrimSpace(overrides.SessionID) != "" || strings.TrimSpace(overrides.Resume) != "" {
+		return a.openSession(overrides)
+	}
+	latest, err := a.Sessions.LatestID()
+	if err != nil {
+		if errors.Is(err, session.ErrNoSessions) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return a.openSession(config.FlagOverrides{SessionID: latest})
+}
+
+func (a *App) metricsForSession(sess *session.Session) (metricsSessionReport, error) {
+	actual, _ := a.sessionUsageValues(sess.ID)
+	usageReport := usage.BuildReportWithUsage(sess.ID, a.Config.Model, sess.Messages, actual)
+	entries, err := a.Sessions.Usage(sess.ID)
+	if err != nil {
+		return metricsSessionReport{}, err
+	}
+	cacheTotal := usageReport.Summary.CacheCreationInputTokens + usageReport.Summary.CacheReadInputTokens
+	cacheDenominator := usageReport.Summary.InputTokens + cacheTotal
+	cacheHitRatio := 0.0
+	if cacheDenominator > 0 {
+		cacheHitRatio = roundedRatio(usageReport.Summary.CacheReadInputTokens, cacheDenominator)
+	}
+	return metricsSessionReport{
+		ID:                       sess.ID,
+		MessageCount:             len(sess.Messages),
+		UsageRecords:             len(entries),
+		InputTokens:              usageReport.Summary.InputTokens,
+		OutputTokens:             usageReport.Summary.OutputTokens,
+		CacheCreationInputTokens: usageReport.Summary.CacheCreationInputTokens,
+		CacheReadInputTokens:     usageReport.Summary.CacheReadInputTokens,
+		TotalTokens:              usageReport.Summary.TotalTokens,
+		EstimatedUSD:             usageReport.Summary.EstimatedUSD,
+		TokenSource:              usageReport.Summary.Source,
+		ToolUses:                 usageReport.ToolUse.ToolUses,
+		ToolResults:              usageReport.ToolUse.ToolResults,
+		ToolErrors:               usageReport.ToolUse.Errors,
+		CacheHitRatio:            cacheHitRatio,
+	}, nil
+}
+
+func roundedRatio(numerator int, denominator int) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return math.Round((float64(numerator)/float64(denominator))*10000) / 10000
+}
+
+func renderMetricsReport(out io.Writer, report metricsReport) {
+	fmt.Fprintln(out, "Metrics")
+	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
+	fmt.Fprintf(out, "  Model            %s\n", emptyAsNone(report.Model))
+	fmt.Fprintf(out, "  Sessions         %d\n", report.WorkspaceMetrics.SessionCount)
+	fmt.Fprintf(out, "  Messages         %d user=%d assistant=%d\n", report.WorkspaceMetrics.MessageCount, report.WorkspaceMetrics.UserMessages, report.WorkspaceMetrics.AssistantMessages)
+	fmt.Fprintf(out, "  Prompts          %d\n", report.WorkspaceMetrics.PromptCount)
+	fmt.Fprintf(out, "  Tool uses        %d\n", report.WorkspaceMetrics.ToolUses)
+	fmt.Fprintf(out, "  Usage records    %d\n", report.WorkspaceMetrics.UsageRecords)
+	fmt.Fprintf(out, "  Tokens           input=%d output=%d cache_create=%d cache_read=%d total=%d\n",
+		report.WorkspaceMetrics.InputTokens,
+		report.WorkspaceMetrics.OutputTokens,
+		report.WorkspaceMetrics.CacheCreationInputTokens,
+		report.WorkspaceMetrics.CacheReadInputTokens,
+		report.WorkspaceMetrics.TotalTokens,
+	)
+	fmt.Fprintf(out, "  Estimated USD    %.5f\n", report.WorkspaceMetrics.EstimatedUSD)
+	if report.WorkspaceMetrics.AverageTokensPerSession != 0 || report.WorkspaceMetrics.AverageTokensPerPrompt != 0 {
+		fmt.Fprintf(out, "  Averages         tokens/session=%.2f tokens/prompt=%.2f\n", report.WorkspaceMetrics.AverageTokensPerSession, report.WorkspaceMetrics.AverageTokensPerPrompt)
+	}
+	if report.Session != nil {
+		fmt.Fprintln(out, "Current session")
+		fmt.Fprintf(out, "  ID               %s\n", report.Session.ID)
+		fmt.Fprintf(out, "  Messages         %d\n", report.Session.MessageCount)
+		fmt.Fprintf(out, "  Usage records    %d\n", report.Session.UsageRecords)
+		fmt.Fprintf(out, "  Tokens           input=%d output=%d cache_create=%d cache_read=%d total=%d\n",
+			report.Session.InputTokens,
+			report.Session.OutputTokens,
+			report.Session.CacheCreationInputTokens,
+			report.Session.CacheReadInputTokens,
+			report.Session.TotalTokens,
+		)
+		fmt.Fprintf(out, "  Source           %s\n", emptyAsNone(report.Session.TokenSource))
+		fmt.Fprintf(out, "  Cache hit ratio  %.2f%%\n", report.Session.CacheHitRatio*100)
+		fmt.Fprintf(out, "  Tool use         calls=%d results=%d errors=%d\n", report.Session.ToolUses, report.Session.ToolResults, report.Session.ToolErrors)
+	}
+	if len(report.TopTools) != 0 {
+		fmt.Fprintln(out, "Top tools")
+		for _, tool := range report.TopTools {
+			fmt.Fprintf(out, "  %s             %d\n", tool.Name, tool.Count)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 type insightsRequest struct {
 	Format string
 	Limit  int
@@ -25290,7 +25650,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
-		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
@@ -25740,6 +26100,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "metrics":
+		return localCommandHelpSpec(
+			"metrics",
+			"metrics",
+			"codog metrics [--session ID|--resume ID|latest] [--limit N] [--output-format text|json]",
+			"Metrics\n\nUsage:\n  codog metrics [--session ID|--resume ID|latest] [--limit N] [--output-format text|json]\n\nShows local workspace and session performance and usage metrics from JSONL sessions, including token totals, cache hit ratio, top tools, and recent sessions.\n",
+			[]string{"workspace_metrics", "session", "top_tools", "recent_sessions"},
+			[]string{"ok", "error"},
+			false,
+		), true
 	case "tokens":
 		return localCommandHelpSpec(
 			"tokens",
@@ -26066,6 +26436,7 @@ Usage:
   %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] metrics [--session ID|--resume ID|latest] [--limit N] [--json|--output-format text|json]
   %s [flags] insights [--limit N] [--json|--output-format text|json]
   %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]

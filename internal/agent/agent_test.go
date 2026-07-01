@@ -199,6 +199,18 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, *report.MutatesWorkspace)
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"metrics", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "metrics", report.Topic)
+	require.Equal(t, "metrics", report.Command)
+	require.Contains(t, report.Help, "usage metrics")
+	require.Contains(t, report.OutputFields, "workspace_metrics")
+	require.NotNil(t, report.LocalOnly)
+	require.True(t, *report.LocalOnly)
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"reset", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "reset", report.Topic)
@@ -314,6 +326,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "profile",
 		},
 		{
+			name:  "metrics local help",
+			args:  []string{"--config", configPath, "metrics", "--help", "--output-format", "json"},
+			topic: "metrics",
+		},
+		{
 			name:  "reset local help",
 			args:  []string{"--config", configPath, "reset", "--help", "--output-format", "json"},
 			topic: "reset",
@@ -394,6 +411,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "budget")
 	require.Contains(t, report.Commands, "capabilities")
 	require.Contains(t, report.Commands, "language")
+	require.Contains(t, report.Commands, "metrics")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
@@ -405,6 +423,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "interface_language")
 	require.Contains(t, report.Features, "mcp_server")
+	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
@@ -3599,6 +3618,27 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Equal(t, "actual", cache.Source)
 	out.Reset()
 
+	require.NoError(t, app.Metrics([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
+	var metrics metricsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &metrics))
+	require.Equal(t, "metrics", metrics.Kind)
+	require.Equal(t, "show", metrics.Action)
+	require.NotNil(t, metrics.Session)
+	require.Equal(t, "usage-session", metrics.Session.ID)
+	require.Equal(t, 1, metrics.Session.UsageRecords)
+	require.Equal(t, 71, metrics.Session.TotalTokens)
+	require.Equal(t, "actual", metrics.Session.TokenSource)
+	require.Equal(t, 1, metrics.Session.ToolUses)
+	require.Equal(t, 1, metrics.Session.ToolResults)
+	require.Equal(t, 0.0667, metrics.Session.CacheHitRatio)
+	require.Equal(t, 1, metrics.WorkspaceMetrics.SessionCount)
+	require.Equal(t, 71, metrics.WorkspaceMetrics.TotalTokens)
+	require.Equal(t, 1, metrics.WorkspaceMetrics.UsageRecords)
+	require.NotEmpty(t, metrics.TopTools)
+	require.Equal(t, "read_file", metrics.TopTools[0].Name)
+	require.True(t, commandAcceptsGlobalOutputFormat("metrics"))
+	out.Reset()
+
 	require.NoError(t, app.Summary([]string{"--session", "usage-session", "--json"}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), `"kind": "summary"`)
 	require.Contains(t, out.String(), `"session_id": "usage-session"`)
@@ -3626,6 +3666,13 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Cache created    6")
 	require.Contains(t, out.String(), "Cache read       4")
 	require.Contains(t, out.String(), "Hit ratio        6.67%")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/metrics --limit 1", sess))
+	require.Contains(t, out.String(), "Metrics")
+	require.Contains(t, out.String(), "Current session")
+	require.Contains(t, out.String(), "ID               usage-session")
+	require.Contains(t, out.String(), "Tool use         calls=1 results=1 errors=0")
 	out.Reset()
 
 	require.NoError(t, app.Insights([]string{"--json"}))
