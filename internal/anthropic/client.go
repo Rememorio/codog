@@ -159,6 +159,7 @@ type openAIMessage struct {
 	Content    string           `json:"content,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	IsError    *bool            `json:"is_error,omitempty"`
 }
 
 type openAIToolCall struct {
@@ -235,8 +236,9 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 	if strings.TrimSpace(req.System) != "" {
 		messages = append(messages, openAIMessage{Role: "system", Content: strings.TrimSpace(req.System)})
 	}
+	wireModel := modelrouting.WireModelForBaseURL(req.Model, baseURL)
 	for _, msg := range req.Messages {
-		converted, err := openAIMessagesFromAnthropic(msg)
+		converted, err := openAIMessagesFromAnthropic(msg, wireModel)
 		if err != nil {
 			return openAIRequest{}, err
 		}
@@ -254,7 +256,7 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 		})
 	}
 	wire := openAIRequest{
-		Model:         modelrouting.WireModelForBaseURL(req.Model, baseURL),
+		Model:         wireModel,
 		Messages:      messages,
 		Tools:         tools,
 		Stream:        true,
@@ -265,7 +267,7 @@ func openAIRequestFromAnthropic(req Request, baseURL string) (openAIRequest, err
 	return wire, nil
 }
 
-func openAIMessagesFromAnthropic(msg Message) ([]openAIMessage, error) {
+func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, error) {
 	role := strings.TrimSpace(msg.Role)
 	if role == "" {
 		return nil, errors.New("message role is required")
@@ -288,7 +290,12 @@ func openAIMessagesFromAnthropic(msg Message) ([]openAIMessage, error) {
 				text.WriteString(block.Text)
 			case "tool_result":
 				flushText()
-				out = append(out, openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: block.Content})
+				toolMessage := openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: block.Content}
+				if !modelrouting.ModelRejectsIsErrorField(model) {
+					isError := block.IsError
+					toolMessage.IsError = &isError
+				}
+				out = append(out, toolMessage)
 			}
 		}
 		flushText()

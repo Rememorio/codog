@@ -148,6 +148,36 @@ func TestOpenAIWireModelPreservesNamespacedModelForCustomGateway(t *testing.T) {
 	require.Equal(t, "openai/gpt-4.1-mini", wire.Model)
 }
 
+func TestOpenAICompatibleToolResultsIncludeIsErrorForNonKimiModels(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "gpt-4o",
+		MaxTokens: 64,
+		Messages: []Message{
+			ToolResultMessage("call_1", "failed", true),
+			ToolResultMessage("call_2", "ok", false),
+		},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Len(t, wire.Messages, 2)
+	require.NotNil(t, wire.Messages[0].IsError)
+	require.True(t, *wire.Messages[0].IsError)
+	require.NotNil(t, wire.Messages[1].IsError)
+	require.False(t, *wire.Messages[1].IsError)
+}
+
+func TestOpenAICompatibleToolResultsOmitIsErrorForKimiModels(t *testing.T) {
+	for _, model := range []string{"kimi", "kimi-k2.5", "kimi/kimi-k2.5"} {
+		wire, err := openAIRequestFromAnthropic(Request{
+			Model:     model,
+			MaxTokens: 64,
+			Messages:  []Message{ToolResultMessage("call_1", "failed", true)},
+		}, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+		require.NoError(t, err)
+		require.Len(t, wire.Messages, 1)
+		require.Nil(t, wire.Messages[0].IsError, model)
+	}
+}
+
 func TestClientStreamsOpenAICompatibleToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any

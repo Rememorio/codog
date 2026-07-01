@@ -116,6 +116,14 @@ func TokenLimitForModel(model string) (TokenLimit, bool) {
 	}
 }
 
+func ModelRejectsIsErrorField(model string) bool {
+	canonical := strings.ToLower(ResolveAlias(model))
+	if slash := strings.LastIndex(canonical, "/"); slash >= 0 {
+		canonical = canonical[slash+1:]
+	}
+	return canonical == "kimi" || strings.HasPrefix(canonical, "kimi-")
+}
+
 func shouldStripOpenAIPrefix(baseURL string) bool {
 	normalized := normalizeBaseURL(baseURL)
 	if normalized == "" || strings.EqualFold(normalized, normalizeBaseURL(DefaultOpenAIBaseURL)) {

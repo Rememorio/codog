@@ -58,3 +58,16 @@ func TestWireModelForBaseURLStripsRoutingPrefixes(t *testing.T) {
 	require.Equal(t, "kimi-k2.5", WireModelForBaseURL("kimi/kimi-k2.5", DefaultDashScopeBaseURL))
 	require.Equal(t, "vendor/model", WireModelForBaseURL("vendor/model", "https://gateway.example/v1"))
 }
+
+func TestModelRejectsIsErrorFieldOnlyForKimiFamily(t *testing.T) {
+	require.True(t, ModelRejectsIsErrorField("kimi"))
+	require.True(t, ModelRejectsIsErrorField("kimi-k2.5"))
+	require.True(t, ModelRejectsIsErrorField("kimi-k1.5"))
+	require.True(t, ModelRejectsIsErrorField("dashscope/kimi-k2.5"))
+	require.True(t, ModelRejectsIsErrorField("moonshot/kimi-moonshot"))
+	require.True(t, ModelRejectsIsErrorField("KIMI-K2.5"))
+
+	require.False(t, ModelRejectsIsErrorField("gpt-4o"))
+	require.False(t, ModelRejectsIsErrorField("qwen/qwen-plus"))
+	require.False(t, ModelRejectsIsErrorField("claude-sonnet-4-6"))
+}
