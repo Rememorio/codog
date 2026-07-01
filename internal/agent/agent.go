@@ -17970,6 +17970,7 @@ func codogCapabilityFeatures() []string {
 		"stale_branch_guard",
 		"team_watch",
 		"telemetry_preferences",
+		"typed_task_packets",
 		"updater",
 		"voice_listen",
 		"worker_startup_no_evidence",

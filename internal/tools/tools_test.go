@@ -1974,6 +1974,9 @@ func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"task_packet": {`)
 	require.Contains(t, out, `"objective": "Update docs"`)
+	require.Contains(t, out, `"scope": "custom"`)
+	require.Contains(t, out, `"scope_path": "README only"`)
+	require.Contains(t, out, `"resolved_scope": {`)
 	var payload struct {
 		TaskID string `json:"task_id"`
 	}
@@ -1983,6 +1986,46 @@ func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
 		logs, err := background.NewStore(configHome).Logs(payload.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "shim:prompt") && strings.Contains(logs, "Update docs")
 	}, 5*time.Second, 50*time.Millisecond)
+}
+
+func TestRunTaskPacketToolAcceptsRichPacket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "internal", "taskpacket"), 0o755))
+	script := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'rich:%s\\n' \"$*\"\n"), 0o755))
+
+	out, err := RunTaskPacketTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{
+		"objective":"Implement packet validation",
+		"scope":"module",
+		"scope_path":"internal/taskpacket",
+		"repo":"codog",
+		"worktree":"/tmp/codog-wt",
+		"branch_policy":"main only",
+		"acceptance_criteria":["validation rejects empty required groups"],
+		"resources":[{"kind":"file","value":"internal/taskpacket/taskpacket.go"}],
+		"model":"claude-test",
+		"provider":"anthropic",
+		"permission_profile":"workspace-write",
+		"commit_policy":"single verified commit",
+		"reporting_targets":["owner"],
+		"recovery_policy":"retry once",
+		"verification_plan":["go test ./internal/taskpacket"]
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"scope": "module"`)
+	require.Contains(t, out, `"scope_path": "internal/taskpacket"`)
+	require.Contains(t, out, `"acceptance_criteria": [`)
+	require.Contains(t, out, `"resources": [`)
+	require.Contains(t, out, `"reporting_targets": [`)
+	require.Contains(t, out, `"recovery_policy": "retry once"`)
+	require.Contains(t, out, `"verification_plan": [`)
+	require.Contains(t, out, `"absolute_path": "`)
+	require.Contains(t, out, "Acceptance criteria:")
+	require.Contains(t, out, "Verification plan:")
 }
 
 func TestWorkerToolsManagePromptWorker(t *testing.T) {

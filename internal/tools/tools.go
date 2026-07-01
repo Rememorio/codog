@@ -41,6 +41,7 @@ import (
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
 	"github.com/Rememorio/codog/internal/skills"
+	"github.com/Rememorio/codog/internal/taskpacket"
 	"github.com/Rememorio/codog/internal/team"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/undo"
@@ -5734,17 +5735,6 @@ type RunTaskPacketTool struct {
 	Executable string
 }
 
-type taskPacketInput struct {
-	Objective         string   `json:"objective"`
-	Scope             string   `json:"scope"`
-	Repo              string   `json:"repo"`
-	BranchPolicy      string   `json:"branch_policy"`
-	AcceptanceTests   []string `json:"acceptance_tests"`
-	CommitPolicy      string   `json:"commit_policy"`
-	ReportingContract string   `json:"reporting_contract"`
-	EscalationPolicy  string   `json:"escalation_policy"`
-}
-
 func (RunTaskPacketTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "run_task_packet",
@@ -5753,24 +5743,42 @@ func (RunTaskPacketTool) Definition() anthropic.ToolDefinition {
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"objective":          map[string]any{"type": "string"},
-				"scope":              map[string]any{"type": "string"},
-				"repo":               map[string]any{"type": "string"},
-				"branch_policy":      map[string]any{"type": "string"},
-				"acceptance_tests":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"objective":           map[string]any{"type": "string"},
+				"scope":               map[string]any{"type": "string"},
+				"scope_path":          map[string]any{"type": "string"},
+				"repo":                map[string]any{"type": "string"},
+				"worktree":            map[string]any{"type": "string"},
+				"branch_policy":       map[string]any{"type": "string"},
+				"acceptance_tests":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"acceptance_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"resources": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"kind":  map[string]any{"type": "string"},
+							"value": map[string]any{"type": "string"},
+						},
+						"required": []string{"kind", "value"},
+					},
+				},
+				"model":              map[string]any{"type": "string"},
+				"provider":           map[string]any{"type": "string"},
+				"permission_profile": map[string]any{"type": "string"},
 				"commit_policy":      map[string]any{"type": "string"},
 				"reporting_contract": map[string]any{"type": "string"},
+				"reporting_targets":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				"escalation_policy":  map[string]any{"type": "string"},
+				"recovery_policy":    map[string]any{"type": "string"},
+				"verification_plan":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
 			"required": []string{
 				"objective",
 				"scope",
 				"repo",
 				"branch_policy",
-				"acceptance_tests",
 				"commit_policy",
-				"reporting_contract",
-				"escalation_policy",
 			},
 		},
 	}
@@ -5779,15 +5787,18 @@ func (RunTaskPacketTool) Definition() anthropic.ToolDefinition {
 func (RunTaskPacketTool) Permission() Permission { return PermissionDanger }
 
 func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
-	var packet taskPacketInput
-	if err := json.Unmarshal(input, &packet); err != nil {
+	packet, err := taskpacket.Parse(input)
+	if err != nil {
 		return "", err
 	}
-	if err := validateTaskPacket(packet); err != nil {
+	if err := taskpacket.Validate(packet); err != nil {
+		return "", err
+	}
+	resolvedScope, err := taskpacket.ResolveScope(t.Workspace, packet)
+	if err != nil {
 		return "", err
 	}
 	executable := strings.TrimSpace(t.Executable)
-	var err error
 	if executable == "" {
 		executable, err = os.Executable()
 		if err != nil {
@@ -5811,65 +5822,92 @@ func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (
 		return "", err
 	}
 	return pretty(map[string]any{
-		"task_id":     task.ID,
-		"status":      task.Status,
-		"prompt":      prompt,
-		"description": packet.Objective,
-		"task_packet": packet,
-		"created_at":  task.StartedAt,
-		"task":        task,
+		"task_id":        task.ID,
+		"status":         task.Status,
+		"prompt":         prompt,
+		"description":    packet.Objective,
+		"task_packet":    packet,
+		"resolved_scope": resolvedScope,
+		"created_at":     task.StartedAt,
+		"task":           task,
 	}), nil
 }
 
-func validateTaskPacket(packet taskPacketInput) error {
-	required := map[string]string{
-		"objective":          packet.Objective,
-		"scope":              packet.Scope,
-		"repo":               packet.Repo,
-		"branch_policy":      packet.BranchPolicy,
-		"commit_policy":      packet.CommitPolicy,
-		"reporting_contract": packet.ReportingContract,
-		"escalation_policy":  packet.EscalationPolicy,
-	}
-	for field, value := range required {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s is required", field)
-		}
-	}
-	if len(packet.AcceptanceTests) == 0 {
-		return errors.New("acceptance_tests is required")
-	}
-	for index, test := range packet.AcceptanceTests {
-		if strings.TrimSpace(test) == "" {
-			return fmt.Errorf("acceptance_tests[%d] is empty", index)
-		}
-	}
-	return nil
-}
-
-func renderTaskPacketPrompt(packet taskPacketInput) string {
+func renderTaskPacketPrompt(packet taskpacket.Packet) string {
 	var builder strings.Builder
 	builder.WriteString("Execute this structured task packet.\n\n")
 	builder.WriteString("Objective:\n")
 	builder.WriteString(strings.TrimSpace(packet.Objective))
 	builder.WriteString("\n\nScope:\n")
-	builder.WriteString(strings.TrimSpace(packet.Scope))
+	builder.WriteString(string(packet.Scope))
+	if strings.TrimSpace(packet.ScopePath) != "" {
+		builder.WriteString(" ")
+		builder.WriteString(strings.TrimSpace(packet.ScopePath))
+	}
 	builder.WriteString("\n\nRepository:\n")
 	builder.WriteString(strings.TrimSpace(packet.Repo))
+	if strings.TrimSpace(packet.Worktree) != "" {
+		builder.WriteString("\n\nWorktree:\n")
+		builder.WriteString(strings.TrimSpace(packet.Worktree))
+	}
 	builder.WriteString("\n\nBranch policy:\n")
 	builder.WriteString(strings.TrimSpace(packet.BranchPolicy))
-	builder.WriteString("\n\nAcceptance tests:\n")
-	for _, test := range packet.AcceptanceTests {
-		builder.WriteString("- ")
-		builder.WriteString(strings.TrimSpace(test))
-		builder.WriteString("\n")
+	if len(packet.AcceptanceTests) > 0 {
+		builder.WriteString("\n\nAcceptance tests:\n")
+		for _, test := range packet.AcceptanceTests {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(test))
+			builder.WriteString("\n")
+		}
+	}
+	if len(packet.AcceptanceCriteria) > 0 {
+		builder.WriteString("\n\nAcceptance criteria:\n")
+		for _, criterion := range packet.AcceptanceCriteria {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(criterion))
+			builder.WriteString("\n")
+		}
+	}
+	if len(packet.Resources) > 0 {
+		builder.WriteString("\n\nResources:\n")
+		for _, resource := range packet.Resources {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(resource.Kind))
+			builder.WriteString(": ")
+			builder.WriteString(strings.TrimSpace(resource.Value))
+			builder.WriteString("\n")
+		}
 	}
 	builder.WriteString("\nCommit policy:\n")
 	builder.WriteString(strings.TrimSpace(packet.CommitPolicy))
-	builder.WriteString("\n\nReporting contract:\n")
-	builder.WriteString(strings.TrimSpace(packet.ReportingContract))
-	builder.WriteString("\n\nEscalation policy:\n")
-	builder.WriteString(strings.TrimSpace(packet.EscalationPolicy))
+	if strings.TrimSpace(packet.ReportingContract) != "" {
+		builder.WriteString("\n\nReporting contract:\n")
+		builder.WriteString(strings.TrimSpace(packet.ReportingContract))
+	}
+	if len(packet.ReportingTargets) > 0 {
+		builder.WriteString("\n\nReporting targets:\n")
+		for _, target := range packet.ReportingTargets {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(target))
+			builder.WriteString("\n")
+		}
+	}
+	if strings.TrimSpace(packet.EscalationPolicy) != "" {
+		builder.WriteString("\n\nEscalation policy:\n")
+		builder.WriteString(strings.TrimSpace(packet.EscalationPolicy))
+	}
+	if strings.TrimSpace(packet.RecoveryPolicy) != "" {
+		builder.WriteString("\n\nRecovery policy:\n")
+		builder.WriteString(strings.TrimSpace(packet.RecoveryPolicy))
+	}
+	if len(packet.VerificationPlan) > 0 {
+		builder.WriteString("\n\nVerification plan:\n")
+		for _, step := range packet.VerificationPlan {
+			builder.WriteString("- ")
+			builder.WriteString(strings.TrimSpace(step))
+			builder.WriteString("\n")
+		}
+	}
 	return builder.String()
 }
 
