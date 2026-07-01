@@ -9902,9 +9902,15 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	}
 
 	require.NoError(t, app.MCP(context.Background(), []string{"list"}))
-	require.Contains(t, out.String(), `"status": "ok"`)
-	require.Contains(t, out.String(), `"tool_count": 1`)
-	require.Contains(t, out.String(), `"tools": [`)
+	require.Contains(t, out.String(), "MCP")
+	require.Contains(t, out.String(), "Working directory")
+	require.Contains(t, out.String(), "Configured servers 1")
+	require.Contains(t, out.String(), "Total entries     1")
+	require.Contains(t, out.String(), "Invalid entries   0")
+	require.Contains(t, out.String(), "test")
+	require.Contains(t, out.String(), "stdio")
+	require.Contains(t, out.String(), "ok")
+	require.Contains(t, out.String(), "1 tool")
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"--output-format", "json", "list"}))
@@ -9913,6 +9919,7 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Equal(t, "mcp", listReport.Kind)
 	require.Equal(t, "list", listReport.Action)
 	require.Equal(t, "ok", listReport.Status)
+	require.NotEmpty(t, listReport.WorkingDirectory)
 	require.Equal(t, 1, listReport.ServerCount)
 	require.Equal(t, "test", listReport.Servers[0].Name)
 	require.Equal(t, "ok", listReport.Servers[0].Status)
@@ -10018,12 +10025,36 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 	}
 
 	require.NoError(t, app.MCP(context.Background(), nil))
-	require.Contains(t, out.String(), "No MCP servers configured.")
+	require.Contains(t, out.String(), "MCP")
+	require.Contains(t, out.String(), "Configured servers 0")
+	require.Contains(t, out.String(), "Total entries     0")
+	require.Contains(t, out.String(), "No valid MCP servers configured.")
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"--output-format", "json"}))
 	require.Contains(t, out.String(), `"kind": "mcp"`)
 	require.Contains(t, out.String(), `"server_count": 0`)
+	require.Contains(t, out.String(), `"working_directory":`)
+}
+
+func TestMCPListTextReportsInvalidServers(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"missing": {}}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"list"}))
+	require.Contains(t, out.String(), "MCP")
+	require.Contains(t, out.String(), "Status           degraded")
+	require.Contains(t, out.String(), "Configured servers 0")
+	require.Contains(t, out.String(), "Total entries     1")
+	require.Contains(t, out.String(), "Invalid entries   1")
+	require.Contains(t, out.String(), "missing")
+	require.Contains(t, out.String(), "missing_command")
+	require.Contains(t, out.String(), "Invalid MCP servers")
+	require.Contains(t, out.String(), "- missing: missing command")
 }
 
 func TestMCPHelpCommand(t *testing.T) {

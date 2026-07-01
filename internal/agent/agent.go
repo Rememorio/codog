@@ -30678,11 +30678,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		}
 		validation := buildMCPValidation(a.Config.MCPServers)
 		if len(a.Config.MCPServers) == 0 {
-			if format == "json" {
-				renderMCPListReport(a.Out, format, buildMCPListReport(nil, validation, "", ""))
-				return nil
-			}
-			fmt.Fprintln(a.Out, "No MCP servers configured.")
+			renderMCPListReport(a.Out, format, buildMCPListReport(nil, validation, "", ""))
 			return nil
 		}
 		statuses := mcp.InspectAll(ctx, a.Config.MCPServers)
@@ -30772,6 +30768,7 @@ type mcpListReport struct {
 	Kind                string                        `json:"kind"`
 	Action              string                        `json:"action"`
 	Status              string                        `json:"status"`
+	WorkingDirectory    string                        `json:"working_directory"`
 	ServerCount         int                           `json:"server_count"`
 	ConfiguredServers   int                           `json:"configured_servers"`
 	TotalConfigured     int                           `json:"total_configured"`
@@ -30853,6 +30850,7 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		Kind:                "mcp",
 		Action:              "list",
 		Status:              status,
+		WorkingDirectory:    currentWorkingDirectory(),
 		ServerCount:         len(statuses),
 		ConfiguredServers:   validation.ValidCount,
 		TotalConfigured:     validation.TotalConfigured,
@@ -31067,28 +31065,55 @@ func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
 
 func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 	if format == "text" {
-		if report.ConfigLoadError == nil {
-			data, _ := json.MarshalIndent(report.Servers, "", "  ")
-			fmt.Fprintln(out, string(data))
-			return
-		}
 		fmt.Fprintln(out, "MCP")
+		fmt.Fprintf(out, "  Working directory %s\n", report.WorkingDirectory)
 		fmt.Fprintf(out, "  Status           %s\n", report.Status)
-		fmt.Fprintf(out, "  Servers          %d\n", report.ServerCount)
+		fmt.Fprintf(out, "  Configured servers %d\n", report.ConfiguredServers)
+		fmt.Fprintf(out, "  Total entries     %d\n", report.TotalConfigured)
+		fmt.Fprintf(out, "  Invalid entries   %d\n", report.InvalidCount)
 		if report.ConfigLoadError != nil {
 			fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
 			fmt.Fprintln(out, "  Hint             Fix the listed config file or run `codog doctor` for details.")
 		}
-		if report.InvalidCount > 0 {
-			fmt.Fprintf(out, "  Invalid servers  %d\n", report.InvalidCount)
+		if len(report.Servers) == 0 {
+			fmt.Fprintln(out, "  No valid MCP servers configured.")
+		} else {
+			fmt.Fprintln(out)
+			for _, server := range report.Servers {
+				fmt.Fprintf(out, "  %-16s %-13s %-7s %s\n", server.Name, "stdio", server.Status, mcpServerStatusSummary(server))
+			}
 		}
-		if len(report.Servers) == 0 && report.ConfigLoadError == nil {
-			fmt.Fprintln(out, "  Result           no MCP servers configured")
+		if len(report.InvalidServers) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "  Invalid MCP servers")
+			for _, invalid := range report.InvalidServers {
+				fmt.Fprintf(out, "    - %s: %s\n", invalid.Name, invalid.Reason)
+			}
 		}
 		return
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(out, string(data))
+}
+
+func mcpServerStatusSummary(server mcp.ServerStatus) string {
+	if strings.TrimSpace(server.Error) != "" {
+		return "error: " + strings.TrimSpace(server.Error)
+	}
+	command := strings.TrimSpace(server.Command)
+	if command == "" {
+		command = "<unknown>"
+	}
+	parts := []string{command}
+	if server.ToolCount == 1 {
+		parts = append(parts, "1 tool")
+	} else if server.ToolCount > 1 {
+		parts = append(parts, fmt.Sprintf("%d tools", server.ToolCount))
+	}
+	if strings.TrimSpace(server.ProtocolVersion) != "" {
+		parts = append(parts, "protocol "+strings.TrimSpace(server.ProtocolVersion))
+	}
+	return strings.Join(parts, " | ")
 }
 
 func currentWorkingDirectory() string {
