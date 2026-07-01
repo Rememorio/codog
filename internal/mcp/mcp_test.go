@@ -113,6 +113,36 @@ func TestServerSignatureMatchesStdioCompatibility(t *testing.T) {
 	require.NotContains(t, ServerSignature(server), "secret")
 }
 
+func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
+	base := config.MCPServerConfig{
+		Command: "uvx",
+		Args:    []string{"mcp-server"},
+		Env:     []string{"TOKEN=secret", "MODE=stdio"},
+	}
+	reorderedEnv := config.MCPServerConfig{
+		Command: "uvx",
+		Args:    []string{"mcp-server"},
+		Env:     []string{"MODE=stdio", "TOKEN=secret"},
+	}
+	changedEnv := config.MCPServerConfig{
+		Command: "uvx",
+		Args:    []string{"mcp-server"},
+		Env:     []string{"TOKEN=changed", "MODE=stdio"},
+	}
+	changedArgs := config.MCPServerConfig{
+		Command: "uvx",
+		Args:    []string{"mcp-server", "--verbose"},
+		Env:     []string{"TOKEN=secret", "MODE=stdio"},
+	}
+
+	hash := ServerConfigHash(base)
+	require.Len(t, hash, 16)
+	require.Equal(t, hash, ServerConfigHash(reorderedEnv))
+	require.NotEqual(t, hash, ServerConfigHash(changedEnv))
+	require.NotEqual(t, hash, ServerConfigHash(changedArgs))
+	require.NotContains(t, hash, "secret")
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_FAIL_STDERR") == "1" {
 		fmt.Fprintln(os.Stderr, "mcp boot failed")

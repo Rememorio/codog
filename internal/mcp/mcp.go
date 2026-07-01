@@ -24,6 +24,7 @@ type ServerStatus struct {
 	Status          string          `json:"status"`
 	Command         string          `json:"command,omitempty"`
 	Signature       string          `json:"signature,omitempty"`
+	ConfigHash      string          `json:"config_hash,omitempty"`
 	ResolvedPath    string          `json:"resolved_path,omitempty"`
 	ProtocolVersion string          `json:"protocol_version,omitempty"`
 	ServerInfo      json.RawMessage `json:"server_info,omitempty"`
@@ -155,6 +156,16 @@ func ServerSignature(server config.MCPServerConfig) string {
 	return "stdio:" + renderCommandSignature(parts)
 }
 
+func ServerConfigHash(server config.MCPServerConfig) string {
+	rendered := fmt.Sprintf(
+		"stdio|%s|%s|%s|",
+		server.Command,
+		renderCommandSignature(server.Args),
+		renderEnvSignature(server.Env),
+	)
+	return stableHexHash("required:false|" + rendered)
+}
+
 func renderCommandSignature(parts []string) string {
 	escaped := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -163,6 +174,24 @@ func renderCommandSignature(parts []string) string {
 		escaped = append(escaped, part)
 	}
 	return "[" + strings.Join(escaped, "|") + "]"
+}
+
+func renderEnvSignature(env []string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	entries := append([]string(nil), env...)
+	sort.Strings(entries)
+	return strings.Join(entries, ";")
+}
+
+func stableHexHash(value string) string {
+	hash := uint64(0xcbf29ce484222325)
+	for _, b := range []byte(value) {
+		hash ^= uint64(b)
+		hash *= 0x100000001b3
+	}
+	return fmt.Sprintf("%016x", hash)
 }
 
 func collapseUnderscores(value string) string {
@@ -225,7 +254,12 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 }
 
 func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
-	status := ServerStatus{Name: name, Command: server.Command, Signature: ServerSignature(server)}
+	status := ServerStatus{
+		Name:       name,
+		Command:    server.Command,
+		Signature:  ServerSignature(server),
+		ConfigHash: ServerConfigHash(server),
+	}
 	if strings.TrimSpace(server.Command) == "" {
 		status.Status = "missing_command"
 		status.Error = "missing command"

@@ -9917,6 +9917,7 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Equal(t, "test", listReport.Servers[0].Name)
 	require.Equal(t, "ok", listReport.Servers[0].Status)
 	require.Equal(t, mcp.ServerSignature(server), listReport.Servers[0].Signature)
+	require.Equal(t, mcp.ServerConfigHash(server), listReport.Servers[0].ConfigHash)
 	out.Reset()
 
 	require.ErrorContains(t, app.MCP(context.Background(), []string{"list", "extra"}), "usage: codog mcp list")
@@ -10190,6 +10191,7 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"action": "show"`)
 	require.Contains(t, out.String(), `"command": "demo-server"`)
 	require.Contains(t, out.String(), `"signature": "stdio:[demo-server|arg1|arg2]"`)
+	require.Contains(t, out.String(), `"config_hash": "`)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"remove", "demo"}))
