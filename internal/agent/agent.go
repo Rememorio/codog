@@ -12849,17 +12849,26 @@ type reviewCompatibilityReport struct {
 	Command             string `json:"command"`
 	Workspace           string `json:"workspace"`
 	Enabled             bool   `json:"enabled"`
+	Configured          bool   `json:"configured,omitempty"`
+	Previous            bool   `json:"previous,omitempty"`
 	LocalReviewCommand  string `json:"local_review_command"`
 	RemoteReviewCommand string `json:"remote_review_command"`
 	DefaultLimit        int    `json:"default_limit"`
 	RequestedLimit      int    `json:"requested_limit,omitempty"`
 	Overage             bool   `json:"overage,omitempty"`
+	ChangedFiles        int    `json:"changed_files,omitempty"`
+	ChangedLines        int    `json:"changed_lines,omitempty"`
+	ReviewStatus        string `json:"review_status,omitempty"`
+	Path                string `json:"path,omitempty"`
 	ProviderRequestMade bool   `json:"provider_request_made"`
 	WorkspaceWillMutate bool   `json:"workspace_will_mutate"`
 	Message             string `json:"message"`
 }
 
 func (a *App) ReviewCompatibility(command string, args []string) error {
+	if reviewCompatibilityAction(command) == "enabled" {
+		return a.reviewEnabledCompatibility(command, args)
+	}
 	clean, format, err := stripJSONOnlyOutputFormat(command, args)
 	if err != nil {
 		return err
@@ -12874,7 +12883,8 @@ func (a *App) ReviewCompatibility(command string, args []string) error {
 		Status:              "ok",
 		Command:             command,
 		Workspace:           a.Workspace,
-		Enabled:             true,
+		Enabled:             ultraReviewEnabled(a.Config.Future.UltraReviewEnabled),
+		Configured:          a.Config.Future.UltraReviewEnabled != nil,
 		LocalReviewCommand:  "codog ultrareview",
 		RemoteReviewCommand: "codog reviewRemote",
 		DefaultLimit:        200,
@@ -12883,15 +12893,24 @@ func (a *App) ReviewCompatibility(command string, args []string) error {
 		WorkspaceWillMutate: false,
 	}
 	switch command {
-	case "ultrareviewEnabled":
-		report.Message = "Ultra review compatibility is enabled through the local `codog ultrareview` review command."
 	case "UltrareviewOverageDialog":
-		report.Overage = req.Limit > report.DefaultLimit
+		reviewReport, err := localreview.Run(a.Workspace, localreview.Options{
+			Base:   req.Base,
+			Staged: req.Staged,
+			Limit:  req.Limit,
+		})
+		if err != nil {
+			return err
+		}
+		report.ChangedFiles = reviewReport.Summary.Files
+		report.ChangedLines = reviewReport.Summary.Additions + reviewReport.Summary.Deletions
+		report.ReviewStatus = reviewReport.Status
+		report.Overage = report.ChangedLines > req.Limit
 		if report.Overage {
 			report.Status = "warn"
-			report.Message = "Requested review limit is above the default threshold; narrow the diff or lower --limit for faster review."
+			report.Message = "Changed line count is above the requested review threshold; narrow the diff or raise --limit for a broader local review."
 		} else {
-			report.Message = "Requested review limit is within the default threshold."
+			report.Message = "Changed line count is within the requested review threshold."
 		}
 	default:
 		report.Message = "Review compatibility report generated."
@@ -12901,13 +12920,174 @@ func (a *App) ReviewCompatibility(command string, args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	fmt.Fprintln(a.Out, "Review Compatibility")
-	fmt.Fprintf(a.Out, "  Command          %s\n", report.Command)
-	fmt.Fprintf(a.Out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(a.Out, "  Enabled          %t\n", report.Enabled)
-	fmt.Fprintf(a.Out, "  Local command    %s\n", report.LocalReviewCommand)
-	fmt.Fprintf(a.Out, "  Message          %s\n", report.Message)
+	renderReviewCompatibilityReport(a.Out, report)
 	return nil
+}
+
+type reviewEnabledRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+}
+
+func (a *App) reviewEnabledCompatibility(command string, args []string) error {
+	req, err := parseReviewEnabledArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := ultraReviewEnabled(a.Config.Future.UltraReviewEnabled)
+	report := reviewCompatibilityReport{
+		Kind:                "review_compatibility",
+		Action:              "enabled",
+		Status:              "ok",
+		Command:             command,
+		Workspace:           a.Workspace,
+		Enabled:             previous,
+		Configured:          a.Config.Future.UltraReviewEnabled != nil,
+		LocalReviewCommand:  "codog ultrareview",
+		RemoteReviewCommand: "codog reviewRemote",
+		DefaultLimit:        200,
+		ProviderRequestMade: false,
+		Message:             "Ultra review is enabled through the local `codog ultrareview` review command.",
+	}
+	switch req.Action {
+	case "status":
+	case "on", "off", "toggle":
+		next := req.Action == "on"
+		if req.Action == "toggle" {
+			next = !previous
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.ultrareview_enabled", next); err != nil {
+			return err
+		}
+		a.Config.Future.UltraReviewEnabled = &next
+		report.Status = "ok"
+		report.Action = "set"
+		report.Enabled = next
+		report.Configured = true
+		report.Previous = previous
+		report.Path = path
+		report.WorkspaceWillMutate = true
+		if next {
+			report.Message = "Ultra review preference saved as enabled."
+		} else {
+			report.Message = "Ultra review preference saved as disabled."
+		}
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "future.ultrareview_enabled"); err != nil {
+			return err
+		}
+		a.Config.Future.UltraReviewEnabled = nil
+		report.Action = "clear"
+		report.Enabled = true
+		report.Configured = false
+		report.Previous = previous
+		report.Path = path
+		report.WorkspaceWillMutate = true
+		report.Message = "Ultra review preference cleared; default is enabled."
+	default:
+		return fmt.Errorf("unknown ultrareviewEnabled command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderReviewCompatibilityReport(a.Out, report)
+	return nil
+}
+
+func parseReviewEnabledArgs(args []string) (reviewEnabledRequest, error) {
+	req := reviewEnabledRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ultrareviewEnabled output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ultrareviewEnabled target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("ultrareviewEnabled config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown ultrareviewEnabled flag %q", arg)
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "ultrareviewEnabled"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "true":
+		req.Action = "on"
+	case "off", "disable", "disabled", "false":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+	default:
+		return req, fmt.Errorf("unknown ultrareviewEnabled command %q", rest[0])
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected ultrareviewEnabled argument %q", rest[1])
+	}
+	return req, nil
+}
+
+func ultraReviewEnabled(value *bool) bool {
+	return value == nil || *value
+}
+
+func renderReviewCompatibilityReport(out io.Writer, report reviewCompatibilityReport) {
+	fmt.Fprintln(out, "Review Compatibility")
+	fmt.Fprintf(out, "  Command          %s\n", report.Command)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Local command    %s\n", report.LocalReviewCommand)
+	if report.ChangedFiles != 0 || report.ChangedLines != 0 {
+		fmt.Fprintf(out, "  Changed files    %d\n", report.ChangedFiles)
+		fmt.Fprintf(out, "  Changed lines    %d\n", report.ChangedLines)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	fmt.Fprintf(out, "  Message          %s\n", report.Message)
 }
 
 func reviewCompatibilityAction(command string) string {
@@ -31780,12 +31960,18 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		), true
 	case "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog":
 		command := reviewCompatibilityCommand(topic)
+		usage := fmt.Sprintf("codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]", command)
+		text := fmt.Sprintf("%s\n\nUsage:\n  codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code ultra review helpers. `ultrareviewCommand` delegates to local review; `UltrareviewOverageDialog` checks the current diff against a local review line threshold; `ultrareviewEnabled` reports or updates the stored local preference.\n", command, command)
+		if command == "ultrareviewEnabled" {
+			usage = "codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]"
+			text = "ultrareviewEnabled\n\nUsage:\n  codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code ultra review enabled helper. It reports or updates the local `future.ultrareview_enabled` preference; the default is enabled when unset.\n"
+		}
 		return localCommandHelpSpec(
 			command,
 			command,
-			fmt.Sprintf("codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]", command),
-			fmt.Sprintf("%s\n\nUsage:\n  codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code ultra review helpers. `ultrareviewCommand` delegates to local review; the other helpers report availability and overage status without making provider requests or mutating the workspace.\n", command, command),
-			[]string{"enabled", "local_review_command", "requested_limit", "overage", "message"},
+			usage,
+			text,
+			[]string{"enabled", "configured", "local_review_command", "requested_limit", "changed_lines", "overage", "path", "message"},
 			[]string{"ok", "warn", "error"},
 			false,
 		), true
