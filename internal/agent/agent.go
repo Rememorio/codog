@@ -19917,6 +19917,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Mobile(resumeSlashArgs("mobile", append([]string{"ios"}, args...), format), resumed)
 	case "/android":
 		return a.Mobile(resumeSlashArgs("mobile", append([]string{"android"}, args...), format), resumed)
+	case "/remote-env":
+		return a.runResumedRemoteEnvSlash(resumeSlashArgs("remote-env", args, format), format)
+	case "/remote-setup", "/web-setup":
+		return a.runResumedRemoteSetupSlash(resumeSlashArgs("remote-setup", args, format), resumed, format)
 	case "/ide":
 		return a.runResumedIDESlash(resumeSlashArgs("ide", args, format), format)
 	case "/bridge-kick":
@@ -20093,6 +20097,28 @@ func (a *App) runResumedTerminalSetupSlash(args []string, format string) error {
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/terminal-setup", req.Action), format)
 	}
+}
+
+func (a *App) runResumedRemoteEnvSlash(args []string, format string) error {
+	req, err := parseRemoteEnvArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" || req.SetEnabled || req.AuthToken != "" || req.ClearToken || req.SetLease {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/remote-env", req.Action), format)
+	}
+	return a.RemoteEnv(args)
+}
+
+func (a *App) runResumedRemoteSetupSlash(args []string, overrides config.FlagOverrides, format string) error {
+	req, err := parseRemoteSetupArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/remote-setup", req.Action), format)
+	}
+	return a.RemoteSetup(args, overrides)
 }
 
 func (a *App) runResumedFormatSlash(args []string, format string) error {

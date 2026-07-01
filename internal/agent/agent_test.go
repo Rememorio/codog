@@ -720,6 +720,15 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	terminalSetupAliasSlash, ok := capabilityReportSlash(report, "/terminalSetup")
 	require.True(t, ok)
 	require.True(t, terminalSetupAliasSlash.ResumeSupported)
+	remoteEnvSlash, ok := capabilityReportSlash(report, "/remote-env")
+	require.True(t, ok)
+	require.True(t, remoteEnvSlash.ResumeSupported)
+	remoteSetupSlash, ok := capabilityReportSlash(report, "/remote-setup")
+	require.True(t, ok)
+	require.True(t, remoteSetupSlash.ResumeSupported)
+	webSetupSlash, ok := capabilityReportSlash(report, "/web-setup")
+	require.True(t, ok)
+	require.True(t, webSetupSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1290,6 +1299,9 @@ func risky(value any) {
 		"future": map[string]any{
 			"chrome_default_enabled": true,
 			"notifications_enabled":  false,
+			"remote_auth_token":      "remote-secret",
+			"remote_enabled":         true,
+			"remote_lease_seconds":   45,
 		},
 	})
 	require.NoError(t, err)
@@ -1967,6 +1979,38 @@ func risky(value any) {
 	require.Equal(t, "mobile_handoff", resumedAndroid.Kind)
 	require.Equal(t, "android", resumedAndroid.Platform)
 
+	out, err = runResumedJSON("/remote-env", "status")
+	require.NoError(t, err)
+	var resumedRemoteEnv remoteEnvReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteEnv))
+	require.Equal(t, "remote_env", resumedRemoteEnv.Kind)
+	require.Equal(t, "show", resumedRemoteEnv.Action)
+	require.True(t, resumedRemoteEnv.Enabled)
+	require.True(t, resumedRemoteEnv.AuthTokenConfigured)
+	require.Equal(t, 45, resumedRemoteEnv.LeaseSeconds)
+	require.NotContains(t, out, "remote-secret")
+
+	out, err = runResumedJSON("/remote-setup", "status", "--addr", "127.0.0.1:8792")
+	require.NoError(t, err)
+	var resumedRemoteSetup remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteSetup))
+	require.Equal(t, "remote_setup", resumedRemoteSetup.Kind)
+	require.Equal(t, "status", resumedRemoteSetup.Action)
+	require.Equal(t, "ready", resumedRemoteSetup.Status)
+	require.True(t, resumedRemoteSetup.Enabled)
+	require.True(t, resumedRemoteSetup.Ready)
+	require.Equal(t, "resume-slash", resumedRemoteSetup.SessionID)
+	require.Equal(t, "http://127.0.0.1:8792", resumedRemoteSetup.RemoteURL)
+	require.NotContains(t, out, "remote-secret")
+
+	out, err = runResumedJSON("/web-setup", "status", "--addr", "127.0.0.1:8793")
+	require.NoError(t, err)
+	var resumedWebSetup remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedWebSetup))
+	require.Equal(t, "remote_setup", resumedWebSetup.Kind)
+	require.Equal(t, "status", resumedWebSetup.Action)
+	require.Equal(t, "http://127.0.0.1:8793", resumedWebSetup.RemoteURL)
+
 	out, err = runResumedJSON("/ide")
 	require.NoError(t, err)
 	var resumedIDE ideReport
@@ -2166,6 +2210,13 @@ func risky(value any) {
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
 		{Command: "/terminal-setup", Args: []string{"install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup install"},
 		{Command: "/terminal-setup", Args: []string{"uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup uninstall"},
+		{Command: "/remote-env", Args: []string{"set", "--enabled", "off"}, Report: "/remote-env set"},
+		{Command: "/remote-env", Args: []string{"clear"}, Report: "/remote-env clear"},
+		{Command: "/remote-env", Args: []string{"show", "--auth-token", "secret"}, Report: "/remote-env show"},
+		{Command: "/remote-setup", Args: []string{"enable", "--addr", "127.0.0.1:8794"}, Report: "/remote-setup enable"},
+		{Command: "/remote-setup", Args: []string{"disable"}, Report: "/remote-setup disable"},
+		{Command: "/remote-setup", Args: []string{"clear"}, Report: "/remote-setup clear"},
+		{Command: "/web-setup", Args: []string{"enable"}, Report: "/remote-setup enable"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},

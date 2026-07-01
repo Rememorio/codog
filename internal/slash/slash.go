@@ -303,6 +303,8 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/reasoning":          true,
 	"/references":         true,
 	"/release-notes":      true,
+	"/remote-env":         true,
+	"/remote-setup":       true,
 	"/rename":             true,
 	"/review":             true,
 	"/rewind":             true,
@@ -338,6 +340,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/usage":              true,
 	"/validation":         true,
 	"/version":            true,
+	"/web-setup":          true,
 	"/vim":                true,
 	"/workspace":          true,
 }
