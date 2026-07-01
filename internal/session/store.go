@@ -121,6 +121,15 @@ type Store struct {
 }
 
 var ErrNoSessions = errors.New("no saved sessions")
+var ErrSessionNotFound = errors.New("session not found")
+
+type PathIsDirectoryError struct {
+	Path string
+}
+
+func (e PathIsDirectoryError) Error() string {
+	return fmt.Sprintf("session path is a directory: %s", e.Path)
+}
 
 func NewStore(configHome string) *Store {
 	return &Store{Dir: filepath.Join(configHome, "sessions")}
@@ -162,6 +171,73 @@ func (s *Store) Open(id string) (*Session, error) {
 		return nil, err
 	}
 	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
+}
+
+func (s *Store) OpenExisting(id string) (*Session, error) {
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return nil, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("session id is required")
+	}
+	if id == "latest" {
+		latest, err := s.LatestID()
+		if err != nil {
+			return nil, err
+		}
+		id = latest
+	}
+	if looksLikeSessionPath(id) {
+		return s.openExistingPath(id)
+	}
+	path := s.pathFor(id)
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+		}
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, PathIsDirectoryError{Path: path}
+	}
+	messages, identity, err := s.readSession(path, id)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
+}
+
+func (s *Store) openExistingPath(path string) (*Session, error) {
+	path = strings.TrimSpace(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, path)
+		}
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, PathIsDirectoryError{Path: path}
+	}
+	id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if strings.TrimSpace(id) == "" {
+		id = filepath.Base(path)
+	}
+	messages, identity, err := s.readSession(path, id)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
+}
+
+func looksLikeSessionPath(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	return filepath.IsAbs(value) || strings.ContainsAny(value, `/\`) || strings.EqualFold(filepath.Ext(value), ".jsonl")
 }
 
 func (s *Store) Create(id string) (*Session, error) {

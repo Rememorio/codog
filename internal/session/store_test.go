@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,6 +71,33 @@ func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	latest, err := store.LatestID()
 	require.NoError(t, err)
 	require.Equal(t, "legacy-session", latest)
+}
+
+func TestOpenExistingDoesNotCreateAndReportsDirectoryPaths(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	_, err := store.OpenExisting("missing-session")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	require.NoFileExists(t, filepath.Join(store.Dir, "missing-session.jsonl"))
+
+	directoryPath := filepath.Join(t.TempDir(), "session-dir")
+	require.NoError(t, os.MkdirAll(directoryPath, 0o755))
+	_, err = store.OpenExisting(directoryPath)
+	require.Error(t, err)
+	var directoryErr PathIsDirectoryError
+	require.True(t, errors.As(err, &directoryErr))
+	require.Equal(t, directoryPath, directoryErr.Path)
+
+	fileStore := NewStore(t.TempDir())
+	require.NoError(t, fileStore.Append("external", anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "from path"}}}))
+	externalPath := filepath.Join(fileStore.Dir, "external.jsonl")
+	opened, err := store.OpenExisting(externalPath)
+	require.NoError(t, err)
+	require.Equal(t, "external", opened.ID)
+	require.Equal(t, externalPath, opened.Path)
+	require.Len(t, opened.Messages, 1)
+	require.Equal(t, "from path", opened.Messages[0].Content[0].Text)
 }
 
 func TestCreateEmptySession(t *testing.T) {

@@ -3299,6 +3299,80 @@ func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
 	require.Equal(t, 1, report.MessageCount)
 }
 
+func TestResumeMissingSessionReportsTypedError(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "resume", "missing-session", "--json"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report sessionRestoreErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "resume", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "session_not_found", report.ErrorKind)
+	require.Equal(t, "missing-session", report.RequestedSession)
+	require.Contains(t, report.Hint, "codog sessions list")
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoFileExists(t, filepath.Join(store.Dir, "missing-session.jsonl"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "resume", "missing-session"}, config.FlagOverrides{})
+	})
+	require.Empty(t, out)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.False(t, exitErr.Silent)
+	require.Contains(t, err.Error(), "session_not_found")
+	require.Contains(t, err.Error(), "codog sessions list")
+}
+
+func TestResumeDirectoryPathReportsTypedError(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	directoryPath := filepath.Join(t.TempDir(), "session-dir")
+	require.NoError(t, os.MkdirAll(directoryPath, 0o755))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", directoryPath, "--output-format", "json", "/status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report sessionRestoreErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "resume", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "session_path_is_directory", report.ErrorKind)
+	require.Equal(t, directoryPath, report.Path)
+	require.Contains(t, report.Hint, ".jsonl")
+	require.Contains(t, report.Hint, "codog sessions list --json")
+}
+
 func TestRunCLIClearCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

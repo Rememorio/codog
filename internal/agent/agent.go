@@ -17026,9 +17026,13 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 		sessionRef = overrides.SessionID
 	}
 	if sessionRef != "" && a.Sessions != nil {
-		active, err = a.Sessions.Open(sessionRef)
+		if strings.TrimSpace(overrides.Resume) != "" {
+			active, err = a.Sessions.OpenExisting(sessionRef)
+		} else {
+			active, err = a.Sessions.Open(sessionRef)
+		}
 		if err != nil {
-			return err
+			return renderSessionRestoreError(a.Out, "status", sessionRef, err, format)
 		}
 	}
 	a.renderStatus(format, active)
@@ -17734,6 +17738,9 @@ func (a *App) contextSession(overrides config.FlagOverrides) (*session.Session, 
 	}
 	if sessionRef == "" || a.Sessions == nil {
 		return nil, nil
+	}
+	if strings.TrimSpace(overrides.Resume) != "" {
+		return a.Sessions.OpenExisting(sessionRef)
 	}
 	return a.Sessions.Open(sessionRef)
 }
@@ -18647,6 +18654,71 @@ type actionErrorReport struct {
 	ErrorKind string `json:"error_kind"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint"`
+}
+
+type sessionRestoreErrorReport struct {
+	Kind             string `json:"kind"`
+	Action           string `json:"action"`
+	Status           string `json:"status"`
+	ErrorKind        string `json:"error_kind"`
+	RequestedSession string `json:"requested_session,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Message          string `json:"message"`
+	Hint             string `json:"hint"`
+}
+
+func renderSessionRestoreError(out io.Writer, action string, requested string, err error, format string) error {
+	if err == nil {
+		return nil
+	}
+	report := buildSessionRestoreErrorReport(action, requested, err)
+	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json", "stream-json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: exitErr, Silent: true}
+	default:
+		return &ExitError{Code: 1, Err: exitErr}
+	}
+}
+
+func buildSessionRestoreErrorReport(action string, requested string, err error) sessionRestoreErrorReport {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "show"
+	}
+	requested = strings.TrimSpace(requested)
+	report := sessionRestoreErrorReport{
+		Kind:             "resume",
+		Action:           action,
+		Status:           "error",
+		ErrorKind:        "session_load_failed",
+		RequestedSession: requested,
+		Message:          strings.TrimSpace(err.Error()),
+		Hint:             "Pass a readable .jsonl session file or a managed session id from `codog sessions list`.",
+	}
+	var directoryErr session.PathIsDirectoryError
+	switch {
+	case errors.As(err, &directoryErr):
+		report.ErrorKind = "session_path_is_directory"
+		report.Path = directoryErr.Path
+		report.Message = fmt.Sprintf("session path is a directory: %s", directoryErr.Path)
+		report.Hint = "--resume expects a session id or a .jsonl session file path, not a directory. Run `codog sessions list --json` to list managed sessions."
+	case errors.Is(err, session.ErrNoSessions):
+		report.ErrorKind = "no_managed_sessions"
+		report.Message = "no managed sessions found"
+		report.Hint = "Run `codog prompt <text>` to create a session, or pass an existing .jsonl session path."
+	case errors.Is(err, session.ErrSessionNotFound):
+		report.ErrorKind = "session_not_found"
+		if requested != "" {
+			report.Message = fmt.Sprintf("session %q was not found", requested)
+		} else {
+			report.Message = "session was not found"
+		}
+		report.Hint = "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl session path."
+	}
+	return report
 }
 
 type outputFormatError struct {
@@ -21397,7 +21469,10 @@ func (a *App) PromptWithOutput(ctx context.Context, input string, overrides conf
 	}
 	sess, err := a.openSession(overrides)
 	if err != nil {
-		return err
+		if strings.TrimSpace(overrides.Resume) == "" {
+			return err
+		}
+		return renderSessionRestoreError(a.Out, "prompt", overrides.Resume, err, format)
 	}
 	if err := a.ensureSessionIdentity(sess, "prompt", input); err != nil {
 		return err
@@ -27667,9 +27742,9 @@ func (a *App) ResumeCommand(args []string) error {
 	if requested == "" {
 		return errors.New("usage: codog resume [ID|latest] [--json|--output-format text|json]")
 	}
-	sess, err := a.Sessions.Open(requested)
+	sess, err := a.Sessions.OpenExisting(requested)
 	if err != nil {
-		return err
+		return renderSessionRestoreError(a.Out, "show", requested, err, format)
 	}
 	exe := strings.TrimSpace(a.Executable)
 	if exe == "" {
@@ -31557,17 +31632,22 @@ func joinInts(values []int) string {
 
 func (a *App) openSession(overrides config.FlagOverrides) (*session.Session, error) {
 	id := overrides.SessionID
+	resuming := strings.TrimSpace(overrides.Resume) != ""
+	var sess *session.Session
+	var err error
 	if overrides.Resume != "" {
 		id = overrides.Resume
 		if id == "true" {
 			id = "latest"
 		}
+		sess, err = a.Sessions.OpenExisting(id)
+	} else {
+		sess, err = a.Sessions.Open(id)
 	}
-	sess, err := a.Sessions.Open(id)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(id) != "" {
+	if resuming || strings.TrimSpace(id) != "" {
 		if err := a.restoreTodosFromSession(sess); err != nil {
 			return nil, err
 		}
