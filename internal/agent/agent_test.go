@@ -469,6 +469,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "memory",
 		},
 		{
+			name:  "keybindings local help",
+			args:  []string{"--config", configPath, "keybindings", "--help", "--output-format", "json"},
+			topic: "keybindings",
+		},
+		{
 			name:  "language local help",
 			args:  []string{"--config", configPath, "language", "--help", "--output-format", "json"},
 			topic: "language",
@@ -4981,6 +4986,14 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Equal(t, keybindingsPath+"\n", out.String())
 	out.Reset()
 
+	require.NoError(t, app.Keybindings([]string{"resolve", "repl", "Control-R", "--json"}))
+	require.Contains(t, out.String(), `"action": "resolve"`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
+	require.Contains(t, out.String(), `"found": true`)
+	require.Contains(t, out.String(), `"source": "default"`)
+	require.Contains(t, out.String(), `"binding_action": "reverse search prompt history"`)
+	out.Reset()
+
 	require.NoError(t, app.Keybindings([]string{"init", "--json"}))
 	require.Contains(t, out.String(), `"status": "created"`)
 	require.Contains(t, out.String(), `"created": true`)
@@ -4994,6 +5007,7 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"valid": true`)
 	require.Contains(t, out.String(), `"context_count": 4`)
 	require.Contains(t, out.String(), `"binding_count": 19`)
+	require.Contains(t, out.String(), `"normalized_key": "ctrl+r"`)
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte("custom\n"), 0o644))
@@ -5014,6 +5028,19 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	data, err = os.ReadFile(keybindingsPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"bindings"`)
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(keybindingsPath, []byte(`{"bindings":[{"context":"repl","bindings":{"Ctrl-R":"custom history search"}}]}`), 0o644))
+	require.NoError(t, app.Keybindings([]string{"resolve", "repl", "ctrl+r"}))
+	require.Contains(t, out.String(), "Keybinding Resolve")
+	require.Contains(t, out.String(), "Source           user")
+	require.Contains(t, out.String(), "Action           custom history search")
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(keybindingsPath, []byte(`{"bindings":[{"context":"repl","bindings":{"Ctrl-R":"custom","ctrl+r":"duplicate"}}]}`), 0o644))
+	require.Error(t, app.Keybindings([]string{"validate", "--json"}))
+	require.Contains(t, out.String(), `"status": "invalid"`)
+	require.Contains(t, out.String(), "duplicate binding")
 	out.Reset()
 
 	require.NoError(t, os.WriteFile(keybindingsPath, []byte(`{"bindings":[{"context":"repl","bindings":{"enter":"submit"}},{"context":"repl","bindings":{"enter":"duplicate"}},{"context":"slash","bindings":{"/empty":""}}]}`), 0o644))

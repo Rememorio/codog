@@ -11495,10 +11495,11 @@ func (a *App) preferenceConfigPath(target, path string) (string, error) {
 }
 
 type keybindingEntry struct {
-	Key         string `json:"key"`
-	Action      string `json:"action"`
-	Mode        string `json:"mode,omitempty"`
-	Description string `json:"description,omitempty"`
+	Key           string `json:"key"`
+	NormalizedKey string `json:"normalized_key,omitempty"`
+	Action        string `json:"action"`
+	Mode          string `json:"mode,omitempty"`
+	Description   string `json:"description,omitempty"`
 }
 
 type keybindingSection struct {
@@ -11508,10 +11509,13 @@ type keybindingSection struct {
 }
 
 type keybindingsRequest struct {
-	Action string
-	Format string
-	Force  bool
-	Path   string
+	Action  string
+	Format  string
+	Force   bool
+	Path    string
+	Args    []string
+	Context string
+	Key     string
 }
 
 type keybindingReport struct {
@@ -11546,6 +11550,21 @@ type keybindingValidationReport struct {
 	BindingCount int                 `json:"binding_count"`
 	Errors       []string            `json:"errors,omitempty"`
 	Sections     []keybindingSection `json:"sections,omitempty"`
+}
+
+type keybindingResolveReport struct {
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	Context       string   `json:"context"`
+	Key           string   `json:"key"`
+	NormalizedKey string   `json:"normalized_key"`
+	Found         bool     `json:"found"`
+	Source        string   `json:"source,omitempty"`
+	BindingAction string   `json:"binding_action,omitempty"`
+	Section       string   `json:"section,omitempty"`
+	Disabled      bool     `json:"disabled,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
 }
 
 func (a *App) Keybindings(args []string) error {
@@ -11606,6 +11625,18 @@ func (a *App) Keybindings(args []string) error {
 			return errors.New("invalid keybindings")
 		}
 		return nil
+	case "resolve":
+		report := a.resolveKeybinding(req.Context, req.Key, req.Path)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			renderKeybindingResolve(a.Out, report)
+		}
+		if report.Status == "invalid" {
+			return errors.New("invalid keybindings")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown keybindings command %q", req.Action)
 	}
@@ -11641,7 +11672,8 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 			return req, fmt.Errorf("unknown keybindings flag %q", arg)
 		default:
 			if actionSet {
-				return req, fmt.Errorf("unexpected keybindings argument %q", arg)
+				req.Args = append(req.Args, arg)
+				continue
 			}
 			switch strings.ToLower(arg) {
 			case "show", "list", "report":
@@ -11652,6 +11684,8 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 				req.Action = "init"
 			case "validate", "check":
 				req.Action = "validate"
+			case "resolve", "match":
+				req.Action = "resolve"
 			default:
 				return req, fmt.Errorf("unknown keybindings command %q", arg)
 			}
@@ -11660,6 +11694,18 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 	}
 	if err := validateTextOrJSON(req.Format, "keybindings"); err != nil {
 		return req, err
+	}
+	switch req.Action {
+	case "resolve":
+		if len(req.Args) < 2 {
+			return req, errors.New("usage: codog keybindings resolve CONTEXT KEY [--json]")
+		}
+		req.Context = req.Args[0]
+		req.Key = strings.Join(req.Args[1:], " ")
+	case "show", "path", "init", "validate":
+		if len(req.Args) != 0 {
+			return req, fmt.Errorf("unexpected keybindings argument %q", req.Args[0])
+		}
 	}
 	return req, nil
 }
@@ -11806,17 +11852,201 @@ func parseKeybindingsFile(data []byte) ([]keybindingSection, []string) {
 				validationErrors = append(validationErrors, fmt.Sprintf("bindings[%d].bindings[%q] action is required", index, trimmedKey))
 				continue
 			}
-			duplicateKey := strings.ToLower(contextName) + "\x00" + strings.ToLower(trimmedKey)
+			normalizedContext := normalizeKeybindingContext(contextName)
+			normalizedKey := normalizeShortcut(trimmedKey)
+			if normalizedKey == "" {
+				validationErrors = append(validationErrors, fmt.Sprintf("bindings[%d].bindings[%q] could not be parsed", index, trimmedKey))
+				continue
+			}
+			duplicateKey := normalizedContext + "\x00" + normalizedKey
 			if seen[duplicateKey] {
 				validationErrors = append(validationErrors, fmt.Sprintf("duplicate binding %q in context %q", trimmedKey, contextName))
 				continue
 			}
 			seen[duplicateKey] = true
-			entries = append(entries, keybindingEntry{Key: trimmedKey, Action: trimmedAction})
+			entries = append(entries, keybindingEntry{Key: trimmedKey, NormalizedKey: normalizedKey, Action: trimmedAction})
 		}
 		sections = append(sections, keybindingSection{Name: contextName, Entries: entries, Disabled: block.Disabled})
 	}
 	return sections, validationErrors
+}
+
+type effectiveKeybinding struct {
+	Context  string
+	Entry    keybindingEntry
+	Source   string
+	Section  string
+	Disabled bool
+}
+
+func (a *App) resolveKeybinding(contextName string, key string, path string) keybindingResolveReport {
+	normalizedContext := normalizeKeybindingContext(contextName)
+	normalizedKey := normalizeShortcut(key)
+	report := keybindingResolveReport{
+		Kind:          "keybindings",
+		Action:        "resolve",
+		Status:        "missing",
+		Context:       normalizedContext,
+		Key:           strings.TrimSpace(key),
+		NormalizedKey: normalizedKey,
+	}
+	if normalizedContext == "" || normalizedKey == "" {
+		report.Status = "invalid"
+		report.Errors = []string{"context and key are required"}
+		return report
+	}
+	bindings, validationErrors := a.effectiveKeybindings(path)
+	if len(validationErrors) != 0 {
+		report.Status = "invalid"
+		report.Errors = validationErrors
+		return report
+	}
+	binding, ok := bindings[normalizedContext+"\x00"+normalizedKey]
+	if !ok {
+		return report
+	}
+	report.Status = "ok"
+	report.Found = true
+	report.Source = binding.Source
+	report.BindingAction = binding.Entry.Action
+	report.Section = binding.Section
+	report.Disabled = binding.Disabled
+	return report
+}
+
+func (a *App) effectiveKeybindings(path string) (map[string]effectiveKeybinding, []string) {
+	out := map[string]effectiveKeybinding{}
+	defaultSections, validationErrors := parseKeybindingsFile(defaultKeybindingsTemplate())
+	if len(validationErrors) != 0 {
+		return nil, validationErrors
+	}
+	addEffectiveKeybindings(out, defaultSections, "default", effectiveEditorMode(a.Config.EditorMode))
+	if strings.TrimSpace(path) == "" {
+		var err error
+		path, err = a.keybindingsPath()
+		if err != nil {
+			return out, nil
+		}
+	} else {
+		path = a.resolveOutputPath(path)
+	}
+	if path == "" || !fileExists(path) {
+		return out, nil
+	}
+	report := a.validateKeybindings(path)
+	if !report.Valid {
+		return nil, report.Errors
+	}
+	addEffectiveKeybindings(out, report.Sections, "user", effectiveEditorMode(a.Config.EditorMode))
+	return out, nil
+}
+
+func addEffectiveKeybindings(out map[string]effectiveKeybinding, sections []keybindingSection, source string, editorMode string) {
+	for _, section := range sections {
+		contextName := normalizeKeybindingContext(section.Name)
+		if contextName == "" {
+			continue
+		}
+		disabled := section.Disabled || (contextName == "repl-vim" && !editorModeIsVim(editorMode))
+		for _, entry := range section.Entries {
+			normalizedKey := entry.NormalizedKey
+			if normalizedKey == "" {
+				normalizedKey = normalizeShortcut(entry.Key)
+			}
+			if normalizedKey == "" {
+				continue
+			}
+			entry.NormalizedKey = normalizedKey
+			out[contextName+"\x00"+normalizedKey] = effectiveKeybinding{
+				Context:  contextName,
+				Entry:    entry,
+				Source:   source,
+				Section:  section.Name,
+				Disabled: disabled,
+			}
+		}
+	}
+}
+
+func normalizeKeybindingContext(contextName string) string {
+	contextName = strings.ToLower(strings.TrimSpace(contextName))
+	contextName = strings.ReplaceAll(contextName, "_", "-")
+	contextName = strings.Join(strings.Fields(contextName), "-")
+	return contextName
+}
+
+func normalizeShortcut(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if strings.HasPrefix(key, "/") {
+		return strings.ToLower(strings.Join(strings.Fields(key), " "))
+	}
+	lower := strings.ToLower(key)
+	lower = strings.ReplaceAll(lower, " ", "")
+	parts := strings.FieldsFunc(lower, func(r rune) bool {
+		return r == '+' || r == '-'
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 1 {
+		return normalizeShortcutToken(parts[0])
+	}
+	modSeen := map[string]bool{}
+	var keyPart string
+	for _, part := range parts {
+		token := normalizeShortcutToken(part)
+		if token == "" {
+			continue
+		}
+		if isShortcutModifier(token) {
+			modSeen[token] = true
+			continue
+		}
+		keyPart = token
+	}
+	if keyPart == "" {
+		return ""
+	}
+	var normalized []string
+	for _, modifier := range []string{"ctrl", "alt", "shift", "meta"} {
+		if modSeen[modifier] {
+			normalized = append(normalized, modifier)
+		}
+	}
+	normalized = append(normalized, keyPart)
+	return strings.Join(normalized, "+")
+}
+
+func normalizeShortcutToken(token string) string {
+	token = strings.TrimSpace(token)
+	switch token {
+	case "control", "ctl":
+		return "ctrl"
+	case "cmd", "command", "super":
+		return "meta"
+	case "option":
+		return "alt"
+	case "escape":
+		return "esc"
+	case "return":
+		return "enter"
+	case "spacebar":
+		return "space"
+	default:
+		return token
+	}
+}
+
+func isShortcutModifier(token string) bool {
+	switch token {
+	case "ctrl", "alt", "shift", "meta":
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultKeybindingsTemplate() []byte {
@@ -11942,6 +12172,29 @@ func renderKeybindingsValidation(out io.Writer, report keybindingValidationRepor
 	fmt.Fprintf(out, "  Valid            %t\n", report.Valid)
 	fmt.Fprintf(out, "  Contexts         %d\n", report.ContextCount)
 	fmt.Fprintf(out, "  Bindings         %d\n", report.BindingCount)
+	for _, validationError := range report.Errors {
+		fmt.Fprintf(out, "  Error            %s\n", validationError)
+	}
+}
+
+func renderKeybindingResolve(out io.Writer, report keybindingResolveReport) {
+	fmt.Fprintln(out, "Keybinding Resolve")
+	fmt.Fprintf(out, "  Context          %s\n", report.Context)
+	fmt.Fprintf(out, "  Key              %s\n", report.Key)
+	fmt.Fprintf(out, "  Normalized key   %s\n", report.NormalizedKey)
+	fmt.Fprintf(out, "  Found            %t\n", report.Found)
+	if report.Source != "" {
+		fmt.Fprintf(out, "  Source           %s\n", report.Source)
+	}
+	if report.Section != "" {
+		fmt.Fprintf(out, "  Section          %s\n", report.Section)
+	}
+	if report.BindingAction != "" {
+		fmt.Fprintf(out, "  Action           %s\n", report.BindingAction)
+	}
+	if report.Disabled {
+		fmt.Fprintln(out, "  Disabled         true")
+	}
 	for _, validationError := range report.Errors {
 		fmt.Fprintf(out, "  Error            %s\n", validationError)
 	}
@@ -30009,6 +30262,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "keybindings":
+		return localCommandHelpSpec(
+			"keybindings",
+			"keybindings",
+			"codog keybindings [show|path|init|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--output-format text|json]",
+			"Keybindings\n\nUsage:\n  codog keybindings [show|path|init|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--output-format text|json]\n\nShows default shortcuts, creates or validates a keybindings config file, and resolves an effective action for a context/key pair after applying user overrides.\n",
+			[]string{"editor_mode", "keybindings_path", "sections", "normalized_key", "binding_action"},
+			[]string{"ok", "missing", "invalid", "created", "written"},
+			true,
+		), true
 	case "voice", "listen":
 		spec := localCommandHelpSpec(
 			"voice",
@@ -30240,7 +30503,7 @@ Usage:
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] telemetry [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]
+  %s [flags] keybindings [show|path|init|validate|resolve CONTEXT KEY] [--force] [--path PATH] [--json|--output-format text|json]
   %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
