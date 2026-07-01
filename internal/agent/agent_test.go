@@ -5338,6 +5338,29 @@ func TestBranchFreshnessCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestBranchLockCommandAndSlash(t *testing.T) {
+	input := `{"intents":[{"lane_id":"lane-a","branch":"feature/shared","modules":["runtime"]},{"laneId":"lane-b","branch":"feature/shared","modules":["runtime/mcp"]}]}`
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Out: &out, Err: &errOut}
+
+	require.NoError(t, app.BranchLock([]string{"check", "--input", input, "--json"}))
+	require.Contains(t, out.String(), `"kind": "branch_lock"`)
+	require.Contains(t, out.String(), `"status": "collision"`)
+	require.Contains(t, out.String(), `"collision_count": 1`)
+	require.Contains(t, out.String(), `"module": "runtime"`)
+	require.Contains(t, out.String(), `"lane-a"`)
+	require.Contains(t, out.String(), `"lane-b"`)
+	out.Reset()
+
+	app.In = strings.NewReader(input)
+	require.True(t, app.handleSlash(context.Background(), "/branch-lock check --stdin", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Branch Lock")
+	require.Contains(t, out.String(), "Status           collision")
+	require.Contains(t, out.String(), "branch=feature/shared module=runtime lanes=lane-a, lane-b")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))

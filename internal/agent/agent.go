@@ -32,6 +32,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/branchlock"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/bughunt"
 	"github.com/Rememorio/codog/internal/codeintel"
@@ -534,6 +535,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Git(append([]string{command}, rest...))
 	case "branch":
 		return app.Branch(rest)
+	case "branch-lock", "branchlock":
+		return app.BranchLock(rest)
 	case "tag":
 		return app.Tag(rest)
 	case "stash":
@@ -19216,6 +19219,7 @@ func codogCapabilityFeatures() []string {
 		"bash_sandbox_request_status",
 		"bash_test_hang_timeout_event",
 		"background_tasks",
+		"branch_lock_collisions",
 		"broad_cwd_guard",
 		"bubble_tea_tui",
 		"config_layers",
@@ -19322,6 +19326,8 @@ func builtInCommandNames() []string {
 		"bashes",
 		"blame",
 		"branch",
+		"branch-lock",
+		"branchlock",
 		"bridge",
 		"bridge-kick",
 		"break-cache",
@@ -20325,6 +20331,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedPlanSlash(resumeSlashArgs("plan", args, format), format)
 	case "/branch":
 		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
+	case "/branch-lock", "/branchlock":
+		return a.BranchLock(resumeSlashArgs("branch-lock", args, format))
 	case "/tag":
 		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
 	case "/stash":
@@ -24565,6 +24573,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Branch(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/branch-lock", "/branchlock":
+		if err := a.BranchLock(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/tag":
 		if err := a.Tag(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -28310,6 +28322,166 @@ func renderBranchReport(out io.Writer, report branchReport) {
 			fmt.Fprintf(out, "  %s", detail)
 		}
 		fmt.Fprintln(out)
+	}
+}
+
+type branchLockRequest struct {
+	Format string
+	Action string
+	File   string
+	Input  string
+	Stdin  bool
+}
+
+type branchLockReport struct {
+	Kind           string                 `json:"kind"`
+	Action         string                 `json:"action"`
+	Status         string                 `json:"status"`
+	IntentCount    int                    `json:"intent_count"`
+	CollisionCount int                    `json:"collision_count"`
+	Collisions     []branchlock.Collision `json:"collisions,omitempty"`
+}
+
+func (a *App) BranchLock(args []string) error {
+	req, err := parseBranchLockArgs(args)
+	if err != nil {
+		return err
+	}
+	input, err := a.branchLockInput(req)
+	if err != nil {
+		return err
+	}
+	intents, err := branchlock.Decode(input)
+	if err != nil {
+		return err
+	}
+	collisions := branchlock.DetectCollisions(intents)
+	status := "ok"
+	if len(collisions) > 0 {
+		status = "collision"
+	}
+	report := branchLockReport{
+		Kind:           "branch_lock",
+		Action:         req.Action,
+		Status:         status,
+		IntentCount:    len(intents),
+		CollisionCount: len(collisions),
+		Collisions:     collisions,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBranchLockReport(a.Out, report)
+	return nil
+}
+
+func (a *App) branchLockInput(req branchLockRequest) ([]byte, error) {
+	switch {
+	case strings.TrimSpace(req.Input) != "":
+		return []byte(req.Input), nil
+	case strings.TrimSpace(req.File) != "":
+		return os.ReadFile(req.File)
+	case req.Stdin:
+		in := a.In
+		if in == nil {
+			in = os.Stdin
+		}
+		return io.ReadAll(in)
+	default:
+		return []byte("[]"), nil
+	}
+}
+
+func parseBranchLockArgs(args []string) (branchLockRequest, error) {
+	req := branchLockRequest{Format: "text", Action: "check"}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("branch-lock output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--file" || arg == "-f":
+			i++
+			if i >= len(args) {
+				return req, errors.New("branch-lock file is required")
+			}
+			req.File = args[i]
+		case strings.HasPrefix(arg, "--file="):
+			req.File = strings.TrimPrefix(arg, "--file=")
+		case arg == "--input":
+			i++
+			if i >= len(args) {
+				return req, errors.New("branch-lock input JSON is required")
+			}
+			req.Input = args[i]
+		case strings.HasPrefix(arg, "--input="):
+			req.Input = strings.TrimPrefix(arg, "--input=")
+		case arg == "--stdin":
+			req.Stdin = true
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown branch-lock flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "branch-lock")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	rest := positionals
+	action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	if action == "check" || action == "detect" || action == "collisions" {
+		req.Action = action
+		rest = positionals[1:]
+	}
+	if req.Action == "detect" || req.Action == "collisions" {
+		req.Action = "check"
+	}
+	if req.Action != "check" {
+		return req, fmt.Errorf("unknown branch-lock action %q", positionals[0])
+	}
+	if len(rest) > 1 {
+		return req, errors.New("usage: codog branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]")
+	}
+	if len(rest) == 1 {
+		value := strings.TrimSpace(rest[0])
+		if strings.HasPrefix(value, "[") || strings.HasPrefix(value, "{") {
+			req.Input = value
+		} else {
+			req.File = value
+		}
+	}
+	if strings.TrimSpace(req.Input) != "" && strings.TrimSpace(req.File) != "" {
+		return req, errors.New("branch-lock accepts only one of --input or --file")
+	}
+	if req.Stdin && (strings.TrimSpace(req.Input) != "" || strings.TrimSpace(req.File) != "") {
+		return req, errors.New("branch-lock accepts --stdin only without --input or --file")
+	}
+	return req, nil
+}
+
+func renderBranchLockReport(out io.Writer, report branchLockReport) {
+	fmt.Fprintln(out, "Branch Lock")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Intents          %d\n", report.IntentCount)
+	fmt.Fprintf(out, "  Collisions       %d\n", report.CollisionCount)
+	for _, collision := range report.Collisions {
+		fmt.Fprintf(out, "  - branch=%s module=%s lanes=%s\n", collision.Branch, collision.Module, strings.Join(collision.LaneIDs, ", "))
 	}
 }
 
@@ -35779,7 +35951,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
@@ -36101,6 +36273,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Statusline\n\nUsage:\n  codog statusline [--output-format text|json]\n\nPrints a compact one-line local workspace status for shell prompts and editor integrations.\n",
 			[]string{"workspace", "session_id", "model", "permission_mode", "git_branch"},
 			[]string{"ok", "error"},
+			false,
+		), true
+	case "branch-lock", "branchlock":
+		return localCommandHelpSpec(
+			"branch-lock",
+			"branch-lock",
+			"codog branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--output-format text|json]",
+			"Branch Lock\n\nUsage:\n  codog branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--output-format text|json]\n  codog branchlock [same flags]\n\nDetects branch/module collisions across concurrent lane intents. Input is either a JSON array of intents or an object with an `intents` array. Each intent accepts `lane_id` or `laneId`, `branch`, optional `worktree`, and `modules`.\n",
+			[]string{"intent_count", "collision_count", "collisions", "branch", "module", "lane_ids"},
+			[]string{"ok", "collision", "error"},
 			false,
 		), true
 	case "acp":
@@ -37082,6 +37264,7 @@ Usage:
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
+  %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]
   %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE [--json|--output-format text|json]
