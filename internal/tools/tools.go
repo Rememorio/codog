@@ -2821,20 +2821,37 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	case "files_with_matches":
 		sort.Strings(files)
 		return pretty(map[string]any{
-			"output_mode": mode,
-			"files":       files,
-			"filenames":   files,
-			"num_files":   len(files),
-			"truncated":   len(files) >= limit,
-			"offset":      offset,
+			"output_mode":   mode,
+			"mode":          mode,
+			"files":         files,
+			"filenames":     files,
+			"num_files":     len(files),
+			"numFiles":      len(files),
+			"content":       nil,
+			"numLines":      nil,
+			"numMatches":    nil,
+			"appliedLimit":  limit,
+			"appliedOffset": offset,
+			"truncated":     len(files) >= limit,
+			"offset":        offset,
 		}), nil
 	case "count":
 		entries := grepCountEntries(counts, offset, limit)
+		filenames := grepCountFilenames(entries)
+		totalMatches := grepCountTotal(counts)
 		return pretty(map[string]any{
-			"output_mode": mode,
-			"counts":      entries,
-			"truncated":   len(counts) >= offset+limit,
-			"offset":      offset,
+			"output_mode":   mode,
+			"mode":          mode,
+			"counts":        entries,
+			"filenames":     filenames,
+			"numFiles":      len(filenames),
+			"content":       nil,
+			"numLines":      nil,
+			"numMatches":    totalMatches,
+			"appliedLimit":  limit,
+			"appliedOffset": offset,
+			"truncated":     len(counts) >= offset+limit,
+			"offset":        offset,
 		}), nil
 	default:
 		sort.Strings(contentFilenames)
@@ -2960,6 +2977,24 @@ func grepCountEntries(counts map[string]int, offset int, limit int) []map[string
 		entries = append(entries, map[string]any{"path": path, "count": counts[path]})
 	}
 	return entries
+}
+
+func grepCountFilenames(entries []map[string]any) []string {
+	filenames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if path, ok := entry["path"].(string); ok {
+			filenames = append(filenames, path)
+		}
+	}
+	return filenames
+}
+
+func grepCountTotal(counts map[string]int) int {
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	return total
 }
 
 type GlobTool struct {

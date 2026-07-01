@@ -251,6 +251,25 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Contains(t, out, "a.go")
 	require.Contains(t, out, "b.py")
 	require.NotContains(t, out, `"matches":`)
+	var filesReport struct {
+		Mode          string   `json:"mode"`
+		Filenames     []string `json:"filenames"`
+		NumFiles      int      `json:"numFiles"`
+		Content       *string  `json:"content"`
+		NumLines      *int     `json:"numLines"`
+		NumMatches    *int     `json:"numMatches"`
+		AppliedLimit  int      `json:"appliedLimit"`
+		AppliedOffset int      `json:"appliedOffset"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &filesReport))
+	require.Equal(t, "files_with_matches", filesReport.Mode)
+	require.Equal(t, []string{"a.go", "b.py"}, filesReport.Filenames)
+	require.Equal(t, 2, filesReport.NumFiles)
+	require.Nil(t, filesReport.Content)
+	require.Nil(t, filesReport.NumLines)
+	require.Nil(t, filesReport.NumMatches)
+	require.Equal(t, 100, filesReport.AppliedLimit)
+	require.Equal(t, 0, filesReport.AppliedOffset)
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
 	require.NoError(t, err)
@@ -264,6 +283,21 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Contains(t, out, "a.go")
 	require.Contains(t, out, `"count": 2`)
 	require.Contains(t, out, "b.py")
+	var countReport struct {
+		Mode       string   `json:"mode"`
+		Filenames  []string `json:"filenames"`
+		NumFiles   int      `json:"numFiles"`
+		NumMatches int      `json:"numMatches"`
+		Content    *string  `json:"content"`
+		NumLines   *int     `json:"numLines"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &countReport))
+	require.Equal(t, "count", countReport.Mode)
+	require.Equal(t, []string{"a.go", "b.py"}, countReport.Filenames)
+	require.Equal(t, 2, countReport.NumFiles)
+	require.Equal(t, 3, countReport.NumMatches)
+	require.Nil(t, countReport.Content)
+	require.Nil(t, countReport.NumLines)
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"content","offset":1,"head_limit":1}`), nil)
 	require.NoError(t, err)
