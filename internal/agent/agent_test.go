@@ -10057,6 +10057,58 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	require.Contains(t, out.String(), "- missing: missing command")
 }
 
+func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"tools", "demo", "--json"}), "no_servers_configured")
+	var report mcpRemoteActionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "mcp", report.Kind)
+	require.Equal(t, "tools", report.Action)
+	require.False(t, report.OK)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "no_servers_configured", report.ErrorKind)
+	require.Equal(t, "tools demo", report.RequestedAction)
+	require.Contains(t, report.Hint, "codog mcp add")
+	require.Equal(t, "codog mcp tools SERVER", report.Usage.DirectCLI)
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"tools", "demo"}), "no_servers_configured")
+	require.Contains(t, out.String(), "MCP")
+	require.Contains(t, out.String(), "Action           tools")
+	require.Contains(t, out.String(), "Error            no_servers_configured")
+	require.Contains(t, out.String(), "Usage            codog mcp tools SERVER")
+	out.Reset()
+
+	app.Config.MCPServers = map[string]config.MCPServerConfig{"configured": {Command: "demo-server"}}
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"resources", "missing", "--json"}), "server_not_found")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "resources", report.Action)
+	require.Equal(t, "server_not_found", report.ErrorKind)
+	require.Equal(t, "missing", report.ServerName)
+	require.Equal(t, []string{"configured"}, report.AvailableServers)
+	require.Equal(t, "codog mcp resources SERVER", report.Usage.DirectCLI)
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"call", "configured", "--json"}), "missing_argument")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "call", report.Action)
+	require.Equal(t, "missing_argument", report.ErrorKind)
+	require.Equal(t, "tool", report.Argument)
+	require.Equal(t, "codog mcp call SERVER TOOL JSON", report.Usage.DirectCLI)
+	out.Reset()
+
+	require.ErrorContains(t, app.MCP(context.Background(), []string{"call", "configured", "echo", "--json"}), "missing_argument")
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "json", report.Argument)
+	require.Contains(t, report.Message, "tool input JSON")
+}
+
 func TestMCPHelpCommand(t *testing.T) {
 	var out bytes.Buffer
 	app := &App{

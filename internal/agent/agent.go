@@ -30705,16 +30705,37 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), fmt.Sprintf("`%s` is not a supported MCP sub-action; run `codog mcp help`.", verb))
 	}
 	if len(a.Config.MCPServers) == 0 {
-		fmt.Fprintln(a.Out, "No MCP servers configured.")
-		return nil
+		return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
+			Kind:            "mcp",
+			Action:          args[0],
+			OK:              false,
+			Status:          "error",
+			ErrorKind:       "no_servers_configured",
+			RequestedAction: strings.Join(args, " "),
+			Message:         "No MCP servers are configured.",
+			Hint:            "Add one with `codog mcp add NAME COMMAND [ARG...]` or run `codog mcp list`.",
+			Usage:           mcpRemoteUsage(args[0]),
+		})
 	}
 	if len(args) < 2 {
-		return errors.New(mcpUsage)
+		return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "server"))
 	}
 	serverName := args[1]
 	server, ok := a.Config.MCPServers[serverName]
 	if !ok {
-		return fmt.Errorf("unknown MCP server %q", serverName)
+		return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
+			Kind:             "mcp",
+			Action:           args[0],
+			OK:               false,
+			Status:           "error",
+			ErrorKind:        "server_not_found",
+			RequestedAction:  strings.Join(args, " "),
+			ServerName:       serverName,
+			AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
+			Message:          fmt.Sprintf("MCP server %q is not configured.", serverName),
+			Hint:             "Run `codog mcp list` to see configured servers.",
+			Usage:            mcpRemoteUsage(args[0]),
+		})
 	}
 	var payload any
 	switch args[0] {
@@ -30723,8 +30744,11 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	case "auth":
 		payload = mcp.InspectAuth(ctx, serverName, server)
 	case "call":
+		if len(args) < 3 {
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "tool"))
+		}
 		if len(args) < 4 {
-			return errors.New("usage: codog mcp call SERVER TOOL JSON")
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "json"))
 		}
 		payload = mcp.CallTool(ctx, serverName, server, args[2], json.RawMessage(args[3]))
 	case "resources":
@@ -30733,14 +30757,14 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		payload = mcp.ListResourceTemplates(ctx, serverName, server)
 	case "read", "read-resource":
 		if len(args) < 3 {
-			return errors.New("usage: codog mcp read SERVER URI")
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "uri"))
 		}
 		payload = mcp.ReadResource(ctx, serverName, server, args[2])
 	case "prompts":
 		payload = mcp.ListPrompts(ctx, serverName, server)
 	case "prompt", "get-prompt":
 		if len(args) < 3 {
-			return errors.New("usage: codog mcp prompt SERVER NAME [JSON]")
+			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "prompt"))
 		}
 		var arguments json.RawMessage
 		if len(args) > 3 {
@@ -30830,6 +30854,21 @@ type mcpUnsupportedActionReport struct {
 	Usage           mcpUsageBlock `json:"usage"`
 }
 
+type mcpRemoteActionErrorReport struct {
+	Kind             string        `json:"kind"`
+	Action           string        `json:"action"`
+	OK               bool          `json:"ok"`
+	Status           string        `json:"status"`
+	ErrorKind        string        `json:"error_kind"`
+	RequestedAction  string        `json:"requested_action"`
+	ServerName       string        `json:"server_name,omitempty"`
+	Argument         string        `json:"argument,omitempty"`
+	AvailableServers []string      `json:"available_servers,omitempty"`
+	Message          string        `json:"message"`
+	Hint             string        `json:"hint"`
+	Usage            mcpUsageBlock `json:"usage"`
+}
+
 func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPValidationStatus, configLoadError string, configLoadErrorKind string) mcpListReport {
 	if statuses == nil {
 		statuses = []mcp.ServerStatus{}
@@ -30861,6 +30900,90 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		Servers:             statuses,
 		InvalidServers:      append([]localstatus.ValidationIssue(nil), validation.InvalidServers...),
 	}
+}
+
+func buildMCPRemoteMissingArgumentReport(action string, requestedAction string, argument string) mcpRemoteActionErrorReport {
+	action = strings.TrimSpace(action)
+	argument = strings.TrimSpace(argument)
+	return mcpRemoteActionErrorReport{
+		Kind:            "mcp",
+		Action:          action,
+		OK:              false,
+		Status:          "error",
+		ErrorKind:       "missing_argument",
+		RequestedAction: strings.TrimSpace(requestedAction),
+		Argument:        argument,
+		Message:         fmt.Sprintf("mcp %s requires %s.", action, mcpRemoteArgumentLabel(argument)),
+		Hint:            "Usage: " + mcpRemoteUsage(action).DirectCLI + ".",
+		Usage:           mcpRemoteUsage(action),
+	}
+}
+
+func mcpRemoteArgumentLabel(argument string) string {
+	switch argument {
+	case "server":
+		return "a server name"
+	case "tool":
+		return "a tool name"
+	case "json":
+		return "tool input JSON"
+	case "uri":
+		return "a resource URI"
+	case "prompt":
+		return "a prompt name"
+	default:
+		return "an argument"
+	}
+}
+
+func mcpRemoteUsage(action string) mcpUsageBlock {
+	action = strings.TrimSpace(action)
+	direct := "codog mcp " + action + " SERVER"
+	switch action {
+	case "tools", "list-tools":
+		direct = "codog mcp tools SERVER"
+	case "auth":
+		direct = "codog mcp auth SERVER"
+	case "call":
+		direct = "codog mcp call SERVER TOOL JSON"
+	case "resources":
+		direct = "codog mcp resources SERVER"
+	case "resource-templates", "resources-templates":
+		direct = "codog mcp resource-templates SERVER"
+	case "read", "read-resource":
+		direct = "codog mcp read SERVER URI"
+	case "prompts":
+		direct = "codog mcp prompts SERVER"
+	case "prompt", "get-prompt":
+		direct = "codog mcp prompt SERVER NAME [JSON]"
+	}
+	return mcpUsageBlock{
+		SlashCommand: "/" + strings.TrimPrefix(direct, "codog "),
+		DirectCLI:    direct,
+		Sources:      []string{".codog.json", ".codog.local.json", "user config"},
+	}
+}
+
+func renderMCPRemoteActionError(out io.Writer, format string, report mcpRemoteActionErrorReport) error {
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	fmt.Fprintln(out, "MCP")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Error            %s\n", report.ErrorKind)
+	fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	if report.ServerName != "" {
+		fmt.Fprintf(out, "  Server           %s\n", report.ServerName)
+	}
+	if len(report.AvailableServers) > 0 {
+		fmt.Fprintf(out, "  Available        %s\n", strings.Join(report.AvailableServers, ", "))
+	}
+	fmt.Fprintf(out, "  Hint             %s\n", report.Hint)
+	fmt.Fprintf(out, "  Usage            %s\n", report.Usage.DirectCLI)
+	return &ExitError{Code: 1, Err: err}
 }
 
 func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUnsupportedActionReport {
