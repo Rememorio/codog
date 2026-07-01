@@ -478,11 +478,15 @@ func (s Store) Logs(id string, limitBytes int64) (string, error) {
 }
 
 func (s Store) LogFrom(id string, offset int64) (int64, string, error) {
+	return s.LogRange(id, offset, 0)
+}
+
+func (s Store) LogRange(id string, offset int64, limitBytes int64) (int64, string, error) {
 	task, err := s.Get(id)
 	if err != nil {
 		return offset, "", err
 	}
-	return s.readLogFrom(task.LogPath, offset)
+	return s.readLogRange(task.LogPath, offset, limitBytes)
 }
 
 func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit func(WatchEvent) error) error {
@@ -550,6 +554,10 @@ func (s Store) Watch(ctx context.Context, id string, options WatchOptions, emit 
 }
 
 func (s Store) readLogFrom(path string, offset int64) (int64, string, error) {
+	return s.readLogRange(path, offset, 0)
+}
+
+func (s Store) readLogRange(path string, offset int64, limitBytes int64) (int64, string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -562,13 +570,20 @@ func (s Store) readLogFrom(path string, offset int64) (int64, string, error) {
 	if err != nil {
 		return offset, "", err
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	if offset > info.Size() {
 		offset = 0
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return offset, "", err
 	}
-	data, err := io.ReadAll(file)
+	remaining := info.Size() - offset
+	if limitBytes <= 0 || limitBytes > remaining {
+		limitBytes = remaining
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limitBytes))
 	if err != nil {
 		return offset, "", err
 	}

@@ -23,6 +23,23 @@ func TestLogsReturnsTail(t *testing.T) {
 	require.Equal(t, "codog", logs)
 }
 
+func TestLogRangeReturnsBoundedChunkFromOffset(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	logPath := filepath.Join(store.Dir, "task.log")
+	require.NoError(t, os.WriteFile(logPath, []byte("alpha beta gamma"), 0o644))
+	require.NoError(t, store.save(Task{ID: "task", Status: "completed", LogPath: logPath}))
+
+	nextOffset, logs, err := store.LogRange("task", 6, 4)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), nextOffset)
+	require.Equal(t, "beta", logs)
+
+	nextOffset, logs, err = store.LogRange("task", 10_000, 5)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), nextOffset)
+	require.Equal(t, "alpha", logs)
+}
+
 func TestWatchEmitsStatusAndLogEvents(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	logPath := filepath.Join(store.Dir, "task.log")

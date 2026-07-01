@@ -2524,6 +2524,8 @@ func (BashOutputTool) Definition() anthropic.ToolDefinition {
 				"task_id":     map[string]any{"type": "string"},
 				"id":          map[string]any{"type": "string"},
 				"limit_bytes": map[string]any{"type": "integer", "minimum": 1},
+				"limit":       map[string]any{"type": "integer", "minimum": 1},
+				"offset":      map[string]any{"type": "integer", "minimum": 0},
 			},
 			"additionalProperties": false,
 		},
@@ -2538,6 +2540,8 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		TaskID     string `json:"task_id"`
 		ID         string `json:"id"`
 		LimitBytes int64  `json:"limit_bytes"`
+		Limit      int64  `json:"limit"`
+		Offset     *int64 `json:"offset"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -2546,8 +2550,12 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	if payload.LimitBytes <= 0 {
-		payload.LimitBytes = 64 * 1024
+	limitBytes := payload.LimitBytes
+	if limitBytes <= 0 {
+		limitBytes = payload.Limit
+	}
+	if limitBytes <= 0 {
+		limitBytes = 64 * 1024
 	}
 	store := taskStore(t.ConfigHome, t.Workspace)
 	task, err := store.Status(id)
@@ -2557,9 +2565,27 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err := requireBashTask(task); err != nil {
 		return "", err
 	}
-	output, err := store.Logs(id, payload.LimitBytes)
-	if err != nil {
-		return "", err
+	var output string
+	var appliedOffset, nextOffset, logSize int64
+	if info, statErr := os.Stat(task.LogPath); statErr == nil {
+		logSize = info.Size()
+	}
+	if payload.Offset != nil {
+		if *payload.Offset < 0 {
+			return "", errors.New("offset must be non-negative")
+		}
+		nextOffset, output, err = store.LogRange(id, *payload.Offset, limitBytes)
+		if err != nil {
+			return "", err
+		}
+		appliedOffset = nextOffset - int64(len([]byte(output)))
+	} else {
+		output, err = store.Logs(id, limitBytes)
+		if err != nil {
+			return "", err
+		}
+		nextOffset = logSize
+		appliedOffset = maxInt64(nextOffset-int64(len([]byte(output))), 0)
 	}
 	outputText, outputTruncated := truncateBashOutput(output)
 	result := bashOutputContractFields(false)
@@ -2574,6 +2600,9 @@ func (t BashOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	result["rawOutputPath"] = task.LogPath
 	result["interrupted"] = task.Status == "stopped"
 	result["noOutputExpected"] = bashNoOutputExpected(outputText, "")
+	result["offset"] = appliedOffset
+	result["nextOffset"] = nextOffset
+	result["bytesRead"] = len([]byte(output))
 	if task.ExitCode != nil {
 		result["exit_code"] = *task.ExitCode
 		if interpretation := bashReturnCodeInterpretation(*task.ExitCode, false, task.Command); interpretation != "" {
@@ -6699,6 +6728,8 @@ func (TaskOutputTool) Definition() anthropic.ToolDefinition {
 				"task_id":     map[string]any{"type": "string"},
 				"taskId":      map[string]any{"type": "string"},
 				"limit_bytes": map[string]any{"type": "integer", "minimum": 1},
+				"limit":       map[string]any{"type": "integer", "minimum": 1},
+				"offset":      map[string]any{"type": "integer", "minimum": 0},
 				"block":       map[string]any{"type": "boolean"},
 				"timeout":     map[string]any{"type": "integer", "minimum": 0},
 			},
@@ -6716,12 +6747,18 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		TaskID     string `json:"task_id"`
 		TaskId     string `json:"taskId"`
 		LimitBytes int64  `json:"limit_bytes"`
+		Limit      int64  `json:"limit"`
+		Offset     *int64 `json:"offset"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	if payload.LimitBytes <= 0 {
-		payload.LimitBytes = 64 * 1024
+	limitBytes := payload.LimitBytes
+	if limitBytes <= 0 {
+		limitBytes = payload.Limit
+	}
+	if limitBytes <= 0 {
+		limitBytes = 64 * 1024
 	}
 	store := taskStore(t.ConfigHome, t.Workspace)
 	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId)
@@ -6732,17 +6769,38 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	output, err := store.Logs(id, payload.LimitBytes)
-	if err != nil {
-		return "", err
+	var output string
+	var appliedOffset, nextOffset, logSize int64
+	if info, statErr := os.Stat(task.LogPath); statErr == nil {
+		logSize = info.Size()
+	}
+	if payload.Offset != nil {
+		if *payload.Offset < 0 {
+			return "", errors.New("offset must be non-negative")
+		}
+		nextOffset, output, err = store.LogRange(id, *payload.Offset, limitBytes)
+		if err != nil {
+			return "", err
+		}
+		appliedOffset = nextOffset - int64(len([]byte(output)))
+	} else {
+		output, err = store.Logs(id, limitBytes)
+		if err != nil {
+			return "", err
+		}
+		nextOffset = logSize
+		appliedOffset = maxInt64(nextOffset-int64(len([]byte(output))), 0)
 	}
 	return pretty(map[string]any{
-		"id":        id,
-		"task_id":   id,
-		"status":    task.Status,
-		"exit_code": task.ExitCode,
-		"error":     task.Error,
-		"output":    output,
+		"id":         id,
+		"task_id":    id,
+		"status":     task.Status,
+		"exit_code":  task.ExitCode,
+		"error":      task.Error,
+		"output":     output,
+		"offset":     appliedOffset,
+		"nextOffset": nextOffset,
+		"bytesRead":  len([]byte(output)),
 	}), nil
 }
 
@@ -7854,6 +7912,13 @@ func min(a, b int) int {
 }
 
 func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func maxInt64(a, b int64) int64 {
 	if a > b {
 		return a
 	}

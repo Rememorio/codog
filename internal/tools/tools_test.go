@@ -356,6 +356,19 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 	require.Equal(t, outputPayload.Output, outputPayload.Stdout)
 	require.False(t, outputPayload.Interrupted)
 	require.False(t, outputPayload.NoOutputExpected)
+	out, err = registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`","offset":0,"limit":4}`), nil)
+	require.NoError(t, err)
+	var offsetOutput struct {
+		Stdout     string `json:"stdout"`
+		Offset     int64  `json:"offset"`
+		NextOffset int64  `json:"nextOffset"`
+		BytesRead  int    `json:"bytesRead"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &offsetOutput))
+	require.Equal(t, "bash", offsetOutput.Stdout)
+	require.Equal(t, int64(0), offsetOutput.Offset)
+	require.Equal(t, int64(4), offsetOutput.NextOffset)
+	require.Equal(t, 4, offsetOutput.BytesRead)
 	out, err = registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`","limit_bytes":4}`), nil)
 	require.NoError(t, err)
 	var limitedOutput struct {
@@ -2090,6 +2103,19 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.Contains(t, outputOut, `"task_id": "`)
 	require.Contains(t, outputOut, `"status": "completed"`)
 	require.Contains(t, outputOut, `"exit_code": 0`)
+	outputOut, err = TaskOutputTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`","offset":0,"limit":4}`))
+	require.NoError(t, err)
+	var offsetOutput struct {
+		Output     string `json:"output"`
+		Offset     int64  `json:"offset"`
+		NextOffset int64  `json:"nextOffset"`
+		BytesRead  int    `json:"bytesRead"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(outputOut), &offsetOutput))
+	require.Equal(t, "task", offsetOutput.Output)
+	require.Equal(t, int64(0), offsetOutput.Offset)
+	require.Equal(t, int64(4), offsetOutput.NextOffset)
+	require.Equal(t, 4, offsetOutput.BytesRead)
 
 	updateOut, err := TaskUpdateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"taskId":"`+task.ID+`","message":"review logs"}`))
 	require.NoError(t, err)
