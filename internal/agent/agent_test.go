@@ -50,6 +50,7 @@ import (
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/sessionname"
 	"github.com/Rememorio/codog/internal/skills"
+	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/todos"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/undo"
@@ -673,6 +674,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "session_identity_metadata")
 	require.Contains(t, report.Features, "session_identity_reconciliation")
 	require.Contains(t, report.Features, "stale_branch_guard")
+	require.Contains(t, report.Features, "status_config_validation")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
 	require.Contains(t, report.Features, "typed_task_packets")
@@ -4906,6 +4908,66 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "codog")
 	require.Contains(t, out.String(), "claude-test")
 	require.Contains(t, out.String(), "session=source(1)")
+}
+
+func TestStatusValidationReportsDegradedConfig(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Model:      "claude-test",
+			MCPServers: map[string]config.MCPServerConfig{
+				"missing": {},
+				"ok":      {Command: "codog-test-mcp"},
+			},
+			Hooks: config.HookConfig{
+				PreToolUseCommands: []config.HookCommand{
+					{Type: "command", Command: "echo ok"},
+					{Type: "command"},
+					{Type: "http"},
+					{Type: "webhook", Command: "echo no"},
+					{Type: "prompt", Prompt: "summarize payload"},
+					{Type: "agent", Prompt: "inspect payload"},
+				},
+				SessionStart: []string{"echo session"},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{}))
+	var snapshot localstatus.Snapshot
+	require.NoError(t, json.Unmarshal(out.Bytes(), &snapshot))
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, 2, snapshot.MCPValidation.TotalConfigured)
+	require.Equal(t, 1, snapshot.MCPValidation.ValidCount)
+	require.Equal(t, 1, snapshot.MCPValidation.InvalidCount)
+	require.Len(t, snapshot.MCPValidation.InvalidServers, 1)
+	require.Equal(t, "missing", snapshot.MCPValidation.InvalidServers[0].Name)
+	require.Equal(t, "missing_command", snapshot.MCPValidation.InvalidServers[0].Kind)
+	require.Equal(t, "command", snapshot.MCPValidation.InvalidServers[0].ErrorField)
+	require.Equal(t, 4, snapshot.HookValidation.ValidCount)
+	require.Equal(t, 3, snapshot.HookValidation.InvalidCount)
+	require.Len(t, snapshot.HookValidation.InvalidHooks, 3)
+	kinds := map[string]string{}
+	for _, issue := range snapshot.HookValidation.InvalidHooks {
+		require.Equal(t, "pre_tool_use", issue.Event)
+		require.NotNil(t, issue.Index)
+		require.NotNil(t, issue.HookIndex)
+		kinds[issue.Kind] = issue.ErrorField
+	}
+	require.Equal(t, "command", kinds["missing_command"])
+	require.Equal(t, "url", kinds["missing_url"])
+	require.Equal(t, "type", kinds["unsupported_type"])
+	out.Reset()
+
+	require.NoError(t, app.Status(nil, config.FlagOverrides{}))
+	require.Contains(t, out.String(), "MCP validation   valid=1 invalid=1")
+	require.Contains(t, out.String(), "Hook validation  valid=4 invalid=3")
 }
 
 func TestStatusIncludesBranchFreshness(t *testing.T) {

@@ -48,6 +48,8 @@ type Options struct {
 	InstructionsLoadedHookCount int
 	FileChangedHookCount        int
 	EnabledSkillCount           int
+	MCPValidation               MCPValidationStatus
+	HookValidation              HookValidationStatus
 	PlanActive                  bool
 	PlanText                    string
 	PlanUpdatedAt               string
@@ -70,19 +72,21 @@ type Options struct {
 }
 
 type Snapshot struct {
-	Kind      string          `json:"kind"`
-	Action    string          `json:"action"`
-	Status    string          `json:"status"`
-	Version   string          `json:"version"`
-	Workspace WorkspaceStatus `json:"workspace"`
-	Config    ConfigStatus    `json:"config"`
-	Session   SessionStatus   `json:"session"`
-	Plan      PlanStatus      `json:"plan"`
-	Tools     ToolsStatus     `json:"tools"`
-	Git       GitStatus       `json:"git"`
-	LaneBoard LaneBoardStatus `json:"lane_board"`
-	Sandbox   SandboxStatus   `json:"sandbox"`
-	Runtime   RuntimeStatus   `json:"runtime"`
+	Kind           string               `json:"kind"`
+	Action         string               `json:"action"`
+	Status         string               `json:"status"`
+	Version        string               `json:"version"`
+	Workspace      WorkspaceStatus      `json:"workspace"`
+	Config         ConfigStatus         `json:"config"`
+	Session        SessionStatus        `json:"session"`
+	Plan           PlanStatus           `json:"plan"`
+	Tools          ToolsStatus          `json:"tools"`
+	Git            GitStatus            `json:"git"`
+	LaneBoard      LaneBoardStatus      `json:"lane_board"`
+	Sandbox        SandboxStatus        `json:"sandbox"`
+	Runtime        RuntimeStatus        `json:"runtime"`
+	MCPValidation  MCPValidationStatus  `json:"mcp_validation"`
+	HookValidation HookValidationStatus `json:"hook_validation"`
 }
 
 type WorkspaceStatus struct {
@@ -197,16 +201,46 @@ type RuntimeStatus struct {
 	Executable string `json:"executable,omitempty"`
 }
 
+type MCPValidationStatus struct {
+	TotalConfigured int               `json:"total_configured"`
+	ValidCount      int               `json:"valid_count"`
+	InvalidCount    int               `json:"invalid_count"`
+	InvalidServers  []ValidationIssue `json:"invalid_servers,omitempty"`
+}
+
+type HookValidationStatus struct {
+	ValidCount   int               `json:"valid_count"`
+	InvalidCount int               `json:"invalid_count"`
+	InvalidHooks []ValidationIssue `json:"invalid_hooks,omitempty"`
+}
+
+type ValidationIssue struct {
+	Name       string `json:"name,omitempty"`
+	Event      string `json:"event,omitempty"`
+	Index      *int   `json:"index,omitempty"`
+	HookIndex  *int   `json:"hook_index,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	ErrorField string `json:"error_field,omitempty"`
+	Reason     string `json:"reason"`
+	Command    string `json:"command,omitempty"`
+	Matcher    string `json:"matcher,omitempty"`
+	Valid      bool   `json:"valid"`
+}
+
 func Build(opts Options) Snapshot {
 	git := parseGitStatus(opts.GitStatus, opts.GitError)
 	laneBoard := buildLaneBoardStatus(opts.LaneBoard, opts.LaneBoardError)
+	if opts.GitFreshness != nil {
+		freshness := *opts.GitFreshness
+		git.Freshness = &freshness
+	}
 	status := "ok"
 	if !git.Available {
 		status = "degraded"
-	} else if opts.GitFreshness != nil {
-		freshness := *opts.GitFreshness
-		git.Freshness = &freshness
-		if !freshness.Fresh {
+	} else if opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
+		status = "degraded"
+	} else if git.Freshness != nil {
+		if !git.Freshness.Fresh {
 			status = "warn"
 		}
 	}
@@ -287,6 +321,8 @@ func Build(opts Options) Snapshot {
 			GoVersion:  runtime.Version(),
 			Executable: opts.Executable,
 		},
+		MCPValidation:  opts.MCPValidation,
+		HookValidation: opts.HookValidation,
 	}
 }
 
@@ -330,6 +366,12 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		}
 	} else {
 		fmt.Fprintf(w, "  Git              unavailable: %s\n", snapshot.Git.Error)
+	}
+	if snapshot.MCPValidation.TotalConfigured > 0 || snapshot.MCPValidation.InvalidCount > 0 {
+		fmt.Fprintf(w, "  MCP validation   valid=%d invalid=%d\n", snapshot.MCPValidation.ValidCount, snapshot.MCPValidation.InvalidCount)
+	}
+	if snapshot.HookValidation.ValidCount > 0 || snapshot.HookValidation.InvalidCount > 0 {
+		fmt.Fprintf(w, "  Hook validation  valid=%d invalid=%d\n", snapshot.HookValidation.ValidCount, snapshot.HookValidation.InvalidCount)
 	}
 	fmt.Fprintf(w, "  Sandbox          available=%t default=%s\n", snapshot.Sandbox.Available, snapshot.Sandbox.Default)
 	if snapshot.LaneBoard.Available {

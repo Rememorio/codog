@@ -18019,6 +18019,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		executable = path
 	}
 	planState, _ := planmode.Load(a.Workspace)
+	mcpValidation := buildMCPValidation(a.Config.MCPServers)
+	hookValidation := buildHookValidation(a.Config.Hooks)
 	return localstatus.Build(localstatus.Options{
 		Version:                     version,
 		Workspace:                   a.Workspace,
@@ -18056,6 +18058,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		InstructionsLoadedHookCount: len(a.Config.Hooks.InstructionsLoaded),
 		FileChangedHookCount:        len(a.Config.Hooks.FileChanged),
 		EnabledSkillCount:           len(a.Config.EnabledSkills),
+		MCPValidation:               mcpValidation,
+		HookValidation:              hookValidation,
 		PlanActive:                  planState.Active,
 		PlanText:                    planState.Plan,
 		PlanUpdatedAt:               planState.UpdatedAt,
@@ -18076,6 +18080,137 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		SandboxAvailable:            sandboxStatus.Available,
 		Executable:                  executable,
 	})
+}
+
+func buildMCPValidation(servers map[string]config.MCPServerConfig) localstatus.MCPValidationStatus {
+	status := localstatus.MCPValidationStatus{TotalConfigured: len(servers)}
+	if len(servers) == 0 {
+		return status
+	}
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		server := servers[name]
+		if strings.TrimSpace(server.Command) == "" {
+			status.InvalidServers = append(status.InvalidServers, localstatus.ValidationIssue{
+				Name:       name,
+				Kind:       "missing_command",
+				ErrorField: "command",
+				Reason:     "missing command",
+				Valid:      false,
+			})
+			continue
+		}
+		status.ValidCount++
+	}
+	status.InvalidCount = len(status.InvalidServers)
+	return status
+}
+
+type hookValidationGroup struct {
+	Event    string
+	Entries  []config.HookCommand
+	Fallback []string
+}
+
+func buildHookValidation(cfg config.HookConfig) localstatus.HookValidationStatus {
+	status := localstatus.HookValidationStatus{}
+	for _, group := range hookValidationGroups(cfg) {
+		if len(group.Entries) != 0 {
+			for i, hook := range group.Entries {
+				if issue, ok := validateHookCommand(group.Event, i, hook); ok {
+					status.InvalidHooks = append(status.InvalidHooks, issue)
+					continue
+				}
+				status.ValidCount++
+			}
+			continue
+		}
+		for i, command := range group.Fallback {
+			hook := config.HookCommand{Type: "command", Command: command}
+			if issue, ok := validateHookCommand(group.Event, i, hook); ok {
+				status.InvalidHooks = append(status.InvalidHooks, issue)
+				continue
+			}
+			status.ValidCount++
+		}
+	}
+	status.InvalidCount = len(status.InvalidHooks)
+	return status
+}
+
+func hookValidationGroups(cfg config.HookConfig) []hookValidationGroup {
+	return []hookValidationGroup{
+		{Event: "pre_tool_use", Entries: cfg.PreToolUseCommands, Fallback: cfg.PreToolUse},
+		{Event: "post_tool_use", Entries: cfg.PostToolUseCommands, Fallback: cfg.PostToolUse},
+		{Event: "post_tool_use_failure", Entries: cfg.PostToolUseFailureCommands, Fallback: cfg.PostToolUseFailure},
+		{Event: "permission_request", Entries: cfg.PermissionRequestCommands, Fallback: cfg.PermissionRequest},
+		{Event: "permission_denied", Entries: cfg.PermissionDeniedCommands, Fallback: cfg.PermissionDenied},
+		{Event: "user_prompt_submit", Entries: cfg.UserPromptSubmitCommands, Fallback: cfg.UserPromptSubmit},
+		{Event: "session_start", Entries: cfg.SessionStartCommands, Fallback: cfg.SessionStart},
+		{Event: "session_end", Entries: cfg.SessionEndCommands, Fallback: cfg.SessionEnd},
+		{Event: "setup", Entries: cfg.SetupCommands, Fallback: cfg.Setup},
+		{Event: "stop", Entries: cfg.StopCommands, Fallback: cfg.Stop},
+		{Event: "stop_failure", Entries: cfg.StopFailureCommands, Fallback: cfg.StopFailure},
+		{Event: "pre_compact", Entries: cfg.PreCompactCommands, Fallback: cfg.PreCompact},
+		{Event: "post_compact", Entries: cfg.PostCompactCommands, Fallback: cfg.PostCompact},
+		{Event: "notification", Entries: cfg.NotificationCommands, Fallback: cfg.Notification},
+		{Event: "subagent_start", Entries: cfg.SubagentStartCommands, Fallback: cfg.SubagentStart},
+		{Event: "subagent_stop", Entries: cfg.SubagentStopCommands, Fallback: cfg.SubagentStop},
+		{Event: "worktree_create", Entries: cfg.WorktreeCreateCommands, Fallback: cfg.WorktreeCreate},
+		{Event: "worktree_remove", Entries: cfg.WorktreeRemoveCommands, Fallback: cfg.WorktreeRemove},
+		{Event: "cwd_changed", Entries: cfg.CwdChangedCommands, Fallback: cfg.CwdChanged},
+		{Event: "task_created", Entries: cfg.TaskCreatedCommands, Fallback: cfg.TaskCreated},
+		{Event: "task_completed", Entries: cfg.TaskCompletedCommands, Fallback: cfg.TaskCompleted},
+		{Event: "instructions_loaded", Entries: cfg.InstructionsLoadedCommands, Fallback: cfg.InstructionsLoaded},
+		{Event: "file_changed", Entries: cfg.FileChangedCommands, Fallback: cfg.FileChanged},
+	}
+}
+
+func validateHookCommand(event string, index int, hook config.HookCommand) (localstatus.ValidationIssue, bool) {
+	typ := strings.ToLower(strings.TrimSpace(hook.Type))
+	if typ == "" {
+		typ = "command"
+	}
+	display := strings.TrimSpace(config.HookCommandDisplay(hook))
+	switch typ {
+	case "command":
+		if strings.TrimSpace(hook.Command) == "" {
+			return hookValidationIssue(event, index, hook, "missing_command", "command", "missing command"), true
+		}
+	case "http":
+		if strings.TrimSpace(hook.URL) == "" {
+			return hookValidationIssue(event, index, hook, "missing_url", "url", "missing url"), true
+		}
+	case "prompt", "agent":
+		if strings.TrimSpace(hook.Prompt) == "" {
+			return hookValidationIssue(event, index, hook, "missing_prompt", "prompt", "missing prompt"), true
+		}
+	default:
+		return hookValidationIssue(event, index, hook, "unsupported_type", "type", "unsupported hook type "+typ), true
+	}
+	if display == "" {
+		return hookValidationIssue(event, index, hook, "missing_display", "command", "missing hook target"), true
+	}
+	return localstatus.ValidationIssue{}, false
+}
+
+func hookValidationIssue(event string, index int, hook config.HookCommand, kind string, field string, reason string) localstatus.ValidationIssue {
+	i := index
+	return localstatus.ValidationIssue{
+		Event:      event,
+		Index:      &i,
+		HookIndex:  &i,
+		Kind:       kind,
+		ErrorField: field,
+		Reason:     reason,
+		Command:    config.HookCommandDisplay(hook),
+		Matcher:    strings.TrimSpace(hook.Matcher),
+		Valid:      false,
+	}
 }
 
 type capabilitiesReport struct {
@@ -18319,6 +18454,7 @@ func codogCapabilityFeatures() []string {
 		"sampling_temperature",
 		"speech_output",
 		"stale_branch_guard",
+		"status_config_validation",
 		"team_watch",
 		"telemetry_preferences",
 		"task_id_alias_schemas",

@@ -103,6 +103,47 @@ func TestBuildWarnsOnStaleBranchFreshness(t *testing.T) {
 	require.Contains(t, out.String(), "Git freshness    status=stale base=main ahead=0 behind=2")
 }
 
+func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
+	index := 0
+	snapshot := Build(Options{
+		Version:   "test-version",
+		GitStatus: "## main",
+		MCPValidation: MCPValidationStatus{
+			TotalConfigured: 1,
+			InvalidCount:    1,
+			InvalidServers: []ValidationIssue{{
+				Name:       "bad",
+				Kind:       "missing_command",
+				ErrorField: "command",
+				Reason:     "missing command",
+				Valid:      false,
+			}},
+		},
+		HookValidation: HookValidationStatus{
+			ValidCount:   1,
+			InvalidCount: 1,
+			InvalidHooks: []ValidationIssue{{
+				Event:      "pre_tool_use",
+				Index:      &index,
+				HookIndex:  &index,
+				Kind:       "unsupported_type",
+				ErrorField: "type",
+				Reason:     "unsupported hook type webhook",
+				Valid:      false,
+			}},
+		},
+	})
+
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, 1, snapshot.MCPValidation.InvalidCount)
+	require.Equal(t, 1, snapshot.HookValidation.InvalidCount)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "MCP validation   valid=0 invalid=1")
+	require.Contains(t, out.String(), "Hook validation  valid=1 invalid=1")
+}
+
 func TestBuildParsesInitialBranch(t *testing.T) {
 	snapshot := Build(Options{GitStatus: "## No commits yet on main"})
 
