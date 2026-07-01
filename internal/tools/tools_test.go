@@ -402,8 +402,65 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 
 	aliases := ClaudeToolAliases()
 	require.Equal(t, "web_fetch", aliases["WebFetch"])
+	require.Equal(t, "read_file", aliases["FileReadTool"])
 	aliases["WebFetch"] = "changed"
 	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
+}
+
+func TestClaudeToolAliasesCoverArchivedToolEntries(t *testing.T) {
+	archivedToolEntries := []string{
+		"AgentTool",
+		"AskUserQuestionTool",
+		"BashTool",
+		"BriefTool",
+		"ConfigTool",
+		"CronCreateTool",
+		"CronDeleteTool",
+		"CronListTool",
+		"EnterPlanModeTool",
+		"EnterWorktreeTool",
+		"ExitPlanModeV2Tool",
+		"ExitWorktreeTool",
+		"FileEditTool",
+		"FileReadTool",
+		"FileWriteTool",
+		"GlobTool",
+		"GrepTool",
+		"LSPTool",
+		"ListMcpResourcesTool",
+		"MCPTool",
+		"McpAuthTool",
+		"NotebookEditTool",
+		"PowerShellTool",
+		"ReadMcpResourceTool",
+		"RemoteTriggerTool",
+		"SendMessageTool",
+		"SkillTool",
+		"SyntheticOutputTool",
+		"TaskCreateTool",
+		"TaskGetTool",
+		"TaskListTool",
+		"TaskOutputTool",
+		"TaskStopTool",
+		"TaskUpdateTool",
+		"TeamCreateTool",
+		"TeamDeleteTool",
+		"TestingPermissionTool",
+		"TodoWriteTool",
+		"ToolSearchTool",
+		"WebFetchTool",
+		"WebSearchTool",
+	}
+
+	aliases := ClaudeToolAliases()
+	registry := NewRegistry(t.TempDir())
+	for _, alias := range archivedToolEntries {
+		canonical, ok := aliases[alias]
+		require.True(t, ok, alias)
+		info, ok := registry.Info(alias)
+		require.True(t, ok, alias)
+		require.Equal(t, canonical, info.Name, alias)
+	}
 }
 
 func TestPrompterEmitsDecision(t *testing.T) {

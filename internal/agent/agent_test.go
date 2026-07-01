@@ -539,6 +539,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 
 	require.NoError(t, app.Capabilities(nil))
 	require.Contains(t, out.String(), "Codog Capabilities")
+	require.Contains(t, out.String(), "Tool aliases")
 	require.Contains(t, out.String(), "MCP local data")
 	out.Reset()
 
@@ -642,6 +643,20 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Greater(t, report.CommandCount, 20)
 	require.Greater(t, report.SlashCommandCount, 20)
 	require.Greater(t, report.ToolCount, 10)
+	require.Greater(t, report.ToolAliasCount, 40)
+	require.Equal(t, len(report.ToolAliases), report.ToolAliasCount)
+	require.Equal(t, "read_file", report.ToolAliases["Read"])
+	require.Equal(t, "read_file", report.ToolAliases["FileReadTool"])
+	require.Equal(t, "bash", report.ToolAliases["BashTool"])
+	require.Equal(t, "tool_search", report.ToolAliases["ToolSearchTool"])
+	readTool, ok := capabilityReportTool(report, "read_file")
+	require.True(t, ok)
+	require.Contains(t, readTool.Aliases, "Read")
+	require.Contains(t, readTool.Aliases, "FileReadTool")
+	bashTool, ok := capabilityReportTool(report, "bash")
+	require.True(t, ok)
+	require.Contains(t, bashTool.Aliases, "Bash")
+	require.Contains(t, bashTool.Aliases, "BashTool")
 	require.Equal(t, 3, report.MCP.LocalResourceCount)
 	require.Equal(t, 1, report.MCP.LocalTemplateCount)
 	require.Equal(t, 3, report.MCP.LocalPromptCount)
@@ -1111,12 +1126,17 @@ func TestInvalidOutputFormatJSONContract(t *testing.T) {
 }
 
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
+	_, ok := capabilityReportTool(report, name)
+	return ok
+}
+
+func capabilityReportTool(report capabilitiesReport, name string) (capabilityTool, bool) {
 	for _, tool := range report.Tools {
 		if tool.Name == name {
-			return true
+			return tool, true
 		}
 	}
-	return false
+	return capabilityTool{}, false
 }
 
 func capabilityReportHasSlash(report capabilitiesReport, name string) bool {

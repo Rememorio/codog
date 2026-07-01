@@ -16436,6 +16436,8 @@ type capabilitiesReport struct {
 	SlashCommands     []capabilitySlash `json:"slash_commands"`
 	ToolCount         int               `json:"tool_count"`
 	Tools             []capabilityTool  `json:"tools"`
+	ToolAliasCount    int               `json:"tool_alias_count"`
+	ToolAliases       map[string]string `json:"tool_aliases,omitempty"`
 	MCP               capabilityMCP     `json:"mcp"`
 	Features          []string          `json:"features"`
 	Protocols         []string          `json:"protocols"`
@@ -16454,6 +16456,7 @@ type capabilityTool struct {
 	Name           string         `json:"name"`
 	Description    string         `json:"description"`
 	Permission     string         `json:"permission"`
+	Aliases        []string       `json:"aliases,omitempty"`
 	ExposedOverMCP bool           `json:"exposed_over_mcp"`
 	InputSchema    map[string]any `json:"input_schema,omitempty"`
 }
@@ -16499,12 +16502,15 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			exposedNames[name] = true
 		}
 	}
+	toolAliases := tools.ClaudeToolAliases()
+	aliasesByCanonical := capabilityToolAliasesByCanonical(toolAliases, toolInfos)
 	capTools := make([]capabilityTool, 0, len(toolInfos))
 	for _, info := range toolInfos {
 		capTools = append(capTools, capabilityTool{
 			Name:           info.Name,
 			Description:    info.Description,
 			Permission:     string(info.Permission),
+			Aliases:        aliasesByCanonical[info.Name],
 			ExposedOverMCP: exposedNames[info.Name],
 			InputSchema:    info.InputSchema,
 		})
@@ -16526,6 +16532,8 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 		SlashCommands:     slashCommands,
 		ToolCount:         len(capTools),
 		Tools:             capTools,
+		ToolAliasCount:    len(toolAliases),
+		ToolAliases:       toolAliases,
 		MCP: capabilityMCP{
 			ConfiguredServerCount:  len(a.Config.MCPServers),
 			ConfiguredServers:      sortedMCPServerNames(a.Config.MCPServers),
@@ -16549,12 +16557,30 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  Commands          %d\n", report.CommandCount)
 	fmt.Fprintf(out, "  Slash commands    %d\n", report.SlashCommandCount)
 	fmt.Fprintf(out, "  Tools             %d\n", report.ToolCount)
+	fmt.Fprintf(out, "  Tool aliases      %d\n", report.ToolAliasCount)
 	fmt.Fprintf(out, "  MCP servers       %d configured\n", report.MCP.ConfiguredServerCount)
 	fmt.Fprintf(out, "  MCP local data    %d resources, %d templates, %d prompts\n", report.MCP.LocalResourceCount, report.MCP.LocalTemplateCount, report.MCP.LocalPromptCount)
 	fmt.Fprintln(out, "  Features")
 	for _, feature := range report.Features {
 		fmt.Fprintf(out, "    - %s\n", feature)
 	}
+}
+
+func capabilityToolAliasesByCanonical(aliases map[string]string, infos []tools.ToolInfo) map[string][]string {
+	known := map[string]bool{}
+	for _, info := range infos {
+		known[info.Name] = true
+	}
+	out := map[string][]string{}
+	for alias, canonical := range aliases {
+		if known[canonical] {
+			out[canonical] = append(out[canonical], alias)
+		}
+	}
+	for canonical := range out {
+		sort.Strings(out[canonical])
+	}
+	return out
 }
 
 func slashCapabilities() []capabilitySlash {
