@@ -17816,11 +17816,12 @@ type capabilitiesReport struct {
 }
 
 type capabilitySlash struct {
-	Name        string `json:"name"`
-	Usage       string `json:"usage"`
-	Description string `json:"description"`
-	Hidden      bool   `json:"hidden,omitempty"`
-	Disabled    bool   `json:"disabled,omitempty"`
+	Name            string `json:"name"`
+	Usage           string `json:"usage"`
+	Description     string `json:"description"`
+	ResumeSupported bool   `json:"resume_supported"`
+	Hidden          bool   `json:"hidden,omitempty"`
+	Disabled        bool   `json:"disabled,omitempty"`
 }
 
 type capabilityTool struct {
@@ -17959,11 +17960,12 @@ func slashCapabilities() []capabilitySlash {
 	out := make([]capabilitySlash, 0, len(specs))
 	for _, spec := range specs {
 		out = append(out, capabilitySlash{
-			Name:        spec.Name,
-			Usage:       spec.Usage,
-			Description: spec.Description,
-			Hidden:      spec.Hidden,
-			Disabled:    spec.Disabled,
+			Name:            spec.Name,
+			Usage:           spec.Usage,
+			Description:     spec.Description,
+			ResumeSupported: spec.ResumeSupported,
+			Hidden:          spec.Hidden,
+			Disabled:        spec.Disabled,
 		})
 	}
 	return out
@@ -18009,6 +18011,7 @@ func codogCapabilityFeatures() []string {
 		"recovery_recipes_ledger",
 		"remote_control",
 		"repl",
+		"resume_safe_slash_metadata",
 		"sandbox",
 		"session_identity_metadata",
 		"session_resume",
@@ -19419,7 +19422,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /output-style, /theme, /language, /effort, /fast, /vim, /chrome, /notifications, /privacy-settings, /telemetry, /keybindings, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /files, /search, /security-review, /bughunter, /review, /symbols, /diagnostics, /map, /references, /definition, /hover, /teleport, /completion, /format, /metrics, /insights, /perf-issue, /desktop, /mobile, /ide, /workspace, /focus, /add-dir, /validation, /ant-trace --no-request, /mock-limits, /diff, /git, /log, /blame, /changelog, /release-notes, /branch, /tag, /stash, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      unsupportedResumedSlashHint(),
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -19428,6 +19431,28 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		return &ExitError{Code: 1, Err: err, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: err}
+}
+
+func unsupportedResumedSlashHint() string {
+	names := slash.ResumeSupportedNames()
+	if len(names) == 0 {
+		return "Run `codog repl` and use the command there."
+	}
+	return "Run `codog repl` and use the command there, or use a resume-safe slash command such as " + joinReadable(names) + "."
+}
+
+func joinReadable(values []string) string {
+	values = append([]string(nil), values...)
+	switch len(values) {
+	case 0:
+		return ""
+	case 1:
+		return values[0]
+	case 2:
+		return values[0] + " or " + values[1]
+	default:
+		return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1]
+	}
 }
 
 func directSlashInteractiveOnly(name string) bool {

@@ -8,11 +8,12 @@ import (
 )
 
 type Spec struct {
-	Name        string
-	Usage       string
-	Description string
-	Hidden      bool
-	Disabled    bool
+	Name            string
+	Usage           string
+	Description     string
+	ResumeSupported bool
+	Hidden          bool
+	Disabled        bool
 }
 
 type CandidateOptions struct {
@@ -210,8 +211,152 @@ func Specs() []Spec {
 		{Name: "/oauth-refresh", Usage: "/oauth-refresh [PROFILE]", Description: "Refresh the saved OAuth access token."},
 		{Name: "/logout", Usage: "/logout [PROFILE]", Description: "Revoke and delete local OAuth credentials."},
 	}
+	for i := range specs {
+		specs[i].ResumeSupported = resumeSupportedSlashCommands[strings.ToLower(specs[i].Name)]
+	}
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	return specs
+}
+
+var resumeSupportedSlashCommands = map[string]bool{
+	"/add-dir":            true,
+	"/agents":             true,
+	"/allowed-tools":      true,
+	"/android":            true,
+	"/ant-trace":          true,
+	"/api":                true,
+	"/api-key":            true,
+	"/app":                true,
+	"/background":         true,
+	"/bashes":             true,
+	"/blame":              true,
+	"/branch":             true,
+	"/break-cache":        true,
+	"/bridge-kick":        true,
+	"/budget":             true,
+	"/bughunter":          true,
+	"/cache":              true,
+	"/caches":             true,
+	"/changelog":          true,
+	"/checkpoint":         true,
+	"/chrome":             true,
+	"/clear":              true,
+	"/color":              true,
+	"/commands":           true,
+	"/compact":            true,
+	"/completion":         true,
+	"/config":             true,
+	"/context":            true,
+	"/copy":               true,
+	"/cost":               true,
+	"/ctx_viz":            true,
+	"/cwd":                true,
+	"/definition":         true,
+	"/desktop":            true,
+	"/diagnostics":        true,
+	"/diff":               true,
+	"/doctor":             true,
+	"/effort":             true,
+	"/env":                true,
+	"/export":             true,
+	"/fast":               true,
+	"/files":              true,
+	"/focus":              true,
+	"/format":             true,
+	"/git":                true,
+	"/help":               true,
+	"/history":            true,
+	"/hover":              true,
+	"/ide":                true,
+	"/init":               true,
+	"/insights":           true,
+	"/ios":                true,
+	"/keybindings":        true,
+	"/language":           true,
+	"/log":                true,
+	"/map":                true,
+	"/marketplace":        true,
+	"/max-tokens":         true,
+	"/max-turns":          true,
+	"/mcp":                true,
+	"/memory":             true,
+	"/metrics":            true,
+	"/mobile":             true,
+	"/mock-limits":        true,
+	"/model":              true,
+	"/notifications":      true,
+	"/onboarding":         true,
+	"/output-style":       true,
+	"/perf-issue":         true,
+	"/permissions":        true,
+	"/plugin":             true,
+	"/plugins":            true,
+	"/privacy-settings":   true,
+	"/profile":            true,
+	"/project":            true,
+	"/prompt-history":     true,
+	"/providers":          true,
+	"/rate-limit":         true,
+	"/rate-limit-options": true,
+	"/reasoning":          true,
+	"/references":         true,
+	"/release-notes":      true,
+	"/rename":             true,
+	"/review":             true,
+	"/rewind":             true,
+	"/sandbox":            true,
+	"/search":             true,
+	"/security-review":    true,
+	"/session":            true,
+	"/settings":           true,
+	"/share":              true,
+	"/skills":             true,
+	"/stash":              true,
+	"/state":              true,
+	"/stats":              true,
+	"/status":             true,
+	"/statusline":         true,
+	"/summary":            true,
+	"/symbols":            true,
+	"/tag":                true,
+	"/tasks":              true,
+	"/telemetry":          true,
+	"/teleport":           true,
+	"/temperature":        true,
+	"/templates":          true,
+	"/theme":              true,
+	"/todos":              true,
+	"/tokens":             true,
+	"/ultrareview":        true,
+	"/usage":              true,
+	"/validation":         true,
+	"/version":            true,
+	"/vim":                true,
+	"/workspace":          true,
+}
+
+func SupportsResume(name string) bool {
+	return resumeSupportedSlashCommands[strings.ToLower(strings.TrimSpace(name))]
+}
+
+func ResumeSupportedSpecs() []Spec {
+	specs := []Spec{}
+	for _, spec := range Specs() {
+		if spec.ResumeSupported && !spec.Hidden && !spec.Disabled {
+			specs = append(specs, spec)
+		}
+	}
+	return specs
+}
+
+func ResumeSupportedNames() []string {
+	specs := ResumeSupportedSpecs()
+	names := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		names = append(names, spec.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func Lookup(name string) (Spec, bool) {

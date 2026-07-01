@@ -220,6 +220,33 @@ func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Empty(t, Candidates("co"))
 }
 
+func TestResumeSupportedMetadata(t *testing.T) {
+	status, ok := Lookup("/status")
+	require.True(t, ok)
+	require.True(t, status.ResumeSupported)
+	require.True(t, SupportsResume("/status"))
+	require.True(t, SupportsResume("/STATUS"))
+
+	commit, ok := Lookup("/commit")
+	require.True(t, ok)
+	require.False(t, commit.ResumeSupported)
+	require.False(t, SupportsResume("/commit"))
+
+	names := ResumeSupportedNames()
+	require.Contains(t, names, "/status")
+	require.Contains(t, names, "/compact")
+	require.Contains(t, names, "/session")
+	require.NotContains(t, names, "/commit")
+	require.NotContains(t, names, "/capabilities")
+	require.Greater(t, len(names), 70)
+
+	for _, spec := range ResumeSupportedSpecs() {
+		require.True(t, spec.ResumeSupported)
+		require.False(t, spec.Hidden)
+		require.False(t, spec.Disabled)
+	}
+}
+
 func TestHookCandidatesIncludeCurrentEvents(t *testing.T) {
 	candidates := Candidates("/hooks run ")
 	for _, candidate := range []string{

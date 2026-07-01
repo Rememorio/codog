@@ -651,6 +651,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "policy_engine")
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "recovery_recipes_ledger")
+	require.Contains(t, report.Features, "resume_safe_slash_metadata")
 	require.Contains(t, report.Features, "session_identity_metadata")
 	require.Contains(t, report.Features, "stale_branch_guard")
 	require.Contains(t, report.Features, "team_watch")
@@ -664,6 +665,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Greater(t, report.SlashCommandCount, 20)
 	require.Greater(t, report.ToolCount, 10)
 	require.Greater(t, report.ToolAliasCount, 40)
+	statusSlash, ok := capabilityReportSlash(report, "/status")
+	require.True(t, ok)
+	require.True(t, statusSlash.ResumeSupported)
+	commitSlash, ok := capabilityReportSlash(report, "/commit")
+	require.True(t, ok)
+	require.False(t, commitSlash.ResumeSupported)
 	require.Equal(t, len(report.ToolAliases), report.ToolAliasCount)
 	require.Equal(t, "read_file", report.ToolAliases["Read"])
 	require.Equal(t, "read_file", report.ToolAliases["FileReadTool"])
@@ -2120,6 +2127,8 @@ func risky(value any) {
 	require.Equal(t, "/commit", slashReport.Command)
 	require.Contains(t, slashReport.Hint, "/help")
 	require.Contains(t, slashReport.Hint, "/model")
+	require.Contains(t, slashReport.Hint, "/status")
+	require.NotContains(t, slashReport.Hint, "/commit")
 }
 
 func TestInvalidPermissionModeJSONContract(t *testing.T) {
@@ -2202,12 +2211,17 @@ func capabilityReportTool(report capabilitiesReport, name string) (capabilityToo
 }
 
 func capabilityReportHasSlash(report capabilitiesReport, name string) bool {
+	_, ok := capabilityReportSlash(report, name)
+	return ok
+}
+
+func capabilityReportSlash(report capabilitiesReport, name string) (capabilitySlash, bool) {
 	for _, command := range report.SlashCommands {
 		if command.Name == name {
-			return true
+			return command, true
 		}
 	}
-	return false
+	return capabilitySlash{}, false
 }
 
 func capabilityReportHasMCPResource(report capabilitiesReport, uri string) bool {
