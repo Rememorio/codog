@@ -694,7 +694,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 78)
+	require.Len(t, infos, 79)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -748,7 +748,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("cron_list")
 	require.True(t, ok)
 	require.Equal(t, PermissionReadOnly, info.Permission)
-	for _, name := range []string{"policy_evaluate", "recovery_recipe", "recovery_attempt", "recovery_status"} {
+	for _, name := range []string{"approval_token", "policy_evaluate", "recovery_recipe", "recovery_attempt", "recovery_status"} {
 		info, ok = registry.Info(name)
 		require.True(t, ok)
 		require.Equal(t, PermissionReadOnly, info.Permission)
@@ -982,6 +982,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 
 	for alias, canonical := range map[string]string{
 		"AgentTool":                    "agent",
+		"ApprovalToken":                "approval_token",
+		"ApprovalTokenTool":            "approval_token",
 		"AskUserQuestionTool":          "ask_user_question",
 		"BriefTool":                    "brief",
 		"ConfigTool":                   "config",
@@ -2243,6 +2245,59 @@ func TestPolicyEvaluateToolReturnsActions(t *testing.T) {
 	require.Contains(t, out, `"rule_id": "stale-branch-merge-forward"`)
 	require.Contains(t, out, `"rule_id": "lane-completed-closeout"`)
 	require.NotContains(t, out, `"kind": "merge_to_dev"`)
+}
+
+func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
+	configHome := t.TempDir()
+	tool := ApprovalTokenTool{ConfigHome: configHome}
+
+	grantOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"grant",
+		"token":"tok-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"approving_actor":"owner",
+		"approved_executor":"release-bot",
+		"max_uses":1,
+		"delegation_chain":[{"actor":"owner","session_id":"session-owner","reason":"owner approval"}]
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, grantOut, `"kind": "approval_token"`)
+	require.Contains(t, grantOut, `"status": "approval_granted"`)
+
+	verifyOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"verify",
+		"token":"tok-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"executing_actor":"release-bot"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, verifyOut, `"status": "ok"`)
+	require.Contains(t, verifyOut, `"delegated_execution": true`)
+
+	consumeOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"consume",
+		"token":"tok-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"executing_actor":"release-bot"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, consumeOut, `"status": "approval_consumed"`)
+	require.Contains(t, consumeOut, `"uses": 1`)
+
+	replayOut, err := tool.Execute(context.Background(), []byte(`{
+		"action":"consume",
+		"token":"tok-main",
+		"scope":{"policy":"main_push_forbidden","action":"git push","repository":"owner/repo","branch":"main"},
+		"executing_actor":"release-bot"
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, replayOut, `"status": "denied"`)
+	require.Contains(t, replayOut, `"error_kind": "approval_already_consumed"`)
+
+	listOut, err := tool.Execute(context.Background(), []byte(`{"action":"list"}`))
+	require.NoError(t, err)
+	require.Contains(t, listOut, `"kind": "approval_token_ledger"`)
+	require.Contains(t, listOut, `"token": "tok-main"`)
 }
 
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {

@@ -640,6 +640,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "UltrareviewOverageDialog")
 	require.Contains(t, report.Commands, "xaaIdpCommand")
 	require.Contains(t, report.Commands, "cwd")
+	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_reset")
 	require.Contains(t, report.Features, "hooks_health")
@@ -4683,7 +4684,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
-	require.Contains(t, out.String(), "Tools            78")
+	require.Contains(t, out.String(), "Tools            79")
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{Resume: "source"}))

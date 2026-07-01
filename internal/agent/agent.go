@@ -17974,6 +17974,7 @@ func codogCapabilityFeatures() []string {
 		"acp_bridge",
 		"anthropic_streaming",
 		"api_key_management",
+		"approval_tokens",
 		"auto_compaction",
 		"background_tasks",
 		"broad_cwd_guard",

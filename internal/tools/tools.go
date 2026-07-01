@@ -28,6 +28,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/agentdefs"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/approval"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bashvalidation"
 	"github.com/Rememorio/codog/internal/codeintel"
@@ -112,6 +113,8 @@ type RegistryOptions struct {
 
 var claudeToolAliases = map[string]string{
 	"agenttool":                    "agent",
+	"approvaltoken":                "approval_token",
+	"approvaltokentool":            "approval_token",
 	"askuserquestion":              "ask_user_question",
 	"askuserquestiontool":          "ask_user_question",
 	"agentoutputtool":              "task_output",
@@ -292,6 +295,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"Agent":                        "agent",
 	"AgentOutputTool":              "task_output",
 	"AgentTool":                    "agent",
+	"ApprovalToken":                "approval_token",
+	"ApprovalTokenTool":            "approval_token",
 	"AskUserQuestion":              "ask_user_question",
 	"AskUserQuestionTool":          "ask_user_question",
 	"Bash":                         "bash",
@@ -544,6 +549,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronListTool{ConfigHome: opts.ConfigHome})
 	r.Register(PolicyEvaluateTool{})
+	r.Register(ApprovalTokenTool{ConfigHome: opts.ConfigHome})
 	r.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -1487,6 +1493,169 @@ func (PolicyEvaluateTool) Execute(_ context.Context, input json.RawMessage) (str
 	}
 	evaluation := policyengine.DefaultEngine().Evaluate(ctx)
 	return pretty(evaluation), nil
+}
+
+type ApprovalTokenTool struct {
+	ConfigHome string
+}
+
+func (ApprovalTokenTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "approval_token",
+		Description: "Create, verify, consume, revoke, or list auditable local policy-exception approval tokens.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"grant", "pending", "verify", "consume", "revoke", "list"}},
+				"token":  map[string]any{"type": "string"},
+				"scope": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"policy":     map[string]any{"type": "string"},
+						"action":     map[string]any{"type": "string"},
+						"repository": map[string]any{"type": "string"},
+						"branch":     map[string]any{"type": "string"},
+					},
+				},
+				"approving_actor":   map[string]any{"type": "string"},
+				"approved_executor": map[string]any{"type": "string"},
+				"executing_actor":   map[string]any{"type": "string"},
+				"expires_at":        map[string]any{"type": "string", "description": "RFC3339 timestamp."},
+				"ttl_seconds":       map[string]any{"type": "integer", "minimum": 1},
+				"max_uses":          map[string]any{"type": "integer", "minimum": 1},
+				"delegation_chain": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"actor":      map[string]any{"type": "string"},
+							"session_id": map[string]any{"type": "string"},
+							"reason":     map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+			"required": []string{"action"},
+		},
+	}
+}
+
+func (ApprovalTokenTool) Permission() Permission { return PermissionReadOnly }
+
+func (t ApprovalTokenTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Action           string                   `json:"action"`
+		Token            string                   `json:"token,omitempty"`
+		Scope            approval.Scope           `json:"scope,omitempty"`
+		ApprovingActor   string                   `json:"approving_actor,omitempty"`
+		ApprovedExecutor string                   `json:"approved_executor,omitempty"`
+		ExecutingActor   string                   `json:"executing_actor,omitempty"`
+		ExpiresAt        string                   `json:"expires_at,omitempty"`
+		TTLSeconds       int                      `json:"ttl_seconds,omitempty"`
+		MaxUses          int                      `json:"max_uses,omitempty"`
+		DelegationChain  []approval.DelegationHop `json:"delegation_chain,omitempty"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	action := strings.TrimSpace(strings.ToLower(payload.Action))
+	store := approval.NewStore(t.ConfigHome)
+	now := time.Now().UTC()
+	switch action {
+	case "grant", "pending":
+		expiresAt, err := approvalExpiry(payload.ExpiresAt, payload.TTLSeconds, now)
+		if err != nil {
+			return "", err
+		}
+		status := approval.StatusGranted
+		if action == "pending" {
+			status = approval.StatusPending
+		}
+		grant, err := store.Grant(approval.GrantOptions{
+			Token:            payload.Token,
+			Scope:            payload.Scope,
+			ApprovingActor:   payload.ApprovingActor,
+			ApprovedExecutor: payload.ApprovedExecutor,
+			Status:           status,
+			ExpiresAt:        expiresAt,
+			MaxUses:          payload.MaxUses,
+			DelegationChain:  payload.DelegationChain,
+			Now:              now,
+		})
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "grant": grant}), nil
+	case "verify":
+		audit, err := store.Verify(payload.Token, payload.Scope, payload.ExecutingActor, now)
+		if err != nil {
+			return approvalTokenDeniedReport(action, err), nil
+		}
+		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "audit": audit}), nil
+	case "consume":
+		audit, err := store.Consume(payload.Token, payload.Scope, payload.ExecutingActor, now)
+		if err != nil {
+			return approvalTokenDeniedReport(action, err), nil
+		}
+		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "audit": audit}), nil
+	case "revoke":
+		audit, err := store.Revoke(payload.Token, now)
+		if err != nil {
+			return approvalTokenDeniedReport(action, err), nil
+		}
+		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "audit": audit}), nil
+	case "list":
+		ledger, err := store.List()
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{"kind": "approval_token", "action": action, "status": "ok", "ledger": ledger}), nil
+	default:
+		return "", fmt.Errorf("unknown approval_token action %q", payload.Action)
+	}
+}
+
+func approvalExpiry(expiresAt string, ttlSeconds int, now time.Time) (*time.Time, error) {
+	expiresAt = strings.TrimSpace(expiresAt)
+	if expiresAt != "" && ttlSeconds > 0 {
+		return nil, errors.New("approval_token cannot set both expires_at and ttl_seconds")
+	}
+	if expiresAt != "" {
+		parsed, err := time.Parse(time.RFC3339, expiresAt)
+		if err != nil {
+			return nil, err
+		}
+		parsed = parsed.UTC()
+		return &parsed, nil
+	}
+	if ttlSeconds > 0 {
+		value := now.Add(time.Duration(ttlSeconds) * time.Second).UTC()
+		return &value, nil
+	}
+	return nil, nil
+}
+
+func approvalTokenDeniedReport(action string, err error) string {
+	var approvalErr approval.Error
+	if errors.As(err, &approvalErr) {
+		return pretty(map[string]any{
+			"kind":       "approval_token",
+			"action":     action,
+			"status":     "denied",
+			"error_kind": approvalErr.Kind,
+			"error":      approvalErr,
+		})
+	}
+	return pretty(map[string]any{
+		"kind":       "approval_token",
+		"action":     action,
+		"status":     "error",
+		"error_kind": "approval_error",
+		"error":      err.Error(),
+	})
 }
 
 func sortedMCPServerNames(servers map[string]config.MCPServerConfig) []string {
