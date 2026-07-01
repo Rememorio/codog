@@ -104,6 +104,25 @@ type PromptGetResult struct {
 	Error  string          `json:"error,omitempty"`
 }
 
+type ServerTransport struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type ServerDetails struct {
+	Command   string   `json:"command,omitempty"`
+	ArgsCount int      `json:"args_count"`
+	EnvKeys   []string `json:"env_keys,omitempty"`
+}
+
+type ServerDescriptor struct {
+	Name      string          `json:"name"`
+	Valid     bool            `json:"valid"`
+	Transport ServerTransport `json:"transport"`
+	Summary   string          `json:"summary"`
+	Details   ServerDetails   `json:"details"`
+}
+
 type rpcRequest struct {
 	JSONRPC string         `json:"jsonrpc"`
 	ID      int            `json:"id"`
@@ -166,6 +185,30 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 	return stableHexHash("required:false|" + rendered)
 }
 
+func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor {
+	return ServerDescriptor{
+		Name:      name,
+		Valid:     strings.TrimSpace(server.Command) != "",
+		Transport: ServerTransport{ID: "stdio", Label: "stdio"},
+		Summary:   stdioServerSummary(server),
+		Details: ServerDetails{
+			Command:   server.Command,
+			ArgsCount: len(server.Args),
+			EnvKeys:   envKeys(server.Env),
+		},
+	}
+}
+
+func stdioServerSummary(server config.MCPServerConfig) string {
+	if strings.TrimSpace(server.Command) == "" {
+		return "missing command"
+	}
+	if len(server.Args) == 0 {
+		return server.Command
+	}
+	return fmt.Sprintf("%s (%d args)", server.Command, len(server.Args))
+}
+
 func renderCommandSignature(parts []string) string {
 	escaped := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -183,6 +226,22 @@ func renderEnvSignature(env []string) string {
 	entries := append([]string(nil), env...)
 	sort.Strings(entries)
 	return strings.Join(entries, ";")
+}
+
+func envKeys(env []string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		key = strings.TrimSpace(key)
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func stableHexHash(value string) string {

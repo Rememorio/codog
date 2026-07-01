@@ -143,6 +143,26 @@ func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
 	require.NotContains(t, hash, "secret")
 }
 
+func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: "uvx",
+		Args:    []string{"mcp-server", "--token=secret"},
+		Env:     []string{"TOKEN=secret", "MODE=stdio"},
+	}
+	description := DescribeServer("alpha", server)
+	require.Equal(t, "alpha", description.Name)
+	require.True(t, description.Valid)
+	require.Equal(t, "stdio", description.Transport.ID)
+	require.Equal(t, "uvx (2 args)", description.Summary)
+	require.Equal(t, "uvx", description.Details.Command)
+	require.Equal(t, 2, description.Details.ArgsCount)
+	require.Equal(t, []string{"MODE", "TOKEN"}, description.Details.EnvKeys)
+	data, err := json.Marshal(description)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "TOKEN=secret")
+	require.NotContains(t, string(data), "--token=secret")
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("CODOG_MCP_FAIL_STDERR") == "1" {
 		fmt.Fprintln(os.Stderr, "mcp boot failed")

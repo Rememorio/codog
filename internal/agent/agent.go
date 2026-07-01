@@ -30978,7 +30978,7 @@ func (a *App) mcpShow(args []string, format string) error {
 		"name":        name,
 		"signature":   mcp.ServerSignature(server),
 		"config_hash": mcp.ServerConfigHash(server),
-		"server":      server,
+		"server":      mcp.DescribeServer(name, server),
 	}, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil

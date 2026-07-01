@@ -10192,6 +10192,10 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"command": "demo-server"`)
 	require.Contains(t, out.String(), `"signature": "stdio:[demo-server|arg1|arg2]"`)
 	require.Contains(t, out.String(), `"config_hash": "`)
+	require.Contains(t, out.String(), `"args_count": 2`)
+	require.Contains(t, out.String(), `"env_keys": [`)
+	require.NotContains(t, out.String(), `"A=B"`)
+	require.NotContains(t, out.String(), `"C=D"`)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"remove", "demo"}))
