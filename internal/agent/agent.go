@@ -28026,6 +28026,8 @@ func (a *App) Skills(args []string) error {
 	switch action {
 	case "list":
 		return a.listSkills(rest)
+	case "help":
+		return renderCommandHelpTopic(a.Out, "skills", rest, "text")
 	case "show":
 		format, remaining, err := parseTemplateOutputArgs("skills show", rest)
 		if err != nil {
@@ -28120,9 +28122,28 @@ func (a *App) Skills(args []string) error {
 		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
 		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
 	default:
-		return fmt.Errorf("unknown skills action %q", action)
+		_, format, err := stripJSONOnlyOutputFormat("skills", rest)
+		if err != nil {
+			return renderCLIError(a.Out, err, requestedOutputFormat(append([]string{"skills", action}, rest...)))
+		}
+		return renderUnsupportedSkillsAction(a.Out, action, format)
 	}
 	return nil
+}
+
+func renderUnsupportedSkillsAction(out io.Writer, action string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "unknown"
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "skills",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "unsupported_skills_action",
+		Message:   fmt.Sprintf("unsupported skills action %q", action),
+		Hint:      "Supported: `codog skills list`, `codog skills show NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
+	}, format)
 }
 
 type skillInstallRequest struct {
@@ -33482,8 +33503,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skills [list|show|invoke|install|uninstall]",
-			"Skills\n\nUsage:\n  codog skills [list|show|invoke|install|uninstall]\n\nLists, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills.\n",
+			"codog skills [list|show|invoke|install|uninstall|help]",
+			"Skills\n\nUsage:\n  codog skills [list|show|invoke|install|uninstall|help]\n\nLists, renders, invokes, installs, or removes bundled, user, workspace, plugin, and compatible Claude Markdown skills. Run `codog skills help` for this local command reference.\n",
 			[]string{"skills", "name", "path", "body"},
 			[]string{"ok", "error"},
 			true,
