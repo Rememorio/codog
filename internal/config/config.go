@@ -261,6 +261,7 @@ type FutureConfig struct {
 	EditorBridgeToken         string            `json:"editor_bridge_token,omitempty"`
 	BackgroundStatePath       string            `json:"background_state_path,omitempty"`
 	ChromeDefaultEnabled      *bool             `json:"chrome_default_enabled,omitempty"`
+	NotificationsEnabled      *bool             `json:"notifications_enabled,omitempty"`
 	SlackAppInstallCount      int               `json:"slack_app_install_count,omitempty"`
 	StickerOrderCount         int               `json:"sticker_order_count,omitempty"`
 	ExtraUsageVisitCount      int               `json:"extra_usage_visit_count,omitempty"`
@@ -934,6 +935,7 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.EditorBridgeToken != "" ||
 		cfg.BackgroundStatePath != "" ||
 		cfg.ChromeDefaultEnabled != nil ||
+		cfg.NotificationsEnabled != nil ||
 		cfg.SlackAppInstallCount != 0 ||
 		cfg.StickerOrderCount != 0 ||
 		cfg.ExtraUsageVisitCount != 0 ||
@@ -1284,6 +1286,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value, ok := parseBoolEnv("CODOG_CHROME_DEFAULT_ENABLED"); ok {
 		cfg.Future.ChromeDefaultEnabled = &value
+	}
+	if value, ok := parseBoolEnv("CODOG_NOTIFICATIONS_ENABLED"); ok {
+		cfg.Future.NotificationsEnabled = &value
 	}
 	if value := os.Getenv("CODOG_CONFIG_HOME"); value != "" {
 		cfg.ConfigHome = expandHome(value)

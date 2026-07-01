@@ -208,6 +208,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "cache", "--help", "--output-format", "json"},
 			topic: "cache",
 		},
+		{
+			name:  "notifications local help",
+			args:  []string{"--config", configPath, "notifications", "--help", "--output-format", "json"},
+			topic: "notifications",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3620,6 +3625,75 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Config exists    true")
 	require.Contains(t, out.String(), "User valid       true")
 	require.Contains(t, out.String(), "User bindings    19")
+	require.Empty(t, errOut.String())
+}
+
+func TestNotificationsCommandAndHookGate(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	notificationPath := filepath.Join(workspace, "notification.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Hooks: config.HookConfig{
+				Notification: []string{"cat > " + shellQuote(notificationPath)},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Notifications([]string{"status", "--json"}))
+	require.Contains(t, out.String(), `"kind": "notifications"`)
+	require.Contains(t, out.String(), `"enabled": true`)
+	require.Contains(t, out.String(), `"configured": false`)
+	require.Contains(t, out.String(), `"hook_count": 1`)
+	out.Reset()
+
+	require.NoError(t, app.Notifications([]string{"off", "--json"}))
+	require.Contains(t, out.String(), `"action": "set"`)
+	require.Contains(t, out.String(), `"enabled": false`)
+	require.NotNil(t, app.Config.Future.NotificationsEnabled)
+	require.False(t, *app.Config.Future.NotificationsEnabled)
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"notifications_enabled": false`)
+	out.Reset()
+
+	app.runNotificationHook(context.Background(), "background_task_started", "Started", "task started")
+	require.NoFileExists(t, notificationPath)
+
+	require.True(t, app.handleSlash(context.Background(), "/notifications on", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Notifications")
+	require.NotNil(t, app.Config.Future.NotificationsEnabled)
+	require.True(t, *app.Config.Future.NotificationsEnabled)
+	out.Reset()
+
+	app.runNotificationHook(context.Background(), "background_task_started", "Started", "task started")
+	data, err = os.ReadFile(notificationPath)
+	require.NoError(t, err)
+	var payload struct {
+		Event            string `json:"event"`
+		NotificationType string `json:"notification_type"`
+		Title            string `json:"title"`
+		Message          string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "notification", payload.Event)
+	require.Equal(t, "background_task_started", payload.NotificationType)
+	require.Equal(t, "Started", payload.Title)
+	require.Equal(t, "task started", payload.Message)
+	out.Reset()
+
+	require.NoError(t, app.Notifications([]string{"clear", "--json"}))
+	require.Contains(t, out.String(), `"configured": false`)
+	require.Nil(t, app.Config.Future.NotificationsEnabled)
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"notifications_enabled"`)
 	require.Empty(t, errOut.String())
 }
 

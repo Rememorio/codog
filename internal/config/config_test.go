@@ -158,6 +158,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 		"speech_command": "say",
 		"future": {
 			"chrome_default_enabled": true,
+			"notifications_enabled": true,
 			"slack_app_install_count": 3,
 			"sticker_order_count": 2,
 			"extra_usage_visit_count": 4,
@@ -185,6 +186,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.Equal(t, "say", cfg.SpeechCommand)
 	require.NotNil(t, cfg.Future.ChromeDefaultEnabled)
 	require.True(t, *cfg.Future.ChromeDefaultEnabled)
+	require.NotNil(t, cfg.Future.NotificationsEnabled)
+	require.True(t, *cfg.Future.NotificationsEnabled)
 	require.Equal(t, 3, cfg.Future.SlackAppInstallCount)
 	require.Equal(t, 2, cfg.Future.StickerOrderCount)
 	require.Equal(t, 4, cfg.Future.ExtraUsageVisitCount)
@@ -205,6 +208,7 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	t.Setenv("CODOG_VOICE_ENABLED", "false")
 	t.Setenv("CODOG_VOICE_COMMAND", "printf")
 	t.Setenv("CODOG_SPEECH_COMMAND", "cat")
+	t.Setenv("CODOG_NOTIFICATIONS_ENABLED", "false")
 	t.Setenv("CODOG_PRIVACY_PROMPT_HISTORY_ENABLED", "true")
 	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
@@ -218,6 +222,8 @@ func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	require.False(t, *cfg.VoiceEnabled)
 	require.Equal(t, "printf", cfg.VoiceCommand)
 	require.Equal(t, "cat", cfg.SpeechCommand)
+	require.NotNil(t, cfg.Future.NotificationsEnabled)
+	require.False(t, *cfg.Future.NotificationsEnabled)
 	require.NotNil(t, cfg.Privacy.PromptHistoryEnabled)
 	require.True(t, *cfg.Privacy.PromptHistoryEnabled)
 }

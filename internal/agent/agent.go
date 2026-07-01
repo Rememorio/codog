@@ -362,6 +362,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.PrivacySettings(rest)
 	case "keybindings":
 		return app.Keybindings(rest)
+	case "notifications":
+		return app.Notifications(rest)
 	case "skills":
 		return app.Skills(rest)
 	case "commands":
@@ -8799,6 +8801,172 @@ func renderChromeReport(out io.Writer, report chromeReport) {
 	}
 }
 
+type notificationsRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+}
+
+type notificationsReport struct {
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Enabled    bool   `json:"enabled"`
+	Configured bool   `json:"configured"`
+	Previous   bool   `json:"previous,omitempty"`
+	HookCount  int    `json:"hook_count"`
+	Path       string `json:"path,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
+func (a *App) Notifications(args []string) error {
+	req, err := parseNotificationsArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := notificationsEnabled(a.Config.Future.NotificationsEnabled)
+	report := a.notificationsReport(req.Action, req.Path)
+	switch req.Action {
+	case "status":
+	case "on", "off", "toggle":
+		next := req.Action == "on"
+		if req.Action == "toggle" {
+			next = !previous
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "future.notifications_enabled", next); err != nil {
+			return err
+		}
+		a.Config.Future.NotificationsEnabled = &next
+		report = a.notificationsReport("set", path)
+		report.Previous = previous
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "future.notifications_enabled"); err != nil {
+			return err
+		}
+		a.Config.Future.NotificationsEnabled = nil
+		report = a.notificationsReport("clear", path)
+		report.Previous = previous
+	default:
+		return fmt.Errorf("unknown notifications command %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderNotificationsReport(a.Out, report)
+	return nil
+}
+
+func parseNotificationsArgs(args []string) (notificationsRequest, error) {
+	req := notificationsRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("notifications output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("notifications target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("notifications config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "notifications"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+	case "on", "enable", "enabled", "true":
+		req.Action = "on"
+	case "off", "disable", "disabled", "false":
+		req.Action = "off"
+	case "toggle":
+		req.Action = "toggle"
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+	default:
+		return req, fmt.Errorf("unknown notifications command %q", rest[0])
+	}
+	if len(rest) > 1 {
+		return req, fmt.Errorf("unexpected notifications argument %q", rest[1])
+	}
+	return req, nil
+}
+
+func (a *App) notificationsReport(action string, path string) notificationsReport {
+	enabled := notificationsEnabled(a.Config.Future.NotificationsEnabled)
+	report := notificationsReport{
+		Kind:       "notifications",
+		Action:     action,
+		Status:     "ok",
+		Enabled:    enabled,
+		Configured: a.Config.Future.NotificationsEnabled != nil,
+		HookCount:  len(hookCommandsForList(a.Config.Hooks.NotificationCommands, a.Config.Hooks.Notification)),
+		Path:       path,
+	}
+	if !enabled {
+		report.Message = "Notification hooks are disabled."
+	} else if report.HookCount == 0 {
+		report.Message = "Notifications are enabled, but no notification hooks are configured."
+	} else {
+		report.Message = "Notifications are enabled and notification hooks are configured."
+	}
+	return report
+}
+
+func notificationsEnabled(value *bool) bool {
+	return value == nil || *value
+}
+
+func renderNotificationsReport(out io.Writer, report notificationsReport) {
+	fmt.Fprintln(out, "Notifications")
+	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Configured       %t\n", report.Configured)
+	fmt.Fprintf(out, "  Hooks            %d\n", report.HookCount)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func boolPtrEnabled(value *bool) bool {
 	return value != nil && *value
 }
@@ -13679,6 +13847,7 @@ func codogCapabilityFeatures() []string {
 		"plugin_marketplace",
 		"prompt_cache_stats",
 		"project_memory",
+		"notification_preferences",
 		"remote_control",
 		"repl",
 		"sandbox",
@@ -13786,6 +13955,7 @@ func builtInCommandNames() []string {
 		"mock-server",
 		"model",
 		"node",
+		"notifications",
 		"oauth",
 		"oauth-refresh",
 		"output-style",
@@ -16802,6 +16972,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/keybindings":
 		if err := a.Keybindings(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/notifications":
+		if err := a.Notifications(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/cost":
@@ -22058,6 +22232,9 @@ func (a *App) lifecycleHookRunner() hooks.Runner {
 }
 
 func (a *App) runNotificationHook(ctx context.Context, notificationType string, title string, message string) {
+	if !notificationsEnabled(a.Config.Future.NotificationsEnabled) {
+		return
+	}
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return
@@ -23015,7 +23192,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
-		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
+		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
@@ -23425,6 +23602,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "notifications":
+		return localCommandHelpSpec(
+			"notifications",
+			"notifications",
+			"codog notifications [on|off|toggle|status|clear] [--target user|project|local] [--output-format text|json]",
+			"Notifications\n\nUsage:\n  codog notifications [on|off|toggle|status|clear] [--target user|project|local] [--output-format text|json]\n\nShows or changes whether Codog notification hooks run. Notification hooks remain configured under `hooks.notification`; this command controls the runtime preference.\n",
+			[]string{"enabled", "configured", "hook_count", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "hooks":
 		return localCommandHelpSpec(
 			"hooks",
@@ -23653,6 +23840,7 @@ Usage:
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]
+  %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
@@ -23726,7 +23914,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	return strings.ReplaceAll(help, "%s", exe)
 }
