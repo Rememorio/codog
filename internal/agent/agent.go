@@ -14219,6 +14219,7 @@ type installGitHubAppStepReport struct {
 	Workflows             []githubsetup.WorkflowFile `json:"workflows,omitempty"`
 	ExistingWorkflows     []string                   `json:"existing_workflows,omitempty"`
 	SecretCheck           *installGitHubSecretCheck  `json:"secret_check,omitempty"`
+	GitHubCheck           *installGitHubCLICheck     `json:"github_check,omitempty"`
 	Instructions          []string                   `json:"instructions,omitempty"`
 	Messages              []string                   `json:"messages,omitempty"`
 	Warnings              []string                   `json:"warnings,omitempty"`
@@ -14236,6 +14237,18 @@ type installGitHubSecretCheck struct {
 	Repo       string   `json:"repo,omitempty"`
 	Command    []string `json:"command,omitempty"`
 	Error      string   `json:"error,omitempty"`
+}
+
+type installGitHubCLICheck struct {
+	Attempted      bool     `json:"attempted"`
+	Available      bool     `json:"available"`
+	Authenticated  bool     `json:"authenticated"`
+	RepoAccessible bool     `json:"repo_accessible"`
+	Repo           string   `json:"repo,omitempty"`
+	AuthCommand    []string `json:"auth_command,omitempty"`
+	RepoCommand    []string `json:"repo_command,omitempty"`
+	AuthError      string   `json:"auth_error,omitempty"`
+	RepoError      string   `json:"repo_error,omitempty"`
 }
 
 type installSlackAppRequest struct {
@@ -14685,6 +14698,7 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		}
 		report.SecretCheck = &secretCheck
 	case "CheckGitHubStep":
+		githubCheck := installGitHubCLICheck{Available: ghErr == nil, Repo: setupReport.Repo}
 		if setupReport.Repo != "" {
 			report.Messages = append(report.Messages, "GitHub origin remote detected.")
 		} else {
@@ -14694,7 +14708,27 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		if ghErr != nil {
 			report.Status = "warn"
 			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available on PATH.")
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			githubCheck = checkGitHubCLI(ctx, ghPath, setupReport.Repo)
+			report.ProviderRequestMade = githubCheck.Attempted
+			if githubCheck.Authenticated {
+				report.Messages = append(report.Messages, "GitHub CLI authentication is active.")
+			} else {
+				report.Status = "warn"
+				report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub CLI authentication check failed: %s", fallbackMessage(githubCheck.AuthError, "not authenticated")))
+			}
+			if setupReport.Repo != "" {
+				if githubCheck.RepoAccessible {
+					report.Messages = append(report.Messages, fmt.Sprintf("Repository %s is accessible through gh.", setupReport.Repo))
+				} else {
+					report.Status = "warn"
+					report.Warnings = append(report.Warnings, fmt.Sprintf("GitHub repository access check failed: %s", fallbackMessage(githubCheck.RepoError, "repository not accessible")))
+				}
+			}
+			cancel()
 		}
+		report.GitHubCheck = &githubCheck
 	case "ChooseRepoStep":
 		if setupReport.Repo != "" {
 			report.Messages = append(report.Messages, fmt.Sprintf("Selected repository: %s", setupReport.Repo))
@@ -14774,6 +14808,67 @@ func commandErrorMessage(err error) string {
 		}
 	}
 	return err.Error()
+}
+
+func commandOutputErrorMessage(err error, output []byte) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(output))
+	if text != "" {
+		return text
+	}
+	return commandErrorMessage(err)
+}
+
+func fallbackMessage(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func checkGitHubCLI(ctx context.Context, ghPath string, repo string) installGitHubCLICheck {
+	check := installGitHubCLICheck{
+		Attempted: true,
+		Available: true,
+		Repo:      repo,
+	}
+	authArgs := []string{"auth", "status", "--hostname", "github.com"}
+	check.AuthCommand = append([]string{ghPath}, authArgs...)
+	authCmd := exec.CommandContext(ctx, ghPath, authArgs...)
+	authOut, authErr := authCmd.CombinedOutput()
+	if authErr != nil {
+		check.AuthError = commandOutputErrorMessage(authErr, authOut)
+		return check
+	}
+	check.Authenticated = true
+
+	if strings.TrimSpace(repo) == "" {
+		return check
+	}
+	repoArgs := []string{"repo", "view", repo, "--json", "nameWithOwner"}
+	check.RepoCommand = append([]string{ghPath}, repoArgs...)
+	repoCmd := exec.CommandContext(ctx, ghPath, repoArgs...)
+	repoOut, repoErr := repoCmd.CombinedOutput()
+	if repoErr != nil {
+		check.RepoError = commandOutputErrorMessage(repoErr, repoOut)
+		return check
+	}
+	var payload struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	}
+	if err := json.Unmarshal(repoOut, &payload); err != nil {
+		check.RepoError = fmt.Sprintf("failed to parse gh repo view output: %v", err)
+		return check
+	}
+	if strings.TrimSpace(payload.NameWithOwner) == "" {
+		check.RepoError = "gh repo view returned no repository name"
+		return check
+	}
+	check.RepoAccessible = true
+	return check
 }
 
 func checkGitHubRepositorySecret(ctx context.Context, ghPath string, repo string, secretName string) installGitHubSecretCheck {
@@ -14913,6 +15008,24 @@ func renderInstallGitHubAppStepReport(out io.Writer, report installGitHubAppStep
 	fmt.Fprintf(out, "  GitHub CLI       %t\n", report.GitHubCLIAvailable)
 	if report.GitHubCLIPath != "" {
 		fmt.Fprintf(out, "  gh path          %s\n", report.GitHubCLIPath)
+	}
+	if report.GitHubCheck != nil {
+		fmt.Fprintf(out, "  gh auth          %t\n", report.GitHubCheck.Authenticated)
+		if report.GitHubCheck.Repo != "" {
+			fmt.Fprintf(out, "  gh repo          %t\n", report.GitHubCheck.RepoAccessible)
+		}
+		if report.GitHubCheck.AuthError != "" {
+			fmt.Fprintf(out, "  gh auth error    %s\n", report.GitHubCheck.AuthError)
+		}
+		if report.GitHubCheck.RepoError != "" {
+			fmt.Fprintf(out, "  gh repo error    %s\n", report.GitHubCheck.RepoError)
+		}
+	}
+	if report.SecretCheck != nil {
+		fmt.Fprintf(out, "  Secret exists    %t\n", report.SecretCheck.Exists)
+		if report.SecretCheck.Error != "" {
+			fmt.Fprintf(out, "  Secret error     %s\n", report.SecretCheck.Error)
+		}
 	}
 	for _, workflow := range report.Workflows {
 		state := "ready"

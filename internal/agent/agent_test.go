@@ -7379,6 +7379,16 @@ func TestInstallGitHubAppStepCompatibilityCommands(t *testing.T) {
 			fakeBin := t.TempDir()
 			fakeGH := filepath.Join(fakeBin, "gh")
 			require.NoError(t, os.WriteFile(fakeGH, []byte(`#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo "Logged in to github.com"
+  exit 0
+fi
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  cat <<'JSON'
+{"nameWithOwner":"acme/widgets"}
+JSON
+  exit 0
+fi
 if [ "$1" = "secret" ] && [ "$2" = "list" ]; then
   cat <<'JSON'
 [{"name":"ANTHROPIC_API_KEY"},{"name":"OTHER_SECRET"}]
@@ -7408,6 +7418,23 @@ exit 1
 			require.Equal(t, "acme/widgets", secretReport.SecretCheck.Repo)
 			require.Contains(t, secretReport.SecretCheck.Command, "--json")
 			require.Contains(t, secretReport.Messages, "Repository secret ANTHROPIC_API_KEY exists on acme/widgets.")
+			out.Reset()
+
+			require.NoError(t, secretApp.InstallGitHubAppStep("CheckGitHubStep", []string{"--json"}))
+			var githubReport installGitHubAppStepReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &githubReport))
+			require.Equal(t, "CheckGitHubStep", githubReport.Step)
+			require.Equal(t, "ok", githubReport.Status)
+			require.True(t, githubReport.ProviderRequestMade)
+			require.NotNil(t, githubReport.GitHubCheck)
+			require.True(t, githubReport.GitHubCheck.Attempted)
+			require.True(t, githubReport.GitHubCheck.Authenticated)
+			require.True(t, githubReport.GitHubCheck.RepoAccessible)
+			require.Equal(t, "acme/widgets", githubReport.GitHubCheck.Repo)
+			require.Contains(t, githubReport.GitHubCheck.AuthCommand, "status")
+			require.Contains(t, githubReport.GitHubCheck.RepoCommand, "view")
+			require.Contains(t, githubReport.Messages, "GitHub CLI authentication is active.")
+			require.Contains(t, githubReport.Messages, "Repository acme/widgets is accessible through gh.")
 			out.Reset()
 		}
 	}
