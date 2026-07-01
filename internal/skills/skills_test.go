@@ -83,6 +83,28 @@ func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
 	require.Contains(t, RenderInvocation(debug, "failing test"), "User request: failing test")
 }
 
+func TestRenderInvocationSubstitutesNamedAndIndexedArguments(t *testing.T) {
+	doc := `---
+description: Review a target.
+arguments: [file, focus]
+---
+Review $file for $focus.
+First: $0
+Second: $ARGUMENTS[1]
+All: $ARGUMENTS
+Keep: $filename
+`
+	skill := ParseDocument("review", filepath.Join("review", "SKILL.md"), "workspace", doc)
+	rendered := RenderInvocation(skill, `main.go "race condition"`)
+
+	require.Contains(t, rendered, "Review main.go for race condition.")
+	require.Contains(t, rendered, "First: main.go")
+	require.Contains(t, rendered, "Second: race condition")
+	require.Contains(t, rendered, `All: main.go "race condition"`)
+	require.Contains(t, rendered, "Keep: $filename")
+	require.Contains(t, rendered, `User request: main.go "race condition"`)
+}
+
 func TestParseSkillFrontmatterMetadata(t *testing.T) {
 	doc := `---
 name: Review helper

@@ -21,9 +21,9 @@ func TestLoadFindAndRenderCommands(t *testing.T) {
 description: Review a file.
 allowed-tools: Read, Bash(go test:*)
 argument-hint: FILE
-arguments: [file]
+arguments: [file, focus]
 ---
-User review $ARGUMENTS`), 0o644))
+User review $file / $focus / $0 / $ARGUMENTS[1] / $ARGUMENTS / $filename`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "fix.md"), []byte("Claude fix {{args}}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "audit.md"), []byte("Team audit $ARGUMENTS"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "fix.md"), []byte("Codog fix {{ ARGUMENTS }}"), 0o644))
@@ -51,10 +51,10 @@ User review $ARGUMENTS`), 0o644))
 	require.Equal(t, "Review a file.", command.Preview)
 	require.Equal(t, []string{"Read", "Bash(go test:*)"}, command.AllowedTools)
 	require.Equal(t, "FILE", command.ArgumentHint)
-	require.Equal(t, []string{"file"}, command.Arguments)
+	require.Equal(t, []string{"file", "focus"}, command.Arguments)
 	require.NotContains(t, command.Body, "allowed-tools")
-	rendered = Render(command, "file.go")
-	require.Equal(t, "User review file.go", rendered.Rendered)
+	rendered = Render(command, `file.go "race condition"`)
+	require.Equal(t, `User review file.go / race condition / file.go / race condition / file.go "race condition" / $filename`, rendered.Rendered)
 	require.Equal(t, "Review a file.", rendered.Description)
 	require.Equal(t, []string{"Read", "Bash(go test:*)"}, rendered.AllowedTools)
 

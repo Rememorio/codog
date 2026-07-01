@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/argsub"
 	"github.com/Rememorio/codog/internal/frontmatter"
 	"github.com/Rememorio/codog/internal/plugins"
 )
@@ -113,10 +114,7 @@ func Find(configHome, workspace, name string) (Command, error) {
 
 func Render(command Command, args string) Rendered {
 	args = strings.TrimSpace(args)
-	rendered := command.Body
-	for _, marker := range []string{"$ARGUMENTS", "{{args}}", "{{ args }}", "{{ARGUMENTS}}", "{{ ARGUMENTS }}"} {
-		rendered = strings.ReplaceAll(rendered, marker, args)
-	}
+	rendered := argsub.Substitute(command.Body, args, true, command.Arguments)
 	return Rendered{
 		Name:         command.Name,
 		Path:         command.Path,

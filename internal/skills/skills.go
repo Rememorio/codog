@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/argsub"
 	"github.com/Rememorio/codog/internal/frontmatter"
 	"github.com/Rememorio/codog/internal/plugins"
 )
@@ -550,9 +551,11 @@ func Uninstall(name string, roots []string) (UninstallReport, error) {
 
 func RenderInvocation(skill Skill, args string) string {
 	args = strings.TrimSpace(args)
+	renderedSkill := skill
+	renderedSkill.Body = argsub.Substitute(skill.Body, args, false, skill.Arguments)
 	var builder strings.Builder
 	builder.WriteString("Use the following Codog skill for this request.\n\n")
-	builder.WriteString(RenderPromptBlock(skill))
+	builder.WriteString(RenderPromptBlock(renderedSkill))
 	builder.WriteString("\n\n")
 	if args == "" {
 		builder.WriteString("User request: apply this skill.")
