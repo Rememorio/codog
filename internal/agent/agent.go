@@ -14221,6 +14221,9 @@ type installGitHubAppStepReport struct {
 	SecretCheck           *installGitHubSecretCheck  `json:"secret_check,omitempty"`
 	GitHubCheck           *installGitHubCLICheck     `json:"github_check,omitempty"`
 	ActionsCheck          *installGitHubActionsCheck `json:"actions_check,omitempty"`
+	OAuthProfile          string                     `json:"oauth_profile,omitempty"`
+	OAuthStatus           *oauth.Status              `json:"oauth_status,omitempty"`
+	OAuthProfiles         []oauthProviderSummary     `json:"oauth_profiles,omitempty"`
 	Instructions          []string                   `json:"instructions,omitempty"`
 	Messages              []string                   `json:"messages,omitempty"`
 	Warnings              []string                   `json:"warnings,omitempty"`
@@ -14810,7 +14813,7 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		}
 		report.ActionsCheck = &actionsCheck
 	case "OAuthFlowStep":
-		report.Messages = append(report.Messages, "If your organization uses OAuth or OIDC, complete provider authorization before enabling workflow automation.")
+		a.populateGitHubAppOAuthChecks(&report)
 	case "SuccessStep":
 		a.populateGitHubAppSuccessChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
 		if len(report.Warnings) > 0 {
@@ -14833,6 +14836,38 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 		report.Messages = append(report.Messages, "GitHub App setup step report generated.")
 	}
 	return report
+}
+
+func (a *App) populateGitHubAppOAuthChecks(report *installGitHubAppStepReport) {
+	profileName := strings.TrimSpace(a.Config.OAuthProfile)
+	oauthStatus, oauthProfiles := a.xaaOAuthStatus(profileName)
+	report.OAuthProfile = profileName
+	report.OAuthStatus = &oauthStatus
+	report.OAuthProfiles = oauthProfiles
+	switch {
+	case strings.TrimSpace(a.Config.ConfigHome) == "":
+		report.Status = "warn"
+		report.Warnings = append(report.Warnings, "Config home is unavailable; OAuth profile and token state cannot be inspected.")
+	case oauthStatus.Ready:
+		report.Messages = append(report.Messages, "OAuth token is ready for provider-backed setup.")
+		if oauthStatus.ProfileConfigured {
+			report.Messages = append(report.Messages, fmt.Sprintf("OAuth provider profile resolved: %s.", oauthStatus.ProfileName))
+		}
+	case !oauthStatus.ProfileConfigured && !oauthStatus.TokenPresent:
+		report.Status = "warn"
+		report.Warnings = append(report.Warnings, "No OAuth provider profile or token is configured.")
+		report.Messages = append(report.Messages, "Run `codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...]` and then `codog oauth browser login NAME` or `codog oauth device login NAME`.")
+	case !oauthStatus.TokenPresent:
+		report.Status = "warn"
+		report.Warnings = append(report.Warnings, "No OAuth token is saved for the selected provider profile.")
+		report.Messages = append(report.Messages, "Run `codog oauth browser login PROFILE` or `codog oauth device login PROFILE` before enabling provider-backed workflow automation.")
+	case oauthStatus.Expired && !oauthStatus.CanRefresh:
+		report.Status = "warn"
+		report.Warnings = append(report.Warnings, fallbackMessage(oauthStatus.Issue, "OAuth token is expired and cannot be refreshed."))
+	default:
+		report.Status = "warn"
+		report.Warnings = append(report.Warnings, fallbackMessage(oauthStatus.Issue, "OAuth setup is not ready."))
+	}
 }
 
 func (a *App) populateGitHubAppSuccessChecks(report *installGitHubAppStepReport, setupReport githubsetup.Report, ghPath string, ghErr error, apiKeyConfigured bool) {
@@ -15165,6 +15200,15 @@ func renderInstallGitHubAppStepReport(out io.Writer, report installGitHubAppStep
 		}
 		if report.ActionsCheck.Error != "" {
 			fmt.Fprintf(out, "  Actions error    %s\n", report.ActionsCheck.Error)
+		}
+	}
+	if report.OAuthStatus != nil {
+		fmt.Fprintf(out, "  OAuth ready      %t\n", report.OAuthStatus.Ready)
+		if report.OAuthStatus.ProfileName != "" {
+			fmt.Fprintf(out, "  OAuth profile    %s\n", report.OAuthStatus.ProfileName)
+		}
+		if report.OAuthStatus.Issue != "" {
+			fmt.Fprintf(out, "  OAuth issue      %s\n", report.OAuthStatus.Issue)
 		}
 	}
 	for _, workflow := range report.Workflows {

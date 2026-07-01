@@ -7483,6 +7483,32 @@ exit 1
 			require.Contains(t, successReport.Messages, "Local GitHub App setup checks are ready.")
 			require.Empty(t, successReport.Warnings)
 			out.Reset()
+
+			oauthHome := t.TempDir()
+			_, err = oauth.SaveToken(oauthHome, oauth.Token{
+				AccessToken: "oauth-access-1234",
+				ExpiresAt:   time.Now().UTC().Add(time.Hour),
+			})
+			require.NoError(t, err)
+			oauthApp := &App{
+				Config:    config.Config{ConfigHome: oauthHome, APIKey: "test-key"},
+				Workspace: secretWorkspace,
+				Out:       &out,
+				Err:       io.Discard,
+			}
+			require.NoError(t, oauthApp.InstallGitHubAppStep("OAuthFlowStep", []string{"--json"}))
+			var oauthReport installGitHubAppStepReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &oauthReport))
+			require.Equal(t, "OAuthFlowStep", oauthReport.Step)
+			require.Equal(t, "ok", oauthReport.Status)
+			require.False(t, oauthReport.ProviderRequestMade)
+			require.NotNil(t, oauthReport.OAuthStatus)
+			require.True(t, oauthReport.OAuthStatus.TokenPresent)
+			require.True(t, oauthReport.OAuthStatus.Ready)
+			require.False(t, oauthReport.OAuthStatus.Expired)
+			require.Contains(t, oauthReport.Messages, "OAuth token is ready for provider-backed setup.")
+			require.Empty(t, oauthReport.Warnings)
+			out.Reset()
 		}
 	}
 
