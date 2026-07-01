@@ -28045,7 +28045,7 @@ func (a *App) Skills(args []string) error {
 		}
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
-			return err
+			return renderSkillLookupError(a.Out, "show", remaining[0], err, format)
 		}
 		if format == "json" {
 			data, _ := json.MarshalIndent(skill, "", "  ")
@@ -28066,7 +28066,7 @@ func (a *App) Skills(args []string) error {
 		}
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
-			return err
+			return renderSkillLookupError(a.Out, "invoke", remaining[0], err, format)
 		}
 		rendered := skills.RenderInvocation(skill, strings.Join(remaining[1:], " "))
 		if format == "json" {
@@ -28092,7 +28092,7 @@ func (a *App) Skills(args []string) error {
 		}
 		report, err := skills.Install(req.Source, targetRoot, req.Name, targetLabel)
 		if err != nil {
-			return err
+			return renderSkillLookupError(a.Out, "install", req.Source, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -28111,7 +28111,7 @@ func (a *App) Skills(args []string) error {
 		roots := a.skillUninstallRoots(req.Target)
 		report, err := skills.Uninstall(req.Name, roots)
 		if err != nil {
-			return err
+			return renderSkillLookupError(a.Out, "uninstall", req.Name, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -28129,6 +28129,45 @@ func (a *App) Skills(args []string) error {
 		return renderUnsupportedSkillsAction(a.Out, action, format)
 	}
 	return nil
+}
+
+func renderSkillLookupError(out io.Writer, action string, subject string, err error, format string) error {
+	if errors.Is(err, skills.ErrNotFound) {
+		return renderSkillNotFound(out, action, subject, format)
+	}
+	var sourceMissing skills.SourceNotFoundError
+	if errors.As(err, &sourceMissing) {
+		source := strings.TrimSpace(sourceMissing.Source)
+		if source == "" {
+			source = subject
+		}
+		return renderSkillNotFound(out, action, source, format)
+	}
+	return err
+}
+
+func renderSkillNotFound(out io.Writer, action string, subject string, format string) error {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "show"
+	}
+	subject = strings.TrimSpace(subject)
+	message := "skill was not found"
+	if subject != "" {
+		if action == "install" {
+			message = fmt.Sprintf("skill source %q was not found", subject)
+		} else {
+			message = fmt.Sprintf("skill %q was not found", subject)
+		}
+	}
+	return renderActionError(out, actionErrorReport{
+		Kind:      "skills",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "skill_not_found",
+		Message:   message,
+		Hint:      "Run `codog skills list` to see available skills, or `codog skills install <path>` to install one.",
+	}, format)
 }
 
 func renderUnsupportedSkillsAction(out io.Writer, action string, format string) error {

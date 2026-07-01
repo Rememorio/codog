@@ -60,6 +60,19 @@ type UninstallReport struct {
 
 var ErrNotFound = errors.New("skill not found")
 
+type SourceNotFoundError struct {
+	Source string
+	Err    error
+}
+
+func (e SourceNotFoundError) Error() string {
+	return fmt.Sprintf("skill source %q not found: %v", e.Source, e.Err)
+}
+
+func (e SourceNotFoundError) Unwrap() error {
+	return e.Err
+}
+
 var bundledSkillDocuments = map[string]string{
 	"batch": `---
 description: Break a large request into a clear sequence of smaller coding tasks.
@@ -466,10 +479,13 @@ func Install(source string, targetRoot string, explicitName string, targetLabel 
 	}
 	resolvedSource, err := filepath.EvalSymlinks(absSource)
 	if err != nil {
-		return InstallReport{}, fmt.Errorf("skill source %q not found: %w", source, err)
+		return InstallReport{}, SourceNotFoundError{Source: source, Err: err}
 	}
 	info, err := os.Stat(resolvedSource)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return InstallReport{}, SourceNotFoundError{Source: source, Err: err}
+		}
 		return InstallReport{}, err
 	}
 	name := strings.TrimSpace(explicitName)

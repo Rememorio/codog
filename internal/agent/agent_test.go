@@ -9752,6 +9752,79 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.Contains(t, help.Help, "codog skills help")
 }
 
+func TestSkillsNotFoundReportsTypedError(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	missingSource := filepath.Join(t.TempDir(), "missing-skill")
+
+	cases := []struct {
+		name    string
+		args    []string
+		action  string
+		message string
+	}{
+		{
+			name:    "show missing skill",
+			args:    []string{"--config", configPath, "--output-format", "json", "skills", "show", "missing-skill"},
+			action:  "show",
+			message: `skill "missing-skill" was not found`,
+		},
+		{
+			name:    "invoke missing skill",
+			args:    []string{"--config", configPath, "--output-format", "json", "skills", "invoke", "missing-skill", "args"},
+			action:  "invoke",
+			message: `skill "missing-skill" was not found`,
+		},
+		{
+			name:    "uninstall missing skill",
+			args:    []string{"--config", configPath, "--output-format", "json", "skills", "uninstall", "missing-skill"},
+			action:  "uninstall",
+			message: `skill "missing-skill" was not found`,
+		},
+		{
+			name:    "install missing source",
+			args:    []string{"--config", configPath, "--output-format", "json", "skills", "install", missingSource},
+			action:  "install",
+			message: "skill source",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 1, exitErr.Code)
+			require.True(t, exitErr.Silent)
+			var report actionErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "skills", report.Kind)
+			require.Equal(t, tc.action, report.Action)
+			require.Equal(t, "error", report.Status)
+			require.Equal(t, "skill_not_found", report.ErrorKind)
+			require.Contains(t, report.Message, tc.message)
+			require.Contains(t, report.Hint, "codog skills list")
+			require.Contains(t, report.Hint, "codog skills install <path>")
+		})
+	}
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "show", "missing-skill"}, config.FlagOverrides{})
+	})
+	require.Empty(t, out)
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.False(t, exitErr.Silent)
+	require.Contains(t, err.Error(), "skill_not_found")
+	require.Contains(t, err.Error(), "codog skills list")
+}
+
 func TestTemplatesCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
