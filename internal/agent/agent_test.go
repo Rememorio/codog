@@ -12964,6 +12964,8 @@ func TestProvidersStatusRedactsAuth(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "anthropic"`)
 	require.Contains(t, out.String(), `"name": "xai"`)
 	require.Contains(t, out.String(), `"base_url": "https://api.x.ai/v1"`)
+	require.Contains(t, out.String(), `"name": "dashscope"`)
+	require.Contains(t, out.String(), `"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"`)
 	require.Contains(t, out.String(), `"stored_oauth"`)
 	require.Contains(t, out.String(), `"api_key": true`)
 	require.NotContains(t, out.String(), "api-key-secret")
@@ -13068,6 +13070,24 @@ func TestProvidersSetWritesConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"base_url": "https://api.x.ai/v1"`)
 	require.Contains(t, string(data), `"model": "grok"`)
+	out.Reset()
+
+	dashScopePath := filepath.Join(configHome, "dashscope-provider.json")
+	require.NoError(t, app.Providers([]string{"set", "dashscope", "--path", dashScopePath, "--json"}))
+	require.Contains(t, out.String(), `"provider": "dashscope"`)
+	data, err = os.ReadFile(dashScopePath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"`)
+	require.Contains(t, string(data), `"model": "qwen-plus"`)
+	out.Reset()
+
+	kimiPath := filepath.Join(configHome, "kimi-provider.json")
+	require.NoError(t, app.Providers([]string{"set", "kimi", "--path", kimiPath, "--json"}))
+	require.Contains(t, out.String(), `"provider": "dashscope"`)
+	data, err = os.ReadFile(kimiPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"`)
+	require.Contains(t, string(data), `"model": "kimi"`)
 }
 
 func TestProvidersShowCurrent(t *testing.T) {
@@ -13103,6 +13123,14 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "xai"`)
 	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
 	require.Contains(t, out.String(), `"model": "grok"`)
+	out.Reset()
+
+	app.Config.BaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	app.Config.Model = "qwen-plus"
+	require.NoError(t, app.Providers([]string{"show", "current", "--json"}))
+	require.Contains(t, out.String(), `"name": "dashscope"`)
+	require.Contains(t, out.String(), `"protocol": "openai-compatible"`)
+	require.Contains(t, out.String(), `"model": "qwen-plus"`)
 }
 
 func TestOAuthBrowserCommands(t *testing.T) {

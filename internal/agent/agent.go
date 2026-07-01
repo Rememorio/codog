@@ -7374,7 +7374,7 @@ func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
 		}
 	case "set":
 		if len(positionals) == 0 {
-			return req, errors.New("usage: codog providers set anthropic|openai|xai|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
+			return req, errors.New("usage: codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
 		}
 		req.Name = positionals[0]
 		if len(positionals) > 1 && req.BaseURL == "" {
@@ -7454,6 +7454,9 @@ func activeProvider(cfg config.Config) activeProviderReport {
 	case modelrouting.ProviderXAI:
 		name = "xai"
 		protocol = "openai-compatible"
+	case modelrouting.ProviderDashScope:
+		name = "dashscope"
+		protocol = "openai-compatible"
 	}
 	return activeProviderReport{
 		Name:      name,
@@ -7528,6 +7531,14 @@ func providerPresets() []providerPreset {
 			Description:  "xAI Chat Completions API selected by Grok model aliases or the xai/ model prefix.",
 		},
 		{
+			Name:         "dashscope",
+			Protocol:     "openai-compatible",
+			BaseURL:      modelrouting.DefaultDashScopeBaseURL,
+			DefaultModel: "qwen-plus",
+			AuthEnv:      []string{"DASHSCOPE_API_KEY"},
+			Description:  "Alibaba DashScope compatible mode selected by Qwen and Kimi model aliases or prefixes.",
+		},
+		{
 			Name:        "custom",
 			Protocol:    "anthropic-compatible",
 			AuthEnv:     []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
@@ -7562,6 +7573,7 @@ func setProviderConfig(paths []string, req providerCommandRequest) (providerSetR
 	if name == "" {
 		return providerSetReport{}, errors.New("provider name is required")
 	}
+	requestedName := name
 	baseURL := strings.TrimSpace(req.BaseURL)
 	model := strings.TrimSpace(req.Model)
 	switch name {
@@ -7594,9 +7606,20 @@ func setProviderConfig(paths []string, req providerCommandRequest) (providerSetR
 		if model == "" {
 			model = "grok"
 		}
+	case "dashscope", "qwen", "kimi":
+		name = "dashscope"
+		if baseURL == "" {
+			baseURL = modelrouting.DefaultDashScopeBaseURL
+		}
+		if model == "" {
+			model = "qwen-plus"
+			if requestedName == "kimi" {
+				model = "kimi"
+			}
+		}
 	default:
 		if baseURL == "" {
-			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic, openai, xai, or custom --base-url URL", req.Name)
+			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic, openai, xai, dashscope, or custom --base-url URL", req.Name)
 		}
 	}
 	if err := validateProviderBaseURL(baseURL); err != nil {
