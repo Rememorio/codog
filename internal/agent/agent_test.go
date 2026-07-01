@@ -8331,9 +8331,12 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 		Args:    []string{"-test.run=TestAgentMCPHelperProcess"},
 		Env:     []string{"CODOG_AGENT_MCP_HELPER=1"},
 	}
+	configHome := t.TempDir()
+	_, err := oauth.SaveToken(configHome, oauth.Token{AccessToken: "oauth-access-token"})
+	require.NoError(t, err)
 	var out bytes.Buffer
 	app := &App{
-		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"test": server}},
+		Config: config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{"test": server}},
 		Out:    &out,
 		Err:    io.Discard,
 	}
@@ -8372,7 +8375,18 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &xaaReport))
 	require.Equal(t, "mcp_compatibility", xaaReport.Kind)
 	require.Equal(t, "xaa_idp", xaaReport.Action)
+	require.Equal(t, "ok", xaaReport.Status)
+	require.Equal(t, 1, xaaReport.ServerCount)
 	require.Contains(t, xaaReport.ConfiguredServers, "test")
+	require.Len(t, xaaReport.AuthStatuses, 1)
+	require.Equal(t, "test", xaaReport.AuthStatuses[0].Server)
+	require.Equal(t, "ok", xaaReport.AuthStatuses[0].Status)
+	require.Equal(t, 1, xaaReport.AuthStatuses[0].ToolCount)
+	require.Equal(t, 1, xaaReport.AuthStatuses[0].ResourceCount)
+	require.True(t, xaaReport.ProviderConfigured)
+	require.True(t, xaaReport.OAuthReady)
+	require.NotNil(t, xaaReport.OAuthStatus)
+	require.True(t, xaaReport.OAuthStatus.TokenPresent)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/mcp tools test", &session.Session{ID: "session"}))

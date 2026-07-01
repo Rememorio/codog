@@ -27715,51 +27715,177 @@ func (a *App) mcpRemove(args []string) error {
 }
 
 type xaaIDPReport struct {
-	Kind               string   `json:"kind"`
-	Action             string   `json:"action"`
-	Status             string   `json:"status"`
-	Command            string   `json:"command"`
-	ConfiguredServers  []string `json:"configured_servers"`
-	ConfigHome         string   `json:"config_home,omitempty"`
-	ProviderConfigured bool     `json:"provider_configured"`
-	Message            string   `json:"message"`
-	Usage              string   `json:"usage"`
+	Kind               string                 `json:"kind"`
+	Action             string                 `json:"action"`
+	Status             string                 `json:"status"`
+	Command            string                 `json:"command"`
+	ConfiguredServers  []string               `json:"configured_servers"`
+	ServerCount        int                    `json:"server_count"`
+	AuthStatuses       []mcp.AuthStatusResult `json:"auth_statuses,omitempty"`
+	ErrorCount         int                    `json:"error_count,omitempty"`
+	ConfigHome         string                 `json:"config_home,omitempty"`
+	ProviderConfigured bool                   `json:"provider_configured"`
+	OAuthReady         bool                   `json:"oauth_ready"`
+	OAuthProfile       string                 `json:"oauth_profile,omitempty"`
+	OAuthStatus        *oauth.Status          `json:"oauth_status,omitempty"`
+	OAuthProfiles      []oauthProviderSummary `json:"oauth_profiles,omitempty"`
+	Message            string                 `json:"message"`
+	Usage              string                 `json:"usage"`
+}
+
+type xaaIDPRequest struct {
+	Format  string
+	Server  string
+	Profile string
 }
 
 func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
-	clean, format, err := stripJSONOnlyOutputFormat("xaaIdpCommand", args)
+	req, err := parseXAAIDPArgs(args)
 	if err != nil {
 		return err
 	}
-	if len(clean) > 0 {
-		mcpArgs := append([]string{"auth"}, clean...)
-		if format == "json" {
+	if req.Server != "" {
+		mcpArgs := []string{"auth", req.Server}
+		if req.Format == "json" {
 			mcpArgs = append(mcpArgs, "--json")
 		}
 		return a.MCP(ctx, mcpArgs)
 	}
+	configuredServers := sortedMCPServerNames(a.Config.MCPServers)
+	authStatuses := make([]mcp.AuthStatusResult, 0, len(configuredServers))
+	errorCount := 0
+	for _, name := range configuredServers {
+		status := mcp.InspectAuth(ctx, name, a.Config.MCPServers[name])
+		if status.Status == "error" || status.Error != "" {
+			errorCount++
+		}
+		authStatuses = append(authStatuses, status)
+	}
+	profileName := strings.TrimSpace(req.Profile)
+	if profileName == "" {
+		profileName = a.Config.OAuthProfile
+	}
+	oauthStatus, oauthProfiles := a.xaaOAuthStatus(profileName)
 	report := xaaIDPReport{
 		Kind:               "mcp_compatibility",
 		Action:             "xaa_idp",
-		Status:             "ok",
 		Command:            "xaaIdpCommand",
-		ConfiguredServers:  sortedMCPServerNames(a.Config.MCPServers),
+		ConfiguredServers:  configuredServers,
+		ServerCount:        len(configuredServers),
+		AuthStatuses:       authStatuses,
+		ErrorCount:         errorCount,
 		ConfigHome:         a.Config.ConfigHome,
-		ProviderConfigured: a.Config.OAuthProfile != "" || a.Config.AuthToken != "",
-		Message:            "XAA IdP compatibility is exposed through `codog mcp auth SERVER` and Codog OAuth provider commands.",
-		Usage:              "codog xaaIdpCommand [SERVER] [--json]",
+		ProviderConfigured: a.Config.OAuthProfile != "" || a.Config.AuthToken != "" || oauthStatus.ProfileConfigured || oauthStatus.TokenPresent,
+		OAuthReady:         oauthStatus.Ready,
+		OAuthProfile:       profileName,
+		OAuthStatus:        &oauthStatus,
+		OAuthProfiles:      oauthProfiles,
+		Usage:              "codog xaaIdpCommand [SERVER] [--profile PROFILE] [--json]",
 	}
-	if format == "json" {
+	switch {
+	case len(configuredServers) == 0:
+		report.Status = "no_servers"
+		report.Message = "No MCP servers are configured. Add one with `codog mcp add NAME COMMAND [ARG...]` before running XAA IdP auth checks."
+	case errorCount > 0:
+		report.Status = "warn"
+		report.Message = "MCP auth preflight completed with server errors; inspect auth_statuses for details."
+	default:
+		report.Status = "ok"
+		report.Message = "MCP auth preflight completed for all configured servers."
+	}
+	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	fmt.Fprintln(a.Out, "XAA IdP Compatibility")
-	fmt.Fprintf(a.Out, "  Status           %s\n", report.Status)
-	fmt.Fprintf(a.Out, "  MCP servers      %d\n", len(report.ConfiguredServers))
-	fmt.Fprintf(a.Out, "  OAuth configured %t\n", report.ProviderConfigured)
-	fmt.Fprintf(a.Out, "  Message          %s\n", report.Message)
+	renderXAAIDPReport(a.Out, report)
 	return nil
+}
+
+func parseXAAIDPArgs(args []string) (xaaIDPRequest, error) {
+	req := xaaIDPRequest{Format: "text"}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("xaaIdpCommand output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--profile":
+			index++
+			if index >= len(args) {
+				return req, errors.New("xaaIdpCommand profile is required")
+			}
+			req.Profile = args[index]
+		case strings.HasPrefix(arg, "--profile="):
+			req.Profile = strings.TrimPrefix(arg, "--profile=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown xaaIdpCommand flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "xaaIdpCommand"); err != nil {
+		return req, err
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog xaaIdpCommand [SERVER] [--profile PROFILE] [--json]")
+	}
+	if len(positionals) == 1 {
+		if req.Profile != "" {
+			return req, errors.New("xaaIdpCommand --profile only applies to the overview form without SERVER")
+		}
+		req.Server = positionals[0]
+	}
+	return req, nil
+}
+
+func (a *App) xaaOAuthStatus(profileName string) (oauth.Status, []oauthProviderSummary) {
+	if strings.TrimSpace(a.Config.ConfigHome) == "" {
+		return oauth.Status{ProfileName: profileName, Issue: "config home is unavailable"}, nil
+	}
+	status := oauth.InspectStatus(a.Config.ConfigHome, profileName, time.Now().UTC())
+	profiles, err := oauth.ListProviderProfiles(a.Config.ConfigHome)
+	if err != nil {
+		if status.Issue == "" {
+			status.Issue = err.Error()
+		}
+		return status, nil
+	}
+	summaries := make([]oauthProviderSummary, 0, len(profiles))
+	for _, profile := range profiles {
+		summaries = append(summaries, oauthProfileSummary(profile))
+	}
+	return status, summaries
+}
+
+func renderXAAIDPReport(out io.Writer, report xaaIDPReport) {
+	fmt.Fprintln(out, "XAA IdP Compatibility")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  MCP servers      %d\n", report.ServerCount)
+	fmt.Fprintf(out, "  OAuth configured %t\n", report.ProviderConfigured)
+	fmt.Fprintf(out, "  OAuth ready      %t\n", report.OAuthReady)
+	if report.OAuthProfile != "" {
+		fmt.Fprintf(out, "  OAuth profile    %s\n", report.OAuthProfile)
+	}
+	if len(report.AuthStatuses) != 0 {
+		fmt.Fprintln(out, "  Auth statuses")
+		for _, status := range report.AuthStatuses {
+			fmt.Fprintf(out, "    %s\t%s\ttools=%d resources=%d", status.Server, status.Status, status.ToolCount, status.ResourceCount)
+			if status.Error != "" {
+				fmt.Fprintf(out, "\terror=%s", status.Error)
+			}
+			fmt.Fprintln(out)
+		}
+	}
+	fmt.Fprintf(out, "  Message          %s\n", report.Message)
 }
 
 type mcpAddRequest struct {
@@ -31952,10 +32078,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"xaaIdpCommand",
 			"xaaIdpCommand",
-			"codog xaaIdpCommand [SERVER] [--output-format text|json]",
-			"xaaIdpCommand\n\nUsage:\n  codog xaaIdpCommand [SERVER] [--output-format text|json]\n\nCompatibility entrypoint for archived MCP XAA IdP authentication. With a server name it delegates to `codog mcp auth SERVER`; without one it reports configured MCP servers and OAuth readiness.\n",
-			[]string{"configured_servers", "provider_configured", "usage"},
-			[]string{"ok", "error"},
+			"codog xaaIdpCommand [SERVER] [--profile PROFILE] [--output-format text|json]",
+			"xaaIdpCommand\n\nUsage:\n  codog xaaIdpCommand [SERVER] [--profile PROFILE] [--output-format text|json]\n\nCompatibility entrypoint for archived MCP XAA IdP authentication. With a server name it delegates to `codog mcp auth SERVER`; without one it runs MCP auth preflight for all configured servers and summarizes local OAuth profile/token readiness.\n",
+			[]string{"configured_servers", "auth_statuses", "oauth_status", "oauth_profiles", "provider_configured", "oauth_ready", "usage"},
+			[]string{"ok", "warn", "no_servers", "error"},
 			false,
 		), true
 	case "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog":
