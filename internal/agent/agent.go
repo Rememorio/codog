@@ -13182,9 +13182,23 @@ func (a *App) Feedback(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
-	active, err := a.feedbackSession(req.SessionID)
+	report, err := a.writeFeedback(req)
 	if err != nil {
 		return err
+	}
+	if req.Format == "json" {
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return nil
+	}
+	renderFeedbackReport(a.Out, report)
+	return nil
+}
+
+func (a *App) writeFeedback(req feedbackRequest) (feedbackReport, error) {
+	active, err := a.feedbackSession(req.SessionID)
+	if err != nil {
+		return feedbackReport{}, err
 	}
 	snapshot := a.statusSnapshot(active)
 	bundle := feedbackBundle{
@@ -13195,14 +13209,14 @@ func (a *App) Feedback(args []string, overrides config.FlagOverrides) error {
 	}
 	path := a.feedbackOutputPath(req.Output, bundle.CreatedAt)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return feedbackReport{}, err
 	}
 	if err := session.ValidateExportOutputPath(path); err != nil {
-		return err
+		return feedbackReport{}, err
 	}
 	data := []byte(renderFeedbackMarkdown(bundle))
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return err
+		return feedbackReport{}, err
 	}
 	report := feedbackReport{
 		Kind:            "feedback",
@@ -13218,13 +13232,7 @@ func (a *App) Feedback(args []string, overrides config.FlagOverrides) error {
 		GitBranch:       snapshot.Git.Branch,
 		GitClean:        snapshot.Git.Clean,
 	}
-	if req.Format == "json" {
-		encoded, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(a.Out, string(encoded))
-		return nil
-	}
-	renderFeedbackReport(a.Out, report)
-	return nil
+	return report, nil
 }
 
 func parseFeedbackArgs(args []string, overrides config.FlagOverrides) (feedbackRequest, error) {
@@ -27655,6 +27663,10 @@ type simpleCompatibilityReport struct {
 	ProviderRequestMade bool     `json:"provider_request_made"`
 	WorkspaceWillMutate bool     `json:"workspace_will_mutate"`
 	NextCommand         string   `json:"next_command,omitempty"`
+	File                string   `json:"file,omitempty"`
+	Bytes               int      `json:"bytes,omitempty"`
+	SessionID           string   `json:"session_id,omitempty"`
+	SessionMessages     int      `json:"session_messages,omitempty"`
 }
 
 func (a *App) ExitCompatibility(args []string) error {
@@ -27681,17 +27693,31 @@ func (a *App) GoodClaude(args []string) error {
 	if err != nil {
 		return err
 	}
+	message := strings.TrimSpace(strings.Join(clean, " "))
+	if message == "" {
+		message = "Good Claude"
+	}
+	feedback, err := a.writeFeedback(feedbackRequest{
+		Message: "Positive feedback from good-claude: " + message,
+	})
+	if err != nil {
+		return err
+	}
 	report := simpleCompatibilityReport{
 		Kind:                "feedback",
 		Action:              "good_claude",
 		Status:              "ok",
 		Command:             "good-claude",
 		Workspace:           a.Workspace,
-		Message:             "Positive feedback was recorded as a local compatibility acknowledgement. Use `codog feedback MESSAGE` for a persisted feedback draft.",
+		Message:             "Positive feedback was written to a local feedback draft.",
 		Args:                clean,
 		ProviderRequestMade: false,
-		WorkspaceWillMutate: false,
-		NextCommand:         "codog feedback \"good claude\"",
+		WorkspaceWillMutate: true,
+		NextCommand:         "codog feedback " + shellQuote(message),
+		File:                feedback.File,
+		Bytes:               feedback.Bytes,
+		SessionID:           feedback.SessionID,
+		SessionMessages:     feedback.SessionMessages,
 	}
 	return renderSimpleCompatibility(a.Out, report, format)
 }
@@ -27736,6 +27762,9 @@ func renderSimpleCompatibility(out io.Writer, report simpleCompatibilityReport, 
 	fmt.Fprintf(out, "  Message          %s\n", report.Message)
 	if report.NextCommand != "" {
 		fmt.Fprintf(out, "  Next             %s\n", report.NextCommand)
+	}
+	if report.File != "" {
+		fmt.Fprintf(out, "  File             %s\n", report.File)
 	}
 	return nil
 }
