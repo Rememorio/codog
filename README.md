@@ -171,7 +171,8 @@ Minimal example:
 
 Useful preference commands include `codog theme`, `codog vim`, `codog voice`,
 `codog chrome`, `codog privacy-settings`, `codog keybindings`, and
-`codog output-style`.
+`codog output-style`. `codog voice test` and `codog voice listen` can run the
+configured external speech-to-text command.
 
 ## Integrations
 

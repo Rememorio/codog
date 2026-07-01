@@ -351,6 +351,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Fast(rest)
 	case "voice":
 		return app.Voice(rest)
+	case "listen":
+		return app.Voice(append([]string{"listen"}, rest...))
 	case "chrome":
 		return app.Chrome(rest)
 	case "privacy-settings":
@@ -7797,11 +7799,13 @@ func fastModeEnabled(value *bool) bool {
 }
 
 type voiceRequest struct {
-	Action  string
-	Format  string
-	Target  string
-	Path    string
-	Command string
+	Action    string
+	Format    string
+	Target    string
+	Path      string
+	Command   string
+	Input     string
+	TimeoutMS int
 }
 
 type voiceReport struct {
@@ -7813,6 +7817,14 @@ type voiceReport struct {
 	CommandAvailable  bool   `json:"command_available"`
 	Command           string `json:"command,omitempty"`
 	Path              string `json:"path,omitempty"`
+	Transcript        string `json:"transcript,omitempty"`
+	Stdout            string `json:"stdout,omitempty"`
+	Stderr            string `json:"stderr,omitempty"`
+	StdoutTruncated   bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated   bool   `json:"stderr_truncated,omitempty"`
+	ExitCode          *int   `json:"exit_code,omitempty"`
+	DurationMS        int64  `json:"duration_ms,omitempty"`
+	TimedOut          bool   `json:"timed_out,omitempty"`
 	Message           string `json:"message,omitempty"`
 }
 
@@ -7882,19 +7894,19 @@ func (a *App) Voice(args []string) error {
 		a.Config.VoiceEnabled = nil
 		a.Config.VoiceCommand = ""
 		req.Path = path
+	case "test", "transcribe", "listen":
+		report, runErr := a.runVoiceCommand(req)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			renderVoiceReport(a.Out, report)
+		}
+		return runErr
 	default:
 		return fmt.Errorf("unknown voice command %q", req.Action)
 	}
-	report := voiceReport{
-		Kind:              "voice",
-		Action:            req.Action,
-		Status:            "ok",
-		Enabled:           boolPtrEnabled(a.Config.VoiceEnabled),
-		CommandConfigured: strings.TrimSpace(a.Config.VoiceCommand) != "",
-		CommandAvailable:  voiceCommandAvailable(a.Config.VoiceCommand),
-		Command:           strings.TrimSpace(a.Config.VoiceCommand),
-		Path:              req.Path,
-	}
+	report := a.voiceStatusReport(req.Action, req.Path)
 	if !report.CommandConfigured {
 		report.Message = "Voice mode needs an external STT command before it can be enabled."
 	}
@@ -7947,6 +7959,32 @@ func parseVoiceArgs(args []string) (voiceRequest, error) {
 			req.Command = args[index]
 		case strings.HasPrefix(arg, "--command="):
 			req.Command = strings.TrimPrefix(arg, "--command=")
+		case arg == "--input" || arg == "--stdin":
+			index++
+			if index >= len(args) {
+				return req, errors.New("voice input is required")
+			}
+			req.Input = args[index]
+		case strings.HasPrefix(arg, "--input="):
+			req.Input = strings.TrimPrefix(arg, "--input=")
+		case strings.HasPrefix(arg, "--stdin="):
+			req.Input = strings.TrimPrefix(arg, "--stdin=")
+		case arg == "--timeout-ms":
+			index++
+			if index >= len(args) {
+				return req, errors.New("voice timeout is required")
+			}
+			timeout, err := strconv.Atoi(args[index])
+			if err != nil || timeout < 0 {
+				return req, errors.New("voice timeout must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
+			if err != nil || timeout < 0 {
+				return req, errors.New("voice timeout must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
 		default:
 			rest = append(rest, arg)
 		}
@@ -7971,6 +8009,10 @@ func parseVoiceArgs(args []string) (voiceRequest, error) {
 		if req.Command == "" && len(rest) > 1 {
 			req.Command = strings.Join(rest[1:], " ")
 		}
+	case "test", "check":
+		req.Action = "test"
+	case "transcribe", "listen":
+		req.Action = strings.ToLower(rest[0])
 	case "clear-command":
 		req.Action = "clear-command"
 	case "clear", "reset", "unset":
@@ -7984,6 +8026,118 @@ func parseVoiceArgs(args []string) (voiceRequest, error) {
 	return req, nil
 }
 
+func (a *App) voiceStatusReport(action string, path string) voiceReport {
+	return voiceReport{
+		Kind:              "voice",
+		Action:            action,
+		Status:            "ok",
+		Enabled:           boolPtrEnabled(a.Config.VoiceEnabled),
+		CommandConfigured: strings.TrimSpace(a.Config.VoiceCommand) != "",
+		CommandAvailable:  voiceCommandAvailable(a.Config.VoiceCommand),
+		Command:           strings.TrimSpace(a.Config.VoiceCommand),
+		Path:              path,
+	}
+}
+
+func (a *App) runVoiceCommand(req voiceRequest) (voiceReport, error) {
+	report := a.voiceStatusReport(req.Action, req.Path)
+	if !report.CommandConfigured {
+		err := errors.New("voice command is not configured; run `codog voice set-command COMMAND`")
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	if !report.CommandAvailable {
+		err := fmt.Errorf("voice command is not executable: %s", report.Command)
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	if (req.Action == "transcribe" || req.Action == "listen") && !report.Enabled {
+		err := errors.New("voice mode is disabled; run `codog voice on` before listening")
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	args := voiceCommandArgs(report.Command)
+	if len(args) == 0 {
+		err := errors.New("voice command is empty")
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	if strings.TrimSpace(a.Workspace) != "" {
+		cmd.Dir = a.Workspace
+	}
+	if req.Input != "" {
+		cmd.Stdin = strings.NewReader(req.Input)
+	}
+	stdout := &boundedTextBuffer{Limit: 256 * 1024}
+	stderr := &boundedTextBuffer{Limit: 64 * 1024}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	start := time.Now()
+	err := cmd.Run()
+	report.DurationMS = time.Since(start).Milliseconds()
+	report.Stdout = stdout.String()
+	report.Stderr = stderr.String()
+	report.StdoutTruncated = stdout.Truncated
+	report.StderrTruncated = stderr.Truncated
+	transcript := strings.TrimSpace(report.Stdout)
+	if transcript != "" {
+		report.Transcript = transcript
+	}
+	exitCode := 0
+	if err != nil {
+		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			report.TimedOut = true
+			err = fmt.Errorf("voice command timed out after %s", timeout)
+		}
+		report.Status = "error"
+		report.Message = err.Error()
+		report.ExitCode = &exitCode
+		return report, err
+	}
+	report.ExitCode = &exitCode
+	return report, nil
+}
+
+type boundedTextBuffer struct {
+	bytes.Buffer
+	Limit     int
+	Truncated bool
+}
+
+func (b *boundedTextBuffer) Write(data []byte) (int, error) {
+	accepted := len(data)
+	if b.Limit <= 0 {
+		return accepted, nil
+	}
+	remaining := b.Limit - b.Buffer.Len()
+	if remaining <= 0 {
+		b.Truncated = b.Truncated || len(data) > 0
+		return accepted, nil
+	}
+	if len(data) > remaining {
+		b.Truncated = true
+		data = data[:remaining]
+	}
+	_, _ = b.Buffer.Write(data)
+	return accepted, nil
+}
+
 func renderVoiceReport(out io.Writer, report voiceReport) {
 	fmt.Fprintln(out, "Voice")
 	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
@@ -7994,6 +8148,21 @@ func renderVoiceReport(out io.Writer, report voiceReport) {
 	}
 	if report.Path != "" {
 		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Transcript != "" {
+		fmt.Fprintf(out, "  Transcript       %s\n", report.Transcript)
+	}
+	if report.ExitCode != nil {
+		fmt.Fprintf(out, "  Exit code        %d\n", *report.ExitCode)
+	}
+	if report.DurationMS > 0 {
+		fmt.Fprintf(out, "  Duration         %dms\n", report.DurationMS)
+	}
+	if report.Stderr != "" {
+		fmt.Fprintf(out, "  Stderr           %s\n", report.Stderr)
+	}
+	if report.TimedOut {
+		fmt.Fprintln(out, "  Timed out        true")
 	}
 	if report.Message != "" {
 		fmt.Fprintf(out, "  Message          %s\n", report.Message)
@@ -8214,7 +8383,7 @@ func boolPtrEnabled(value *bool) bool {
 }
 
 func voiceCommandAvailable(command string) bool {
-	fields := strings.Fields(command)
+	fields := voiceCommandArgs(command)
 	if len(fields) == 0 {
 		return false
 	}
@@ -8225,6 +8394,10 @@ func voiceCommandAvailable(command string) bool {
 	}
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+func voiceCommandArgs(command string) []string {
+	return strings.Fields(command)
 }
 
 type vimRequest struct {
@@ -12782,6 +12955,7 @@ func codogCapabilityFeatures() []string {
 		"slash_commands",
 		"team_watch",
 		"updater",
+		"voice_listen",
 		"workspace_tools",
 	})
 }
@@ -12863,6 +13037,7 @@ func builtInCommandNames() []string {
 		"install-slack-app",
 		"issue",
 		"keybindings",
+		"listen",
 		"lint",
 		"log",
 		"login",
@@ -15866,6 +16041,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/voice":
 		if err := a.Voice(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/listen":
+		if err := a.Voice(append([]string{"listen"}, fields[1:]...)); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/chrome":
@@ -21937,7 +22116,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
-		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "log", "marketplace",
+		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
@@ -22294,7 +22473,8 @@ Usage:
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] voice [status|set-command|on|off|toggle|clear] [--command COMMAND] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] voice [status|set-command|on|off|toggle|test|listen|transcribe|clear] [--command COMMAND] [--input TEXT] [--timeout-ms N] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] listen [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]

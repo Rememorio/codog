@@ -3314,7 +3314,7 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"fast_mode": true`)
 	out.Reset()
 
-	voiceCommand := os.Args[0]
+	voiceCommand := os.Args[0] + " -test.run=TestVoiceCommandHelperProcess"
 	require.NoError(t, app.Voice([]string{"set-command", voiceCommand, "--json"}))
 	require.Contains(t, out.String(), `"kind": "voice"`)
 	require.Contains(t, out.String(), `"command_configured": true`)
@@ -3332,6 +3332,21 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"voice_enabled": true`)
+	out.Reset()
+
+	t.Setenv("CODOG_TEST_VOICE_HELPER", "1")
+	require.NoError(t, app.Voice([]string{"test", "--input", "mic-check", "--json"}))
+	require.Contains(t, out.String(), `"action": "test"`)
+	require.Contains(t, out.String(), `"transcript": "voice:mic-check"`)
+	require.Contains(t, out.String(), `"exit_code": 0`)
+	out.Reset()
+
+	require.NoError(t, app.Voice([]string{"listen", "--input", "listen-check"}))
+	require.Contains(t, out.String(), "Transcript       voice:listen-check")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/listen --input slash-check", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Transcript       voice:slash-check")
 	out.Reset()
 
 	require.NoError(t, app.Chrome([]string{"--json"}))
@@ -7553,4 +7568,13 @@ func makeAgentPluginZip(t *testing.T, files map[string]string) []byte {
 	}
 	require.NoError(t, writer.Close())
 	return buf.Bytes()
+}
+
+func TestVoiceCommandHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_TEST_VOICE_HELPER") != "1" {
+		return
+	}
+	data, _ := io.ReadAll(os.Stdin)
+	fmt.Printf("voice:%s", strings.TrimSpace(string(data)))
+	os.Exit(0)
 }

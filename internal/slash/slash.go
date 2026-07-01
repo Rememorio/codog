@@ -138,7 +138,8 @@ func Specs() []Spec {
 		{Name: "/vim", Usage: "/vim [on|off|toggle|status]", Description: "Toggle vim keybinding preference."},
 		{Name: "/effort", Usage: "/effort [auto|low|medium|high|clear]", Description: "Show or change reasoning effort preference."},
 		{Name: "/fast", Usage: "/fast [on|off|toggle|status|clear]", Description: "Show or change fast mode preference."},
-		{Name: "/voice", Usage: "/voice [status|set-command|on|off|clear]", Description: "Show or change external voice mode settings."},
+		{Name: "/voice", Usage: "/voice [status|set-command|on|off|test|listen|clear]", Description: "Show, test, or change external voice mode settings."},
+		{Name: "/listen", Usage: "/listen [--input TEXT]", Description: "Run the configured external voice command."},
 		{Name: "/chrome", Usage: "/chrome [status|on|off|install|permissions|reconnect]", Description: "Show or change Chrome integration settings."},
 		{Name: "/privacy-settings", Usage: "/privacy-settings [show|set KEY on|off|clear KEY]", Description: "Show or change local privacy preferences."},
 		{Name: "/keybindings", Usage: "/keybindings [show|path|init]", Description: "Show shortcuts or create the keybindings config template."},
@@ -362,6 +363,9 @@ func AllCandidates(options CandidateOptions) []string {
 		"/vim toggle",
 		"/voice status",
 		"/voice set-command ",
+		"/voice test",
+		"/voice listen",
+		"/listen",
 	} {
 		add(candidate)
 	}
