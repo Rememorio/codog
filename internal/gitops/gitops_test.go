@@ -169,6 +169,8 @@ func TestCheckBranchFreshness(t *testing.T) {
 	require.True(t, freshness.Fresh)
 	require.Zero(t, freshness.Ahead)
 	require.Zero(t, freshness.Behind)
+	require.False(t, freshness.VerificationBlocked)
+	require.Nil(t, freshness.Event)
 
 	runGit(t, workspace, "switch", "main")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
@@ -185,6 +187,17 @@ func TestCheckBranchFreshness(t *testing.T) {
 	require.Zero(t, freshness.Ahead)
 	require.Equal(t, 2, freshness.Behind)
 	require.ElementsMatch(t, []string{"fix: resolve timeout", "docs: update notes"}, freshness.MissingFixes)
+	require.True(t, freshness.VerificationBlocked)
+	require.Equal(t, "stale_branch", freshness.RecoveryScenario)
+	require.Equal(t, "merge_forward_before_broad_verification", freshness.SuggestedAction)
+	require.Equal(t, []string{"git switch topic", "git merge --ff-only main", "go test ./..."}, freshness.SuggestedCommands)
+	require.NotNil(t, freshness.Event)
+	require.Equal(t, "branch.stale_against_main", freshness.Event.LaneEvent)
+	require.Equal(t, "stale_branch", freshness.Event.Classification)
+	require.Equal(t, "healthcheck", freshness.Event.Provenance.Source)
+	require.Equal(t, "codog-git", freshness.Event.Provenance.Emitter)
+	require.Equal(t, "act", freshness.Event.Binding.WatcherAction)
+	require.Equal(t, 2, freshness.Event.Evidence["behind"])
 
 	runGit(t, workspace, "switch", "topic")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "topic.txt"), []byte("topic\n"), 0o644))
@@ -198,6 +211,8 @@ func TestCheckBranchFreshness(t *testing.T) {
 	require.Equal(t, 1, freshness.Ahead)
 	require.Equal(t, 2, freshness.Behind)
 	require.ElementsMatch(t, []string{"fix: resolve timeout", "docs: update notes"}, freshness.MissingFixes)
+	require.True(t, freshness.VerificationBlocked)
+	require.Equal(t, []string{"git switch topic", "git rebase main", "go test ./..."}, freshness.SuggestedCommands)
 }
 
 func TestTagWorkflows(t *testing.T) {

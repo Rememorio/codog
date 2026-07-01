@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/Rememorio/codog/internal/laneevents"
 )
 
 type CommitOptions struct {
@@ -33,13 +36,18 @@ type BranchList struct {
 }
 
 type BranchFreshness struct {
-	Branch       string   `json:"branch"`
-	Base         string   `json:"base"`
-	Status       string   `json:"status"`
-	Fresh        bool     `json:"fresh"`
-	Ahead        int      `json:"ahead"`
-	Behind       int      `json:"behind"`
-	MissingFixes []string `json:"missing_fixes,omitempty"`
+	Branch              string            `json:"branch"`
+	Base                string            `json:"base"`
+	Status              string            `json:"status"`
+	Fresh               bool              `json:"fresh"`
+	Ahead               int               `json:"ahead"`
+	Behind              int               `json:"behind"`
+	MissingFixes        []string          `json:"missing_fixes,omitempty"`
+	VerificationBlocked bool              `json:"verification_blocked"`
+	RecoveryScenario    string            `json:"recovery_scenario,omitempty"`
+	SuggestedAction     string            `json:"suggested_action,omitempty"`
+	SuggestedCommands   []string          `json:"suggested_commands,omitempty"`
+	Event               *laneevents.Event `json:"event,omitempty"`
 }
 
 type LogEntry struct {
@@ -302,7 +310,7 @@ func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, erro
 	} else if behind > 0 {
 		status = "stale"
 	}
-	return BranchFreshness{
+	freshness := BranchFreshness{
 		Branch:       branch,
 		Base:         base,
 		Status:       status,
@@ -310,7 +318,61 @@ func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, erro
 		Ahead:        ahead,
 		Behind:       behind,
 		MissingFixes: missing,
-	}, nil
+	}
+	return annotateBranchFreshness(freshness), nil
+}
+
+func annotateBranchFreshness(freshness BranchFreshness) BranchFreshness {
+	if freshness.Behind <= 0 {
+		return freshness
+	}
+	freshness.VerificationBlocked = true
+	freshness.RecoveryScenario = "stale_branch"
+	freshness.SuggestedAction = "merge_forward_before_broad_verification"
+	if freshness.Ahead > 0 {
+		freshness.SuggestedCommands = []string{
+			fmt.Sprintf("git switch %s", freshness.Branch),
+			fmt.Sprintf("git rebase %s", freshness.Base),
+			"go test ./...",
+		}
+	} else {
+		freshness.SuggestedCommands = []string{
+			fmt.Sprintf("git switch %s", freshness.Branch),
+			fmt.Sprintf("git merge --ff-only %s", freshness.Base),
+			"go test ./...",
+		}
+	}
+	event := laneevents.Normalize(laneevents.Event{
+		Sequence:       1,
+		Type:           "stale_against_main",
+		LaneEvent:      laneevents.BranchStaleAgainstMain,
+		Status:         freshness.Status,
+		Message:        fmt.Sprintf("branch %s is %d commit(s) behind %s", freshness.Branch, freshness.Behind, freshness.Base),
+		Classification: "stale_branch",
+		CreatedAt:      time.Now().UTC(),
+		Provenance: laneevents.Provenance{
+			Source:      laneevents.ProvenanceHealthcheck,
+			Environment: "local",
+			Emitter:     "codog-git",
+			Confidence:  1,
+		},
+		Binding: laneevents.Binding{
+			Scope:         "stale_branch",
+			WatcherAction: "act",
+		},
+		Evidence: map[string]any{
+			"branch":               freshness.Branch,
+			"base":                 freshness.Base,
+			"status":               freshness.Status,
+			"ahead":                freshness.Ahead,
+			"behind":               freshness.Behind,
+			"missing_fixes":        freshness.MissingFixes,
+			"verification_blocked": true,
+			"recovery_scenario":    freshness.RecoveryScenario,
+		},
+	})
+	freshness.Event = &event
+	return freshness
 }
 
 func CreateBranch(workspace, name, startPoint string, checkout bool) (string, error) {

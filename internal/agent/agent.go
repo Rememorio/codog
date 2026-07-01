@@ -17967,6 +17967,7 @@ func codogCapabilityFeatures() []string {
 		"slash_commands",
 		"sampling_temperature",
 		"speech_output",
+		"stale_branch_guard",
 		"team_watch",
 		"telemetry_preferences",
 		"updater",
@@ -25440,6 +25441,21 @@ func renderBranchReport(out io.Writer, report branchReport) {
 		fmt.Fprintf(out, "  Freshness        %s\n", freshness.Status)
 		fmt.Fprintf(out, "  Ahead            %d\n", freshness.Ahead)
 		fmt.Fprintf(out, "  Behind           %d\n", freshness.Behind)
+		if freshness.VerificationBlocked {
+			fmt.Fprintln(out, "  Verification     blocked until branch is updated")
+		}
+		if freshness.RecoveryScenario != "" {
+			fmt.Fprintf(out, "  Recovery         %s\n", freshness.RecoveryScenario)
+		}
+		if freshness.Event != nil {
+			fmt.Fprintf(out, "  Event            %s\n", freshness.Event.LaneEvent)
+		}
+		if len(freshness.SuggestedCommands) > 0 {
+			fmt.Fprintln(out, "  Suggested commands")
+			for _, command := range freshness.SuggestedCommands {
+				fmt.Fprintf(out, "    - %s\n", command)
+			}
+		}
 		if len(freshness.MissingFixes) > 0 {
 			fmt.Fprintln(out, "  Missing commits")
 			for _, subject := range freshness.MissingFixes {

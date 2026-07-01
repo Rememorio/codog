@@ -694,7 +694,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	require.Contains(t, required, "command")
 
 	infos := registry.Infos()
-	require.Len(t, infos, 76)
+	require.Len(t, infos, 77)
 	info, ok = registry.Info("bash")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
@@ -831,7 +831,7 @@ func TestRegistryInfoReportsToolPermissionAndSchema(t *testing.T) {
 	info, ok = registry.Info("mcp_auth")
 	require.True(t, ok)
 	require.Equal(t, PermissionDanger, info.Permission)
-	for _, name := range []string{"git_status", "git_diff", "git_log", "git_show", "git_blame"} {
+	for _, name := range []string{"git_status", "branch_freshness", "git_diff", "git_log", "git_show", "git_blame"} {
 		info, ok = registry.Info(name)
 		require.True(t, ok)
 		require.Equal(t, PermissionReadOnly, info.Permission)
@@ -1006,6 +1006,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"FileReadTool":                 "read_file",
 		"FileWrite":                    "write_file",
 		"FileWriteTool":                "write_file",
+		"BranchFreshness":              "branch_freshness",
+		"BranchFreshnessTool":          "branch_freshness",
 		"GitStatusTool":                "git_status",
 		"GlobTool":                     "glob",
 		"GlobSearch":                   "glob",
@@ -1574,6 +1576,20 @@ func TestGitToolsReadRepositoryState(t *testing.T) {
 	blameOut, err := GitBlameTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"notes.txt","start_line":1,"end_line":1}`))
 	require.NoError(t, err)
 	require.Contains(t, blameOut, "alpha")
+
+	runToolTestGit(t, workspace, "restore", "notes.txt")
+	runToolTestGit(t, workspace, "switch", "-q", "-c", "topic")
+	runToolTestGit(t, workspace, "switch", "-q", "master")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
+	runToolTestGit(t, workspace, "add", "fix.txt")
+	runToolTestGit(t, workspace, "commit", "-q", "-m", "fix: main update")
+	freshnessOut, err := BranchFreshnessTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"branch":"topic","base":"master"}`))
+	require.NoError(t, err)
+	require.Contains(t, freshnessOut, `"kind": "branch_freshness"`)
+	require.Contains(t, freshnessOut, `"status": "stale"`)
+	require.Contains(t, freshnessOut, `"verification_blocked": true`)
+	require.Contains(t, freshnessOut, `"lane_event": "branch.stale_against_main"`)
+	require.Contains(t, freshnessOut, `"recovery_scenario": "stale_branch"`)
 
 	_, err = GitDiffTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"path":"../outside.txt"}`))
 	require.Error(t, err)

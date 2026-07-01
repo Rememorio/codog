@@ -148,6 +148,8 @@ var claudeToolAliases = map[string]string{
 	"filewritetool":                "write_file",
 	"getmcpprompt":                 "get_mcp_prompt",
 	"getmcpprompttool":             "get_mcp_prompt",
+	"branchfreshness":              "branch_freshness",
+	"branchfreshnesstool":          "branch_freshness",
 	"gitblame":                     "git_blame",
 	"gitblametool":                 "git_blame",
 	"gitdiff":                      "git_diff",
@@ -317,6 +319,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"FileWriteTool":                "write_file",
 	"GetMcpPrompt":                 "get_mcp_prompt",
 	"GetMcpPromptTool":             "get_mcp_prompt",
+	"BranchFreshness":              "branch_freshness",
+	"BranchFreshnessTool":          "branch_freshness",
 	"GitStatusTool":                "git_status",
 	"Glob":                         "glob",
 	"GlobSearch":                   "glob",
@@ -577,6 +581,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(ListMCPPromptsTool{Servers: opts.MCPServers})
 	r.Register(GetMCPPromptTool{Servers: opts.MCPServers})
 	r.Register(GitStatusTool{Workspace: workspace})
+	r.Register(BranchFreshnessTool{Workspace: workspace})
 	r.Register(GitDiffTool{Workspace: workspace})
 	r.Register(GitLogTool{Workspace: workspace})
 	r.Register(GitShowTool{Workspace: workspace})
@@ -1484,6 +1489,44 @@ func (t GitStatusTool) Execute(_ context.Context, input json.RawMessage) (string
 		return "", err
 	}
 	return pretty(map[string]any{"output": output}), nil
+}
+
+type BranchFreshnessTool struct {
+	Workspace string
+}
+
+func (BranchFreshnessTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "branch_freshness",
+		Description: "Compare a branch against a base branch and emit a stale-branch guard event when broad verification should wait.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"branch": map[string]any{"type": "string"},
+				"base":   map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+
+func (BranchFreshnessTool) Permission() Permission { return PermissionReadOnly }
+
+func (t BranchFreshnessTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Branch string `json:"branch"`
+		Base   string `json:"base"`
+	}
+	if len(input) != 0 {
+		if err := json.Unmarshal(input, &payload); err != nil {
+			return "", err
+		}
+	}
+	freshness, err := gitops.CheckBranchFreshness(t.Workspace, payload.Branch, payload.Base)
+	if err != nil {
+		return "", err
+	}
+	return pretty(map[string]any{"kind": "branch_freshness", "freshness": freshness}), nil
 }
 
 type GitDiffTool struct {
