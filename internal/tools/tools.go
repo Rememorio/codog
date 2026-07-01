@@ -6445,6 +6445,8 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 			SessionID:     payload.SessionID,
 			RestartPolicy: payload.Restart,
 			Env:           env,
+			Prompt:        prompt,
+			Description:   strings.TrimSpace(payload.Description),
 		})
 		if err != nil {
 			return "", err
@@ -6547,6 +6549,10 @@ func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (
 		}
 	}
 	prompt := renderTaskPacketPrompt(packet)
+	taskPacketData, err := json.Marshal(packet)
+	if err != nil {
+		return "", err
+	}
 	env, err := toolEnvironment(ctx, t.ConfigHome)
 	if err != nil {
 		return "", err
@@ -6556,8 +6562,11 @@ func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (
 		return "", err
 	}
 	task, err := taskStore(t.ConfigHome, t.Workspace).RunWithOptions(buildTeamTaskCommand(executable, prompt), cwd, background.RunOptions{
-		Kind: "task_packet",
-		Env:  env,
+		Kind:        "task_packet",
+		Env:         env,
+		Prompt:      prompt,
+		Description: packet.Objective,
+		TaskPacket:  taskPacketData,
 	})
 	if err != nil {
 		return "", err

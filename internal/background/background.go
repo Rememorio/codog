@@ -14,24 +14,27 @@ import (
 )
 
 type Task struct {
-	ID            string         `json:"id"`
-	Kind          string         `json:"kind,omitempty"`
-	AgentType     string         `json:"agent_type,omitempty"`
-	Command       string         `json:"command"`
-	Workspace     string         `json:"workspace,omitempty"`
-	SessionID     string         `json:"session_id,omitempty"`
-	RestartPolicy *RestartPolicy `json:"restart_policy,omitempty"`
-	RestartCount  int            `json:"restart_count,omitempty"`
-	PID           int            `json:"pid"`
-	Status        string         `json:"status"`
-	StartedAt     time.Time      `json:"started_at"`
-	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
-	ExitCode      *int           `json:"exit_code,omitempty"`
-	LogPath       string         `json:"log_path"`
-	Error         string         `json:"error,omitempty"`
-	RestartedFrom string         `json:"restarted_from,omitempty"`
-	RestartedBy   string         `json:"restarted_by,omitempty"`
-	Messages      []TaskMessage  `json:"messages,omitempty"`
+	ID            string          `json:"id"`
+	Kind          string          `json:"kind,omitempty"`
+	AgentType     string          `json:"agent_type,omitempty"`
+	Command       string          `json:"command"`
+	Prompt        string          `json:"prompt,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	TaskPacket    json.RawMessage `json:"task_packet,omitempty"`
+	Workspace     string          `json:"workspace,omitempty"`
+	SessionID     string          `json:"session_id,omitempty"`
+	RestartPolicy *RestartPolicy  `json:"restart_policy,omitempty"`
+	RestartCount  int             `json:"restart_count,omitempty"`
+	PID           int             `json:"pid"`
+	Status        string          `json:"status"`
+	StartedAt     time.Time       `json:"started_at"`
+	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
+	ExitCode      *int            `json:"exit_code,omitempty"`
+	LogPath       string          `json:"log_path"`
+	Error         string          `json:"error,omitempty"`
+	RestartedFrom string          `json:"restarted_from,omitempty"`
+	RestartedBy   string          `json:"restarted_by,omitempty"`
+	Messages      []TaskMessage   `json:"messages,omitempty"`
 }
 
 type TaskMessage struct {
@@ -63,6 +66,9 @@ type RunOptions struct {
 	RestartPolicy *RestartPolicy
 	RestartCount  int
 	Env           []string
+	Prompt        string
+	Description   string
+	TaskPacket    json.RawMessage
 }
 
 type RestartPolicy struct {
@@ -163,6 +169,9 @@ func (s Store) Restart(id string, cwd string) (Task, error) {
 		RestartedFrom: task.ID,
 		RestartPolicy: task.RestartPolicy,
 		RestartCount:  task.RestartCount,
+		Prompt:        task.Prompt,
+		Description:   task.Description,
+		TaskPacket:    task.TaskPacket,
 	})
 	if err != nil {
 		return Task{}, err
@@ -258,6 +267,9 @@ func (s Store) SuperviseOnce(now time.Time) (SuperviseResult, error) {
 			RestartedFrom: task.ID,
 			RestartPolicy: policy,
 			RestartCount:  task.RestartCount + 1,
+			Prompt:        task.Prompt,
+			Description:   task.Description,
+			TaskPacket:    task.TaskPacket,
 		})
 		if err != nil {
 			return result, err
@@ -306,6 +318,9 @@ func (s Store) run(command string, cwd string, options RunOptions) (Task, error)
 		Kind:          options.Kind,
 		AgentType:     options.AgentType,
 		Command:       command,
+		Prompt:        strings.TrimSpace(options.Prompt),
+		Description:   strings.TrimSpace(options.Description),
+		TaskPacket:    append(json.RawMessage(nil), options.TaskPacket...),
 		Workspace:     cwd,
 		SessionID:     options.SessionID,
 		RestartPolicy: policy,

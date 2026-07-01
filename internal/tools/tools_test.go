@@ -2396,12 +2396,21 @@ printf 'codog:%s\n' "$*"
 	require.False(t, report.CreatedAt.IsZero())
 	require.Equal(t, "task", report.Task.Kind)
 	require.Equal(t, "session-1", report.Task.SessionID)
+	require.Equal(t, "check auth", report.Task.Prompt)
+	require.Equal(t, "audit auth", report.Task.Description)
 	require.Contains(t, report.Task.Command, "prompt")
 
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(report.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "Task: audit auth") && strings.Contains(logs, "check auth")
 	}, 2*time.Second, 20*time.Millisecond)
+
+	getOut, err := TaskGetTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+report.TaskID+`"}`))
+	require.NoError(t, err)
+	var fetched background.Task
+	require.NoError(t, json.Unmarshal([]byte(getOut), &fetched))
+	require.Equal(t, "check auth", fetched.Prompt)
+	require.Equal(t, "audit auth", fetched.Description)
 
 	_, err = TaskCreateTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"command":"printf ok","prompt":"check auth"}`))
 	require.Error(t, err)
@@ -2462,10 +2471,16 @@ func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
 	require.Contains(t, out, `"scope_path": "README only"`)
 	require.Contains(t, out, `"resolved_scope": {`)
 	var payload struct {
-		TaskID string `json:"task_id"`
+		TaskID string          `json:"task_id"`
+		Task   background.Task `json:"task"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &payload))
 	require.NotEmpty(t, payload.TaskID)
+	require.Equal(t, "Update docs", payload.Task.Description)
+	require.Contains(t, payload.Task.Prompt, "Objective:")
+	var persistedPacket map[string]any
+	require.NoError(t, json.Unmarshal(payload.Task.TaskPacket, &persistedPacket))
+	require.Equal(t, "Update docs", persistedPacket["objective"])
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(payload.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "shim:prompt") && strings.Contains(logs, "Update docs")
