@@ -28,13 +28,18 @@ func TestFetchHTMLPlainTextAndInvalidURL(t *testing.T) {
 	htmlOut, err := Fetch(context.Background(), FetchInput{URL: server.URL + "/page", Prompt: "What is the page title?"})
 	require.NoError(t, err)
 	require.Equal(t, 200, htmlOut.StatusCode)
+	require.Equal(t, htmlOut.StatusCode, htmlOut.Code)
+	require.Equal(t, "OK", htmlOut.CodeText)
 	require.Equal(t, "Test Title", htmlOut.Title)
 	require.Contains(t, htmlOut.Text, "Test Page Hello world.")
 	require.Equal(t, "Title: Test Title", htmlOut.Summary)
+	require.Equal(t, htmlOut.Summary, htmlOut.Result)
+	require.Equal(t, htmlOut.DurationMS, htmlOut.DurationMs)
 
 	textOut, err := Fetch(context.Background(), FetchInput{URL: server.URL + "/plain"})
 	require.NoError(t, err)
 	require.Contains(t, textOut.Text, "plain text response")
+	require.Equal(t, "plain text response", textOut.Result)
 
 	_, err = Fetch(context.Background(), FetchInput{URL: "not a url"})
 	require.Error(t, err)
@@ -68,6 +73,7 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 	require.Equal(t, "https://docs.rs/reqwest", out.Results[0].URL)
 	require.Equal(t, "Fast Rust HTTP client docs.", out.Results[0].Snippet)
 	require.Contains(t, out.SourceURL, "/search?q=rust+web+search")
+	require.GreaterOrEqual(t, out.DurationSeconds, 0.0)
 
 	out, err = Search(context.Background(), SearchInput{
 		Query:          "rust web search",

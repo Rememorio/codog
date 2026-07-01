@@ -30,13 +30,17 @@ type FetchOutput struct {
 	URL         string `json:"url"`
 	FinalURL    string `json:"final_url"`
 	StatusCode  int    `json:"status_code"`
+	Code        int    `json:"code"`
+	CodeText    string `json:"codeText"`
 	ContentType string `json:"content_type,omitempty"`
 	Title       string `json:"title,omitempty"`
 	Bytes       int64  `json:"bytes"`
 	Truncated   bool   `json:"truncated"`
 	Text        string `json:"text"`
 	Summary     string `json:"summary,omitempty"`
+	Result      string `json:"result,omitempty"`
 	DurationMS  int64  `json:"duration_ms"`
+	DurationMs  int64  `json:"durationMs"`
 }
 
 type SearchInput struct {
@@ -48,10 +52,11 @@ type SearchInput struct {
 }
 
 type SearchOutput struct {
-	Query      string         `json:"query"`
-	SourceURL  string         `json:"source_url"`
-	Results    []SearchResult `json:"results"`
-	DurationMS int64          `json:"duration_ms"`
+	Query           string         `json:"query"`
+	SourceURL       string         `json:"source_url"`
+	Results         []SearchResult `json:"results"`
+	DurationMS      int64          `json:"duration_ms"`
+	DurationSeconds float64        `json:"durationSeconds"`
 }
 
 type SearchResult struct {
@@ -96,17 +101,23 @@ func Fetch(ctx context.Context, input FetchInput) (FetchOutput, error) {
 	}
 	contentType := resp.Header.Get("Content-Type")
 	title, text := normalizeContent(string(data), contentType)
+	summary := summarize(input.Prompt, title, text)
+	durationMS := time.Since(started).Milliseconds()
 	return FetchOutput{
 		URL:         requestURL.String(),
 		FinalURL:    resp.Request.URL.String(),
 		StatusCode:  resp.StatusCode,
+		Code:        resp.StatusCode,
+		CodeText:    http.StatusText(resp.StatusCode),
 		ContentType: contentType,
 		Title:       title,
 		Bytes:       int64(len(data)),
 		Truncated:   truncated,
 		Text:        text,
-		Summary:     summarize(input.Prompt, title, text),
-		DurationMS:  time.Since(started).Milliseconds(),
+		Summary:     summary,
+		Result:      firstNonEmpty(summary, text),
+		DurationMS:  durationMS,
+		DurationMs:  durationMS,
 	}, nil
 }
 
@@ -153,11 +164,13 @@ func Search(ctx context.Context, input SearchInput) (SearchOutput, error) {
 	if len(results) > maxResults {
 		results = results[:maxResults]
 	}
+	duration := time.Since(started)
 	return SearchOutput{
-		Query:      query,
-		SourceURL:  resp.Request.URL.String(),
-		Results:    results,
-		DurationMS: time.Since(started).Milliseconds(),
+		Query:           query,
+		SourceURL:       resp.Request.URL.String(),
+		Results:         results,
+		DurationMS:      duration.Milliseconds(),
+		DurationSeconds: duration.Seconds(),
 	}, nil
 }
 
@@ -414,4 +427,13 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

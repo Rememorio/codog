@@ -1061,6 +1061,10 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, fetchOut, `"title": "Local"`)
 	require.Contains(t, fetchOut, `"summary": "Title: Local"`)
+	require.Contains(t, fetchOut, `"code": 200`)
+	require.Contains(t, fetchOut, `"codeText": "OK"`)
+	require.Contains(t, fetchOut, `"result": "Title: Local"`)
+	require.Contains(t, fetchOut, `"durationMs":`)
 
 	_, err = WebFetchTool{}.Execute(context.Background(), []byte(`{"url":"`+server.URL+`/page"}`))
 	require.Error(t, err)
@@ -1071,6 +1075,7 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	require.Contains(t, searchOut, `"title": "Example Result"`)
 	require.Contains(t, searchOut, `"url": "https://example.com/result"`)
 	require.Contains(t, searchOut, `"snippet": "A local search summary."`)
+	require.Contains(t, searchOut, `"durationSeconds":`)
 
 	_, err = WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"x"}`))
 	require.Error(t, err)
