@@ -709,6 +709,16 @@ func TestSetAndUnsetFileValue(t *testing.T) {
 	require.Equal(t, "new-model", raw["model"])
 	require.Equal(t, float64(4), raw["rate_limit"].(map[string]any)["max_retries"])
 	require.NotContains(t, raw, "future")
+
+	report, err = ResetFile(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "reset", report.Action)
+	require.Equal(t, "*", report.Key)
+	require.NoFileExists(t, configPath)
+
+	report, err = ResetFile(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "reset", report.Action)
 }
 
 func TestParseConfigValue(t *testing.T) {

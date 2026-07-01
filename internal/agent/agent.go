@@ -329,6 +329,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.AddDir(rest)
 	case "output-style":
 		return app.OutputStyle(rest)
+	case "reset":
+		return app.Reset(rest)
 	case "model":
 		return app.Model(rest)
 	case "api-key":
@@ -14454,6 +14456,7 @@ func codogCapabilityFeatures() []string {
 		"broad_cwd_guard",
 		"bubble_tea_tui",
 		"config_layers",
+		"config_reset",
 		"cost_token_tracking",
 		"editor_bridge",
 		"git_workflows",
@@ -14616,6 +14619,7 @@ func builtInCommandNames() []string {
 		"remote-setup",
 		"rename",
 		"repl",
+		"reset",
 		"reset-limits",
 		"review",
 		"rewind",
@@ -17569,6 +17573,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.OutputStyle(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/reset":
+		if err := a.Reset(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/language":
 		if err := a.Language(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -19468,6 +19476,13 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	if len(args) == 0 {
 		return renderConfigInspectionPayload(out, req.Format, map[string]any{"config": cfg, "paths": paths})
 	}
+	if strings.EqualFold(args[0], "reset") {
+		report, err := resetConfigFileCommand(args, paths)
+		if err != nil {
+			return err
+		}
+		return renderConfigInspectionPayload(out, req.Format, report)
+	}
 	if strings.EqualFold(args[0], "set") || strings.EqualFold(args[0], "unset") {
 		report, err := mutateConfigFile(args, paths)
 		if err != nil {
@@ -19560,6 +19575,8 @@ func renderConfigInspectionText(out io.Writer, payload any) {
 		fmt.Fprintf(out, "  Action           %s\n", value.Action)
 		fmt.Fprintf(out, "  Path             %s\n", value.Path)
 		fmt.Fprintf(out, "  Key              %s\n", value.Key)
+	case resetReport:
+		_ = renderResetReport(out, "text", value)
 	default:
 		data, _ := json.MarshalIndent(value, "", "  ")
 		fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(string(data), "\n", "\n  "))
@@ -19672,6 +19689,326 @@ func configMutationPath(req configMutationRequest, paths []string) (string, erro
 	}
 }
 
+func resetConfigFileCommand(args []string, paths []string) (resetReport, error) {
+	req, err := parseResetArgs(args[1:])
+	if err != nil {
+		return resetReport{}, err
+	}
+	path, err := configMutationPath(configMutationRequest{Path: req.Path, Target: req.Target}, paths)
+	if err != nil {
+		return resetReport{}, err
+	}
+	report, _, err := resetConfigAtPath(path, req.Section, req.Action, req.Confirm)
+	return report, err
+}
+
+type resetRequest struct {
+	Action  string
+	Section string
+	Format  string
+	Target  string
+	Path    string
+	Confirm bool
+}
+
+type resetReport struct {
+	Kind              string                  `json:"kind"`
+	Action            string                  `json:"action"`
+	Status            string                  `json:"status"`
+	Section           string                  `json:"section"`
+	Path              string                  `json:"path,omitempty"`
+	ConfirmRequired   bool                    `json:"confirm_required,omitempty"`
+	ResetKeys         []string                `json:"reset_keys,omitempty"`
+	AvailableSections []string                `json:"available_sections,omitempty"`
+	Changes           []config.MutationReport `json:"changes,omitempty"`
+	Message           string                  `json:"message,omitempty"`
+}
+
+var resetSectionKeys = map[string][]string{
+	"auth":        []string{"api_key", "auth_token", "oauth_profile", "base_url"},
+	"future":      []string{"future"},
+	"hooks":       []string{"hooks"},
+	"interface":   []string{"language", "theme", "editorMode"},
+	"mcp":         []string{"mcp_servers"},
+	"model":       []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
+	"permissions": []string{"permission_mode", "permission_rules"},
+	"privacy":     []string{"privacy_settings"},
+	"rate-limit":  []string{"rate_limit"},
+	"remote":      []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
+	"skills":      []string{"enabled_skills"},
+	"voice":       []string{"voice_enabled", "voice_command", "speech_command"},
+}
+
+var resetSectionAliases = map[string]string{
+	"all":              "all",
+	"auth":             "auth",
+	"authentication":   "auth",
+	"defaults":         "all",
+	"everything":       "all",
+	"future":           "future",
+	"hooks":            "hooks",
+	"interface":        "interface",
+	"mcp":              "mcp",
+	"model":            "model",
+	"models":           "model",
+	"permission":       "permissions",
+	"permissions":      "permissions",
+	"privacy":          "privacy",
+	"privacy-settings": "privacy",
+	"rate_limit":       "rate-limit",
+	"rate-limit":       "rate-limit",
+	"remote":           "remote",
+	"skills":           "skills",
+	"ui":               "interface",
+	"voice":            "voice",
+}
+
+func (a *App) Reset(args []string) error {
+	req, err := parseResetArgs(args)
+	if err != nil {
+		return err
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	report, changed, err := resetConfigAtPath(path, req.Section, req.Action, req.Confirm)
+	if err != nil {
+		return err
+	}
+	if changed {
+		a.applyConfigReset(report.Section)
+	}
+	return renderResetReport(a.Out, req.Format, report)
+}
+
+func parseResetArgs(args []string) (resetRequest, error) {
+	req := resetRequest{Action: "status", Section: "all", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reset output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reset target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("reset config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--confirm" || arg == "--yes" || arg == "-y":
+			req.Confirm = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown reset flag %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "reset"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		if req.Confirm {
+			req.Action = "reset"
+		}
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show", "list":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected reset argument %q", rest[1])
+		}
+		req.Action = "status"
+	default:
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected reset argument %q", rest[1])
+		}
+		req.Action = "reset"
+		req.Section = rest[0]
+	}
+	return req, nil
+}
+
+func resetConfigAtPath(path string, section string, action string, confirm bool) (resetReport, bool, error) {
+	canonical, keys, err := resolveResetSection(section)
+	if err != nil {
+		return resetReport{}, false, err
+	}
+	report := resetReport{
+		Kind:              "reset",
+		Action:            action,
+		Status:            "ok",
+		Section:           canonical,
+		Path:              path,
+		ResetKeys:         append([]string(nil), keys...),
+		AvailableSections: availableResetSections(),
+	}
+	if action == "status" {
+		report.ConfirmRequired = canonical == "all"
+		report.Message = "Choose a section to reset, or use `reset all --confirm` to remove the selected config file."
+		return report, false, nil
+	}
+	if canonical == "all" {
+		report.ResetKeys = []string{"*"}
+		if !confirm {
+			report.ConfirmRequired = true
+			report.Action = "status"
+			report.Message = "Whole-file reset requires --confirm."
+			return report, false, nil
+		}
+		change, err := config.ResetFile(path)
+		if err != nil {
+			return resetReport{}, false, err
+		}
+		report.Changes = []config.MutationReport{change}
+		report.Message = "Configuration file reset to defaults."
+		return report, true, nil
+	}
+	for _, key := range keys {
+		change, err := config.UnsetFileValue(path, key)
+		if err != nil {
+			return resetReport{}, false, err
+		}
+		report.Changes = append(report.Changes, change)
+	}
+	report.Message = fmt.Sprintf("Configuration section %q reset to defaults.", canonical)
+	return report, true, nil
+}
+
+func resolveResetSection(section string) (string, []string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(section))
+	if normalized == "" {
+		normalized = "all"
+	}
+	canonical, ok := resetSectionAliases[normalized]
+	if !ok {
+		return "", nil, fmt.Errorf("unknown reset section %q", section)
+	}
+	if canonical == "all" {
+		return canonical, nil, nil
+	}
+	keys := resetSectionKeys[canonical]
+	return canonical, append([]string(nil), keys...), nil
+}
+
+func availableResetSections() []string {
+	sections := make([]string, 0, len(resetSectionKeys)+1)
+	sections = append(sections, "all")
+	for section := range resetSectionKeys {
+		sections = append(sections, section)
+	}
+	sort.Strings(sections)
+	return sections
+}
+
+func renderResetReport(out io.Writer, format string, report resetReport) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Reset")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Section          %s\n", report.Section)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.ConfirmRequired {
+		fmt.Fprintln(out, "  Confirm required true")
+	}
+	if len(report.ResetKeys) != 0 {
+		fmt.Fprintf(out, "  Reset keys       %s\n", strings.Join(report.ResetKeys, ", "))
+	}
+	if len(report.AvailableSections) != 0 && report.Action == "status" {
+		fmt.Fprintf(out, "  Sections         %s\n", strings.Join(report.AvailableSections, ", "))
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	return nil
+}
+
+func (a *App) applyConfigReset(section string) {
+	defaults := defaultResetConfig(a.Config.ConfigHome)
+	switch section {
+	case "all":
+		a.Config = defaults
+	case "auth":
+		a.Config.APIKey = ""
+		a.Config.AuthToken = ""
+		a.Config.OAuthProfile = ""
+		a.Config.BaseURL = defaults.BaseURL
+	case "future":
+		a.Config.Future = config.FutureConfig{}
+	case "hooks":
+		a.Config.Hooks = config.HookConfig{}
+	case "interface":
+		a.Config.Language = ""
+		a.Config.Theme = ""
+		a.Config.EditorMode = ""
+	case "mcp":
+		a.Config.MCPServers = map[string]config.MCPServerConfig{}
+	case "model":
+		a.Config.Model = defaults.Model
+		a.Config.AdvisorModel = ""
+		a.Config.MaxTokens = defaults.MaxTokens
+		a.Config.MaxTurns = defaults.MaxTurns
+		a.Config.Temperature = nil
+		a.Config.ReasoningEffort = ""
+		a.Config.FastMode = nil
+	case "permissions":
+		a.Config.PermissionMode = defaults.PermissionMode
+		a.Config.PermissionRules = config.PermissionRules{}
+	case "privacy":
+		a.Config.Privacy = config.PrivacyConfig{}
+	case "rate-limit":
+		a.Config.RateLimit = defaults.RateLimit
+	case "remote":
+		a.Config.Future.RemoteEnabled = false
+		a.Config.Future.RemoteAuthToken = ""
+		a.Config.Future.RemoteLeaseSeconds = 0
+	case "skills":
+		a.Config.EnabledSkills = nil
+	case "voice":
+		a.Config.VoiceEnabled = nil
+		a.Config.VoiceCommand = ""
+		a.Config.SpeechCommand = ""
+	}
+}
+
+func defaultResetConfig(configHome string) config.Config {
+	return config.Config{
+		BaseURL:             config.DefaultBaseURL,
+		Model:               config.DefaultModel,
+		MaxTokens:           4096,
+		MaxTurns:            8,
+		PermissionMode:      "workspace-write",
+		AutoCompactMessages: 40,
+		ConfigHome:          configHome,
+		RateLimit:           config.DefaultRateLimitConfig(),
+		MCPServers:          map[string]config.MCPServerConfig{},
+	}
+}
+
 func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	if len(args) == 0 {
 		return cfg, nil
@@ -19680,7 +20017,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	case "model":
 		return map[string]any{"model": cfg.Model, "advisor_model": cfg.AdvisorModel, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "temperature": cfg.Temperature, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
 	case "interface", "ui":
-		return map[string]any{"theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
+		return map[string]any{"language": cfg.Language, "theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
 	case "privacy", "privacy-settings":
 		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
@@ -24955,7 +25292,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
+		"remote-env", "remote-setup", "reset", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
@@ -25297,9 +25634,19 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"config",
 			"config",
-			"codog config [get SECTION|paths|set KEY VALUE|unset KEY] [--output-format text|json]",
-			"Config\n\nUsage:\n  codog config [get SECTION|paths|set KEY VALUE|unset KEY] [--output-format text|json]\n\nInspects merged configuration and updates user, project, or local config files.\n",
+			"codog config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]",
+			"Config\n\nUsage:\n  codog config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n\nInspects merged configuration and updates user, project, or local config files.\n",
 			[]string{"paths", "config", "key", "value", "target"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "reset":
+		return localCommandHelpSpec(
+			"reset",
+			"reset",
+			"codog reset [status|SECTION|all --confirm] [--target user|project|local] [--output-format text|json]",
+			"Reset\n\nUsage:\n  codog reset [status|SECTION|all --confirm] [--target user|project|local] [--output-format text|json]\n  codog config reset [SECTION|all --confirm]\n\nResets selected configuration sections to defaults. Whole-file reset requires `all --confirm`.\n",
+			[]string{"section", "reset_keys", "changes", "path", "confirm_required"},
 			[]string{"ok", "error"},
 			true,
 		), true
@@ -25640,7 +25987,8 @@ Usage:
   %s [flags] prompt "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
-  %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
+  %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
+  %s reset [status|SECTION|all --confirm] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--json|--output-format text|json]
@@ -25766,7 +26114,7 @@ Usage:
   %s mobile|ios|android [all|ios|android] [--addr HOST:PORT] [--session ID|--resume latest] [--json|--output-format text|json]
   %s --acp|-acp [serve] [--json|--output-format text|json]
   %s enterprise [--json] | enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY
-  %s config [get SECTION|paths|set KEY VALUE|unset KEY] [--json|--output-format text|json]
+  %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
 
 Flags:
   --model NAME

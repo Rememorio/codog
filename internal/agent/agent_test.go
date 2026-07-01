@@ -199,6 +199,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, *report.MutatesWorkspace)
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"reset", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "reset", report.Topic)
+	require.Equal(t, "reset", report.Command)
+	require.Contains(t, report.Help, "configuration sections")
+	require.Contains(t, report.OutputFields, "reset_keys")
+	require.NotNil(t, report.MutatesWorkspace)
+	require.True(t, *report.MutatesWorkspace)
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"language", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "language", report.Topic)
@@ -304,6 +314,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "profile",
 		},
 		{
+			name:  "reset local help",
+			args:  []string{"--config", configPath, "reset", "--help", "--output-format", "json"},
+			topic: "reset",
+		},
+		{
 			name:  "language local help",
 			args:  []string{"--config", configPath, "language", "--help", "--output-format", "json"},
 			topic: "language",
@@ -382,9 +397,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rate-limit")
 	require.Contains(t, report.Commands, "reasoning")
+	require.Contains(t, report.Commands, "reset")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Features, "broad_cwd_guard")
+	require.Contains(t, report.Features, "config_reset")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "interface_language")
 	require.Contains(t, report.Features, "mcp_server")
@@ -433,6 +450,75 @@ func TestReasoningCommandPersistsPreference(t *testing.T) {
 	require.Contains(t, out, `"kind": "reasoning"`)
 	require.Contains(t, out, `"effort": "high"`)
 	require.True(t, commandAcceptsGlobalOutputFormat("reasoning"))
+}
+
+func TestResetCommandResetsConfigSections(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	configPath := filepath.Join(configHome, "config.json")
+	require.NoError(t, os.MkdirAll(configHome, 0o755))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "custom-model",
+		"max_tokens": 123,
+		"language": "Japanese",
+		"theme": "dark"
+	}`), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "reset", "model"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "reset"`)
+	require.Contains(t, out, `"action": "reset"`)
+	require.Contains(t, out, `"section": "model"`)
+	require.Contains(t, out, `"model"`)
+
+	stored, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(stored), `"model"`)
+	require.NotContains(t, string(stored), `"max_tokens"`)
+	require.Contains(t, string(stored), `"language": "Japanese"`)
+	require.Contains(t, string(stored), `"theme": "dark"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "reset", "all"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"confirm_required": true`)
+	require.FileExists(t, configPath)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "reset", "all", "--confirm"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"action": "reset"`)
+	require.Contains(t, out, `"section": "all"`)
+	require.NoFileExists(t, configPath)
+	require.True(t, commandAcceptsGlobalOutputFormat("reset"))
+}
+
+func TestConfigResetSubcommandResetsExplicitConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "custom-model",
+		"language": "Japanese",
+		"theme": "dark",
+		"editorMode": "vim"
+	}`), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "config", "reset", "interface"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "reset"`)
+	require.Contains(t, out, `"section": "interface"`)
+
+	stored, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"model": "custom-model"`)
+	require.NotContains(t, string(stored), `"language"`)
+	require.NotContains(t, string(stored), `"theme"`)
+	require.NotContains(t, string(stored), `"editorMode"`)
 }
 
 func TestLanguageCommandPersistsPreference(t *testing.T) {

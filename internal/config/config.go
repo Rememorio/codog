@@ -498,6 +498,17 @@ func UnsetFileValue(path string, key string) (MutationReport, error) {
 	return MutationReport{Kind: "config", Action: "unset", Status: "ok", Path: path, Key: key}, nil
 }
 
+func ResetFile(path string) (MutationReport, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return MutationReport{}, fmt.Errorf("config path is required")
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return MutationReport{}, err
+	}
+	return MutationReport{Kind: "config", Action: "reset", Status: "ok", Path: path, Key: "*"}, nil
+}
+
 func ParseConfigValue(raw string) any {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
