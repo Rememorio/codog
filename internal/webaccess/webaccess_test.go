@@ -59,8 +59,7 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 
 	out, err := Search(context.Background(), SearchInput{
 		Query:          "rust web search",
-		AllowedDomains: []string{"docs.rs", "example.com"},
-		BlockedDomains: []string{"example.com"},
+		AllowedDomains: []string{"docs.rs"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "rust web search", out.Query)
@@ -69,6 +68,25 @@ func TestSearchExtractsFiltersAndDecodesRedirects(t *testing.T) {
 	require.Equal(t, "https://docs.rs/reqwest", out.Results[0].URL)
 	require.Equal(t, "Fast Rust HTTP client docs.", out.Results[0].Snippet)
 	require.Contains(t, out.SourceURL, "/search?q=rust+web+search")
+
+	out, err = Search(context.Background(), SearchInput{
+		Query:          "rust web search",
+		BlockedDomains: []string{"example.com"},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Results, 1)
+	require.Equal(t, "https://docs.rs/reqwest", out.Results[0].URL)
+}
+
+func TestSearchRejectsAllowedAndBlockedDomainsTogether(t *testing.T) {
+	_, err := Search(context.Background(), SearchInput{
+		Query:          "rust web search",
+		AllowedDomains: []string{"docs.rs"},
+		BlockedDomains: []string{"example.com"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allowed_domains")
+	require.Contains(t, err.Error(), "blocked_domains")
 }
 
 func TestSearchFallsBackToGenericLinks(t *testing.T) {

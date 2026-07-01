@@ -1068,6 +1068,10 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	require.Contains(t, searchOut, `"url": "https://example.com/result"`)
 	require.Contains(t, searchOut, `"snippet": "A local search summary."`)
 
+	_, err = WebSearchTool{}.Execute(context.Background(), []byte(`{"query":"local result","allowed_domains":["example.com"],"blocked_domains":["example.org"]}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allowed_domains")
+
 	registry := NewRegistry(t.TempDir())
 	info, ok := registry.Info("web_fetch")
 	require.True(t, ok)
