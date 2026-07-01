@@ -258,9 +258,17 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return err
 	}
 	app := &App{
-		Config:    cfg,
-		Client:    anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
-		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{SandboxStrategy: cfg.Future.SandboxStrategy, AdditionalDirs: additionalDirs, ConfigHome: cfg.ConfigHome, MCPServers: cfg.MCPServers, QuestionIn: os.Stdin, QuestionOut: os.Stderr}),
+		Config: cfg,
+		Client: anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Tools: tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
+			SandboxStrategy: cfg.Future.SandboxStrategy,
+			Sandbox:         cfg.Future.Sandbox,
+			AdditionalDirs:  additionalDirs,
+			ConfigHome:      cfg.ConfigHome,
+			MCPServers:      cfg.MCPServers,
+			QuestionIn:      os.Stdin,
+			QuestionOut:     os.Stderr,
+		}),
 		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace: workspace,
 		Out:       os.Stdout,
@@ -3747,6 +3755,7 @@ func (a *App) newToolRegistry() (*tools.Registry, error) {
 	}
 	return tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
 		SandboxStrategy: a.Config.Future.SandboxStrategy,
+		Sandbox:         a.Config.Future.Sandbox,
 		AdditionalDirs:  additionalDirs,
 		ConfigHome:      a.Config.ConfigHome,
 		MCPServers:      a.Config.MCPServers,
@@ -9285,6 +9294,7 @@ func (a *App) refreshBuiltinToolScope() error {
 	}
 	a.Tools.UpdateBuiltinScope(a.Workspace, tools.RegistryOptions{
 		SandboxStrategy: a.Config.Future.SandboxStrategy,
+		Sandbox:         a.Config.Future.Sandbox,
 		AdditionalDirs:  additionalDirs,
 		ConfigHome:      a.Config.ConfigHome,
 		MCPServers:      a.Config.MCPServers,
@@ -18014,6 +18024,7 @@ func codogCapabilityFeatures() []string {
 		"repl",
 		"resume_safe_slash_metadata",
 		"sandbox",
+		"sandbox_config_defaults",
 		"session_identity_metadata",
 		"session_identity_reconciliation",
 		"session_resume",
@@ -28530,6 +28541,7 @@ func (a *App) mcpRegistry() *tools.Registry {
 	if registry == nil {
 		registry = tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
 			SandboxStrategy: a.Config.Future.SandboxStrategy,
+			Sandbox:         a.Config.Future.Sandbox,
 			AdditionalDirs:  a.Config.AdditionalDirs,
 			ConfigHome:      a.Config.ConfigHome,
 			MCPServers:      a.Config.MCPServers,

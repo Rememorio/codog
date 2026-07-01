@@ -147,6 +147,39 @@ func TestBashToolAcceptsSandboxRequestAliases(t *testing.T) {
 	require.Contains(t, err.Error(), "unsupported filesystem isolation mode")
 }
 
+func TestBashToolAppliesSandboxConfigDefaults(t *testing.T) {
+	workspace := t.TempDir()
+	enabled := false
+	namespace := false
+	network := true
+	out, err := BashTool{
+		Workspace: workspace,
+		Sandbox: config.SandboxConfig{
+			Enabled:               &enabled,
+			NamespaceRestrictions: &namespace,
+			NetworkIsolation:      &network,
+			FilesystemMode:        "allow-list",
+			AllowedMounts:         []string{"logs"},
+		},
+	}.Execute(context.Background(), []byte(`{"command":"printf ok"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ok"`)
+	var payload struct {
+		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.False(t, payload.SandboxStatus.Requested.Enabled)
+	require.False(t, payload.SandboxStatus.Requested.NamespaceRestrictions)
+	require.True(t, payload.SandboxStatus.Requested.NetworkIsolation)
+	require.Equal(t, sandbox.FilesystemIsolationAllowList, payload.SandboxStatus.Requested.FilesystemMode)
+	require.Equal(t, []string{filepath.Join(workspace, "logs")}, payload.SandboxStatus.AllowedMounts)
+
+	enabled = true
+	require.Equal(t, "detect", bashSandboxStrategy("", config.SandboxConfig{Enabled: &enabled}, false))
+	require.Equal(t, "off", bashSandboxStrategy("off", config.SandboxConfig{Enabled: &enabled}, false))
+	require.Equal(t, "off", bashSandboxStrategy("detect", config.SandboxConfig{Enabled: &enabled}, true))
+}
+
 func TestBashToolLoadsHookEnvironment(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

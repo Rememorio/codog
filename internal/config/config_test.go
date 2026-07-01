@@ -97,6 +97,40 @@ func TestMergeAppendsPermissionRules(t *testing.T) {
 	require.Equal(t, []string{"bash", "plugin_tool"}, dst.PermissionRules.DeniedTools)
 }
 
+func TestMergeFutureConfigPreservesSandboxDefaults(t *testing.T) {
+	enabled := true
+	namespace := false
+	network := true
+	dst := Config{
+		Future: FutureConfig{
+			SandboxStrategy: "detect",
+			RemoteAuthToken: "token",
+		},
+	}
+	merge(&dst, Config{
+		Future: FutureConfig{
+			Sandbox: SandboxConfig{
+				Enabled:               &enabled,
+				NamespaceRestrictions: &namespace,
+				NetworkIsolation:      &network,
+				FilesystemMode:        "allow-list",
+				AllowedMounts:         []string{"logs"},
+			},
+		},
+	})
+
+	require.Equal(t, "detect", dst.Future.SandboxStrategy)
+	require.Equal(t, "token", dst.Future.RemoteAuthToken)
+	require.NotNil(t, dst.Future.Sandbox.Enabled)
+	require.True(t, *dst.Future.Sandbox.Enabled)
+	require.NotNil(t, dst.Future.Sandbox.NamespaceRestrictions)
+	require.False(t, *dst.Future.Sandbox.NamespaceRestrictions)
+	require.NotNil(t, dst.Future.Sandbox.NetworkIsolation)
+	require.True(t, *dst.Future.Sandbox.NetworkIsolation)
+	require.Equal(t, "allow-list", dst.Future.Sandbox.FilesystemMode)
+	require.Equal(t, []string{"logs"}, dst.Future.Sandbox.AllowedMounts)
+}
+
 func TestLoadRemoteAuthToken(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
@@ -666,6 +700,43 @@ func TestLoadEditorBridgeToken(t *testing.T) {
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "bridge-token", cfg.Future.EditorBridgeToken)
+}
+
+func TestLoadSandboxConfigAliases(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"future": {
+			"sandbox": {
+				"enabled": true,
+				"namespaceRestrictions": false,
+				"networkIsolation": true,
+				"filesystemMode": "allow-list",
+				"allowedMounts": ["logs", "tmp/cache"]
+			}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Future.Sandbox.Enabled)
+	require.True(t, *cfg.Future.Sandbox.Enabled)
+	require.NotNil(t, cfg.Future.Sandbox.NamespaceRestrictions)
+	require.False(t, *cfg.Future.Sandbox.NamespaceRestrictions)
+	require.NotNil(t, cfg.Future.Sandbox.NetworkIsolation)
+	require.True(t, *cfg.Future.Sandbox.NetworkIsolation)
+	require.Equal(t, "allow-list", cfg.Future.Sandbox.FilesystemMode)
+	require.Equal(t, []string{"logs", "tmp/cache"}, cfg.Future.Sandbox.AllowedMounts)
+}
+
+func TestLoadRejectsInvalidSandboxFilesystemMode(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"sandbox":{"filesystemMode":"invalid"}}}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_sandbox_config")
 }
 
 func TestLoadProjectLocalOverridesSharedConfig(t *testing.T) {

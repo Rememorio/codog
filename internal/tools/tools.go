@@ -103,6 +103,7 @@ type ToolInfo struct {
 
 type RegistryOptions struct {
 	SandboxStrategy string
+	Sandbox         config.SandboxConfig
 	AdditionalDirs  []string
 	ConfigHome      string
 	MCPServers      map[string]config.MCPServerConfig
@@ -522,7 +523,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	if r.tools == nil {
 		r.tools = map[string]Tool{}
 	}
-	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, SandboxStrategy: opts.SandboxStrategy})
+	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
 	r.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, Executable: opts.PowerShell})
 	r.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(KillBashTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -2042,6 +2043,7 @@ type BashTool struct {
 	Workspace       string
 	ConfigHome      string
 	SandboxStrategy string
+	Sandbox         config.SandboxConfig
 }
 
 func (BashTool) Definition() anthropic.ToolDefinition {
@@ -2126,19 +2128,39 @@ func wrapCommandWithCWDProbe(command string, cwdFile string) string {
 	return command + "\n__codog_status=$?\npwd -P > " + shellQuoteToolArg(cwdFile) + "\nexit $__codog_status"
 }
 
-func bashSandboxRequestOptions(strategy string, dangerouslyDisable bool, namespaceRestrictions, namespaceRestrictionsAlt, isolateNetwork, isolateNetworkAlt *bool, filesystemMode, filesystemModeAlt string, allowedMounts, allowedMountsAlt []string) (sandbox.SandboxRequestOptions, error) {
-	opts := sandbox.SandboxRequestOptions{}
+func bashSandboxStrategy(strategy string, cfg config.SandboxConfig, dangerouslyDisable bool) string {
+	if dangerouslyDisable {
+		return "off"
+	}
+	strategy = strings.TrimSpace(strategy)
+	if strategy == "" && cfg.Enabled != nil && *cfg.Enabled {
+		return "detect"
+	}
+	return strategy
+}
+
+func bashSandboxRequestOptions(cfg config.SandboxConfig, strategy string, dangerouslyDisable bool, namespaceRestrictions, namespaceRestrictionsAlt, isolateNetwork, isolateNetworkAlt *bool, filesystemMode, filesystemModeAlt string, allowedMounts, allowedMountsAlt []string) (sandbox.SandboxRequestOptions, error) {
+	opts, err := sandboxRequestOptionsFromConfig(cfg)
+	if err != nil {
+		return opts, err
+	}
 	if dangerouslyDisable {
 		disabled := false
 		opts.Enabled = &disabled
 	}
-	opts.NamespaceRestrictions = firstBoolPointer(namespaceRestrictions, namespaceRestrictionsAlt)
-	opts.NetworkIsolation = firstBoolPointer(isolateNetwork, isolateNetworkAlt)
+	if value := firstBoolPointer(namespaceRestrictions, namespaceRestrictionsAlt); value != nil {
+		opts.NamespaceRestrictions = value
+	}
+	if value := firstBoolPointer(isolateNetwork, isolateNetworkAlt); value != nil {
+		opts.NetworkIsolation = value
+	}
 	mode, err := sandbox.ParseFilesystemIsolationMode(firstNonEmpty(filesystemMode, filesystemModeAlt))
 	if err != nil {
 		return opts, err
 	}
-	opts.FilesystemMode = mode
+	if mode != "" {
+		opts.FilesystemMode = mode
+	}
 	if allowedMounts != nil {
 		opts.AllowedMounts = append([]string(nil), allowedMounts...)
 	} else if allowedMountsAlt != nil {
@@ -2148,6 +2170,21 @@ func bashSandboxRequestOptions(strategy string, dangerouslyDisable bool, namespa
 		disabled := false
 		opts.Enabled = &disabled
 	}
+	return opts, nil
+}
+
+func sandboxRequestOptionsFromConfig(cfg config.SandboxConfig) (sandbox.SandboxRequestOptions, error) {
+	opts := sandbox.SandboxRequestOptions{
+		Enabled:               cloneBoolPointer(cfg.Enabled),
+		NamespaceRestrictions: cloneBoolPointer(cfg.NamespaceRestrictions),
+		NetworkIsolation:      cloneBoolPointer(cfg.NetworkIsolation),
+		AllowedMounts:         append([]string(nil), cfg.AllowedMounts...),
+	}
+	mode, err := sandbox.ParseFilesystemIsolationMode(cfg.FilesystemMode)
+	if err != nil {
+		return opts, err
+	}
+	opts.FilesystemMode = mode
 	return opts, nil
 }
 
@@ -2167,6 +2204,14 @@ func firstBoolPointer(values ...*bool) *bool {
 		}
 	}
 	return nil
+}
+
+func cloneBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
@@ -2207,13 +2252,10 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		defer os.Remove(cwdProbePath)
 		commandText = wrapCommandWithCWDProbe(commandText, cwdProbePath)
 	}
-	strategy := t.SandboxStrategy
-	requestOptions, err := bashSandboxRequestOptions(strategy, payload.DangerouslyDisableSandbox, payload.NamespaceRestrictions, payload.NamespaceRestrictionsAlt, payload.IsolateNetwork, payload.IsolateNetworkAlt, payload.FilesystemMode, payload.FilesystemModeAlt, payload.AllowedMounts, payload.AllowedMountsAlt)
+	strategy := bashSandboxStrategy(t.SandboxStrategy, t.Sandbox, payload.DangerouslyDisableSandbox)
+	requestOptions, err := bashSandboxRequestOptions(t.Sandbox, strategy, payload.DangerouslyDisableSandbox, payload.NamespaceRestrictions, payload.NamespaceRestrictionsAlt, payload.IsolateNetwork, payload.IsolateNetworkAlt, payload.FilesystemMode, payload.FilesystemModeAlt, payload.AllowedMounts, payload.AllowedMountsAlt)
 	if err != nil {
 		return "", err
-	}
-	if payload.DangerouslyDisableSandbox {
-		strategy = "off"
 	}
 	command, args, effectiveSandbox, sandboxStatus, err := sandbox.ShellCommandWithSandboxStatus(strategy, t.Workspace, commandText, requestOptions)
 	if err != nil {

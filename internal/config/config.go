@@ -248,6 +248,85 @@ type MCPServerConfig struct {
 	Env     []string `json:"env,omitempty"`
 }
 
+type SandboxConfig struct {
+	Enabled               *bool    `json:"enabled,omitempty"`
+	NamespaceRestrictions *bool    `json:"namespace_restrictions,omitempty"`
+	NetworkIsolation      *bool    `json:"network_isolation,omitempty"`
+	FilesystemMode        string   `json:"filesystem_mode,omitempty"`
+	AllowedMounts         []string `json:"allowed_mounts,omitempty"`
+}
+
+func (s *SandboxConfig) UnmarshalJSON(data []byte) error {
+	type plain SandboxConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readBoolAlias := func(target **bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed bool
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid sandbox.%s: %w", key, err)
+			}
+			*target = &parsed
+		}
+		return nil
+	}
+	readStringAlias := func(target *string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid sandbox.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	readStringArrayAlias := func(target *[]string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed []string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid sandbox.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	if err := readBoolAlias(&parsed.Enabled, "enabled"); err != nil {
+		return err
+	}
+	if err := readBoolAlias(&parsed.NamespaceRestrictions, "namespaceRestrictions", "namespace_restrictions"); err != nil {
+		return err
+	}
+	if err := readBoolAlias(&parsed.NetworkIsolation, "networkIsolation", "network_isolation", "isolateNetwork", "isolate_network"); err != nil {
+		return err
+	}
+	if err := readStringAlias(&parsed.FilesystemMode, "filesystemMode", "filesystem_mode"); err != nil {
+		return err
+	}
+	if err := readStringArrayAlias(&parsed.AllowedMounts, "allowedMounts", "allowed_mounts"); err != nil {
+		return err
+	}
+	*s = SandboxConfig(parsed)
+	return nil
+}
+
 type FutureConfig struct {
 	RemoteEnabled             bool              `json:"remote_enabled,omitempty"`
 	RemoteAuthToken           string            `json:"remote_auth_token,omitempty"`
@@ -257,6 +336,7 @@ type FutureConfig struct {
 	PluginMarketplaces        []string          `json:"plugin_marketplaces,omitempty"`
 	PluginMarketplaceKeys     map[string]string `json:"plugin_marketplace_public_keys,omitempty"`
 	SandboxStrategy           string            `json:"sandbox_strategy,omitempty"`
+	Sandbox                   SandboxConfig     `json:"sandbox,omitempty"`
 	UpdaterManifestURL        string            `json:"updater_manifest_url,omitempty"`
 	EditorBridgeSocket        string            `json:"editor_bridge_socket,omitempty"`
 	EditorBridgeToken         string            `json:"editor_bridge_token,omitempty"`
@@ -395,6 +475,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 	if err := validatePermissionMode(&cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
+		return Config{}, err
+	}
 	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
 	return cfg, nil
 }
@@ -435,6 +518,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 		return Config{}, paths, err
 	}
 	if err := validatePermissionMode(&cfg); err != nil {
+		return Config{}, paths, err
+	}
+	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
 		return Config{}, paths, err
 	}
 	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
@@ -823,6 +909,17 @@ func parseJSONStringMap(data json.RawMessage) map[string]string {
 	return out
 }
 
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
 func parseJSONStringSlice(data json.RawMessage) []string {
 	var values []string
 	if err := json.Unmarshal(data, &values); err != nil {
@@ -950,7 +1047,7 @@ func merge(dst *Config, src Config) {
 		}
 	}
 	if futureConfigSet(src.Future) {
-		dst.Future = src.Future
+		mergeFutureConfig(&dst.Future, src.Future)
 	}
 }
 
@@ -963,6 +1060,7 @@ func futureConfigSet(cfg FutureConfig) bool {
 		len(cfg.PluginMarketplaces) != 0 ||
 		len(cfg.PluginMarketplaceKeys) != 0 ||
 		cfg.SandboxStrategy != "" ||
+		sandboxConfigSet(cfg.Sandbox) ||
 		cfg.UpdaterManifestURL != "" ||
 		cfg.EditorBridgeSocket != "" ||
 		cfg.EditorBridgeToken != "" ||
@@ -975,6 +1073,101 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.ExtraUsageVisitCount != 0 ||
 		cfg.GuestPassReferralURL != "" ||
 		cfg.GuestPassVisitCount != 0
+}
+
+func sandboxConfigSet(cfg SandboxConfig) bool {
+	return cfg.Enabled != nil ||
+		cfg.NamespaceRestrictions != nil ||
+		cfg.NetworkIsolation != nil ||
+		cfg.FilesystemMode != "" ||
+		cfg.AllowedMounts != nil
+}
+
+func mergeFutureConfig(dst *FutureConfig, src FutureConfig) {
+	if src.RemoteEnabled {
+		dst.RemoteEnabled = src.RemoteEnabled
+	}
+	if src.RemoteAuthToken != "" {
+		dst.RemoteAuthToken = src.RemoteAuthToken
+	}
+	if src.RemoteLeaseSeconds != 0 {
+		dst.RemoteLeaseSeconds = src.RemoteLeaseSeconds
+	}
+	if src.EnterprisePolicy != "" {
+		dst.EnterprisePolicy = src.EnterprisePolicy
+	}
+	if src.EnterprisePolicyPublicKey != "" {
+		dst.EnterprisePolicyPublicKey = src.EnterprisePolicyPublicKey
+	}
+	if len(src.PluginMarketplaces) != 0 {
+		dst.PluginMarketplaces = append([]string(nil), src.PluginMarketplaces...)
+	}
+	if len(src.PluginMarketplaceKeys) != 0 {
+		dst.PluginMarketplaceKeys = cloneStringMap(src.PluginMarketplaceKeys)
+	}
+	if src.SandboxStrategy != "" {
+		dst.SandboxStrategy = src.SandboxStrategy
+	}
+	if sandboxConfigSet(src.Sandbox) {
+		mergeSandboxConfig(&dst.Sandbox, src.Sandbox)
+	}
+	if src.UpdaterManifestURL != "" {
+		dst.UpdaterManifestURL = src.UpdaterManifestURL
+	}
+	if src.EditorBridgeSocket != "" {
+		dst.EditorBridgeSocket = src.EditorBridgeSocket
+	}
+	if src.EditorBridgeToken != "" {
+		dst.EditorBridgeToken = src.EditorBridgeToken
+	}
+	if src.BackgroundStatePath != "" {
+		dst.BackgroundStatePath = src.BackgroundStatePath
+	}
+	if src.ChromeDefaultEnabled != nil {
+		dst.ChromeDefaultEnabled = src.ChromeDefaultEnabled
+	}
+	if src.NotificationsEnabled != nil {
+		dst.NotificationsEnabled = src.NotificationsEnabled
+	}
+	if src.UltraReviewEnabled != nil {
+		dst.UltraReviewEnabled = src.UltraReviewEnabled
+	}
+	if src.SlackAppInstallCount != 0 {
+		dst.SlackAppInstallCount = src.SlackAppInstallCount
+	}
+	if src.StickerOrderCount != 0 {
+		dst.StickerOrderCount = src.StickerOrderCount
+	}
+	if src.ExtraUsageVisitCount != 0 {
+		dst.ExtraUsageVisitCount = src.ExtraUsageVisitCount
+	}
+	if src.GuestPassReferralURL != "" {
+		dst.GuestPassReferralURL = src.GuestPassReferralURL
+	}
+	if src.GuestPassVisitCount != 0 {
+		dst.GuestPassVisitCount = src.GuestPassVisitCount
+	}
+}
+
+func mergeSandboxConfig(dst *SandboxConfig, src SandboxConfig) {
+	if src.Enabled != nil {
+		value := *src.Enabled
+		dst.Enabled = &value
+	}
+	if src.NamespaceRestrictions != nil {
+		value := *src.NamespaceRestrictions
+		dst.NamespaceRestrictions = &value
+	}
+	if src.NetworkIsolation != nil {
+		value := *src.NetworkIsolation
+		dst.NetworkIsolation = &value
+	}
+	if src.FilesystemMode != "" {
+		dst.FilesystemMode = src.FilesystemMode
+	}
+	if src.AllowedMounts != nil {
+		dst.AllowedMounts = append([]string(nil), src.AllowedMounts...)
+	}
 }
 
 func permissionRulesSet(rules PermissionRules) bool {
@@ -1503,6 +1696,19 @@ func validateTemperature(cfg *Config) error {
 		return fmt.Errorf("invalid_temperature: temperature must be between 0 and 1")
 	}
 	return nil
+}
+
+func validateSandboxConfig(cfg SandboxConfig) error {
+	mode := strings.TrimSpace(cfg.FilesystemMode)
+	if mode == "" {
+		return nil
+	}
+	switch mode {
+	case "off", "workspace-only", "allow-list":
+		return nil
+	default:
+		return fmt.Errorf("invalid_sandbox_config: unsupported filesystem mode %q", cfg.FilesystemMode)
+	}
 }
 
 func defaultConfigHome() (string, error) {
