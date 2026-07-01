@@ -40,6 +40,12 @@ Deploy ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA} $ARGUMENTS`), 0o644))
 	require.Contains(t, commandNames(commands), "team:audit")
 	require.Contains(t, commandNames(commands), "demo:deploy")
 	require.Contains(t, commandNames(commands), "demo:ops")
+	workspaceFix := commandByNameAndSource(commands, "fix", "workspace")
+	require.True(t, workspaceFix.Active)
+	claudeFix := commandByNameAndSource(commands, "fix", "claude")
+	require.False(t, claudeFix.Active)
+	require.Equal(t, "workspace", claudeFix.ShadowedBy)
+	require.Equal(t, workspaceFix.Path, claudeFix.ShadowedByPath)
 
 	command, err := Find(configHome, workspace, "/fix")
 	require.NoError(t, err)
@@ -84,6 +90,15 @@ Deploy ${CLAUDE_PLUGIN_ROOT} ${CLAUDE_PLUGIN_DATA} $ARGUMENTS`), 0o644))
 	require.NoError(t, err)
 	require.Equal(t, "plugin:demo", command.Source)
 	require.Equal(t, "Ops prod", Render(command, "prod").Rendered)
+
+	sources := Sources(configHome, workspace)
+	requireCommandSource(t, sources, "workspace", filepath.Join(workspace, ".codog", "commands"), true)
+	requireCommandSource(t, sources, "claude", filepath.Join(workspace, ".claude", "commands"), true)
+	requireCommandSource(t, sources, "user", filepath.Join(configHome, "commands"), true)
+	pluginSource := commandSourceByPath(sources, filepath.Join(workspace, ".codog", "plugins", "demo", "commands"))
+	require.Equal(t, "plugin:demo", pluginSource.Source)
+	require.Equal(t, "demo", pluginSource.PluginID)
+	require.True(t, pluginSource.Exists)
 }
 
 func TestRenderWithSessionSubstitutesSessionID(t *testing.T) {
@@ -99,4 +114,34 @@ func commandNames(commands []Command) []string {
 		names = append(names, command.Name)
 	}
 	return names
+}
+
+func commandByNameAndSource(commands []Command, name string, source string) Command {
+	for _, command := range commands {
+		if command.Name == name && command.Source == source {
+			return command
+		}
+	}
+	return Command{}
+}
+
+func requireCommandSource(t *testing.T, roots []DiscoveryRoot, source string, path string, exists bool) {
+	t.Helper()
+	for _, root := range roots {
+		if root.Source == source && root.Path == path {
+			require.Equal(t, exists, root.Exists)
+			require.NotEmpty(t, root.Label)
+			return
+		}
+	}
+	require.Failf(t, "command source root not found", "source=%s path=%s roots=%v", source, path, roots)
+}
+
+func commandSourceByPath(roots []DiscoveryRoot, path string) DiscoveryRoot {
+	for _, root := range roots {
+		if root.Path == path {
+			return root
+		}
+	}
+	return DiscoveryRoot{}
 }

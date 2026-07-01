@@ -33,6 +33,7 @@ import (
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/cron"
+	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
@@ -11161,13 +11162,56 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace, Out: &out, Err: &errOut}
 
 	require.NoError(t, app.Commands([]string{"list"}))
-	require.Contains(t, out.String(), "fix\tclaude")
-	require.Contains(t, out.String(), "fix\tworkspace")
-	require.Contains(t, out.String(), "review\tuser")
+	require.Contains(t, out.String(), "fix\tclaude\tshadowed by workspace")
+	require.Contains(t, out.String(), "fix\tworkspace\tactive")
+	require.Contains(t, out.String(), "review\tuser\tactive")
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"list", "--json"}))
+	var listReport struct {
+		Kind    string `json:"kind"`
+		Action  string `json:"action"`
+		Status  string `json:"status"`
+		Count   int    `json:"count"`
+		Summary struct {
+			Total    int `json:"total"`
+			Active   int `json:"active"`
+			Shadowed int `json:"shadowed"`
+		} `json:"summary"`
+		Commands []customcommands.Command `json:"commands"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &listReport))
+	require.Equal(t, "commands", listReport.Kind)
+	require.Equal(t, "list", listReport.Action)
+	require.Equal(t, "ok", listReport.Status)
+	require.Equal(t, len(listReport.Commands), listReport.Count)
+	require.Equal(t, 3, listReport.Summary.Total)
+	require.Equal(t, 2, listReport.Summary.Active)
+	require.Equal(t, 1, listReport.Summary.Shadowed)
+	require.False(t, commandReportEntry(listReport.Commands, "fix", "claude").Active)
+	require.Equal(t, "workspace", commandReportEntry(listReport.Commands, "fix", "claude").ShadowedBy)
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"show", "fix", "--json"}))
 	require.Contains(t, out.String(), `"source": "workspace"`)
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"sources", "--json"}))
+	var sourceReport struct {
+		Kind      string                         `json:"kind"`
+		Action    string                         `json:"action"`
+		Status    string                         `json:"status"`
+		RootCount int                            `json:"root_count"`
+		Roots     []customcommands.DiscoveryRoot `json:"roots"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &sourceReport))
+	require.Equal(t, "commands", sourceReport.Kind)
+	require.Equal(t, "sources", sourceReport.Action)
+	require.Equal(t, "ok", sourceReport.Status)
+	require.Equal(t, len(sourceReport.Roots), sourceReport.RootCount)
+	requireCommandSourceRoot(t, sourceReport.Roots, "workspace", filepath.Join(workspace, ".codog", "commands"), true)
+	requireCommandSourceRoot(t, sourceReport.Roots, "claude", filepath.Join(workspace, ".claude", "commands"), true)
+	requireCommandSourceRoot(t, sourceReport.Roots, "user", filepath.Join(configHome, "commands"), true)
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"run", "fix", "bug", "123"}))
@@ -11177,6 +11221,27 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/commands run review file.go", &session.Session{ID: "session"}))
 	require.Equal(t, "Review file.go\n", out.String())
 	require.Empty(t, errOut.String())
+}
+
+func commandReportEntry(commands []customcommands.Command, name string, source string) customcommands.Command {
+	for _, command := range commands {
+		if command.Name == name && command.Source == source {
+			return command
+		}
+	}
+	return customcommands.Command{}
+}
+
+func requireCommandSourceRoot(t *testing.T, roots []customcommands.DiscoveryRoot, source string, path string, exists bool) {
+	t.Helper()
+	for _, root := range roots {
+		if root.Source == source && root.Path == path {
+			require.Equal(t, exists, root.Exists)
+			require.NotEmpty(t, root.Label)
+			return
+		}
+	}
+	require.Failf(t, "command source root not found", "source=%s path=%s roots=%v", source, path, roots)
 }
 
 func TestCustomSlashRunsRenderedPrompt(t *testing.T) {

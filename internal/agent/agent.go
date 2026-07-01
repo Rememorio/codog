@@ -29881,7 +29881,24 @@ func (a *App) Commands(args []string) error {
 			for i := range summaries {
 				summaries[i].Body = ""
 			}
-			data, _ := json.MarshalIndent(map[string]any{"kind": "commands", "commands": summaries}, "", "  ")
+			activeCount := 0
+			for _, command := range all {
+				if command.Active {
+					activeCount++
+				}
+			}
+			data, _ := json.MarshalIndent(map[string]any{
+				"kind":   "commands",
+				"action": "list",
+				"status": "ok",
+				"count":  len(all),
+				"summary": map[string]any{
+					"total":    len(all),
+					"active":   activeCount,
+					"shadowed": len(all) - activeCount,
+				},
+				"commands": summaries,
+			}, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
 			return nil
 		}
@@ -29890,8 +29907,17 @@ func (a *App) Commands(args []string) error {
 			return nil
 		}
 		for _, command := range all {
-			fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", command.Name, command.Source, command.Preview, command.Path)
+			status := "active"
+			if !command.Active {
+				status = "shadowed"
+				if command.ShadowedBy != "" {
+					status += " by " + command.ShadowedBy
+				}
+			}
+			fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\n", command.Name, command.Source, status, command.Preview, command.Path)
 		}
+	case "sources", "roots":
+		return a.commandSources(rest)
 	case "show":
 		format, remaining, err := parseTemplateOutputArgs("commands show", rest)
 		if err != nil {
@@ -29937,6 +29963,34 @@ func (a *App) Commands(args []string) error {
 		}
 	default:
 		return fmt.Errorf("unknown commands action %q", action)
+	}
+	return nil
+}
+
+func (a *App) commandSources(args []string) error {
+	format, err := parseSimpleOutputFormat("commands sources", args)
+	if err != nil {
+		return err
+	}
+	roots := customcommands.Sources(a.Config.ConfigHome, a.Workspace)
+	if format == "json" {
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":       "commands",
+			"action":     "sources",
+			"status":     "ok",
+			"root_count": len(roots),
+			"roots":      roots,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Command Sources")
+	for _, root := range roots {
+		state := "missing"
+		if root.Exists {
+			state = "present"
+		}
+		fmt.Fprintf(a.Out, "  %-11s %-8s %s\n", root.Source, state, root.Path)
 	}
 	return nil
 }
@@ -33949,12 +34003,15 @@ func (a *App) customSlashCompletionCandidates() []string {
 	candidates := []string{}
 	if commands, err := customcommands.Load(a.Config.ConfigHome, a.Workspace); err == nil {
 		for _, command := range commands {
+			if !command.Active {
+				continue
+			}
 			candidates = append(candidates, "/"+strings.ReplaceAll(command.Name, ":", "/")+" ")
 		}
 	}
 	if loadedSkills, err := skills.Load(a.Config.ConfigHome, a.Workspace); err == nil {
 		for _, skill := range loadedSkills {
-			if !skill.UserInvocable {
+			if !skill.Active || !skill.UserInvocable {
 				continue
 			}
 			candidates = append(candidates, "/"+strings.ReplaceAll(skill.Name, ":", "/")+" ")
@@ -35138,9 +35195,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"commands",
 			"commands",
-			"codog commands [list|show|run]",
-			"Commands\n\nUsage:\n  codog commands [list|show|run]\n\nLists, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories.\n",
-			[]string{"commands", "name", "path", "body"},
+			"codog commands [list|sources|show|run]",
+			"Commands\n\nUsage:\n  codog commands [list|sources|show|run]\n\nLists, audits sources, shows, or renders custom Markdown slash commands from Codog and compatible Claude command directories. `roots` is an alias for `sources`.\n",
+			[]string{"commands", "roots", "name", "path", "body", "active", "shadowed_by"},
 			[]string{"ok", "error"},
 			false,
 		), true

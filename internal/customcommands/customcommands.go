@@ -26,6 +26,18 @@ type Command struct {
 	FrontmatterError string   `json:"frontmatter_error,omitempty"`
 	Preview          string   `json:"preview"`
 	Body             string   `json:"body,omitempty"`
+	Active           bool     `json:"active"`
+	ShadowedBy       string   `json:"shadowed_by,omitempty"`
+	ShadowedByPath   string   `json:"shadowed_by_path,omitempty"`
+}
+
+type DiscoveryRoot struct {
+	Source     string `json:"source"`
+	Label      string `json:"label"`
+	Path       string `json:"path"`
+	Exists     bool   `json:"exists"`
+	PluginID   string `json:"plugin_id,omitempty"`
+	PluginRoot string `json:"plugin_root,omitempty"`
 }
 
 type Rendered struct {
@@ -87,12 +99,53 @@ func Load(configHome, workspace string) ([]Command, error) {
 		}
 	}
 	sort.Slice(commands, func(i, j int) bool {
-		if commands[i].Name == commands[j].Name {
-			return commands[i].Source < commands[j].Source
+		if strings.EqualFold(commands[i].Name, commands[j].Name) {
+			leftRank := sourceRank(commands[i].Source)
+			rightRank := sourceRank(commands[j].Source)
+			if leftRank == rightRank {
+				return commands[i].Path < commands[j].Path
+			}
+			return leftRank < rightRank
 		}
-		return commands[i].Name < commands[j].Name
+		return strings.ToLower(commands[i].Name) < strings.ToLower(commands[j].Name)
 	})
+	annotateActiveCommands(commands)
 	return commands, nil
+}
+
+func Sources(configHome, workspace string) []DiscoveryRoot {
+	out := []DiscoveryRoot{}
+	for _, root := range roots(configHome, workspace) {
+		out = append(out, discoveryRoot(root))
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if sourceRank(out[i].Source) == sourceRank(out[j].Source) {
+			return out[i].Path < out[j].Path
+		}
+		return sourceRank(out[i].Source) < sourceRank(out[j].Source)
+	})
+	return out
+}
+
+func annotateActiveCommands(commands []Command) {
+	winners := map[string]int{}
+	for index := range commands {
+		key := strings.ToLower(strings.TrimSpace(commands[index].Name))
+		if key == "" {
+			commands[index].Active = false
+			continue
+		}
+		winnerIndex, ok := winners[key]
+		if !ok {
+			winners[key] = index
+			commands[index].Active = true
+			continue
+		}
+		winner := commands[winnerIndex]
+		commands[index].Active = false
+		commands[index].ShadowedBy = winner.Source
+		commands[index].ShadowedByPath = winner.Path
+	}
 }
 
 func Find(configHome, workspace, name string) (Command, error) {
@@ -150,6 +203,7 @@ func parseCommandDocument(name string, path string, root root, text string) Comm
 		PluginRoot: normalizedPathVariable(root.pluginRoot),
 		PluginData: normalizedPathVariable(root.pluginData),
 		Body:       body,
+		Active:     true,
 	}
 	if parseErr != nil {
 		command.FrontmatterError = parseErr.Error()
@@ -219,6 +273,61 @@ func rootsByPrecedence(configHome, workspace string) []root {
 		base = append(base, commandRootsForPlugin(manifest)...)
 	}
 	return base
+}
+
+func discoveryRoot(root root) DiscoveryRoot {
+	exists := false
+	if root.path != "" {
+		if _, err := os.Stat(root.path); err == nil {
+			exists = true
+		}
+	}
+	return DiscoveryRoot{
+		Source:     root.source,
+		Label:      sourceLabel(root.source),
+		Path:       root.path,
+		Exists:     exists,
+		PluginID:   pluginIDFromSource(root.source),
+		PluginRoot: root.pluginRoot,
+	}
+}
+
+func sourceLabel(source string) string {
+	switch {
+	case source == "user":
+		return "User commands"
+	case source == "workspace":
+		return "Workspace commands"
+	case source == "claude":
+		return "Claude-compatible workspace commands"
+	case strings.HasPrefix(source, "plugin:"):
+		return "Plugin commands"
+	default:
+		return source
+	}
+}
+
+func pluginIDFromSource(source string) string {
+	id, ok := strings.CutPrefix(source, "plugin:")
+	if !ok {
+		return ""
+	}
+	return id
+}
+
+func sourceRank(source string) int {
+	switch {
+	case source == "workspace":
+		return 0
+	case source == "claude":
+		return 1
+	case source == "user":
+		return 2
+	case strings.HasPrefix(source, "plugin:"):
+		return 3
+	default:
+		return 4
+	}
 }
 
 func commandRootsForPlugin(manifest plugins.Manifest) []root {
