@@ -8255,22 +8255,30 @@ func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, er
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(payload.Skill) == "" {
+	requested := normalizeSkillToolName(payload.Skill)
+	if requested == "" {
 		return "", errors.New("skill is required")
 	}
-	skill, err := skills.Find(t.ConfigHome, t.Workspace, payload.Skill)
+	skill, err := skills.Find(t.ConfigHome, t.Workspace, requested)
 	if err != nil {
 		return "", err
 	}
 	return pretty(map[string]any{
-		"kind":     "skill",
-		"skill":    skill.Name,
-		"source":   skill.Source,
-		"path":     skill.Path,
-		"args":     strings.TrimSpace(payload.Args),
-		"prompt":   skill.Body,
-		"rendered": skills.RenderInvocation(skill, payload.Args),
+		"kind":        "skill",
+		"skill":       skill.Name,
+		"source":      skill.Source,
+		"path":        skill.Path,
+		"args":        strings.TrimSpace(payload.Args),
+		"description": skill.Description,
+		"prompt":      skill.Body,
+		"rendered":    skills.RenderInvocation(skill, payload.Args),
 	}), nil
+}
+
+func normalizeSkillToolName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.TrimLeft(name, "/$")
+	return strings.TrimSpace(name)
 }
 
 type ConfigTool struct {
