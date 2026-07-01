@@ -353,6 +353,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Voice(rest)
 	case "listen":
 		return app.Voice(append([]string{"listen"}, rest...))
+	case "speak":
+		return app.Speak(ctx, rest, overrides)
 	case "chrome":
 		return app.Chrome(rest)
 	case "privacy-settings":
@@ -7840,7 +7842,7 @@ func (a *App) Voice(args []string) error {
 		if req.Action == "toggle" {
 			next = !boolPtrEnabled(a.Config.VoiceEnabled)
 		}
-		if next && !voiceCommandAvailable(a.Config.VoiceCommand) {
+		if next && !externalCommandAvailable(a.Config.VoiceCommand) {
 			return errors.New("voice mode requires a configured executable command; run `codog voice set-command COMMAND`")
 		}
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
@@ -8033,7 +8035,7 @@ func (a *App) voiceStatusReport(action string, path string) voiceReport {
 		Status:            "ok",
 		Enabled:           boolPtrEnabled(a.Config.VoiceEnabled),
 		CommandConfigured: strings.TrimSpace(a.Config.VoiceCommand) != "",
-		CommandAvailable:  voiceCommandAvailable(a.Config.VoiceCommand),
+		CommandAvailable:  externalCommandAvailable(a.Config.VoiceCommand),
 		Command:           strings.TrimSpace(a.Config.VoiceCommand),
 		Path:              path,
 	}
@@ -8059,7 +8061,7 @@ func (a *App) runVoiceCommand(req voiceRequest) (voiceReport, error) {
 		report.Message = err.Error()
 		return report, err
 	}
-	args := voiceCommandArgs(report.Command)
+	args := externalCommandArgs(report.Command)
 	if len(args) == 0 {
 		err := errors.New("voice command is empty")
 		report.Status = "error"
@@ -8151,6 +8153,420 @@ func renderVoiceReport(out io.Writer, report voiceReport) {
 	}
 	if report.Transcript != "" {
 		fmt.Fprintf(out, "  Transcript       %s\n", report.Transcript)
+	}
+	if report.ExitCode != nil {
+		fmt.Fprintf(out, "  Exit code        %d\n", *report.ExitCode)
+	}
+	if report.DurationMS > 0 {
+		fmt.Fprintf(out, "  Duration         %dms\n", report.DurationMS)
+	}
+	if report.Stderr != "" {
+		fmt.Fprintf(out, "  Stderr           %s\n", report.Stderr)
+	}
+	if report.TimedOut {
+		fmt.Fprintln(out, "  Timed out        true")
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+type speakRequest struct {
+	Action    string
+	Format    string
+	Target    string
+	Path      string
+	Command   string
+	Input     string
+	SessionID string
+	Nth       int
+	TimeoutMS int
+}
+
+type speakReport struct {
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	CommandConfigured bool   `json:"command_configured"`
+	CommandAvailable  bool   `json:"command_available"`
+	Command           string `json:"command,omitempty"`
+	Path              string `json:"path,omitempty"`
+	SessionID         string `json:"session_id,omitempty"`
+	Nth               int    `json:"nth,omitempty"`
+	InputBytes        int    `json:"input_bytes,omitempty"`
+	TextPreview       string `json:"text_preview,omitempty"`
+	Stdout            string `json:"stdout,omitempty"`
+	Stderr            string `json:"stderr,omitempty"`
+	StdoutTruncated   bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated   bool   `json:"stderr_truncated,omitempty"`
+	ExitCode          *int   `json:"exit_code,omitempty"`
+	DurationMS        int64  `json:"duration_ms,omitempty"`
+	TimedOut          bool   `json:"timed_out,omitempty"`
+	Message           string `json:"message,omitempty"`
+}
+
+func (a *App) Speak(ctx context.Context, args []string, overrides config.FlagOverrides) error {
+	req, err := parseSpeakArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+	case "set-command":
+		command := strings.TrimSpace(req.Command)
+		if command == "" {
+			return errors.New("speech command is required")
+		}
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "speech_command", command); err != nil {
+			return err
+		}
+		a.Config.SpeechCommand = command
+		req.Path = path
+	case "clear-command", "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "speech_command"); err != nil {
+			return err
+		}
+		a.Config.SpeechCommand = ""
+		req.Path = path
+	case "test", "speak":
+		report, runErr := a.runSpeechCommand(ctx, req)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			renderSpeakReport(a.Out, report)
+		}
+		return runErr
+	default:
+		return fmt.Errorf("unknown speak command %q", req.Action)
+	}
+	report := a.speechStatusReport(req.Action, req.Path)
+	if !report.CommandConfigured {
+		report.Message = "Speech output needs an external TTS command before it can run."
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSpeakReport(a.Out, report)
+	return nil
+}
+
+func parseSpeakArgs(args []string, overrides config.FlagOverrides) (speakRequest, error) {
+	req := speakRequest{Action: "speak", Format: "text", Target: "user", SessionID: "latest", Nth: 1}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--command":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speech command is required")
+			}
+			req.Command = args[index]
+		case strings.HasPrefix(arg, "--command="):
+			req.Command = strings.TrimPrefix(arg, "--command=")
+		case arg == "--input" || arg == "--text" || arg == "--stdin":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak input is required")
+			}
+			req.Input = args[index]
+		case strings.HasPrefix(arg, "--input="):
+			req.Input = strings.TrimPrefix(arg, "--input=")
+		case strings.HasPrefix(arg, "--text="):
+			req.Input = strings.TrimPrefix(arg, "--text=")
+		case strings.HasPrefix(arg, "--stdin="):
+			req.Input = strings.TrimPrefix(arg, "--stdin=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak session is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak resume session is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--nth":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak response index is required")
+			}
+			nth, err := strconv.Atoi(args[index])
+			if err != nil || nth < 1 {
+				return req, errors.New("speak response index must be greater than zero")
+			}
+			req.Nth = nth
+		case strings.HasPrefix(arg, "--nth="):
+			nth, err := strconv.Atoi(strings.TrimPrefix(arg, "--nth="))
+			if err != nil || nth < 1 {
+				return req, errors.New("speak response index must be greater than zero")
+			}
+			req.Nth = nth
+		case arg == "--timeout-ms":
+			index++
+			if index >= len(args) {
+				return req, errors.New("speak timeout is required")
+			}
+			timeout, err := strconv.Atoi(args[index])
+			if err != nil || timeout < 0 {
+				return req, errors.New("speak timeout must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		case strings.HasPrefix(arg, "--timeout-ms="):
+			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
+			if err != nil || timeout < 0 {
+				return req, errors.New("speak timeout must be a non-negative integer")
+			}
+			req.TimeoutMS = timeout
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "speak"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
+		}
+	case "set-command", "command":
+		req.Action = "set-command"
+		if req.Command == "" && len(rest) > 1 {
+			req.Command = strings.Join(rest[1:], " ")
+		}
+	case "clear-command":
+		req.Action = "clear-command"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
+		}
+	case "clear", "reset", "unset":
+		req.Action = "clear"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
+		}
+	case "test", "run":
+		req.Action = "test"
+		if req.Input == "" && len(rest) > 1 {
+			req.Input = strings.Join(rest[1:], " ")
+		}
+	case "speak":
+		req.Action = "speak"
+		if req.Input == "" && len(rest) > 1 {
+			req.Input = strings.Join(rest[1:], " ")
+		}
+	case "last", "latest":
+		req.Action = "speak"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected speak argument %q", rest[1])
+		}
+	default:
+		if req.Input != "" {
+			return req, fmt.Errorf("unexpected speak argument %q", rest[0])
+		}
+		req.Action = "speak"
+		req.Input = strings.Join(rest, " ")
+	}
+	return req, nil
+}
+
+func (a *App) speechStatusReport(action string, path string) speakReport {
+	command := strings.TrimSpace(a.Config.SpeechCommand)
+	return speakReport{
+		Kind:              "speak",
+		Action:            action,
+		Status:            "ok",
+		CommandConfigured: command != "",
+		CommandAvailable:  externalCommandAvailable(command),
+		Command:           command,
+		Path:              path,
+	}
+}
+
+func (a *App) runSpeechCommand(ctx context.Context, req speakRequest) (speakReport, error) {
+	report := a.speechStatusReport(req.Action, req.Path)
+	if !report.CommandConfigured {
+		err := errors.New("speech command is not configured; run `codog speak set-command COMMAND`")
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	if !report.CommandAvailable {
+		err := fmt.Errorf("speech command is not executable: %s", report.Command)
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	text := req.Input
+	if req.Action == "test" && strings.TrimSpace(text) == "" {
+		text = "speech check"
+	}
+	if strings.TrimSpace(text) == "" {
+		if a.Sessions == nil {
+			err := errors.New("session store is unavailable")
+			report.Status = "error"
+			report.Message = err.Error()
+			return report, err
+		}
+		sess, err := a.Sessions.Open(req.SessionID)
+		if err != nil {
+			report.Status = "error"
+			report.Message = err.Error()
+			return report, err
+		}
+		report.SessionID = sess.ID
+		report.Nth = req.Nth
+		text = renderNthAssistantMessage(sess, req.Nth)
+		if strings.TrimSpace(text) == "" {
+			err := fmt.Errorf("assistant response %d not found", req.Nth)
+			report.Status = "error"
+			report.Message = err.Error()
+			return report, err
+		}
+	}
+	report.InputBytes = len([]byte(text))
+	report.TextPreview = speakPreview(text)
+	args := externalCommandArgs(report.Command)
+	if len(args) == 0 {
+		err := errors.New("speech command is empty")
+		report.Status = "error"
+		report.Message = err.Error()
+		return report, err
+	}
+	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(runCtx, args[0], args[1:]...)
+	if strings.TrimSpace(a.Workspace) != "" {
+		cmd.Dir = a.Workspace
+	}
+	cmd.Stdin = strings.NewReader(text)
+	stdout := &boundedTextBuffer{Limit: 256 * 1024}
+	stderr := &boundedTextBuffer{Limit: 64 * 1024}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	start := time.Now()
+	err := cmd.Run()
+	report.DurationMS = time.Since(start).Milliseconds()
+	report.Stdout = stdout.String()
+	report.Stderr = stderr.String()
+	report.StdoutTruncated = stdout.Truncated
+	report.StderrTruncated = stderr.Truncated
+	exitCode := 0
+	if err != nil {
+		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			report.TimedOut = true
+			err = fmt.Errorf("speech command timed out after %s", timeout)
+		}
+		report.Status = "error"
+		report.Message = err.Error()
+		report.ExitCode = &exitCode
+		return report, err
+	}
+	report.ExitCode = &exitCode
+	return report, nil
+}
+
+func speakPreview(text string) string {
+	text = strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= 120 {
+		return text
+	}
+	return string(runes[:120]) + "..."
+}
+
+func renderSpeakReport(out io.Writer, report speakReport) {
+	fmt.Fprintln(out, "Speak")
+	fmt.Fprintf(out, "  Command          %t\n", report.CommandConfigured)
+	fmt.Fprintf(out, "  Available        %t\n", report.CommandAvailable)
+	if report.Command != "" {
+		fmt.Fprintf(out, "  Command value    %s\n", report.Command)
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	if report.Nth > 0 {
+		fmt.Fprintf(out, "  Response index   %d\n", report.Nth)
+	}
+	if report.TextPreview != "" {
+		fmt.Fprintf(out, "  Text             %s\n", report.TextPreview)
+	}
+	if report.InputBytes > 0 {
+		fmt.Fprintf(out, "  Input bytes      %d\n", report.InputBytes)
+	}
+	if report.Stdout != "" {
+		fmt.Fprintf(out, "  Stdout           %s\n", report.Stdout)
 	}
 	if report.ExitCode != nil {
 		fmt.Fprintf(out, "  Exit code        %d\n", *report.ExitCode)
@@ -8382,8 +8798,8 @@ func boolPtrEnabled(value *bool) bool {
 	return value != nil && *value
 }
 
-func voiceCommandAvailable(command string) bool {
-	fields := voiceCommandArgs(command)
+func externalCommandAvailable(command string) bool {
+	fields := externalCommandArgs(command)
 	if len(fields) == 0 {
 		return false
 	}
@@ -8396,7 +8812,7 @@ func voiceCommandAvailable(command string) bool {
 	return err == nil
 }
 
-func voiceCommandArgs(command string) []string {
+func externalCommandArgs(command string) []string {
 	return strings.Fields(command)
 }
 
@@ -12953,6 +13369,7 @@ func codogCapabilityFeatures() []string {
 		"session_resume",
 		"skills",
 		"slash_commands",
+		"speech_output",
 		"team_watch",
 		"updater",
 		"voice_listen",
@@ -13088,6 +13505,7 @@ func builtInCommandNames() []string {
 		"sessions",
 		"share",
 		"skills",
+		"speak",
 		"stash",
 		"state",
 		"stats",
@@ -16045,6 +16463,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/listen":
 		if err := a.Voice(append([]string{"listen"}, fields[1:]...)); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/speak":
+		if err := a.Speak(ctx, fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/chrome":
@@ -22120,7 +22542,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "mobile", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
-		"search", "security-review", "skills", "state", "status", "statusline",
+		"search", "security-review", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
@@ -22475,6 +22897,7 @@ Usage:
   %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] voice [status|set-command|on|off|toggle|test|listen|transcribe|clear] [--command COMMAND] [--input TEXT] [--timeout-ms N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] listen [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]
+  %s [flags] speak [TEXT|last|status|set-command|clear] [--session ID|--resume latest] [--nth N] [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]
   %s [flags] chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] privacy-settings [show|set KEY on|off|clear KEY] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] keybindings [show|path|init|validate] [--force] [--path PATH] [--json|--output-format text|json]
@@ -22550,7 +22973,7 @@ Flags:
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	return strings.ReplaceAll(help, "%s", exe)
 }

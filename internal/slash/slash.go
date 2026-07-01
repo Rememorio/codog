@@ -140,6 +140,7 @@ func Specs() []Spec {
 		{Name: "/fast", Usage: "/fast [on|off|toggle|status|clear]", Description: "Show or change fast mode preference."},
 		{Name: "/voice", Usage: "/voice [status|set-command|on|off|test|listen|clear]", Description: "Show, test, or change external voice mode settings."},
 		{Name: "/listen", Usage: "/listen [--input TEXT]", Description: "Run the configured external voice command."},
+		{Name: "/speak", Usage: "/speak [TEXT|last]", Description: "Run the configured external speech command."},
 		{Name: "/chrome", Usage: "/chrome [status|on|off|install|permissions|reconnect]", Description: "Show or change Chrome integration settings."},
 		{Name: "/privacy-settings", Usage: "/privacy-settings [show|set KEY on|off|clear KEY]", Description: "Show or change local privacy preferences."},
 		{Name: "/keybindings", Usage: "/keybindings [show|path|init]", Description: "Show shortcuts or create the keybindings config template."},
@@ -366,6 +367,9 @@ func AllCandidates(options CandidateOptions) []string {
 		"/voice test",
 		"/voice listen",
 		"/listen",
+		"/speak",
+		"/speak last",
+		"/speak set-command ",
 	} {
 		add(candidate)
 	}

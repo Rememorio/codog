@@ -3257,11 +3257,14 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("session", anthropic.TextMessage("assistant", "assistant answer")))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
 		Config:    config.Config{ConfigHome: configHome},
 		Workspace: workspace,
+		Sessions:  store,
 		Out:       &out,
 		Err:       &errOut,
 	}
@@ -3347,6 +3350,44 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/listen --input slash-check", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Transcript       voice:slash-check")
+	out.Reset()
+
+	speakCommand := os.Args[0] + " -test.run=TestVoiceCommandHelperProcess"
+	require.NoError(t, app.Speak(context.Background(), []string{"set-command", speakCommand, "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "speak"`)
+	require.Contains(t, out.String(), `"command_configured": true`)
+	require.Contains(t, out.String(), `"command_available": true`)
+	require.Equal(t, speakCommand, app.Config.SpeechCommand)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"speech_command"`)
+	out.Reset()
+
+	t.Setenv("CODOG_TEST_SPEAK_HELPER", "1")
+	require.NoError(t, app.Speak(context.Background(), []string{"--input", "say this", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"action": "speak"`)
+	require.Contains(t, out.String(), `"text_preview": "say this"`)
+	require.Contains(t, out.String(), `"stdout": "speak:say this"`)
+	require.Contains(t, out.String(), `"exit_code": 0`)
+	out.Reset()
+
+	require.NoError(t, app.Speak(context.Background(), []string{"--json"}, config.FlagOverrides{SessionID: "session"}))
+	require.Contains(t, out.String(), `"session_id": "session"`)
+	require.Contains(t, out.String(), `"text_preview": "assistant answer"`)
+	require.Contains(t, out.String(), `"stdout": "speak:assistant answer"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/speak", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Text             assistant answer")
+	require.Contains(t, out.String(), "Stdout           speak:assistant answer")
+	out.Reset()
+
+	require.NoError(t, app.Speak(context.Background(), []string{"clear-command", "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"kind": "speak"`)
+	require.Equal(t, "", app.Config.SpeechCommand)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"speech_command"`)
 	out.Reset()
 
 	require.NoError(t, app.Chrome([]string{"--json"}))
@@ -7571,6 +7612,11 @@ func makeAgentPluginZip(t *testing.T, files map[string]string) []byte {
 }
 
 func TestVoiceCommandHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_TEST_SPEAK_HELPER") == "1" {
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Printf("speak:%s", strings.TrimSpace(string(data)))
+		os.Exit(0)
+	}
 	if os.Getenv("CODOG_TEST_VOICE_HELPER") != "1" {
 		return
 	}

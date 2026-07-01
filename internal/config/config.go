@@ -296,6 +296,7 @@ type Config struct {
 	FastMode            *bool                      `json:"fast_mode,omitempty"`
 	VoiceEnabled        *bool                      `json:"voice_enabled,omitempty"`
 	VoiceCommand        string                     `json:"voice_command,omitempty"`
+	SpeechCommand       string                     `json:"speech_command,omitempty"`
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
@@ -872,6 +873,9 @@ func merge(dst *Config, src Config) {
 	if src.VoiceCommand != "" {
 		dst.VoiceCommand = src.VoiceCommand
 	}
+	if src.SpeechCommand != "" {
+		dst.SpeechCommand = src.SpeechCommand
+	}
 	if src.MaxTokens != 0 {
 		dst.MaxTokens = src.MaxTokens
 	}
@@ -1262,6 +1266,9 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("CODOG_VOICE_COMMAND"); value != "" {
 		cfg.VoiceCommand = value
+	}
+	if value := os.Getenv("CODOG_SPEECH_COMMAND"); value != "" {
+		cfg.SpeechCommand = value
 	}
 	if value := os.Getenv("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value

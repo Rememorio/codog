@@ -170,9 +170,10 @@ Minimal example:
 ```
 
 Useful preference commands include `codog theme`, `codog vim`, `codog voice`,
-`codog chrome`, `codog privacy-settings`, `codog keybindings`, and
-`codog output-style`. `codog voice test` and `codog voice listen` can run the
-configured external speech-to-text command.
+`codog speak`, `codog chrome`, `codog privacy-settings`, `codog keybindings`,
+and `codog output-style`. Voice input and speech output are intentionally
+external-command based, so users can wire in their preferred STT/TTS tools
+without changing Codog itself.
 
 ## Integrations
 
