@@ -7060,7 +7060,11 @@ func TestPluginMCPServersMergeIntoRuntimeConfig(t *testing.T) {
 	require.Equal(t, "user-mcp", cfg.MCPServers["user"].Command)
 	require.Equal(t, "plugin-mcp", cfg.MCPServers["plugin:demo:local"].Command)
 	require.Equal(t, []string{"--stdio"}, cfg.MCPServers["plugin:demo:local"].Args)
-	require.Equal(t, []string{"A=B"}, cfg.MCPServers["plugin:demo:local"].Env)
+	require.Equal(t, []string{
+		"CLAUDE_PLUGIN_ROOT=" + filepath.ToSlash(pluginRoot),
+		"CLAUDE_PLUGIN_DATA=" + filepath.ToSlash(filepath.Join(workspace, ".codog", "plugin-data", "demo")),
+		"A=B",
+	}, cfg.MCPServers["plugin:demo:local"].Env)
 }
 
 func TestPermissionHooksFromPrompter(t *testing.T) {

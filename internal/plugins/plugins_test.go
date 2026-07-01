@@ -52,16 +52,25 @@ func TestLoadMCPServersNamespacesEnabledPluginServers(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{
 		"id":"demo",
 		"name":"demo",
-		"mcp_servers":{"local":{"command":"echo","args":["hi"]}},
+		"mcp_servers":{"local":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/mcp","args":["--data","${CLAUDE_PLUGIN_DATA}"],"env":["CONFIG=${CLAUDE_PLUGIN_ROOT}/config.json"]}},
 		"mcpServers":{"camel":{"command":"cat"}}
 	}`), 0o644))
 
 	servers, err := LoadMCPServers(workspace)
 	require.NoError(t, err)
 	require.Len(t, servers, 2)
-	require.Equal(t, "echo", servers["plugin:demo:local"].Command)
-	require.Equal(t, []string{"hi"}, servers["plugin:demo:local"].Args)
+	pluginRoot := filepath.ToSlash(root)
+	pluginData := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugin-data", "demo"))
+	require.Equal(t, pluginRoot+"/bin/mcp", servers["plugin:demo:local"].Command)
+	require.Equal(t, []string{"--data", pluginData}, servers["plugin:demo:local"].Args)
+	require.Equal(t, []string{
+		"CLAUDE_PLUGIN_ROOT=" + pluginRoot,
+		"CLAUDE_PLUGIN_DATA=" + pluginData,
+		"CONFIG=" + pluginRoot + "/config.json",
+	}, servers["plugin:demo:local"].Env)
 	require.Equal(t, "cat", servers["plugin:demo:camel"].Command)
+	require.Contains(t, servers["plugin:demo:camel"].Env, "CLAUDE_PLUGIN_ROOT="+pluginRoot)
+	require.Contains(t, servers["plugin:demo:camel"].Env, "CLAUDE_PLUGIN_DATA="+pluginData)
 }
 
 func TestInstallDisableEnableRemovePlugin(t *testing.T) {
