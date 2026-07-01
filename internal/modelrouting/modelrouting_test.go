@@ -110,6 +110,15 @@ func TestReasoningModelDetection(t *testing.T) {
 	require.False(t, IsReasoningModel("claude-sonnet-4-6"))
 }
 
+func TestRequiresReasoningContentHistoryForDeepSeekV4(t *testing.T) {
+	require.True(t, RequiresReasoningContentHistory("deepseek-v4-pro"))
+	require.True(t, RequiresReasoningContentHistory("openai/deepseek-v4-flash"))
+
+	require.False(t, RequiresReasoningContentHistory("deepseek-reasoner"))
+	require.False(t, RequiresReasoningContentHistory("openai/o4-mini"))
+	require.False(t, RequiresReasoningContentHistory("qwen/qwen3-30b-a3b-thinking"))
+}
+
 func TestUsesMaxCompletionTokensForGPT5Family(t *testing.T) {
 	require.True(t, UsesMaxCompletionTokens("gpt-5.2"))
 	require.True(t, UsesMaxCompletionTokens("openai/gpt-5.4"))

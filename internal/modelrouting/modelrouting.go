@@ -149,6 +149,14 @@ func IsReasoningModel(model string) bool {
 		strings.Contains(canonical, "thinking")
 }
 
+func RequiresReasoningContentHistory(model string) bool {
+	canonical := strings.ToLower(ResolveAlias(model))
+	if slash := strings.LastIndex(canonical, "/"); slash >= 0 {
+		canonical = canonical[slash+1:]
+	}
+	return strings.HasPrefix(canonical, "deepseek-v4")
+}
+
 func UsesMaxCompletionTokens(model string) bool {
 	canonical := strings.ToLower(ResolveAlias(model))
 	if slash := strings.LastIndex(canonical, "/"); slash >= 0 {

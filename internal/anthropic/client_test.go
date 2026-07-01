@@ -68,6 +68,40 @@ func TestClientStreamsAnthropicAliasAsResolvedModel(t *testing.T) {
 	require.Contains(t, msg.Blocks[0].Text, "hello from alias")
 }
 
+func TestClientFiltersThinkingBlocksForAnthropicRequests(t *testing.T) {
+	var requestBody struct {
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "ok",
+		OnRequest: func(data json.RawMessage) {
+			require.NoError(t, json.Unmarshal(data, &requestBody))
+		},
+	}.Handler())
+	defer server.Close()
+
+	client := New(server.URL, "test", "")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 64,
+		Messages: []Message{{
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "thinking", Thinking: "hidden reasoning"},
+				{Type: "text", Text: "visible answer"},
+			},
+		}},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Len(t, requestBody.Messages, 1)
+	require.Len(t, requestBody.Messages[0].Content, 1)
+	require.Equal(t, "text", requestBody.Messages[0].Content[0]["type"])
+	require.Equal(t, "visible answer", requestBody.Messages[0].Content[0]["text"])
+}
+
 func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/chat/completions", r.URL.Path)
@@ -122,6 +156,37 @@ func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 	require.Equal(t, 4, msg.Usage.InputTokens)
 	require.Equal(t, 3, msg.Usage.CacheReadInputTokens)
 	require.Equal(t, 2, msg.Usage.OutputTokens)
+}
+
+func TestClientStreamsOpenAICompatibleReasoningAsThinkingBlock(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		writeOpenAISSE(t, w,
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"reasoning_content": "think "}}}},
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"reasoning": "more"}}}},
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"thinking": map[string]any{"content": " done"}}}}},
+			map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "answer"}}}},
+		)
+	}))
+	defer server.Close()
+
+	client := New(server.URL+"/v1", "openai-key", "")
+	var streamed strings.Builder
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "openai/o4-mini",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, func(delta string) {
+		streamed.WriteString(delta)
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "answer", streamed.String())
+	require.Len(t, msg.Blocks, 2)
+	require.Equal(t, "thinking", msg.Blocks[0].Type)
+	require.Equal(t, "think more done", msg.Blocks[0].Thinking)
+	require.Equal(t, "text", msg.Blocks[1].Type)
+	require.Equal(t, "answer", msg.Blocks[1].Text)
 }
 
 func TestClientReturnsMissingCredentialsForAnthropicWithoutAuth(t *testing.T) {
@@ -477,6 +542,42 @@ func TestOpenAICompatibleToolResultsIncludeIsErrorForNonKimiModels(t *testing.T)
 	require.True(t, *wire.Messages[0].IsError)
 	require.NotNil(t, wire.Messages[1].IsError)
 	require.False(t, *wire.Messages[1].IsError)
+}
+
+func TestOpenAICompatibleAssistantThinkingHistoryForDeepSeekV4(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "openai/deepseek-v4-pro",
+		MaxTokens: 64,
+		Messages: []Message{{
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "thinking", Thinking: "prior reasoning"},
+				{Type: "text", Text: "prior answer"},
+			},
+		}},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Len(t, wire.Messages, 1)
+	require.Equal(t, "prior answer", wire.Messages[0].Content)
+	require.Equal(t, "prior reasoning", wire.Messages[0].ReasoningContent)
+}
+
+func TestOpenAICompatibleAssistantThinkingHistoryOmittedForRegularModels(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "openai/gpt-4.1-mini",
+		MaxTokens: 64,
+		Messages: []Message{{
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "thinking", Thinking: "prior reasoning"},
+				{Type: "text", Text: "prior answer"},
+			},
+		}},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Len(t, wire.Messages, 1)
+	require.Equal(t, "prior answer", wire.Messages[0].Content)
+	require.Empty(t, wire.Messages[0].ReasoningContent)
 }
 
 func TestOpenAICompatibleToolResultsOmitIsErrorForKimiModels(t *testing.T) {

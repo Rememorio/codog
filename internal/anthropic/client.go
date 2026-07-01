@@ -136,6 +136,7 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 	if !c.anthropicCredentialsConfigured() {
 		return AssistantMessage{}, anthropicMissingCredentialsError()
 	}
+	resolvedReq.Messages = messagesWithoutThinkingBlocks(resolvedReq.Messages)
 	resolvedReq.Stream = true
 	body, err := json.Marshal(resolvedReq)
 	if err != nil {
@@ -251,11 +252,12 @@ type openAIRequest struct {
 }
 
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	IsError    *bool            `json:"is_error,omitempty"`
+	Role             string           `json:"role"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
+	IsError          *bool            `json:"is_error,omitempty"`
 }
 
 type openAIToolCall struct {
@@ -420,6 +422,7 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 	}
 	if role == "assistant" {
 		var text strings.Builder
+		var thinking strings.Builder
 		var toolCalls []openAIToolCall
 		for _, block := range msg.Content {
 			switch block.Type {
@@ -428,6 +431,15 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 					text.WriteString("\n")
 				}
 				text.WriteString(block.Text)
+			case "thinking":
+				if thinking.Len() > 0 {
+					thinking.WriteString("\n")
+				}
+				if block.Thinking != "" {
+					thinking.WriteString(block.Thinking)
+				} else {
+					thinking.WriteString(block.Text)
+				}
 			case "tool_use":
 				args := block.Input
 				if len(args) == 0 {
@@ -443,7 +455,11 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 				})
 			}
 		}
-		return []openAIMessage{{Role: "assistant", Content: text.String(), ToolCalls: toolCalls}}, nil
+		assistant := openAIMessage{Role: "assistant", Content: text.String(), ToolCalls: toolCalls}
+		if modelrouting.RequiresReasoningContentHistory(model) {
+			assistant.ReasoningContent = thinking.String()
+		}
+		return []openAIMessage{assistant}, nil
 	}
 	return []openAIMessage{{Role: role, Content: contentText(msg.Content)}}, nil
 }
@@ -501,6 +517,23 @@ func contentText(blocks []ContentBlock) string {
 		text.WriteString(block.Text)
 	}
 	return text.String()
+}
+
+func messagesWithoutThinkingBlocks(messages []Message) []Message {
+	out := make([]Message, 0, len(messages))
+	for _, msg := range messages {
+		next := Message{Role: msg.Role}
+		for _, block := range msg.Content {
+			if block.Type == "thinking" {
+				continue
+			}
+			next.Content = append(next.Content, block)
+		}
+		if len(next.Content) > 0 {
+			out = append(out, next)
+		}
+	}
+	return out
 }
 
 func (c *Client) newOpenAIRequest(ctx context.Context, body []byte) (*http.Request, error) {
@@ -736,10 +769,13 @@ func parseStream(r io.Reader, onText func(string)) (AssistantMessage, error) {
 type openAIStreamEnvelope struct {
 	Choices []struct {
 		Delta struct {
-			Content          string                `json:"content"`
-			Reasoning        string                `json:"reasoning"`
-			ReasoningContent string                `json:"reasoning_content"`
-			ToolCalls        []openAIToolCallDelta `json:"tool_calls"`
+			Content          string `json:"content"`
+			Reasoning        string `json:"reasoning"`
+			ReasoningContent string `json:"reasoning_content"`
+			Thinking         struct {
+				Content string `json:"content"`
+			} `json:"thinking"`
+			ToolCalls []openAIToolCallDelta `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage openAIUsage `json:"usage"`
@@ -774,6 +810,7 @@ func parseOpenAIStream(r io.Reader, onText func(string)) (AssistantMessage, erro
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
 	var text strings.Builder
+	var thinking strings.Builder
 	toolCalls := map[int]*openAIToolCallBuilder{}
 	var usage Usage
 	for scanner.Scan() {
@@ -796,17 +833,14 @@ func parseOpenAIStream(r io.Reader, onText func(string)) (AssistantMessage, erro
 			usage = usageFromOpenAI(event.Usage)
 		}
 		for _, choice := range event.Choices {
-			deltaText := choice.Delta.Content
-			if deltaText == "" {
-				deltaText = choice.Delta.ReasoningContent
+			deltaThinking := firstNonEmpty(choice.Delta.ReasoningContent, choice.Delta.Reasoning, choice.Delta.Thinking.Content)
+			if deltaThinking != "" {
+				thinking.WriteString(deltaThinking)
 			}
-			if deltaText == "" {
-				deltaText = choice.Delta.Reasoning
-			}
-			if deltaText != "" {
-				text.WriteString(deltaText)
+			if choice.Delta.Content != "" {
+				text.WriteString(choice.Delta.Content)
 				if onText != nil {
-					onText(deltaText)
+					onText(choice.Delta.Content)
 				}
 			}
 			for _, toolDelta := range choice.Delta.ToolCalls {
@@ -831,6 +865,9 @@ func parseOpenAIStream(r io.Reader, onText func(string)) (AssistantMessage, erro
 		return AssistantMessage{}, err
 	}
 	blocks := []ContentBlock{}
+	if thinking.Len() > 0 {
+		blocks = append(blocks, ContentBlock{Type: "thinking", Thinking: thinking.String()})
+	}
 	if text.Len() > 0 {
 		blocks = append(blocks, ContentBlock{Type: "text", Text: text.String()})
 	}
@@ -856,6 +893,15 @@ func parseOpenAIStream(r io.Reader, onText func(string)) (AssistantMessage, erro
 		})
 	}
 	return AssistantMessage{Blocks: blocks, Usage: usage}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func usageFromOpenAI(usage openAIUsage) Usage {
