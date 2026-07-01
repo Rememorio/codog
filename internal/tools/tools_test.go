@@ -612,6 +612,8 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 		NumMatches    *int     `json:"numMatches"`
 		AppliedLimit  int      `json:"appliedLimit"`
 		AppliedOffset int      `json:"appliedOffset"`
+		DurationMS    int64    `json:"durationMs"`
+		DurationMs    int64    `json:"duration_ms"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &filesReport))
 	require.Equal(t, "files_with_matches", filesReport.Mode)
@@ -622,6 +624,8 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Nil(t, filesReport.NumMatches)
 	require.Equal(t, 250, filesReport.AppliedLimit)
 	require.Equal(t, 0, filesReport.AppliedOffset)
+	require.GreaterOrEqual(t, filesReport.DurationMS, int64(0))
+	require.Equal(t, filesReport.DurationMS, filesReport.DurationMs)
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","type":"go","-i":true,"head_limit":1}`), nil)
 	require.NoError(t, err)
@@ -664,6 +668,8 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 		NumMatches int      `json:"numMatches"`
 		Content    *string  `json:"content"`
 		NumLines   *int     `json:"numLines"`
+		DurationMS int64    `json:"durationMs"`
+		DurationMs int64    `json:"duration_ms"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &countReport))
 	require.Equal(t, "count", countReport.Mode)
@@ -672,6 +678,8 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Equal(t, 3, countReport.NumMatches)
 	require.Nil(t, countReport.Content)
 	require.Nil(t, countReport.NumLines)
+	require.GreaterOrEqual(t, countReport.DurationMS, int64(0))
+	require.Equal(t, countReport.DurationMS, countReport.DurationMs)
 
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"content","offset":1,"head_limit":1}`), nil)
 	require.NoError(t, err)
@@ -687,6 +695,8 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 		NumLines      int      `json:"numLines"`
 		AppliedLimit  int      `json:"appliedLimit"`
 		AppliedOffset int      `json:"appliedOffset"`
+		DurationMS    int64    `json:"durationMs"`
+		DurationMs    int64    `json:"duration_ms"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &contentReport))
 	require.Equal(t, "content", contentReport.Mode)
@@ -696,6 +706,8 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.Equal(t, 1, contentReport.NumLines)
 	require.Equal(t, 1, contentReport.AppliedLimit)
 	require.Equal(t, 1, contentReport.AppliedOffset)
+	require.GreaterOrEqual(t, contentReport.DurationMS, int64(0))
+	require.Equal(t, contentReport.DurationMS, contentReport.DurationMs)
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "context.go"), []byte("before one\nmatch target\nafter one\nafter two\nafter three\n"), 0o644))
 	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"target","output_mode":"content","-B":1,"-A":2}`), nil)
@@ -769,6 +781,83 @@ func TestGrepToolSupportsClaudeOutputModes(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "multi.go")
 	require.Contains(t, out, `"count": 1`)
+}
+
+func TestGrepToolReportsDurationAndRealTruncation(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("needle\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "b.txt"), []byte("needle\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "c.txt"), []byte("needle\n"), 0o644))
+
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","head_limit":3}`), nil)
+	require.NoError(t, err)
+	var filesReport struct {
+		Filenames  []string `json:"filenames"`
+		NumFiles   int      `json:"numFiles"`
+		DurationMS int64    `json:"durationMs"`
+		DurationMs int64    `json:"duration_ms"`
+		Truncated  bool     `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &filesReport))
+	require.Equal(t, []string{"a.txt", "b.txt", "c.txt"}, filesReport.Filenames)
+	require.Equal(t, 3, filesReport.NumFiles)
+	require.GreaterOrEqual(t, filesReport.DurationMS, int64(0))
+	require.Equal(t, filesReport.DurationMS, filesReport.DurationMs)
+	require.False(t, filesReport.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches","head_limit":2}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &filesReport))
+	require.Equal(t, []string{"a.txt", "b.txt"}, filesReport.Filenames)
+	require.Equal(t, 2, filesReport.NumFiles)
+	require.True(t, filesReport.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"content","head_limit":3}`), nil)
+	require.NoError(t, err)
+	var contentReport struct {
+		Content    string `json:"content"`
+		NumLines   int    `json:"numLines"`
+		DurationMS int64  `json:"durationMs"`
+		DurationMs int64  `json:"duration_ms"`
+		Truncated  bool   `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &contentReport))
+	require.Equal(t, "a.txt:1:needle\nb.txt:1:needle\nc.txt:1:needle", contentReport.Content)
+	require.Equal(t, 3, contentReport.NumLines)
+	require.GreaterOrEqual(t, contentReport.DurationMS, int64(0))
+	require.Equal(t, contentReport.DurationMS, contentReport.DurationMs)
+	require.False(t, contentReport.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"content","head_limit":2}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &contentReport))
+	require.Equal(t, "a.txt:1:needle\nb.txt:1:needle", contentReport.Content)
+	require.Equal(t, 2, contentReport.NumLines)
+	require.True(t, contentReport.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"count","head_limit":3}`), nil)
+	require.NoError(t, err)
+	var countReport struct {
+		Counts     []map[string]any `json:"counts"`
+		NumFiles   int              `json:"numFiles"`
+		DurationMS int64            `json:"durationMs"`
+		DurationMs int64            `json:"duration_ms"`
+		Truncated  bool             `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &countReport))
+	require.Len(t, countReport.Counts, 3)
+	require.Equal(t, 3, countReport.NumFiles)
+	require.GreaterOrEqual(t, countReport.DurationMS, int64(0))
+	require.Equal(t, countReport.DurationMS, countReport.DurationMs)
+	require.False(t, countReport.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"count","head_limit":2}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &countReport))
+	require.Len(t, countReport.Counts, 2)
+	require.Equal(t, 2, countReport.NumFiles)
+	require.True(t, countReport.Truncated)
 }
 
 func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {

@@ -3923,6 +3923,7 @@ func (GrepTool) Definition() anthropic.ToolDefinition {
 func (GrepTool) Permission() Permission { return PermissionReadOnly }
 
 func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
+	started := time.Now()
 	var payload struct {
 		Pattern        string `json:"pattern"`
 		Path           string `json:"path"`
@@ -4002,6 +4003,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	var contentLines []string
 	var matches []map[string]any
 	seen := 0
+	filesTruncated := false
+	countTruncated := false
+	contentTruncated := false
 	walkRoot := root
 	if payload.Glob != "" {
 		walkRoot = deriveGlobWalkRoot(root, payload.Glob)
@@ -4009,15 +4013,6 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
-		}
-		if mode == "content" && !unlimited && len(matches) >= limit {
-			return filepath.SkipAll
-		}
-		if mode == "files_with_matches" && !unlimited && len(files) >= limit {
-			return filepath.SkipAll
-		}
-		if mode == "count" && !unlimited && len(counts) >= offset+limit && limit > 0 {
-			return filepath.SkipAll
 		}
 		if entry.IsDir() {
 			if ignoredDir(entry.Name()) && path != root {
@@ -4050,12 +4045,20 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 				if !seenFiles[display] {
 					seenFiles[display] = true
 					if seen >= offset {
+						if !unlimited && len(files) >= limit {
+							filesTruncated = true
+							return filepath.SkipAll
+						}
 						files = append(files, display)
 					}
 					seen++
 				}
 				return nil
 			case "count":
+				if _, ok := counts[display]; !ok && !unlimited && len(counts) >= offset+limit {
+					countTruncated = true
+					return filepath.SkipAll
+				}
 				counts[display] += len(locations)
 				return nil
 			default:
@@ -4063,6 +4066,10 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 				lineStarts := grepLineStartOffsets(text)
 				for _, location := range locations {
 					if seen >= offset {
+						if !unlimited && len(matches) >= limit {
+							contentTruncated = true
+							return filepath.SkipAll
+						}
 						if !contentFiles[display] {
 							contentFiles[display] = true
 							contentFilenames = append(contentFilenames, display)
@@ -4091,9 +4098,6 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 						matches = append(matches, match)
 					}
 					seen++
-					if !unlimited && len(matches) >= limit {
-						return filepath.SkipAll
-					}
 				}
 				return nil
 			}
@@ -4107,15 +4111,27 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 					if !seenFiles[display] {
 						seenFiles[display] = true
 						if seen >= offset {
+							if !unlimited && len(files) >= limit {
+								filesTruncated = true
+								return filepath.SkipAll
+							}
 							files = append(files, display)
 						}
 						seen++
 					}
 					return nil
 				case "count":
+					if _, ok := counts[display]; !ok && !unlimited && len(counts) >= offset+limit {
+						countTruncated = true
+						return filepath.SkipAll
+					}
 					counts[display]++
 				default:
 					if seen >= offset {
+						if !unlimited && len(matches) >= limit {
+							contentTruncated = true
+							return filepath.SkipAll
+						}
 						match := map[string]any{"path": display, "line": i + 1, "text": line}
 						if !contentFiles[display] {
 							contentFiles[display] = true
@@ -4139,9 +4155,6 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 						matches = append(matches, match)
 					}
 					seen++
-					if !unlimited && len(matches) >= limit {
-						return filepath.SkipAll
-					}
 				}
 			}
 		}
@@ -4150,6 +4163,7 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if err != nil {
 		return "", err
 	}
+	durationMS := time.Since(started).Milliseconds()
 	switch mode {
 	case "files_with_matches":
 		sort.Strings(files)
@@ -4165,7 +4179,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"numMatches":    nil,
 			"appliedLimit":  grepAppliedLimit(limit, unlimited),
 			"appliedOffset": offset,
-			"truncated":     !unlimited && len(files) >= limit,
+			"durationMs":    durationMS,
+			"duration_ms":   durationMS,
+			"truncated":     filesTruncated,
 			"offset":        offset,
 		}), nil
 	case "count":
@@ -4183,7 +4199,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"numMatches":    totalMatches,
 			"appliedLimit":  grepAppliedLimit(limit, unlimited),
 			"appliedOffset": offset,
-			"truncated":     !unlimited && len(counts) >= offset+limit,
+			"durationMs":    durationMS,
+			"duration_ms":   durationMS,
+			"truncated":     countTruncated,
 			"offset":        offset,
 		}), nil
 	default:
@@ -4198,7 +4216,9 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			"numLines":      len(contentLines),
 			"appliedLimit":  grepAppliedLimit(limit, unlimited),
 			"appliedOffset": offset,
-			"truncated":     !unlimited && len(matches) >= limit,
+			"durationMs":    durationMS,
+			"duration_ms":   durationMS,
+			"truncated":     contentTruncated,
 			"offset":        offset,
 		}), nil
 	}
