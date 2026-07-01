@@ -57,6 +57,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/onboarding"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
 	"github.com/Rememorio/codog/internal/perfissue"
@@ -574,6 +575,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Memory(rest)
 	case "project":
 		return app.Project(rest)
+	case "onboarding":
+		return app.Onboarding(rest)
 	case "env":
 		return app.Env(rest)
 	case "doctor":
@@ -14197,6 +14200,66 @@ type setupReport struct {
 	Messages   []string              `json:"messages,omitempty"`
 }
 
+type onboardingRequest struct {
+	Format string
+	Path   string
+}
+
+func (a *App) Onboarding(args []string) error {
+	req, err := parseOnboardingArgs(args)
+	if err != nil {
+		return err
+	}
+	workspace := a.Workspace
+	if strings.TrimSpace(req.Path) != "" {
+		workspace = a.resolveOutputPath(req.Path)
+	}
+	report, err := onboarding.Analyze(onboarding.Options{Workspace: workspace})
+	if err != nil {
+		return err
+	}
+	if req.Format == "json" {
+		return onboarding.RenderJSON(a.Out, report)
+	}
+	onboarding.RenderText(a.Out, report)
+	return nil
+}
+
+func parseOnboardingArgs(args []string) (onboardingRequest, error) {
+	req := onboardingRequest{Format: "text"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("onboarding output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--path" || arg == "--workspace":
+			index++
+			if index >= len(args) {
+				return req, errors.New("onboarding path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case strings.HasPrefix(arg, "--workspace="):
+			req.Path = strings.TrimPrefix(arg, "--workspace=")
+		default:
+			return req, fmt.Errorf("unknown onboarding argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "onboarding"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
 func (a *App) Setup(ctx context.Context, args []string) error {
 	req, err := parseSetupArgs(args)
 	if err != nil {
@@ -15410,6 +15473,7 @@ func builtInCommandNames() []string {
 		"notifications",
 		"oauth",
 		"oauth-refresh",
+		"onboarding",
 		"output-style",
 		"passes",
 		"perf-issue",
@@ -18252,6 +18316,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/setup":
 		if err := a.Setup(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/onboarding":
+		if err := a.Onboarding(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/terminal-setup", "/terminalSetup":
@@ -27565,7 +27633,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
@@ -27864,6 +27932,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"workspace", "config_home", "checks", "project", "terminal", "messages"},
 			[]string{"ok", "warn", "error"},
 			true,
+		), true
+	case "onboarding":
+		return localCommandHelpSpec(
+			"onboarding",
+			"onboarding",
+			"codog onboarding [--path PATH] [--output-format text|json]",
+			"Onboarding\n\nUsage:\n  codog onboarding [--path PATH] [--output-format text|json]\n\nInspects a repository for README, tests, language markers, Codog guidance, project config, and git metadata, then reports whether the workspace is ready for a productive Codog session.\n",
+			[]string{"workspace", "has_readme", "has_tests", "primary_language", "checks", "recommendations"},
+			[]string{"ready", "needs_setup", "error"},
+			false,
 		), true
 	case "context":
 		return localCommandHelpSpec(
@@ -28512,6 +28590,7 @@ Usage:
   %s [flags] workspace|cwd [status|PATH|set PATH] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
+  %s [flags] onboarding [--path PATH] [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
   %s [flags] memory [list|show|add|path|ensure|edit] [ARGS...] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]

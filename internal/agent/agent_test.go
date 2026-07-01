@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
 	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/onboarding"
 	"github.com/Rememorio/codog/internal/outputstyle"
 	"github.com/Rememorio/codog/internal/pathscope"
 	"github.com/Rememorio/codog/internal/perfissue"
@@ -462,6 +463,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "generateSessionName", "--help", "--output-format", "json"},
 			topic: "generateSessionName",
 		},
+		{
+			name:  "onboarding local help",
+			args:  []string{"--config", configPath, "onboarding", "--help", "--output-format", "json"},
+			topic: "onboarding",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -550,6 +556,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "language")
 	require.Contains(t, report.Commands, "metrics")
 	require.Contains(t, report.Commands, "mock-limits")
+	require.Contains(t, report.Commands, "onboarding")
 	require.Contains(t, report.Commands, "perf-issue")
 	require.Contains(t, report.Commands, "profile")
 	require.Contains(t, report.Commands, "rc")
@@ -584,6 +591,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/ant-trace"))
 	require.True(t, capabilityReportHasSlash(report, "/bug"))
 	require.True(t, capabilityReportHasSlash(report, "/generateSessionName"))
+	require.True(t, capabilityReportHasSlash(report, "/onboarding"))
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
 	require.True(t, capabilityReportHasSlash(report, "/checkpoint"))
 	require.True(t, capabilityReportHasSlash(report, "/new"))
@@ -596,6 +604,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
+	require.True(t, commandAcceptsGlobalOutputFormat("onboarding"))
 	require.True(t, commandAcceptsGlobalOutputFormat("settings"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
@@ -5061,6 +5070,47 @@ func TestSetupCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Setup")
 	require.Contains(t, out.String(), "Terminal integration")
 	require.Empty(t, errOut.String())
+}
+
+func TestOnboardingCommandAndSlash(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Demo\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/onboarding\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package onboarding\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main_test.go"), []byte("package onboarding\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Run tests.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{"permission_mode":"workspace-write"}`), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(workspace, ".git"), 0o755))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Onboarding([]string{"--json"}))
+	var report onboarding.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "onboarding", report.Kind)
+	require.Equal(t, "inspect", report.Action)
+	require.Equal(t, "ready", report.Status)
+	require.True(t, report.HasReadme)
+	require.True(t, report.HasTests)
+	require.Equal(t, "Go", report.PrimaryLanguage)
+	require.True(t, report.GitRepository)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/onboarding --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ready", report.Status)
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, "app.py"), []byte("print('hi')\n"), 0o644))
+	require.NoError(t, app.Onboarding([]string{"--path", other, "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "needs_setup", report.Status)
+	require.Equal(t, "Python", report.PrimaryLanguage)
+	require.True(t, report.PythonFirst)
 }
 
 func requireSetupCheck(t *testing.T, checks []setupCheck, name string, status string) {
