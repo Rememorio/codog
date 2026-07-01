@@ -706,6 +706,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.DumpManifests(rest)
 	case "system-prompt":
 		return app.SystemPromptCommand(rest)
+	case "tool-details":
+		return app.ToolDetails(rest)
 	default:
 		if command != "" {
 			return renderCommandNotFound(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
@@ -2840,6 +2842,7 @@ func (a *App) SystemPromptCommand(args []string) error {
 	if format == "json" {
 		data, _ := json.MarshalIndent(map[string]any{
 			"kind":          "system-prompt",
+			"action":        "show",
 			"status":        "ok",
 			"system_prompt": prompt,
 		}, "", "  ")
@@ -2848,6 +2851,130 @@ func (a *App) SystemPromptCommand(args []string) error {
 	}
 	fmt.Fprintln(a.Out, prompt)
 	return nil
+}
+
+type toolDetailsRequest struct {
+	Tool   string
+	Format string
+}
+
+type toolDetailsReport struct {
+	Kind    string         `json:"kind"`
+	Action  string         `json:"action"`
+	Status  string         `json:"status"`
+	Tool    tools.ToolInfo `json:"tool"`
+	Aliases []string       `json:"aliases,omitempty"`
+}
+
+func (a *App) ToolDetails(args []string) error {
+	req, err := parseToolDetailsArgs(args)
+	if err != nil {
+		return renderCLIError(a.Out, err, req.Format)
+	}
+	if a.Tools == nil {
+		return renderCLIError(a.Out, errors.New("tool registry is not initialized"), req.Format)
+	}
+	info, ok := a.Tools.Info(req.Tool)
+	if !ok {
+		return renderCLIError(a.Out, toolNameError{
+			Argument:  "tool-details",
+			ToolName:  req.Tool,
+			Available: toolDetailAvailableNames(a.Tools),
+			Aliases:   tools.ClaudeToolAliases(),
+		}, req.Format)
+	}
+	report := toolDetailsReport{
+		Kind:    "tool_details",
+		Action:  "show",
+		Status:  "ok",
+		Tool:    info,
+		Aliases: toolDetailAliases(info.Name),
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderToolDetailsText(a.Out, report)
+	return nil
+}
+
+func parseToolDetailsArgs(args []string) (toolDetailsRequest, error) {
+	req := toolDetailsRequest{Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("tool-details output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Command: "tool-details",
+				Option:  arg,
+				Usage:   "codog tool-details TOOL [--output-format text|json]",
+			}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "tool-details"); err != nil {
+		return req, err
+	}
+	switch len(positionals) {
+	case 0:
+		return req, missingToolNameError{
+			Command: "tool-details",
+			Usage:   "codog tool-details TOOL [--output-format text|json]",
+		}
+	case 1:
+		req.Tool = positionals[0]
+	default:
+		return req, unexpectedExtraArgsError{
+			Command: "tool-details",
+			Args:    positionals[1:],
+			Usage:   "codog tool-details TOOL [--output-format text|json]",
+		}
+	}
+	return req, nil
+}
+
+func renderToolDetailsText(out io.Writer, report toolDetailsReport) {
+	renderToolInfo(out, report.Tool)
+	if len(report.Aliases) > 0 {
+		fmt.Fprintf(out, "  Aliases          %s\n", strings.Join(report.Aliases, ", "))
+	}
+}
+
+func toolDetailAvailableNames(registry *tools.Registry) []string {
+	if registry == nil {
+		return nil
+	}
+	infos := registry.Infos()
+	names := make([]string, 0, len(infos))
+	for _, info := range infos {
+		names = append(names, info.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func toolDetailAliases(canonical string) []string {
+	aliases := []string{}
+	for alias, target := range tools.ClaudeToolAliases() {
+		if target == canonical {
+			aliases = append(aliases, alias)
+		}
+	}
+	sort.Strings(aliases)
+	return aliases
 }
 
 func (a *App) Upgrade(ctx context.Context, args []string) error {
@@ -19078,6 +19205,7 @@ func builtInCommandNames() []string {
 		"think-back",
 		"thinkback",
 		"thinkback-play",
+		"tool-details",
 		"todos",
 		"tokens",
 		"tui",
@@ -19273,6 +19401,19 @@ type toolNameError struct {
 
 func (e toolNameError) Error() string {
 	return fmt.Sprintf("invalid_tool_name: unknown tool name %q for %s", e.ToolName, e.Argument)
+}
+
+type missingToolNameError struct {
+	Command string
+	Usage   string
+}
+
+func (e missingToolNameError) Error() string {
+	command := strings.TrimSpace(e.Command)
+	if command == "" {
+		command = "command"
+	}
+	return fmt.Sprintf("missing_tool_name: %s requires a tool name", command)
 }
 
 type unknownOptionError struct {
@@ -19526,6 +19667,25 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			ToolAliases: copyStringMap(toolErr.Aliases),
 		}
 	}
+	var missingToolErr missingToolNameError
+	if errors.As(err, &missingToolErr) {
+		command := strings.TrimSpace(missingToolErr.Command)
+		if command == "" {
+			command = "command"
+		}
+		usage := strings.TrimSpace(missingToolErr.Usage)
+		if usage == "" {
+			usage = "codog " + command + " TOOL"
+		}
+		return cliErrorReport{
+			Kind:      "missing_tool_name",
+			ErrorKind: "missing_tool_name",
+			Status:    "error",
+			Command:   command,
+			Message:   command + " requires a tool name",
+			Hint:      "Usage: " + usage,
+		}
+	}
 	var optionErr unknownOptionError
 	if errors.As(err, &optionErr) {
 		kind := strings.TrimSpace(optionErr.Kind)
@@ -19679,6 +19839,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Onboarding(resumeSlashArgs("onboarding", args, format))
 	case "/doctor":
 		return a.Doctor(resumeSlashArgs("doctor", args, format))
+	case "/system-prompt":
+		return a.SystemPromptCommand(resumeSlashArgs("system-prompt", args, format))
+	case "/tool-details":
+		return a.ToolDetails(resumeSlashArgs("tool-details", args, format))
 	case "/model":
 		return a.ResumedModel(resumeSlashArgs("model", args, format))
 	case "/status":
@@ -33399,7 +33563,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
-		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
+		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true

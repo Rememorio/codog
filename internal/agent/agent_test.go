@@ -659,6 +659,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "UltrareviewOverageDialog")
 	require.Contains(t, report.Commands, "xaaIdpCommand")
 	require.Contains(t, report.Commands, "cwd")
+	require.Contains(t, report.Commands, "tool-details")
 	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_load_degraded")
@@ -696,6 +697,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	statusSlash, ok := capabilityReportSlash(report, "/status")
 	require.True(t, ok)
 	require.True(t, statusSlash.ResumeSupported)
+	systemPromptSlash, ok := capabilityReportSlash(report, "/system-prompt")
+	require.True(t, ok)
+	require.True(t, systemPromptSlash.ResumeSupported)
+	toolDetailsSlash, ok := capabilityReportSlash(report, "/tool-details")
+	require.True(t, ok)
+	require.True(t, toolDetailsSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -1670,6 +1677,29 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOnboarding))
 	require.Equal(t, "onboarding", resumedOnboarding.Kind)
 	require.NotEmpty(t, resumedOnboarding.Checks)
+
+	out, err = runResumedJSON("/system-prompt")
+	require.NoError(t, err)
+	var resumedSystemPrompt struct {
+		Kind         string `json:"kind"`
+		Action       string `json:"action"`
+		Status       string `json:"status"`
+		SystemPrompt string `json:"system_prompt"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSystemPrompt))
+	require.Equal(t, "system-prompt", resumedSystemPrompt.Kind)
+	require.Equal(t, "show", resumedSystemPrompt.Action)
+	require.Equal(t, "ok", resumedSystemPrompt.Status)
+	require.NotEmpty(t, resumedSystemPrompt.SystemPrompt)
+
+	out, err = runResumedJSON("/tool-details", "bash")
+	require.NoError(t, err)
+	var resumedToolDetails toolDetailsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedToolDetails))
+	require.Equal(t, "tool_details", resumedToolDetails.Kind)
+	require.Equal(t, "show", resumedToolDetails.Action)
+	require.Equal(t, "bash", resumedToolDetails.Tool.Name)
+	require.Contains(t, resumedToolDetails.Aliases, "Bash")
 
 	out, err = runResumedJSON("/model")
 	require.NoError(t, err)
@@ -3232,12 +3262,73 @@ func TestSystemPromptCommand(t *testing.T) {
 
 	require.NoError(t, app.SystemPromptCommand([]string{"--json"}))
 	require.Contains(t, out.String(), `"kind": "system-prompt"`)
+	require.Contains(t, out.String(), `"action": "show"`)
 	require.Contains(t, out.String(), "Custom base.")
 	out.Reset()
 
 	require.NoError(t, app.SystemPromptCommand(nil))
 	require.Contains(t, out.String(), "Custom base.")
 	require.Contains(t, out.String(), "Extra instructions.")
+}
+
+func TestToolDetailsCommandReportsToolAndErrors(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+		Out:       &out,
+	}
+
+	require.NoError(t, app.ToolDetails([]string{"bash", "--json"}))
+	var report toolDetailsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "tool_details", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "bash", report.Tool.Name)
+	require.Equal(t, tools.PermissionDanger, report.Tool.Permission)
+	require.Contains(t, report.Aliases, "Bash")
+	out.Reset()
+
+	require.NoError(t, app.ToolDetails([]string{"Read"}))
+	require.Contains(t, out.String(), "Name             read_file")
+	require.Contains(t, out.String(), "Aliases")
+	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]any{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/tool-details", "bash"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var cliReport toolDetailsReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cliReport))
+	require.Equal(t, "tool_details", cliReport.Kind)
+	require.Equal(t, "bash", cliReport.Tool.Name)
+
+	err = app.ToolDetails([]string{"missing_tool", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var errorReport cliErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "invalid_tool_name", errorReport.ErrorKind)
+	require.Equal(t, "missing_tool", errorReport.ToolName)
+	require.Contains(t, errorReport.Available, "bash")
+	require.Equal(t, "bash", errorReport.ToolAliases["Bash"])
+	out.Reset()
+
+	err = app.ToolDetails([]string{"--json"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+	require.Equal(t, "missing_tool_name", errorReport.ErrorKind)
+	require.Equal(t, "tool-details", errorReport.Command)
 }
 
 func TestSessionsCommandForkExistsAndDelete(t *testing.T) {

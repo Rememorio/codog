@@ -236,6 +236,8 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/status")
 	require.Contains(t, names, "/compact")
 	require.Contains(t, names, "/session")
+	require.Contains(t, names, "/system-prompt")
+	require.Contains(t, names, "/tool-details")
 	require.NotContains(t, names, "/commit")
 	require.NotContains(t, names, "/capabilities")
 	require.Greater(t, len(names), 70)
