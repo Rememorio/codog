@@ -18,6 +18,7 @@ import (
 )
 
 const anthropicVersion = "2023-06-01"
+const skAntBearerHint = "sk-ant-* keys go in ANTHROPIC_API_KEY (x-api-key header), not ANTHROPIC_AUTH_TOKEN (Bearer header). Move your key to ANTHROPIC_API_KEY."
 
 var anthropicCredentialEnvVars = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
 
@@ -163,7 +164,7 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		retryAfter := retryAfterDelay(resp.Header.Get("retry-after"), time.Now())
-		statusErr := fmt.Errorf("anthropic request failed: %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		statusErr := c.anthropicStatusError(resp.Status, resp.StatusCode, string(data))
 		_ = resp.Body.Close()
 		lastErr = statusErr
 		if attempt < options.MaxRetries && retryableStatus(resp.StatusCode) {
@@ -175,6 +176,24 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 		return AssistantMessage{}, statusErr
 	}
 	return AssistantMessage{}, lastErr
+}
+
+func (c *Client) anthropicStatusError(status string, statusCode int, body string) error {
+	message := fmt.Sprintf("anthropic request failed: %s: %s", status, strings.TrimSpace(body))
+	if c.shouldHintSKAntBearer(statusCode) {
+		message += "\n" + skAntBearerHint
+	}
+	return errors.New(message)
+}
+
+func (c *Client) shouldHintSKAntBearer(statusCode int) bool {
+	if statusCode != http.StatusUnauthorized {
+		return false
+	}
+	if strings.TrimSpace(c.APIKey) != "" {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(c.AuthToken), "sk-ant-")
 }
 
 func (c *Client) anthropicCredentialsConfigured() bool {

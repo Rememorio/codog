@@ -151,6 +151,65 @@ func TestClientReturnsMissingCredentialsForAnthropicWithoutAuth(t *testing.T) {
 	require.Contains(t, err.Error(), "ANTHROPIC_AUTH_TOKEN")
 }
 
+func TestClientHintsWhenSKAntKeyIsSentAsBearerToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bearer sk-ant-api03-deadbeef", r.Header.Get("authorization"))
+		require.Empty(t, r.Header.Get("x-api-key"))
+		http.Error(w, `{"error":{"type":"authentication_error","message":"Invalid bearer token"}}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "", "sk-ant-api03-deadbeef")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Invalid bearer token")
+	require.Contains(t, err.Error(), "sk-ant-* keys go in ANTHROPIC_API_KEY")
+	require.Contains(t, err.Error(), "not ANTHROPIC_AUTH_TOKEN")
+}
+
+func TestClientSuppressesSKAntBearerHintWhenAPIKeyHeaderIsPresent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "sk-ant-real", r.Header.Get("x-api-key"))
+		require.Equal(t, "Bearer sk-ant-wrong-slot", r.Header.Get("authorization"))
+		http.Error(w, "Invalid bearer token", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "sk-ant-real", "sk-ant-wrong-slot")
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Invalid bearer token")
+	require.NotContains(t, err.Error(), "sk-ant-* keys go in")
+}
+
+func TestClientSuppressesSKAntBearerHintForNonUnauthorizedErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary upstream failure", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewWithRateLimit(server.URL, "", "sk-ant-api03-deadbeef", RateLimitOptions{MaxRetries: 0})
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "temporary upstream failure")
+	require.NotContains(t, err.Error(), "sk-ant-* keys go in")
+}
+
 func TestClientMissingCredentialsHintDetectsForeignProviderEnv(t *testing.T) {
 	tests := []struct {
 		name     string
