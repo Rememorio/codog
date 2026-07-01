@@ -1070,6 +1070,71 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Contains(t, slashReport.Hint, "--resume")
 }
 
+func TestResumedSlashCLIContracts(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":           configHome,
+		"auto_compact_messages": 2,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("user", "three")))
+	require.NoError(t, store.Append("resume-slash", anthropic.TextMessage("assistant", "four")))
+
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var statusReport struct {
+		Kind    string `json:"kind"`
+		Session struct {
+			Active       bool   `json:"active"`
+			ID           string `json:"id"`
+			MessageCount int    `json:"message_count"`
+		} `json:"session"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &statusReport))
+	require.Equal(t, "status", statusReport.Kind)
+	require.True(t, statusReport.Session.Active)
+	require.Equal(t, "resume-slash", statusReport.Session.ID)
+	require.Equal(t, 4, statusReport.Session.MessageCount)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "/compact", "--keep", "2", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var compactReport session.ReplaceResult
+	require.NoError(t, json.Unmarshal([]byte(out), &compactReport))
+	require.Equal(t, "resume-slash", compactReport.SessionID)
+	require.Equal(t, 4, compactReport.OriginalMessages)
+	require.Equal(t, 3, compactReport.RemainingMessages)
+	opened, err := store.Open("resume-slash")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 3)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/commit"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var slashReport slashErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
+	require.Equal(t, "/commit", slashReport.Command)
+}
+
 func TestInvalidPermissionModeJSONContract(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

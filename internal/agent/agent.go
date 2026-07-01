@@ -273,6 +273,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := app.validateGlobalToolRules(overrides, requestedOutputFormat(originalArgs)); err != nil {
 		return err
 	}
+	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) != "" {
+		return app.RunResumedSlash(ctx, command, rest, overrides, requestedOutputFormat(originalArgs))
+	}
 	if strings.HasPrefix(command, "/") {
 		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
 		if err != nil {
@@ -17642,6 +17645,83 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 	return mapped, injectGlobalOutputFormat(mapped, args, format), nil
 }
 
+func (a *App) RunResumedSlash(ctx context.Context, command string, args []string, overrides config.FlagOverrides, format string) error {
+	name := strings.ToLower(strings.TrimSpace(command))
+	if !strings.HasPrefix(name, "/") {
+		return fmt.Errorf("resume slash command must start with /: %q", command)
+	}
+	if _, ok := slash.Lookup(name); !ok {
+		if mapped := directSlashCommandName(name); mapped == "" {
+			return renderUnknownSlashCommand(a.Out, command, format)
+		}
+	}
+	resumed := overrides
+	if strings.TrimSpace(resumed.Resume) == "" {
+		resumed.Resume = "latest"
+	}
+	switch name {
+	case "/status":
+		return a.Status(resumeSlashArgs("status", args, format), resumed)
+	case "/statusline":
+		return a.Statusline(resumeSlashArgs("statusline", args, format), resumed)
+	case "/compact":
+		return a.Compact(resumeSlashArgs("compact", args, format), resumed)
+	case "/session":
+		return a.runResumedSessionSlash(resumeSlashArgs("sessions", args, format), resumed)
+	case "/summary":
+		return a.Summary(resumeSlashArgs("summary", args, format), resumed)
+	case "/history", "/prompt-history":
+		return a.History(resumeSlashArgs("history", args, format), resumed)
+	case "/rewind", "/checkpoint":
+		return a.Rewind(resumeSlashArgs("rewind", args, format), resumed)
+	case "/context":
+		return a.Context(resumeSlashArgs("context", args, format), resumed)
+	case "/ctx_viz":
+		return a.ContextViz(resumeSlashArgs("ctx_viz", args, format), resumed)
+	case "/cost", "/tokens":
+		return a.ShowCost(resumed)
+	case "/usage", "/stats":
+		return a.Usage(resumeSlashArgs("usage", args, format), resumed)
+	case "/cache", "/caches":
+		return a.Cache(resumeSlashArgs("cache", args, format), resumed)
+	case "/break-cache":
+		return a.BreakCache(resumeSlashArgs("break-cache", args, format), resumed)
+	case "/rename":
+		return a.Rename(resumeSlashArgs("rename", args, format), resumed)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func resumeSlashArgs(_ string, args []string, format string) []string {
+	format = strings.TrimSpace(format)
+	if format == "" || argsHaveOutputFormat(args) {
+		return args
+	}
+	out := append([]string(nil), args...)
+	out = append(out, "--output-format", format)
+	return out
+}
+
+func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrides) error {
+	if len(args) == 0 || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
+		return a.ResumeCommand(append([]string{overrides.Resume}, args...))
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "show", "exists", "fork", "rename", "delete":
+		if len(args) == 1 || strings.HasPrefix(strings.TrimSpace(args[1]), "-") {
+			withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
+			return a.SessionsCommand(withSession)
+		}
+		return a.SessionsCommand(args)
+	case "list", "ls":
+		return a.SessionsCommand(args)
+	default:
+		withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
+		return a.SessionsCommand(withSession)
+	}
+}
+
 func directSlashCommandName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "/exit_plan_mode":
@@ -17663,6 +17743,24 @@ func directSlashCommandName(name string) string {
 		return ""
 	}
 	return strings.TrimPrefix(name, "/")
+}
+
+func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format string) error {
+	report := slashErrorReport{
+		Kind:      "unsupported_resumed_slash_command",
+		ErrorKind: "unsupported_resumed_slash_command",
+		Status:    "error",
+		Command:   command,
+		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, or /session.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: err}
 }
 
 func directSlashInteractiveOnly(name string) bool {
@@ -30421,8 +30519,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "resume",
 			Command:                 "resume",
-			Usage:                   "codog --resume ID|latest [prompt TEXT|repl]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl]\n\nSelects an existing session before running prompt or REPL. Help is local and does not open a session.\n",
+			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command]",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /compact, /summary, /usage, /cache, /context, /history, /rewind, or /session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
