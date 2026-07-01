@@ -209,6 +209,20 @@ func TestLoadDashScopeEnvironmentForQwenModel(t *testing.T) {
 	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1", cfg.BaseURL)
 }
 
+func TestLoadDashScopeEnvironmentForKimiAlias(t *testing.T) {
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "DASHSCOPE_BASE_URL")
+	t.Setenv("CODOG_MODEL", "kimi")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("DASHSCOPE_API_KEY", "dashscope-secret")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "kimi", cfg.Model)
+	require.Equal(t, "dashscope-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1", cfg.BaseURL)
+}
+
 func TestLoadLocalModelUsesOllamaHost(t *testing.T) {
 	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_BASE_URL")
 	t.Setenv("CODOG_MODEL", "local/Qwen/Qwen3.6-27B-FP8")

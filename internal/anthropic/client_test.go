@@ -43,6 +43,28 @@ func TestClientStreamsText(t *testing.T) {
 	require.Equal(t, 10, msg.Usage.InputTokens)
 }
 
+func TestClientStreamsAnthropicAliasAsResolvedModel(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "hello from alias",
+		OnRequest: func(data json.RawMessage) {
+			require.NoError(t, json.Unmarshal(data, &requestBody))
+		},
+	}.Handler())
+	defer server.Close()
+
+	client := New(server.URL, "test", "")
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "opus",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-opus-4-7", requestBody["model"])
+	require.Contains(t, msg.Blocks[0].Text, "hello from alias")
+}
+
 func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/chat/completions", r.URL.Path)
@@ -110,6 +132,10 @@ func TestClientStreamsLocalModelStripsRoutingPrefix(t *testing.T) {
 func TestClientStreamsDashScopeNamespacedModelStripsRoutingPrefix(t *testing.T) {
 	assertOpenAICompatibleRequestModel(t, "qwen/qwen-max", "qwen-max")
 	assertOpenAICompatibleRequestModel(t, "kimi/kimi-k2.5", "kimi-k2.5")
+}
+
+func TestClientStreamsDashScopeAliasThroughOpenAICompatibleRoute(t *testing.T) {
+	assertOpenAICompatibleRequestModel(t, "kimi", "kimi-k2.5")
 }
 
 func TestOpenAIWireModelPreservesNamespacedModelForCustomGateway(t *testing.T) {

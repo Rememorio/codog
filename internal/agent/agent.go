@@ -24865,8 +24865,11 @@ type modelReport struct {
 }
 
 type modelAliasReport struct {
-	Name  string `json:"name"`
-	Model string `json:"model"`
+	Name                string `json:"name"`
+	Model               string `json:"model"`
+	Provider            string `json:"provider,omitempty"`
+	MaxOutputTokens     int    `json:"max_output_tokens,omitempty"`
+	ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
 }
 
 type modelRouteReport struct {
@@ -25059,11 +25062,21 @@ func modelHelpArgsWithoutHelp(args []string) []string {
 }
 
 func modelAliases() []modelAliasReport {
-	return []modelAliasReport{
-		{Name: "opus", Model: "claude-opus"},
-		{Name: "sonnet", Model: config.DefaultModel},
-		{Name: "haiku", Model: "claude-haiku"},
+	aliases := modelrouting.BuiltInAliases()
+	out := make([]modelAliasReport, 0, len(aliases))
+	for _, alias := range aliases {
+		report := modelAliasReport{
+			Name:     alias.Name,
+			Model:    alias.Model,
+			Provider: modelrouting.ProviderForModel(alias.Model),
+		}
+		if limit, ok := modelrouting.TokenLimitForModel(alias.Model); ok {
+			report.MaxOutputTokens = limit.MaxOutputTokens
+			report.ContextWindowTokens = limit.ContextWindowTokens
+		}
+		out = append(out, report)
 	}
+	return out
 }
 
 func modelRoutes() []modelRouteReport {
@@ -25117,13 +25130,7 @@ func modelRoutes() []modelRouteReport {
 }
 
 func resolveModelAlias(model string) string {
-	trimmed := strings.TrimSpace(model)
-	for _, alias := range modelAliases() {
-		if strings.EqualFold(trimmed, alias.Name) {
-			return alias.Model
-		}
-	}
-	return trimmed
+	return modelrouting.ResolveAlias(model)
 }
 
 func renderModelReport(out io.Writer, report modelReport, format string) error {

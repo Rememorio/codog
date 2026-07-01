@@ -1250,6 +1250,8 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "ok", models.Status)
 	require.Equal(t, config.DefaultModel, models.DefaultModel)
 	require.NotEmpty(t, models.Aliases)
+	require.True(t, modelAliasExists(models.Aliases, "kimi", "kimi-k2.5", modelrouting.ProviderDashScope))
+	require.True(t, modelAliasExists(models.Aliases, "opus", "claude-opus-4-7", modelrouting.ProviderAnthropic))
 	require.NotEmpty(t, models.Routes)
 	require.True(t, modelRouteExists(models.Routes, "openai/", modelrouting.ProviderOpenAI))
 	require.True(t, modelRouteExists(models.Routes, "local/", modelrouting.ProviderOpenAI))
@@ -2992,6 +2994,15 @@ func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 func modelRouteExists(routes []modelRouteReport, prefix string, provider string) bool {
 	for _, route := range routes {
 		if route.Prefix == prefix && route.Provider == provider {
+			return true
+		}
+	}
+	return false
+}
+
+func modelAliasExists(aliases []modelAliasReport, name string, model string, provider string) bool {
+	for _, alias := range aliases {
+		if alias.Name == name && alias.Model == model && alias.Provider == provider && alias.MaxOutputTokens > 0 && alias.ContextWindowTokens > 0 {
 			return true
 		}
 	}

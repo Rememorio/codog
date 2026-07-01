@@ -15,8 +15,41 @@ const (
 	DefaultDashScopeBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 
+type ModelAlias struct {
+	Name  string
+	Model string
+}
+
+type TokenLimit struct {
+	MaxOutputTokens     int
+	ContextWindowTokens int
+}
+
+var builtInAliases = []ModelAlias{
+	{Name: "opus", Model: "claude-opus-4-7"},
+	{Name: "sonnet", Model: "claude-sonnet-4-6"},
+	{Name: "haiku", Model: "claude-haiku-4-5-20251213"},
+	{Name: "kimi", Model: "kimi-k2.5"},
+}
+
+func BuiltInAliases() []ModelAlias {
+	out := make([]ModelAlias, len(builtInAliases))
+	copy(out, builtInAliases)
+	return out
+}
+
+func ResolveAlias(model string) string {
+	trimmed := strings.TrimSpace(model)
+	for _, alias := range builtInAliases {
+		if strings.EqualFold(trimmed, alias.Name) {
+			return alias.Model
+		}
+	}
+	return trimmed
+}
+
 func ProviderForModel(model string) string {
-	canonical := strings.ToLower(strings.TrimSpace(model))
+	canonical := strings.ToLower(ResolveAlias(model))
 	switch {
 	case canonical == "":
 		return ProviderAnthropic
@@ -37,7 +70,7 @@ func IsOpenAICompatibleModel(model string) bool {
 }
 
 func WireModelForBaseURL(model string, baseURL string) string {
-	trimmed := strings.TrimSpace(model)
+	trimmed := ResolveAlias(model)
 	pos := strings.Index(trimmed, "/")
 	if pos < 0 {
 		return trimmed
@@ -54,6 +87,32 @@ func WireModelForBaseURL(model string, baseURL string) string {
 		return trimmed[pos+1:]
 	default:
 		return trimmed
+	}
+}
+
+func TokenLimitForModel(model string) (TokenLimit, bool) {
+	canonical := ResolveAlias(model)
+	base := canonical
+	if slash := strings.LastIndex(base, "/"); slash >= 0 {
+		base = base[slash+1:]
+	}
+	switch base {
+	case "claude-opus-4-7", "claude-opus-4-6":
+		return TokenLimit{MaxOutputTokens: 32000, ContextWindowTokens: 200000}, true
+	case "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5-20251213":
+		return TokenLimit{MaxOutputTokens: 64000, ContextWindowTokens: 200000}, true
+	case "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano":
+		return TokenLimit{MaxOutputTokens: 32768, ContextWindowTokens: 1047576}, true
+	case "gpt-5.4":
+		return TokenLimit{MaxOutputTokens: 128000, ContextWindowTokens: 1000000}, true
+	case "gpt-5.4-mini", "gpt-5.4-nano":
+		return TokenLimit{MaxOutputTokens: 128000, ContextWindowTokens: 400000}, true
+	case "kimi-k2.5", "kimi-k1.5":
+		return TokenLimit{MaxOutputTokens: 16384, ContextWindowTokens: 256000}, true
+	case "qwen-max", "qwen-plus":
+		return TokenLimit{MaxOutputTokens: 8192, ContextWindowTokens: 131072}, true
+	default:
+		return TokenLimit{}, false
 	}
 }
 

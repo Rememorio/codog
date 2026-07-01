@@ -78,11 +78,13 @@ func (o RateLimitOptions) Report() RateLimitReport {
 }
 
 func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
-	if modelrouting.IsOpenAICompatibleModel(req.Model) {
-		return c.streamOpenAICompatible(ctx, req, onText)
+	resolvedReq := req
+	resolvedReq.Model = modelrouting.ResolveAlias(req.Model)
+	if modelrouting.IsOpenAICompatibleModel(resolvedReq.Model) {
+		return c.streamOpenAICompatible(ctx, resolvedReq, onText)
 	}
-	req.Stream = true
-	body, err := json.Marshal(req)
+	resolvedReq.Stream = true
+	body, err := json.Marshal(resolvedReq)
 	if err != nil {
 		return AssistantMessage{}, err
 	}
