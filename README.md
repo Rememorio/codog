@@ -1,161 +1,173 @@
 # Codog
 
-Codog is a Go-native coding agent for working inside software repositories from
-the terminal.
+Codog is a Go-native coding agent CLI for working inside software
+repositories.
 
-It aims to make the core Claude Code-style workflow inspectable, portable, and
-easy to modify as ordinary Go software: one binary, local session state,
-explicit tool permissions, streaming model responses, and extension points that
-can be tested without a hidden desktop runtime.
+It brings the core Claude Code-style loop into an ordinary Go program: a single
+binary, streaming model responses, local repository tools, explicit permission
+checks, resumable JSONL sessions, and file-based extension points. The project
+is independent, is not affiliated with Anthropic, and is not intended to be a
+drop-in replacement for Claude Code.
 
-Codog is an independent project. It is not affiliated with Anthropic, and it is
-not a drop-in replacement for Claude Code.
-
-## Status
+## Project Status
 
 Codog is pre-1.0 software. The local agent workflow is usable, but command
 names, configuration fields, compatibility shims, and extension APIs may still
 change.
 
-The CLI is the source of truth for a given build:
+The README describes the shape of the project. The exact runtime surface for a
+given build is reported by the CLI:
 
 ```bash
 codog capabilities --json
 ```
 
-Use that output when you need an exact inventory of commands, tools, protocols,
-and compatibility features.
+## Why Codog Exists
 
-## Why It Exists
+Most coding-agent systems are difficult to inspect because their behavior is
+split across hosted services, local launchers, editor integrations, and hidden
+state. Codog keeps the local runtime small enough to read and strict enough to
+test.
 
-Coding-agent tools often span hosted APIs, local CLIs, editor integrations, and
-extension systems. Codog keeps the local runtime small and explicit:
+The design goals are:
 
-- A single Go binary is the main runtime surface.
-- Sessions, approvals, summaries, memory, and runtime artifacts are stored as
-  local files.
-- Tool execution is explicit: workspace roots, permission modes, shell access,
-  allow lists, sandbox reporting, and policy checks are part of the runtime
-  contract.
-- Claude-style project files, tool names, slash commands, and protocol shapes
-  are mirrored where they help migration or parity testing.
-- MCP, hooks, skills, plugins, prompt templates, and editor bridges are treated
-  as first-class extension surfaces rather than afterthoughts.
+- **One binary.** The main runtime ships as a Go executable that can run from a
+  checkout or be installed like a normal CLI.
+- **Local state.** Sessions, summaries, approvals, usage data, memory, and
+  generated artifacts live in project or user-owned files.
+- **Visible execution.** Tool permissions, workspace roots, shell access,
+  sandbox reporting, audit records, and policy checks are runtime contracts.
+- **Composable extensions.** Slash commands, prompt templates, hooks, skills,
+  plugins, MCP, and local bridges are file-backed or protocol-backed surfaces.
+- **Compatibility where useful.** Claude-style tool names, project files, and
+  protocol shapes are mirrored when they help migration, testing, or automation.
 
-The goal is not to clone every private implementation detail of another tool.
-The goal is a practical local agent runtime that can be read, modified, tested,
-and shipped by Go developers.
+## What It Can Do
 
-## Install
+| Surface | Current shape |
+| --- | --- |
+| Agent loop | One-shot prompts, side questions, REPL, Bubble Tea TUI, streaming Anthropic-compatible requests, and OpenAI-compatible endpoint support. |
+| Repository tools | Read, write, edit, glob, grep, list files, run shell commands, inspect git state, manage todos, and supervise background tasks. |
+| Sessions | JSONL transcripts, resume/fork/rename/delete, history, summaries, export, rewind, compaction, usage, token, and cost views. |
+| Extensions | Project slash commands, prompt templates, hooks, skills, plugins, MCP client/server surfaces, local resources, and custom tool aliases. |
+| Workflow helpers | Review and bug-hunting prompts, PR/comment helpers, GitHub workflow setup, project onboarding, context visualization, and diagnostics. |
+| Integrations | ACP/IDE bridge, remote-control HTTP API, OAuth provider profiles, sandbox reporting, updater flow, and enterprise policy checks. |
 
-Codog requires Go 1.24 or newer.
+Codog intentionally keeps this list high-level. For scripts, tests, or parity
+checks, prefer the machine-readable output from `codog capabilities --json`.
+
+## Quick Start
+
+Install from source with Go 1.24 or newer:
 
 ```bash
 go install github.com/Rememorio/codog/cmd/codog@latest
 ```
 
-For development from a checkout:
+Set an Anthropic-compatible credential through `ANTHROPIC_API_KEY` or Codog's
+local key store:
 
 ```bash
-go build ./cmd/codog
+codog api-key set <key>
 ```
 
-## First Run
-
-Configure an Anthropic-compatible key with either `ANTHROPIC_API_KEY` or the
-local key store (`codog api-key set KEY`).
-
-Then run Codog from the repository you want it to inspect:
+Run Codog from the repository you want it to inspect:
 
 ```bash
 codog -p "summarize this repository"
 ```
 
-For an interactive session, use the REPL or the Bubble Tea TUI:
+For longer work, start an interactive session:
 
 ```bash
 codog repl
 codog tui
 ```
 
-## Core Workflow
+## Daily Workflow
 
-Codog is organized around a few durable surfaces.
+Start with a narrow prompt in the repository root. Codog builds context from the
+workspace, streams the model response, and asks for confirmation before running
+tools that need it. As the session grows, the transcript is written to JSONL so
+you can resume it, summarize it, export it, compact the active context, or audit
+tool calls later.
 
-**Ask and iterate.** Use one-shot prompts for quick repository questions, then
-move into REPL or TUI sessions for multi-turn work. Sessions are stored as JSONL
-so they can be resumed, inspected, exported, summarized, compacted, and used for
-cost or token accounting.
-
-**Let the agent work in a repository.** The built-in tools cover the common
-coding loop: read files, write files, apply edits, glob, grep, run shell
-commands, inspect git state, track todos, and manage background tasks. Tool
-aliases are kept close to Claude-style names where compatibility is useful.
-
-**Extend the runtime locally.** Projects can define slash commands, prompt
-templates, hooks, skills, plugins, MCP servers and clients, worker definitions,
-and local resources. The extension formats are file-based so they can be
-versioned with the project when that makes sense.
-
-**Keep execution visible.** Permission modes, allowed and disallowed tools,
-workspace roots, sandbox status, hooks, approvals, audit records, and policy
-checks are part of the runtime rather than informal prompt instructions.
+For exploratory work, use the REPL or TUI. For automation, use one-shot prompts,
+JSON output, slash commands, hooks, and MCP. For debugging the local setup, use
+`codog doctor`, `codog status`, and `codog context`.
 
 ## Configuration
 
 Configuration is layered from defaults, environment variables, user config,
 project config, local overrides, and command-line flags. Repository-local files
-are intentionally plain:
+are intentionally plain text so teams can version the parts that should be
+shared.
 
 | Path | Purpose |
 | --- | --- |
-| `AGENTS.md` | Project instructions for Codog. |
+| `AGENTS.md` | Project instructions loaded into Codog's working context. |
 | `.codog.json` | Shared project configuration. |
 | `.codog.local.json` | Uncommitted local overrides. |
 | `.codog/commands` | Markdown slash commands. |
 | `.codog/templates` | Prompt templates. |
 | `.codog/skills` | Project skills. |
-| `.codog/hooks` | Local automation hooks. |
+| `.codog/hooks` | Hook definitions and local automation. |
 | `.codog/plugins` | Plugin manifests and packaged extension content. |
 
 Compatible `.claude` instruction, command, and skill locations are loaded where
-that compatibility is useful and implemented.
-
-Useful inspection commands:
-
-```bash
-codog doctor
-codog config paths
-codog context
-```
+that compatibility is implemented.
 
 ## Safety Model
 
-Codog treats tool execution as runtime behavior, not just model output.
+Codog treats tool execution as behavior that should be visible and reviewable,
+not as informal text generated by a model.
 
 - File tools are scoped to trusted workspace roots.
 - Shell tools can require confirmation and record structured results.
-- Permission modes can make a session read-only, workspace-write, prompt-gated,
-  or unrestricted.
-- Hooks and policy checks can add project-specific gates before or after tool
-  execution.
+- Permission modes support read-only, workspace-write, prompt-gated, and
+  unrestricted sessions.
+- Allow and deny lists can narrow the available tool surface.
+- Hooks and policy checks can add project-specific gates around execution.
 - Sessions record prompts, model responses, tool calls, approvals, summaries,
-  compaction metadata, token usage, and estimated cost for later review.
+  compaction metadata, token usage, and estimated cost.
+
+## Compatibility and Non-goals
+
+Codog follows Claude Code conventions where they are useful for local workflows:
+tool aliases such as `Read`, `Write`, `Edit`, `Grep`, `Glob`, and `Bash`;
+Claude-style project instructions; JSONL sessions; MCP; hooks; skills; and
+slash commands.
+
+The project does not try to clone private implementation details. Compatibility
+should be observable through documented behavior, tests, and protocol contracts,
+not through hidden assumptions.
 
 ## Development
 
 The CLI entry point is `cmd/codog`. Most behavior lives in focused packages
 under `internal/`.
 
+Useful entry points:
+
+| Area | Package |
+| --- | --- |
+| CLI orchestration | `internal/agent` |
+| Model streaming | `internal/anthropic` |
+| Repository tools | `internal/tools` |
+| Sessions | `internal/session` |
+| Configuration | `internal/config` |
+| Hooks and skills | `internal/hooks`, `internal/skills` |
+| MCP | `internal/mcp`, `internal/mcpserver` |
+| TUI | `internal/tui` |
+
+Run the test suite before submitting changes:
+
 ```bash
 go test ./...
-go build ./cmd/codog
 ```
 
-When adding user-facing behavior, keep the README high-level and put precise
-runtime truth in the CLI output, tests, or focused documentation. Avoid
-committing generated state, local cache paths, secrets, or tool-generated
-attribution.
+Keep generated state, local cache paths, secrets, and tool-generated attribution
+out of commits.
 
 ## License
 
