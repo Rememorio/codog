@@ -17666,6 +17666,22 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return renderVersion(a.Out, a.Workspace, resumeSlashArgs("version", args, format))
 	case "/config", "/settings":
 		return a.ConfigCommand(resumeSlashArgs("config", args, format))
+	case "/init":
+		return a.Init(resumeSlashArgs("init", args, format))
+	case "/memory":
+		return a.Memory(resumeSlashArgs("memory", args, format))
+	case "/project":
+		return a.Project(resumeSlashArgs("project", args, format))
+	case "/env":
+		return a.Env(resumeSlashArgs("env", args, format))
+	case "/state":
+		return a.State(resumeSlashArgs("state", args, format))
+	case "/onboarding":
+		return a.Onboarding(resumeSlashArgs("onboarding", args, format))
+	case "/doctor":
+		return a.Doctor(resumeSlashArgs("doctor", args, format))
+	case "/model":
+		return a.ResumedModel(resumeSlashArgs("model", args, format))
 	case "/status":
 		return a.Status(resumeSlashArgs("status", args, format), resumed)
 	case "/statusline":
@@ -17682,6 +17698,12 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Templates(resumeSlashArgs("templates", args, format))
 	case "/todos":
 		return a.Todos(resumeSlashArgs("todos", args, format))
+	case "/agents":
+		return a.runResumedAgentsSlash(resumeSlashArgs("agents", args, format), resumed, format)
+	case "/plugin", "/plugins", "/marketplace":
+		return a.runResumedMarketplaceSlash(resumeSlashArgs("plugins", args, format), format)
+	case "/background", "/tasks", "/bashes":
+		return a.runResumedBackgroundSlash(args, resumed, format)
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/git":
@@ -17761,6 +17783,57 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 	}
 }
 
+func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOverrides, format string) error {
+	action := ""
+	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 {
+		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+	}
+	switch action {
+	case "", "list", "status", "logs":
+		return a.BackgroundWithOverrides(args, overrides)
+	default:
+		command := "/tasks"
+		if action != "" {
+			command += " " + action
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverrides, format string) error {
+	action := ""
+	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 {
+		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+	}
+	switch action {
+	case "", "list", "show", "worktrees":
+		return a.AgentsWithOverrides(args, overrides)
+	default:
+		command := "/agents"
+		if action != "" {
+			command += " " + action
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
+	action := ""
+	if meaningful := routeMeaningfulArgs(args); len(meaningful) > 0 {
+		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
+	}
+	switch action {
+	case "", "list", "show", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "settings", "remote", "browse", "discover", "updates":
+		return a.Marketplace(args)
+	default:
+		command := "/plugins"
+		if action != "" {
+			command += " " + action
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
 func directSlashCommandName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "/exit_plan_mode":
@@ -17791,7 +17864,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -17872,7 +17945,7 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	meaningful := routeMeaningfulArgs(args)
 	lower := strings.ToLower(strings.TrimSpace(command))
 	if lower == "model" && len(meaningful) > 1 {
-		err := unexpectedExtraArgsError{Command: "model", Args: meaningful[1:], Usage: "codog model [MODEL]"}
+		err := unexpectedExtraArgsError{Command: "model", Args: meaningful[1:], Usage: "codog model [MODEL] [--output-format text|json]"}
 		return true, renderCLIError(out, err, format)
 	}
 	interactive := false
@@ -20919,17 +20992,98 @@ type advisorReport struct {
 	Message   string `json:"message,omitempty"`
 }
 
+type modelRequest struct {
+	Format string
+	Model  string
+}
+
+type modelReport struct {
+	Kind           string `json:"kind"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	Model          string `json:"model"`
+	Previous       string `json:"previous,omitempty"`
+	RequestedModel string `json:"requested_model,omitempty"`
+}
+
 func (a *App) Model(args []string) error {
-	if len(args) == 0 {
-		fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
+	req, err := parseModelArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := a.Config.Model
+	action := "show"
+	if req.Model != "" {
+		action = "set"
+		a.Config.Model = req.Model
+	}
+	report := modelReport{
+		Kind:     "model",
+		Action:   action,
+		Status:   "ok",
+		Model:    a.Config.Model,
+		Previous: previous,
+	}
+	if action == "show" {
+		report.Previous = ""
+	}
+	return renderModelReport(a.Out, report, req.Format)
+}
+
+func (a *App) ResumedModel(args []string) error {
+	req, err := parseModelArgs(args)
+	if err != nil {
+		return err
+	}
+	report := modelReport{
+		Kind:           "model",
+		Action:         "show",
+		Status:         "ok",
+		Model:          a.Config.Model,
+		RequestedModel: req.Model,
+	}
+	return renderModelReport(a.Out, report, req.Format)
+}
+
+func parseModelArgs(args []string) (modelRequest, error) {
+	req := modelRequest{Format: "text"}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("model output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown model flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "model"); err != nil {
+		return req, err
+	}
+	req.Model = strings.TrimSpace(strings.Join(positionals, " "))
+	return req, nil
+}
+
+func renderModelReport(out io.Writer, report modelReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
 		return nil
 	}
-	model := strings.TrimSpace(strings.Join(args, " "))
-	if model == "" {
-		return errors.New("usage: codog model [name]")
+	fmt.Fprintf(out, "model=%s\n", report.Model)
+	if report.RequestedModel != "" {
+		fmt.Fprintf(out, "requested_model=%s\n", report.RequestedModel)
 	}
-	a.Config.Model = model
-	fmt.Fprintf(a.Out, "model=%s\n", a.Config.Model)
 	return nil
 }
 
@@ -29747,7 +29901,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "model", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
@@ -30208,9 +30362,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"model",
 			"model",
-			"codog model [MODEL]",
-			"Model\n\nUsage:\n  codog model [MODEL]\n\nShows or changes the configured default model for future provider requests.\n",
-			[]string{"model", "previous", "path"},
+			"codog model [MODEL] [--output-format text|json]",
+			"Model\n\nUsage:\n  codog model [MODEL] [--output-format text|json]\n\nShows or changes the configured default model for future provider requests.\n",
+			[]string{"model", "previous", "requested_model"},
 			[]string{"ok", "error"},
 			true,
 		), true

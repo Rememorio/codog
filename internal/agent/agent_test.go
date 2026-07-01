@@ -33,8 +33,10 @@ import (
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/cron"
+	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
 	"github.com/Rememorio/codog/internal/oauth"
@@ -1010,6 +1012,27 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "config", settingsHelp.Topic)
 	require.Equal(t, "config", settingsHelp.Command)
 
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/model"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var directModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &directModel))
+	require.Equal(t, "model", directModel.Kind)
+	require.Equal(t, "show", directModel.Action)
+	require.NotEmpty(t, directModel.Model)
+	require.True(t, commandAcceptsGlobalOutputFormat("model"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "model", "claude-json", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var setModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &setModel))
+	require.Equal(t, "set", setModel.Action)
+	require.Equal(t, "claude-json", setModel.Model)
+	require.NotEmpty(t, setModel.Previous)
+
 	for _, command := range []string{"/version", "/sandbox", "/diff"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
@@ -1100,6 +1123,8 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	data, err := json.Marshal(map[string]any{
 		"config_home":           configHome,
 		"auto_compact_messages": 2,
+		"model":                 "claude-test",
+		"api_key":               "test-key",
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
@@ -1212,6 +1237,26 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "status", resumedHelp.Topic)
 	require.Equal(t, "status", resumedHelp.Command)
 
+	out, err = runResumedJSON("/init")
+	require.NoError(t, err)
+	var resumedInit struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedInit))
+	require.Equal(t, "init", resumedInit.Kind)
+	require.Equal(t, "init", resumedInit.Action)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+
+	out, err = runResumedJSON("/memory", "list")
+	require.NoError(t, err)
+	var resumedMemory memory.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMemory))
+	require.Equal(t, "memory", resumedMemory.Kind)
+	require.Equal(t, "list", resumedMemory.Action)
+	require.GreaterOrEqual(t, resumedMemory.InstructionFiles, 1)
+
 	out, err = runResumedJSON("/version")
 	require.NoError(t, err)
 	var resumedVersion struct {
@@ -1239,6 +1284,58 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &settingsPaths))
 	require.Equal(t, configPaths.Paths, settingsPaths.Paths)
+
+	out, err = runResumedJSON("/project")
+	require.NoError(t, err)
+	var resumedProject projectReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedProject))
+	require.Equal(t, "project", resumedProject.Kind)
+	require.Equal(t, filepath.Base(workspace), resumedProject.Name)
+
+	out, err = runResumedJSON("/env")
+	require.NoError(t, err)
+	var resumedEnv envReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedEnv))
+	require.Equal(t, "env", resumedEnv.Kind)
+	require.NotNil(t, resumedEnv.Variables)
+
+	require.NoError(t, workerstate.Save(workspace, workerstate.New(workerstate.Options{
+		WorkerID:  "resume-worker",
+		Version:   "test",
+		Mode:      "resume",
+		Status:    "idle",
+		Workspace: workspace,
+		SessionID: "resume-slash",
+	})))
+	out, err = runResumedJSON("/state")
+	require.NoError(t, err)
+	var resumedState workerstate.State
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedState))
+	require.Equal(t, "worker_state", resumedState.Kind)
+	require.Equal(t, "resume-worker", resumedState.WorkerID)
+
+	out, err = runResumedJSON("/onboarding")
+	require.NoError(t, err)
+	var resumedOnboarding onboarding.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOnboarding))
+	require.Equal(t, "onboarding", resumedOnboarding.Kind)
+	require.NotEmpty(t, resumedOnboarding.Checks)
+
+	out, err = runResumedJSON("/model")
+	require.NoError(t, err)
+	var resumedModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedModel))
+	require.Equal(t, "model", resumedModel.Kind)
+	require.Equal(t, "show", resumedModel.Action)
+	require.Equal(t, "claude-test", resumedModel.Model)
+
+	out, err = runResumedJSON("/model", "claude-requested")
+	require.NoError(t, err)
+	var requestedModel modelReport
+	require.NoError(t, json.Unmarshal([]byte(out), &requestedModel))
+	require.Equal(t, "show", requestedModel.Action)
+	require.Equal(t, "claude-test", requestedModel.Model)
+	require.Equal(t, "claude-requested", requestedModel.RequestedModel)
 
 	out, err = runResumedJSON("/sandbox")
 	require.NoError(t, err)
@@ -1292,6 +1389,53 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTodos))
 	require.Equal(t, "todos", resumedTodos.Kind)
 	require.Equal(t, "list", resumedTodos.Action)
+
+	out, err = runResumedJSON("/agents", "list")
+	require.NoError(t, err)
+	var resumedAgents agentsListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgents))
+	require.Equal(t, "agents", resumedAgents.Kind)
+	require.Equal(t, "list", resumedAgents.Action)
+
+	out, err = runResumedJSON("/plugins", "list")
+	require.NoError(t, err)
+	var resumedPlugins pluginsListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlugins))
+	require.Equal(t, "plugin", resumedPlugins.Kind)
+	require.Equal(t, "list", resumedPlugins.Action)
+
+	out, err = runResumedJSON("/tasks")
+	require.NoError(t, err)
+	var resumedTasks []background.Task
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTasks))
+	require.Empty(t, resumedTasks)
+
+	for _, guarded := range []struct {
+		Command string
+		Args    []string
+		Report  string
+	}{
+		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
+		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
+		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
+	} {
+		out, err = runResumedJSON(guarded.Command, guarded.Args...)
+		require.Error(t, err, guarded.Command)
+		var guardedExit *ExitError
+		require.ErrorAs(t, err, &guardedExit, guarded.Command)
+		require.True(t, guardedExit.Silent, guarded.Command)
+		var guardedReport slashErrorReport
+		require.NoError(t, json.Unmarshal([]byte(out), &guardedReport), guarded.Command)
+		require.Equal(t, "unsupported_resumed_slash_command", guardedReport.ErrorKind, guarded.Command)
+		require.Equal(t, guarded.Report, guardedReport.Command, guarded.Command)
+	}
+
+	out, err = runResumedJSON("/doctor")
+	require.NoError(t, err)
+	var resumedDoctor doctor.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDoctor))
+	require.Equal(t, "doctor", resumedDoctor.Kind)
+	require.NotEmpty(t, resumedDoctor.Checks)
 
 	if gitAvailable {
 		out, err = runResumedJSON("/diff")
@@ -1355,6 +1499,7 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/commit", slashReport.Command)
 	require.Contains(t, slashReport.Hint, "/help")
+	require.Contains(t, slashReport.Hint, "/model")
 }
 
 func TestInvalidPermissionModeJSONContract(t *testing.T) {
