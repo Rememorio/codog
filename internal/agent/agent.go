@@ -14824,11 +14824,12 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 			report.Messages = append(report.Messages, "Local GitHub App setup checks are ready.")
 		}
 	case "WarningsStep":
+		a.populateGitHubAppSuccessChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
 		if len(report.Warnings) > 0 {
 			report.Status = "warn"
 			report.Messages = append(report.Messages, fmt.Sprintf("%d warning(s) need attention.", len(report.Warnings)))
 		} else {
-			report.Messages = append(report.Messages, "No warnings were produced by the local dry-run setup.")
+			report.Messages = append(report.Messages, "No warnings were produced by the local setup checks.")
 		}
 	case "ErrorStep":
 		report.Messages = append(report.Messages, "No local setup error was produced by the dry-run check.")
