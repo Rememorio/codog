@@ -352,6 +352,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Vim(rest)
 	case "effort":
 		return app.Effort(rest)
+	case "reasoning":
+		return app.Reasoning(rest)
 	case "fast":
 		return app.Fast(rest)
 	case "voice":
@@ -7516,12 +7518,20 @@ type effortReport struct {
 }
 
 func (a *App) Effort(args []string) error {
-	req, err := parseEffortArgs(args)
+	return a.reasoningEffort(args, "effort", "Effort")
+}
+
+func (a *App) Reasoning(args []string) error {
+	return a.reasoningEffort(args, "reasoning", "Reasoning")
+}
+
+func (a *App) reasoningEffort(args []string, kind string, title string) error {
+	req, err := parseEffortArgs(args, kind)
 	if err != nil {
 		return err
 	}
 	report := effortReport{
-		Kind:      "effort",
+		Kind:      kind,
 		Action:    req.Action,
 		Status:    "ok",
 		Effort:    effectiveEffort(a.Config.ReasoningEffort),
@@ -7568,11 +7578,11 @@ func (a *App) Effort(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
-	renderEffortReport(a.Out, report)
+	renderEffortReport(a.Out, title, report)
 	return nil
 }
 
-func parseEffortArgs(args []string) (effortRequest, error) {
+func parseEffortArgs(args []string, command string) (effortRequest, error) {
 	req := effortRequest{Action: "status", Format: "text", Target: "user"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -7583,7 +7593,7 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("effort output format is required")
+				return req, fmt.Errorf("%s output format is required", command)
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -7591,7 +7601,7 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 		case arg == "--target":
 			index++
 			if index >= len(args) {
-				return req, errors.New("effort target is required")
+				return req, fmt.Errorf("%s target is required", command)
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
@@ -7599,7 +7609,7 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 		case arg == "--path":
 			index++
 			if index >= len(args) {
-				return req, errors.New("effort config path is required")
+				return req, fmt.Errorf("%s config path is required", command)
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -7608,7 +7618,7 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "effort"); err != nil {
+	if err := validateTextOrJSON(req.Format, command); err != nil {
 		return req, err
 	}
 	if len(rest) == 0 {
@@ -7621,7 +7631,7 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 		req.Action = "list"
 	case "set":
 		if len(rest) < 2 {
-			return req, errors.New("effort level is required")
+			return req, fmt.Errorf("%s level is required", command)
 		}
 		req.Action = "set"
 		req.Level = strings.ToLower(rest[1])
@@ -7629,7 +7639,7 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 		req.Action = "clear"
 	default:
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected effort argument %q", rest[1])
+			return req, fmt.Errorf("unexpected %s argument %q", command, rest[1])
 		}
 		req.Action = "set"
 		req.Level = strings.ToLower(rest[0])
@@ -7637,8 +7647,8 @@ func parseEffortArgs(args []string) (effortRequest, error) {
 	return req, nil
 }
 
-func renderEffortReport(out io.Writer, report effortReport) {
-	fmt.Fprintln(out, "Effort")
+func renderEffortReport(out io.Writer, title string, report effortReport) {
+	fmt.Fprintln(out, title)
 	fmt.Fprintf(out, "  Active           %s\n", report.Effort)
 	if report.Previous != "" {
 		fmt.Fprintf(out, "  Previous         %s\n", report.Previous)
@@ -14143,6 +14153,7 @@ func builtInCommandNames() []string {
 		"providers",
 		"python",
 		"rate-limit-options",
+		"reasoning",
 		"references",
 		"release-notes",
 		"reload-plugins",
@@ -17119,6 +17130,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/effort":
 		if err := a.Effort(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/reasoning":
+		if err := a.Reasoning(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/fast":
@@ -23823,7 +23838,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
-		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
+		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
@@ -24272,6 +24287,21 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "effort", "reasoning":
+		command := strings.ToLower(strings.TrimSpace(topic))
+		title := "Effort"
+		if command == "reasoning" {
+			title = "Reasoning"
+		}
+		return localCommandHelpSpec(
+			command,
+			command,
+			fmt.Sprintf("codog %s [auto|low|medium|high|clear] [--target user|project|local] [--output-format text|json]", command),
+			fmt.Sprintf("%s\n\nUsage:\n  codog %s [auto|low|medium|high|clear] [--target user|project|local] [--output-format text|json]\n\nShows or changes the reasoning effort preference stored as `reasoning_effort`. The preference is injected into provider prompts as runtime context.\n", title, command),
+			[]string{"effort", "previous", "available", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "hooks":
 		return localCommandHelpSpec(
 			"hooks",
@@ -24495,6 +24525,7 @@ Usage:
   %s [flags] color [list|NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] vim [on|off|toggle|status] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] effort [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
+  %s [flags] reasoning [auto|low|medium|high|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] fast [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] voice [status|set-command|on|off|toggle|test|listen|transcribe|clear] [--command COMMAND] [--input TEXT] [--timeout-ms N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] listen [--input TEXT] [--timeout-ms N] [--json|--output-format text|json]

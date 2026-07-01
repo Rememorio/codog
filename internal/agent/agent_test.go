@@ -157,6 +157,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.False(t, *report.RequiresProviderRequest)
 	require.Contains(t, report.OutputFields, "text_preview")
 	require.Contains(t, report.StatusValues, "error")
+
+	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"reasoning", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "reasoning", report.Topic)
+	require.Equal(t, "reasoning", report.Command)
+	require.Contains(t, report.Help, "reasoning effort")
+	require.Contains(t, report.OutputFields, "effort")
+	require.NotNil(t, report.LocalOnly)
+	require.True(t, *report.LocalOnly)
 }
 
 func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
@@ -228,6 +238,16 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "telemetry", "--help", "--output-format", "json"},
 			topic: "telemetry",
 		},
+		{
+			name:  "effort local help",
+			args:  []string{"--config", configPath, "effort", "--help", "--output-format", "json"},
+			topic: "effort",
+		},
+		{
+			name:  "reasoning local help",
+			args:  []string{"--config", configPath, "reasoning", "--help", "--output-format", "json"},
+			topic: "reasoning",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -287,6 +307,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "reasoning")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Features, "broad_cwd_guard")
@@ -309,6 +330,34 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
+}
+
+func TestReasoningCommandPersistsPreference(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "reasoning", "high", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "reasoning"`)
+	require.Contains(t, out, `"effort": "high"`)
+
+	storedConfigPath := filepath.Join(configHome, "config.json")
+	stored, err := os.ReadFile(storedConfigPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"reasoning_effort": "high"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", storedConfigPath, "--output-format", "json", "reasoning"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "reasoning"`)
+	require.Contains(t, out, `"effort": "high"`)
+	require.True(t, commandAcceptsGlobalOutputFormat("reasoning"))
 }
 
 func TestUnknownCommandOutputContract(t *testing.T) {
@@ -3566,6 +3615,21 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Contains(t, string(data), `"reasoning_effort": "high"`)
 	out.Reset()
 
+	require.NoError(t, app.Reasoning([]string{"medium", "--json"}))
+	require.Contains(t, out.String(), `"kind": "reasoning"`)
+	require.Contains(t, out.String(), `"effort": "medium"`)
+	require.Equal(t, "medium", app.Config.ReasoningEffort)
+	require.Contains(t, app.systemPrompt(), "<codog_reasoning_effort>medium</codog_reasoning_effort>")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"reasoning_effort": "medium"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/effort low", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Effort")
+	require.Equal(t, "low", app.Config.ReasoningEffort)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/fast on", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Fast Mode")
 	require.NotNil(t, app.Config.FastMode)
@@ -3694,8 +3758,8 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.Equal(t, "", app.Config.Theme)
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/effort clear", &session.Session{ID: "session"}))
-	require.Contains(t, out.String(), "Effort")
+	require.True(t, app.handleSlash(context.Background(), "/reasoning clear", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Reasoning")
 	require.Equal(t, "", app.Config.ReasoningEffort)
 	require.NotContains(t, app.systemPrompt(), "<codog_reasoning_effort>")
 	out.Reset()
