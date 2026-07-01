@@ -18103,6 +18103,7 @@ func codogCapabilityFeatures() []string {
 		"approval_tokens",
 		"auto_compaction",
 		"bash_output_contract",
+		"bash_persisted_output",
 		"bash_output_truncation",
 		"bash_sandbox_request_status",
 		"background_tasks",

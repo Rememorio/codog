@@ -151,14 +151,32 @@ func TestBashToolReportsTimeoutAndTruncatesOutput(t *testing.T) {
 	require.Len(t, timeoutPayload.StructuredContent, 1)
 	require.Equal(t, "command.timeout", timeoutPayload.StructuredContent[0]["event"])
 
-	out, err = BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"yes x | head -c 20000"}`))
+	configHome := t.TempDir()
+	out, err = BashTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"command":"yes x | head -c 20000"}`))
 	require.NoError(t, err)
 	var truncPayload struct {
-		Stdout string `json:"stdout"`
+		Stdout              string `json:"stdout"`
+		PersistedOutputPath string `json:"persistedOutputPath"`
+		PersistedOutputSize int64  `json:"persistedOutputSize"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &truncPayload))
 	require.Less(t, len(truncPayload.Stdout), 20000)
 	require.Contains(t, truncPayload.Stdout, "[output truncated - exceeded 16384 bytes]")
+	require.NotEmpty(t, truncPayload.PersistedOutputPath)
+	require.Greater(t, truncPayload.PersistedOutputSize, int64(20000))
+	require.FileExists(t, truncPayload.PersistedOutputPath)
+	require.True(t, strings.HasPrefix(truncPayload.PersistedOutputPath, filepath.Join(configHome, "bash-output")))
+	data, err := os.ReadFile(truncPayload.PersistedOutputPath)
+	require.NoError(t, err)
+	var persisted struct {
+		Kind            string   `json:"kind"`
+		Stdout          string   `json:"stdout"`
+		TruncatedFields []string `json:"truncated_fields"`
+	}
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.Equal(t, "bash_output", persisted.Kind)
+	require.Len(t, persisted.Stdout, 20000)
+	require.Equal(t, []string{"stdout"}, persisted.TruncatedFields)
 }
 
 func TestBashToolAcceptsSandboxRequestAliases(t *testing.T) {

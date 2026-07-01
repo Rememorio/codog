@@ -2131,18 +2131,30 @@ func wrapCommandWithCWDProbe(command string, cwdFile string) string {
 
 const maxBashOutputBytes = 16 * 1024
 
-func truncateBashOutput(value string) string {
+type persistedBashOutput struct {
+	Kind            string   `json:"kind"`
+	Command         string   `json:"command"`
+	CWD             string   `json:"cwd"`
+	Stdout          string   `json:"stdout"`
+	Stderr          string   `json:"stderr"`
+	ExitCode        int      `json:"exit_code"`
+	DurationMS      int64    `json:"duration_ms"`
+	TruncatedFields []string `json:"truncated_fields"`
+	CreatedAt       string   `json:"created_at"`
+}
+
+func truncateBashOutput(value string) (string, bool) {
 	if len(value) <= maxBashOutputBytes {
-		return value
+		return value, false
 	}
 	end := maxBashOutputBytes
 	for end > 0 && !utf8.ValidString(value[:end]) {
 		end--
 	}
 	if end == 0 {
-		return "[output truncated - exceeded 16384 bytes]"
+		return "[output truncated - exceeded 16384 bytes]", true
 	}
-	return value[:end] + "\n\n[output truncated - exceeded 16384 bytes]"
+	return value[:end] + "\n\n[output truncated - exceeded 16384 bytes]", true
 }
 
 func bashNoOutputExpected(stdout, stderr string) bool {
@@ -2206,6 +2218,49 @@ func bashOutputContractFields(dangerouslyDisable bool) map[string]any {
 		"persistedOutputPath":       nil,
 		"persistedOutputSize":       nil,
 	}
+}
+
+func persistBashOutput(configHome, command, cwd, stdout, stderr string, exitCode int, durationMS int64, truncatedFields []string) (string, int64, error) {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" || len(truncatedFields) == 0 {
+		return "", 0, nil
+	}
+	dir := filepath.Join(configHome, "bash-output")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", 0, err
+	}
+	file, err := os.CreateTemp(dir, "bash-*.json")
+	if err != nil {
+		return "", 0, err
+	}
+	path := file.Name()
+	payload := persistedBashOutput{
+		Kind:            "bash_output",
+		Command:         command,
+		CWD:             cwd,
+		Stdout:          stdout,
+		Stderr:          stderr,
+		ExitCode:        exitCode,
+		DurationMS:      durationMS,
+		TruncatedFields: append([]string(nil), truncatedFields...),
+		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(payload); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", 0, err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", 0, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", 0, err
+	}
+	return path, info.Size(), nil
 }
 
 func bashSandboxStrategy(strategy string, cfg config.SandboxConfig, dangerouslyDisable bool) string {
@@ -2386,8 +2441,10 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err = cmd.Run()
-	stdoutText := truncateBashOutput(stdout.String())
-	stderrText := truncateBashOutput(stderr.String())
+	stdoutRaw := stdout.String()
+	stderrRaw := stderr.String()
+	stdoutText, stdoutTruncated := truncateBashOutput(stdoutRaw)
+	stderrText, stderrTruncated := truncateBashOutput(stderrRaw)
 	finalCWD := cwd
 	cwdChanged := false
 	if cwdProbePath != "" {
@@ -2399,13 +2456,29 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		}
 	}
 	exit := exitCode(err)
+	durationMS := time.Since(started).Milliseconds()
+	truncatedFields := []string{}
+	if stdoutTruncated {
+		truncatedFields = append(truncatedFields, "stdout")
+	}
+	if stderrTruncated {
+		truncatedFields = append(truncatedFields, "stderr")
+	}
+	persistedOutputPath, persistedOutputSize, persistErr := persistBashOutput(t.ConfigHome, payload.Command, finalCWD, stdoutRaw, stderrRaw, exit, durationMS, truncatedFields)
+	if persistErr != nil {
+		return "", persistErr
+	}
 	result := bashOutputContractFields(payload.DangerouslyDisableSandbox)
 	result["stdout"] = stdoutText
 	result["stderr"] = stderrText
 	result["exit_code"] = exit
-	result["duration_ms"] = time.Since(started).Milliseconds()
+	result["duration_ms"] = durationMS
 	result["cwd"] = finalCWD
 	result["noOutputExpected"] = bashNoOutputExpected(stdoutText, stderrText)
+	if persistedOutputPath != "" {
+		result["persistedOutputPath"] = persistedOutputPath
+		result["persistedOutputSize"] = persistedOutputSize
+	}
 	if interpretation := bashReturnCodeInterpretation(exit, false, payload.Command); interpretation != "" {
 		result["returnCodeInterpretation"] = interpretation
 	}
