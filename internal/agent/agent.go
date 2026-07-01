@@ -17780,10 +17780,54 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Completion(resumeSlashArgs("completion", args, format))
 	case "/format":
 		return a.runResumedFormatSlash(resumeSlashArgs("format", args, format), format)
+	case "/metrics":
+		return a.Metrics(resumeSlashArgs("metrics", args, format), resumed)
+	case "/insights":
+		return a.Insights(resumeSlashArgs("insights", args, format))
+	case "/perf-issue":
+		return a.runResumedPerfIssueSlash(resumeSlashArgs("perf-issue", args, format), format)
+	case "/desktop", "/app":
+		return a.Desktop(resumeSlashArgs("desktop", args, format), resumed)
+	case "/mobile":
+		return a.Mobile(resumeSlashArgs("mobile", args, format), resumed)
+	case "/ios":
+		return a.Mobile(resumeSlashArgs("mobile", append([]string{"ios"}, args...), format), resumed)
+	case "/android":
+		return a.Mobile(resumeSlashArgs("mobile", append([]string{"android"}, args...), format), resumed)
+	case "/ide":
+		return a.runResumedIDESlash(resumeSlashArgs("ide", args, format), format)
+	case "/bridge-kick":
+		return a.runResumedBridgeKickSlash(resumeSlashArgs("bridge-kick", args, format), format)
+	case "/workspace", "/cwd":
+		return a.runResumedWorkspaceSlash(resumeSlashArgs("workspace", args, format), format)
+	case "/focus":
+		return a.runResumedFocusSlash(resumeSlashArgs("focus", args, format), format)
+	case "/add-dir":
+		return a.runResumedAddDirSlash(resumeSlashArgs("add-dir", args, format), format)
+	case "/validation":
+		return a.Validation(resumeSlashArgs("validation", args, format))
+	case "/ant-trace":
+		return a.runResumedAntTraceSlash(ctx, resumeSlashArgs("ant-trace", args, format), format)
+	case "/mock-limits":
+		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), format)
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/git":
 		return a.Git(resumeSlashArgs("git", args, format))
+	case "/log":
+		return a.GitLog(resumeSlashArgs("log", args, format))
+	case "/blame":
+		return a.GitBlame(resumeSlashArgs("blame", args, format))
+	case "/changelog":
+		return a.Changelog(resumeSlashArgs("changelog", args, format))
+	case "/release-notes":
+		return a.ReleaseNotes(resumeSlashArgs("release-notes", args, format))
+	case "/branch":
+		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
+	case "/tag":
+		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
+	case "/stash":
+		return a.runResumedStashSlash(resumeSlashArgs("stash", args, format), format)
 	case "/clear":
 		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
@@ -17885,6 +17929,136 @@ func (a *App) runResumedFormatSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/format", "write"), format)
 	}
 	return a.Format(args)
+}
+
+func (a *App) runResumedPerfIssueSlash(args []string, format string) error {
+	req, err := parsePerfIssueArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Write || strings.TrimSpace(req.Output) != "" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/perf-issue", "write"), format)
+	}
+	return a.PerfIssue(args)
+}
+
+func (a *App) runResumedIDESlash(args []string, format string) error {
+	req, err := parseIDEArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ide", req.Action), format)
+	}
+	return a.IDE(args)
+}
+
+func (a *App) runResumedBridgeKickSlash(args []string, format string) error {
+	req, err := parseBridgeKickArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/bridge-kick", req.Action), format)
+	}
+	return a.BridgeKick(args)
+}
+
+func (a *App) runResumedWorkspaceSlash(args []string, format string) error {
+	req, err := parseWorkspaceArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/workspace", req.Action), format)
+	}
+	return a.WorkspaceCommand(args)
+}
+
+func (a *App) runResumedFocusSlash(args []string, format string) error {
+	_, paths, err := parseFocusArgs("focus", args)
+	if err != nil {
+		return err
+	}
+	if len(paths) != 0 {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/focus", "add"), format)
+	}
+	return a.Focus(args)
+}
+
+func (a *App) runResumedAddDirSlash(args []string, format string) error {
+	req, err := parseAddDirArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "list" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/add-dir", req.Action), format)
+	}
+	return a.AddDir(args)
+}
+
+func (a *App) runResumedAntTraceSlash(ctx context.Context, args []string, format string) error {
+	req, err := parseAntTraceArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Write || strings.TrimSpace(req.Output) != "" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ant-trace", "write"), format)
+	}
+	if !req.NoRequest {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ant-trace", "request"), format)
+	}
+	return a.AntTrace(ctx, args)
+}
+
+func (a *App) runResumedMockLimitsSlash(args []string, format string) error {
+	req, err := parseMockLimitsArgs(args)
+	if err != nil {
+		return err
+	}
+	if req.Action != "show" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/mock-limits", req.Action), format)
+	}
+	return a.MockLimits(args)
+}
+
+func (a *App) runResumedBranchSlash(args []string, format string) error {
+	req, err := parseBranchArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "current", "freshness":
+		return a.Branch(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/branch", req.Action), format)
+	}
+}
+
+func (a *App) runResumedTagSlash(args []string, format string) error {
+	req, err := parseTagArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "show":
+		return a.Tag(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/tag", req.Action), format)
+	}
+}
+
+func (a *App) runResumedStashSlash(args []string, format string) error {
+	req, err := parseStashArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "list", "show":
+		return a.Stash(args)
+	default:
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/stash", req.Action), format)
+	}
 }
 
 func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverrides, format string) error {
@@ -18189,7 +18363,7 @@ func renderUnsupportedResumedSlashCommand(out io.Writer, command string, format 
 		Status:    "error",
 		Command:   command,
 		Message:   fmt.Sprintf("%s cannot be run through --resume without starting an interactive session", command),
-		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /output-style, /theme, /language, /effort, /fast, /vim, /chrome, /notifications, /privacy-settings, /telemetry, /keybindings, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /files, /search, /security-review, /bughunter, /review, /symbols, /diagnostics, /map, /references, /definition, /hover, /teleport, /completion, /format, /diff, /git, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
+		Hint:      "Run `codog repl` and use the command there, or use a resume-safe slash command such as /help, /version, /config, /api, /api-key, /providers, /profile, /budget, /max-tokens, /max-turns, /temperature, /rate-limit, /permissions, /allowed-tools, /output-style, /theme, /language, /effort, /fast, /vim, /chrome, /notifications, /privacy-settings, /telemetry, /keybindings, /init, /memory, /project, /env, /state, /doctor, /model, /status, /sandbox, /mcp, /skills, /commands, /templates, /todos, /agents, /plugins, /tasks, /files, /search, /security-review, /bughunter, /review, /symbols, /diagnostics, /map, /references, /definition, /hover, /teleport, /completion, /format, /metrics, /insights, /perf-issue, /desktop, /mobile, /ide, /workspace, /focus, /add-dir, /validation, /ant-trace --no-request, /mock-limits, /diff, /git, /log, /blame, /changelog, /release-notes, /branch, /tag, /stash, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {

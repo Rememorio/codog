@@ -1180,6 +1180,7 @@ func risky(value any) {
 		require.NoError(t, os.WriteFile(trackedPath, []byte("before\n"), 0o644))
 		runGit(t, workspace, "add", "tracked.txt", "main.go", "signals.go")
 		runGit(t, workspace, "commit", "-m", "initial")
+		runGit(t, workspace, "tag", "v0.1.0")
 		require.NoError(t, os.WriteFile(trackedPath, []byte("before\nafter\n"), 0o644))
 		require.NoError(t, os.WriteFile(signalPath, []byte(`package main
 
@@ -1716,6 +1717,111 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedTasks))
 	require.Empty(t, resumedTasks)
 
+	out, err = runResumedJSON("/metrics")
+	require.NoError(t, err)
+	var resumedMetrics metricsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMetrics))
+	require.Equal(t, "metrics", resumedMetrics.Kind)
+	require.NotNil(t, resumedMetrics.Session)
+	require.Equal(t, "resume-slash", resumedMetrics.Session.ID)
+
+	out, err = runResumedJSON("/insights")
+	require.NoError(t, err)
+	var resumedInsights struct {
+		Kind     string `json:"kind"`
+		Sessions int    `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedInsights))
+	require.Equal(t, "insights", resumedInsights.Kind)
+	require.GreaterOrEqual(t, resumedInsights.Sessions, 1)
+
+	out, err = runResumedJSON("/perf-issue")
+	require.NoError(t, err)
+	var resumedPerfIssue perfissue.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPerfIssue))
+	require.Equal(t, "perf_issue", resumedPerfIssue.Kind)
+	require.Empty(t, resumedPerfIssue.File)
+
+	out, err = runResumedJSON("/desktop")
+	require.NoError(t, err)
+	var resumedDesktop desktopHandoffReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDesktop))
+	require.Equal(t, "desktop_handoff", resumedDesktop.Kind)
+	require.Equal(t, "resume-slash", resumedDesktop.SessionID)
+
+	out, err = runResumedJSON("/mobile", "ios")
+	require.NoError(t, err)
+	var resumedMobile mobileHandoffReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMobile))
+	require.Equal(t, "mobile_handoff", resumedMobile.Kind)
+	require.Equal(t, "ios", resumedMobile.Platform)
+	require.Equal(t, "resume-slash", resumedMobile.SessionID)
+
+	out, err = runResumedJSON("/android")
+	require.NoError(t, err)
+	var resumedAndroid mobileHandoffReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAndroid))
+	require.Equal(t, "mobile_handoff", resumedAndroid.Kind)
+	require.Equal(t, "android", resumedAndroid.Platform)
+
+	out, err = runResumedJSON("/ide")
+	require.NoError(t, err)
+	var resumedIDE ideReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedIDE))
+	require.Equal(t, "ide", resumedIDE.Kind)
+	require.Equal(t, "status", resumedIDE.Action)
+
+	out, err = runResumedJSON("/bridge-kick")
+	require.NoError(t, err)
+	var resumedBridgeKick bridgeKickReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBridgeKick))
+	require.Equal(t, "bridge_kick", resumedBridgeKick.Kind)
+	require.Equal(t, "status", resumedBridgeKick.Action)
+
+	out, err = runResumedJSON("/workspace")
+	require.NoError(t, err)
+	var resumedWorkspace workspaceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedWorkspace))
+	require.Equal(t, "workspace", resumedWorkspace.Kind)
+	require.Equal(t, "status", resumedWorkspace.Action)
+	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedWorkspace, resumedWorkspace.Workspace)
+
+	out, err = runResumedJSON("/focus")
+	require.NoError(t, err)
+	var resumedFocus focus.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFocus))
+	require.Equal(t, "focus", resumedFocus.Kind)
+
+	out, err = runResumedJSON("/add-dir", "list")
+	require.NoError(t, err)
+	var resumedAddDir pathscope.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAddDir))
+	require.Equal(t, "additional_dirs", resumedAddDir.Kind)
+	require.Equal(t, "list", resumedAddDir.Action)
+
+	out, err = runResumedJSON("/validation", "add-dir", ".")
+	require.NoError(t, err)
+	var resumedValidation pathscope.ValidationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedValidation))
+	require.Equal(t, "validation", resumedValidation.Kind)
+	require.Equal(t, "add_dir", resumedValidation.Action)
+
+	out, err = runResumedJSON("/ant-trace", "--no-request")
+	require.NoError(t, err)
+	var resumedAntTrace anttrace.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAntTrace))
+	require.Equal(t, "ant_trace", resumedAntTrace.Kind)
+	require.False(t, resumedAntTrace.RequestSent)
+
+	out, err = runResumedJSON("/mock-limits")
+	require.NoError(t, err)
+	var resumedMockLimits mocklimits.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMockLimits))
+	require.Equal(t, "mock_limits", resumedMockLimits.Kind)
+	require.Equal(t, "show", resumedMockLimits.Action)
+
 	out, err = runResumedJSON("/files", "--glob", "*.go", "--limit", "5")
 	require.NoError(t, err)
 	var resumedFiles struct {
@@ -1849,6 +1955,18 @@ func risky(value any) {
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
+		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
+		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
+		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
+		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
+		{Command: "/focus", Args: []string{"main.go"}, Report: "/focus add"},
+		{Command: "/add-dir", Args: []string{workspace}, Report: "/add-dir add"},
+		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
+		{Command: "/ant-trace", Args: []string{"--no-request", "--write"}, Report: "/ant-trace write"},
+		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
+		{Command: "/branch", Args: []string{"create", "resume-test"}, Report: "/branch create"},
+		{Command: "/tag", Args: []string{"create", "v9.9.9"}, Report: "/tag create"},
+		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
 		require.Error(t, err, guarded.Command)
@@ -1884,6 +2002,57 @@ func risky(value any) {
 		require.Equal(t, "git_status", resumedGitStatus.Kind)
 		require.False(t, resumedGitStatus.Clean)
 		require.NotEmpty(t, resumedGitStatus.Entries)
+
+		out, err = runResumedJSON("/log", "1")
+		require.NoError(t, err)
+		var resumedLog gitLogReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedLog))
+		require.Equal(t, "git_log", resumedLog.Kind)
+		require.GreaterOrEqual(t, resumedLog.Count, 1)
+
+		out, err = runResumedJSON("/blame", "tracked.txt", "1")
+		require.NoError(t, err)
+		var resumedBlame gitBlameReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedBlame))
+		require.Equal(t, "git_blame", resumedBlame.Kind)
+		require.GreaterOrEqual(t, resumedBlame.Count, 1)
+
+		out, err = runResumedJSON("/changelog", "1")
+		require.NoError(t, err)
+		var resumedChangelog changelogReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedChangelog))
+		require.Equal(t, "changelog", resumedChangelog.Kind)
+		require.GreaterOrEqual(t, resumedChangelog.Count, 1)
+
+		out, err = runResumedJSON("/release-notes", "--limit", "1")
+		require.NoError(t, err)
+		var resumedReleaseNotes struct {
+			Kind string `json:"kind"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedReleaseNotes))
+		require.Equal(t, "release_notes", resumedReleaseNotes.Kind)
+
+		out, err = runResumedJSON("/branch", "list")
+		require.NoError(t, err)
+		var resumedBranch branchReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedBranch))
+		require.Equal(t, "branch", resumedBranch.Kind)
+		require.Equal(t, "list", resumedBranch.Action)
+		require.NotEmpty(t, resumedBranch.Current)
+
+		out, err = runResumedJSON("/tag", "show", "v0.1.0")
+		require.NoError(t, err)
+		var resumedTag tagReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedTag))
+		require.Equal(t, "tag", resumedTag.Kind)
+		require.Equal(t, "show", resumedTag.Action)
+
+		out, err = runResumedJSON("/stash", "list")
+		require.NoError(t, err)
+		var resumedStash stashReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedStash))
+		require.Equal(t, "stash", resumedStash.Kind)
+		require.Equal(t, "list", resumedStash.Action)
 
 		out, err = runResumedJSON("/review", "--limit", "20")
 		require.NoError(t, err)
