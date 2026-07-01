@@ -2056,6 +2056,42 @@ func (BashTool) Definition() anthropic.ToolDefinition {
 				"timeout_ms":        map[string]any{"type": "integer", "minimum": 1},
 				"description":       map[string]any{"type": "string"},
 				"run_in_background": map[string]any{"type": "boolean"},
+				"namespaceRestrictions": map[string]any{
+					"type":        "boolean",
+					"description": "Request namespace restrictions for this bash invocation.",
+				},
+				"namespace_restrictions": map[string]any{
+					"type":        "boolean",
+					"description": "Snake-case alias for namespaceRestrictions.",
+				},
+				"isolateNetwork": map[string]any{
+					"type":        "boolean",
+					"description": "Request network isolation for this bash invocation.",
+				},
+				"isolate_network": map[string]any{
+					"type":        "boolean",
+					"description": "Snake-case alias for isolateNetwork.",
+				},
+				"filesystemMode": map[string]any{
+					"type":        "string",
+					"enum":        []string{"off", "workspace-only", "allow-list"},
+					"description": "Filesystem isolation mode for this bash invocation.",
+				},
+				"filesystem_mode": map[string]any{
+					"type":        "string",
+					"enum":        []string{"off", "workspace-only", "allow-list"},
+					"description": "Snake-case alias for filesystemMode.",
+				},
+				"allowedMounts": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Extra paths to mount when filesystemMode is allow-list.",
+				},
+				"allowed_mounts": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Snake-case alias for allowedMounts.",
+				},
 				"dangerouslyDisableSandbox": map[string]any{
 					"type":        "boolean",
 					"description": "Claude-compatible per-call sandbox bypass.",
@@ -2090,13 +2126,64 @@ func wrapCommandWithCWDProbe(command string, cwdFile string) string {
 	return command + "\n__codog_status=$?\npwd -P > " + shellQuoteToolArg(cwdFile) + "\nexit $__codog_status"
 }
 
+func bashSandboxRequestOptions(strategy string, dangerouslyDisable bool, namespaceRestrictions, namespaceRestrictionsAlt, isolateNetwork, isolateNetworkAlt *bool, filesystemMode, filesystemModeAlt string, allowedMounts, allowedMountsAlt []string) (sandbox.SandboxRequestOptions, error) {
+	opts := sandbox.SandboxRequestOptions{}
+	if dangerouslyDisable {
+		disabled := false
+		opts.Enabled = &disabled
+	}
+	opts.NamespaceRestrictions = firstBoolPointer(namespaceRestrictions, namespaceRestrictionsAlt)
+	opts.NetworkIsolation = firstBoolPointer(isolateNetwork, isolateNetworkAlt)
+	mode, err := sandbox.ParseFilesystemIsolationMode(firstNonEmpty(filesystemMode, filesystemModeAlt))
+	if err != nil {
+		return opts, err
+	}
+	opts.FilesystemMode = mode
+	if allowedMounts != nil {
+		opts.AllowedMounts = append([]string(nil), allowedMounts...)
+	} else if allowedMountsAlt != nil {
+		opts.AllowedMounts = append([]string(nil), allowedMountsAlt...)
+	}
+	if !sandboxStrategyRequestsStatus(strategy) && !dangerouslyDisable {
+		disabled := false
+		opts.Enabled = &disabled
+	}
+	return opts, nil
+}
+
+func sandboxStrategyRequestsStatus(strategy string) bool {
+	switch strings.TrimSpace(strategy) {
+	case "", "off", "none":
+		return false
+	default:
+		return true
+	}
+}
+
+func firstBoolPointer(values ...*bool) *bool {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
 func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		Command                   string `json:"command"`
-		Timeout                   int    `json:"timeout"`
-		TimeoutMS                 int    `json:"timeout_ms"`
-		RunInBackground           bool   `json:"run_in_background"`
-		DangerouslyDisableSandbox bool   `json:"dangerouslyDisableSandbox"`
+		Command                   string   `json:"command"`
+		Timeout                   int      `json:"timeout"`
+		TimeoutMS                 int      `json:"timeout_ms"`
+		RunInBackground           bool     `json:"run_in_background"`
+		DangerouslyDisableSandbox bool     `json:"dangerouslyDisableSandbox"`
+		NamespaceRestrictions     *bool    `json:"namespaceRestrictions"`
+		NamespaceRestrictionsAlt  *bool    `json:"namespace_restrictions"`
+		IsolateNetwork            *bool    `json:"isolateNetwork"`
+		IsolateNetworkAlt         *bool    `json:"isolate_network"`
+		FilesystemMode            string   `json:"filesystemMode"`
+		FilesystemModeAlt         string   `json:"filesystem_mode"`
+		AllowedMounts             []string `json:"allowedMounts"`
+		AllowedMountsAlt          []string `json:"allowed_mounts"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -2121,10 +2208,14 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		commandText = wrapCommandWithCWDProbe(commandText, cwdProbePath)
 	}
 	strategy := t.SandboxStrategy
+	requestOptions, err := bashSandboxRequestOptions(strategy, payload.DangerouslyDisableSandbox, payload.NamespaceRestrictions, payload.NamespaceRestrictionsAlt, payload.IsolateNetwork, payload.IsolateNetworkAlt, payload.FilesystemMode, payload.FilesystemModeAlt, payload.AllowedMounts, payload.AllowedMountsAlt)
+	if err != nil {
+		return "", err
+	}
 	if payload.DangerouslyDisableSandbox {
 		strategy = "off"
 	}
-	command, args, effectiveSandbox, err := sandbox.ShellCommand(strategy, t.Workspace, commandText)
+	command, args, effectiveSandbox, sandboxStatus, err := sandbox.ShellCommandWithSandboxStatus(strategy, t.Workspace, commandText, requestOptions)
 	if err != nil {
 		return "", err
 	}
@@ -2138,6 +2229,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 			return "", err
 		}
 		result := map[string]any{"background": true, "task": task}
+		result["sandboxStatus"] = sandboxStatus
 		if effectiveSandbox != "" {
 			result["sandbox"] = effectiveSandbox
 		}
@@ -2186,6 +2278,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		result["old_cwd"] = cwd
 		result["cwd_changed"] = true
 	}
+	result["sandboxStatus"] = sandboxStatus
 	if effectiveSandbox != "" {
 		result["sandbox"] = effectiveSandbox
 	}

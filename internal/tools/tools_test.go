@@ -21,6 +21,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/planmode"
+	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/stretchr/testify/require"
 )
@@ -98,11 +99,52 @@ func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
 	require.Contains(t, out, `"exit_code": 7`)
 	require.Contains(t, out, `"duration_ms":`)
 	require.Contains(t, out, `"error": "exit status 7"`)
+	var first struct {
+		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &first))
+	require.False(t, first.SandboxStatus.Enabled)
+	require.False(t, first.SandboxStatus.Active)
+	require.NotNil(t, first.SandboxStatus.AllowedMounts)
+	require.NotNil(t, first.SandboxStatus.Requested.AllowedMounts)
 
 	out, err = BashTool{Workspace: workspace, SandboxStrategy: "detect"}.Execute(context.Background(), []byte(`{"command":"printf bypass","timeout":1000,"dangerouslyDisableSandbox":true}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "bypass"`)
 	require.NotContains(t, out, `"sandbox":`)
+	var bypass struct {
+		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &bypass))
+	require.False(t, bypass.SandboxStatus.Enabled)
+	require.Equal(t, "disabled", bypass.SandboxStatus.ResolutionStatus)
+	require.True(t, bypass.SandboxStatus.Requested.NamespaceRestrictions)
+}
+
+func TestBashToolAcceptsSandboxRequestAliases(t *testing.T) {
+	workspace := t.TempDir()
+	out, err := BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{
+		"command":"printf ok",
+		"namespace_restrictions":false,
+		"isolate_network":true,
+		"filesystem_mode":"allow-list",
+		"allowed_mounts":["logs"]
+	}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ok"`)
+	var payload struct {
+		SandboxStatus sandbox.SandboxExecutionStatus `json:"sandboxStatus"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.False(t, payload.SandboxStatus.Enabled)
+	require.False(t, payload.SandboxStatus.Requested.NamespaceRestrictions)
+	require.True(t, payload.SandboxStatus.Requested.NetworkIsolation)
+	require.Equal(t, sandbox.FilesystemIsolationAllowList, payload.SandboxStatus.Requested.FilesystemMode)
+	require.Equal(t, []string{filepath.Join(workspace, "logs")}, payload.SandboxStatus.AllowedMounts)
+
+	_, err = BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"printf bad","filesystemMode":"invalid"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported filesystem isolation mode")
 }
 
 func TestBashToolLoadsHookEnvironment(t *testing.T) {

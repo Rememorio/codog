@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -152,4 +153,80 @@ func TestResolveStrategyReportForDetectAndUnavailable(t *testing.T) {
 	require.Equal(t, "unavailable", resolution.Status)
 	require.Contains(t, resolution.Error, "not available")
 	require.Contains(t, resolution.FallbackReason, "command not found")
+}
+
+func TestResolveSandboxExecutionStatusForRequest(t *testing.T) {
+	workspace := t.TempDir()
+	network := true
+	mode := FilesystemIsolationAllowList
+	status, effective, err := ResolveSandboxExecutionStatusFor("detect", workspace, SandboxRequestOptions{
+		NetworkIsolation: &network,
+		FilesystemMode:   mode,
+		AllowedMounts:    []string{"logs", "tmp/cache"},
+	}, Status{
+		Available: true,
+		Default:   "bwrap",
+		StrategyStatuses: []StrategyStatus{
+			{Name: "bwrap", Available: true},
+		},
+		Container: ContainerStatus{InContainer: true, Markers: []string{"/.dockerenv"}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "bwrap", effective)
+	require.True(t, status.Enabled)
+	require.True(t, status.Active)
+	require.True(t, status.Supported)
+	require.True(t, status.NamespaceActive)
+	require.True(t, status.NetworkActive)
+	require.True(t, status.FilesystemActive)
+	require.Equal(t, "allow-list", status.FilesystemMode)
+	require.Equal(t, FilesystemIsolationAllowList, status.Requested.FilesystemMode)
+	require.Contains(t, status.AllowedMounts, filepath.Join(workspace, "logs"))
+	require.Contains(t, status.AllowedMounts, filepath.Join(workspace, "tmp/cache"))
+	require.True(t, status.InContainer)
+	require.Contains(t, status.ContainerMarkers, "/.dockerenv")
+
+	name, args, err := BuildShellCommandWithStatus(effective, workspace, "printf hi", status)
+	require.NoError(t, err)
+	require.Equal(t, "bwrap", name)
+	require.Contains(t, args, "--unshare-net")
+	require.Contains(t, args, filepath.Join(workspace, "logs"))
+}
+
+func TestResolveSandboxExecutionStatusForDisabledRequest(t *testing.T) {
+	enabled := false
+	status, effective, err := ResolveSandboxExecutionStatusFor("codog-missing-sandbox", t.TempDir(), SandboxRequestOptions{
+		Enabled: &enabled,
+	}, Status{})
+
+	require.NoError(t, err)
+	require.Empty(t, effective)
+	require.False(t, status.Enabled)
+	require.False(t, status.Active)
+	require.True(t, status.Supported)
+	require.Equal(t, "disabled", status.ResolutionStatus)
+	require.Equal(t, "codog-missing-sandbox", status.ConfiguredStrategy)
+	require.True(t, status.Requested.NamespaceRestrictions)
+}
+
+func TestResolveSandboxExecutionStatusReportsUnsupportedCapabilities(t *testing.T) {
+	network := true
+	status, effective, err := ResolveSandboxExecutionStatusFor("restricted-token", t.TempDir(), SandboxRequestOptions{
+		NetworkIsolation: &network,
+	}, Status{
+		Available: true,
+		Default:   "restricted-token",
+		StrategyStatuses: []StrategyStatus{
+			{Name: "restricted-token", Available: true},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "restricted-token", effective)
+	require.False(t, status.Active)
+	require.False(t, status.Supported)
+	require.False(t, status.NetworkActive)
+	require.Contains(t, status.FallbackReason, "network isolation unavailable")
+	require.Contains(t, status.FallbackReason, "namespace isolation unavailable")
 }

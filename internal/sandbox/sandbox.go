@@ -47,6 +47,51 @@ type StrategyResolution struct {
 	Error          string `json:"error,omitempty"`
 }
 
+type FilesystemIsolationMode string
+
+const (
+	FilesystemIsolationOff           FilesystemIsolationMode = "off"
+	FilesystemIsolationWorkspaceOnly FilesystemIsolationMode = "workspace-only"
+	FilesystemIsolationAllowList     FilesystemIsolationMode = "allow-list"
+)
+
+type SandboxRequest struct {
+	Enabled               bool                    `json:"enabled"`
+	NamespaceRestrictions bool                    `json:"namespace_restrictions"`
+	NetworkIsolation      bool                    `json:"network_isolation"`
+	FilesystemMode        FilesystemIsolationMode `json:"filesystem_mode"`
+	AllowedMounts         []string                `json:"allowed_mounts"`
+}
+
+type SandboxRequestOptions struct {
+	Enabled               *bool
+	NamespaceRestrictions *bool
+	NetworkIsolation      *bool
+	FilesystemMode        FilesystemIsolationMode
+	AllowedMounts         []string
+}
+
+type SandboxExecutionStatus struct {
+	Enabled             bool           `json:"enabled"`
+	Requested           SandboxRequest `json:"requested"`
+	Supported           bool           `json:"supported"`
+	Active              bool           `json:"active"`
+	Strategy            string         `json:"strategy,omitempty"`
+	NamespaceSupported  bool           `json:"namespace_supported"`
+	NamespaceActive     bool           `json:"namespace_active"`
+	NetworkSupported    bool           `json:"network_supported"`
+	NetworkActive       bool           `json:"network_active"`
+	FilesystemMode      string         `json:"filesystem_mode"`
+	FilesystemActive    bool           `json:"filesystem_active"`
+	AllowedMounts       []string       `json:"allowed_mounts"`
+	InContainer         bool           `json:"in_container"`
+	ContainerMarkers    []string       `json:"container_markers,omitempty"`
+	FallbackReason      string         `json:"fallback_reason,omitempty"`
+	ConfiguredStrategy  string         `json:"configured_strategy,omitempty"`
+	ResolutionStatus    string         `json:"resolution_status,omitempty"`
+	ResolutionAvailable bool           `json:"resolution_available"`
+}
+
 type DetectionInputs struct {
 	OS                 string
 	Env                []string
@@ -225,6 +270,74 @@ func ResolveStrategyReportFor(strategy string, status Status) StrategyResolution
 	}
 }
 
+func ParseFilesystemIsolationMode(value string) (FilesystemIsolationMode, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	switch FilesystemIsolationMode(value) {
+	case FilesystemIsolationOff, FilesystemIsolationWorkspaceOnly, FilesystemIsolationAllowList:
+		return FilesystemIsolationMode(value), nil
+	default:
+		return "", fmt.Errorf("unsupported filesystem isolation mode %q", value)
+	}
+}
+
+func DefaultSandboxRequest(strategy string) SandboxRequest {
+	enabled := sandboxStrategyRequestsIsolation(strategy)
+	return SandboxRequest{
+		Enabled:               enabled,
+		NamespaceRestrictions: true,
+		NetworkIsolation:      false,
+		FilesystemMode:        FilesystemIsolationWorkspaceOnly,
+	}
+}
+
+func ResolveSandboxRequest(strategy string, opts SandboxRequestOptions) SandboxRequest {
+	request := DefaultSandboxRequest(strategy)
+	if opts.Enabled != nil {
+		request.Enabled = *opts.Enabled
+	}
+	if opts.NamespaceRestrictions != nil {
+		request.NamespaceRestrictions = *opts.NamespaceRestrictions
+	}
+	if opts.NetworkIsolation != nil {
+		request.NetworkIsolation = *opts.NetworkIsolation
+	}
+	if opts.FilesystemMode != "" {
+		request.FilesystemMode = opts.FilesystemMode
+	}
+	if opts.AllowedMounts != nil {
+		request.AllowedMounts = append([]string(nil), opts.AllowedMounts...)
+	}
+	return request
+}
+
+func ResolveSandboxExecutionStatus(strategy, workspace string, opts SandboxRequestOptions) (SandboxExecutionStatus, string, error) {
+	return ResolveSandboxExecutionStatusFor(strategy, workspace, opts, Detect())
+}
+
+func ResolveSandboxExecutionStatusFor(strategy, workspace string, opts SandboxRequestOptions, detected Status) (SandboxExecutionStatus, string, error) {
+	request := ResolveSandboxRequest(strategy, opts)
+	if !request.Enabled {
+		request.Enabled = false
+		status := sandboxExecutionStatusFromResolution(strategy, workspace, request, detected, StrategyResolution{
+			Configured: strings.TrimSpace(strategy),
+			Status:     "disabled",
+			Enabled:    false,
+			Available:  false,
+			Effective:  "",
+		})
+		return status, "", nil
+	}
+	resolution := ResolveStrategyReportFor(strategy, detected)
+	status := sandboxExecutionStatusFromResolution(strategy, workspace, request, detected, resolution)
+	if resolution.Error != "" {
+		return status, "", fmt.Errorf("%s", resolution.Error)
+	}
+	return status, resolution.Effective, nil
+}
+
 func ShellCommand(strategy, workspace, command string) (string, []string, string, error) {
 	effective, err := ResolveStrategy(strategy)
 	if err != nil {
@@ -235,6 +348,18 @@ func ShellCommand(strategy, workspace, command string) (string, []string, string
 	}
 	name, args, err := BuildShellCommand(effective, workspace, command)
 	return name, args, effective, err
+}
+
+func ShellCommandWithSandboxStatus(strategy, workspace, command string, opts SandboxRequestOptions) (string, []string, string, SandboxExecutionStatus, error) {
+	status, effective, err := ResolveSandboxExecutionStatus(strategy, workspace, opts)
+	if err != nil {
+		return "", nil, "", status, err
+	}
+	if effective == "" {
+		return "sh", []string{"-lc", command}, "", status, nil
+	}
+	name, args, err := BuildShellCommandWithStatus(effective, workspace, command, status)
+	return name, args, effective, status, err
 }
 
 func ResolveStrategy(strategy string) (string, error) {
@@ -269,6 +394,97 @@ func BuildShellCommand(strategy, workspace, command string) (string, []string, e
 		return BuildWindowsRestrictedTokenCommand(absWorkspace, command, "")
 	default:
 		return "", nil, fmt.Errorf("unsupported sandbox strategy %q", strategy)
+	}
+}
+
+func BuildShellCommandWithStatus(strategy, workspace, command string, status SandboxExecutionStatus) (string, []string, error) {
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", nil, err
+	}
+	switch strategy {
+	case "sandbox-exec":
+		return "sandbox-exec", []string{"-p", macOSSandboxProfileForStatus(absWorkspace, status), "sh", "-lc", command}, nil
+	case "bwrap":
+		args := []string{
+			"--ro-bind", "/", "/",
+			"--bind", absWorkspace, absWorkspace,
+			"--dev", "/dev",
+			"--proc", "/proc",
+			"--tmpfs", "/tmp",
+			"--chdir", absWorkspace,
+		}
+		for _, mount := range status.AllowedMounts {
+			if mount == "" || mount == absWorkspace {
+				continue
+			}
+			args = append(args, "--bind", mount, mount)
+		}
+		if status.NetworkActive {
+			args = append(args, "--unshare-net")
+		}
+		args = append(args, "sh", "-lc", command)
+		return "bwrap", args, nil
+	case "unshare":
+		flags := "-Ur"
+		if status.NetworkActive {
+			flags += "n"
+		}
+		return "unshare", []string{flags, "sh", "-lc", command}, nil
+	case "restricted-token":
+		return BuildWindowsRestrictedTokenCommand(absWorkspace, command, "")
+	default:
+		return "", nil, fmt.Errorf("unsupported sandbox strategy %q", strategy)
+	}
+}
+
+func sandboxExecutionStatusFromResolution(strategy, workspace string, request SandboxRequest, detected Status, resolution StrategyResolution) SandboxExecutionStatus {
+	effective := strings.TrimSpace(resolution.Effective)
+	namespaceSupported := strategySupportsNamespace(effective) || strategyAvailable(detected.StrategyStatuses, "unshare") || strategyAvailable(detected.StrategyStatuses, "bwrap")
+	networkSupported := strategySupportsNetwork(effective) || strategyAvailable(detected.StrategyStatuses, "unshare") || strategyAvailable(detected.StrategyStatuses, "bwrap") || strategyAvailable(detected.StrategyStatuses, "sandbox-exec")
+	filesystemSupported := strategySupportsFilesystem(effective)
+
+	fallback := []string{}
+	if request.Enabled && effective == "" {
+		fallback = append(fallback, firstNonEmptySandboxString(resolution.FallbackReason, detected.FallbackReason, "sandbox strategy unavailable"))
+	}
+	if request.Enabled && request.NamespaceRestrictions && !strategySupportsNamespace(effective) {
+		fallback = append(fallback, "namespace isolation unavailable for effective sandbox strategy")
+	}
+	if request.Enabled && request.NetworkIsolation && !strategySupportsNetwork(effective) {
+		fallback = append(fallback, "network isolation unavailable for effective sandbox strategy")
+	}
+	if request.Enabled && request.FilesystemMode != FilesystemIsolationOff && !filesystemSupported {
+		fallback = append(fallback, "filesystem isolation unavailable for effective sandbox strategy")
+	}
+	if request.Enabled && request.FilesystemMode == FilesystemIsolationAllowList && len(request.AllowedMounts) == 0 {
+		fallback = append(fallback, "filesystem allow-list requested without configured mounts")
+	}
+
+	namespaceActive := request.Enabled && request.NamespaceRestrictions && strategySupportsNamespace(effective)
+	networkActive := request.Enabled && request.NetworkIsolation && strategySupportsNetwork(effective)
+	filesystemActive := request.Enabled && request.FilesystemMode != FilesystemIsolationOff && filesystemSupported
+	active := request.Enabled && len(fallback) == 0 && effective != ""
+
+	return SandboxExecutionStatus{
+		Enabled:             request.Enabled,
+		Requested:           cloneSandboxRequest(request),
+		Supported:           !request.Enabled || len(fallback) == 0,
+		Active:              active,
+		Strategy:            effective,
+		NamespaceSupported:  namespaceSupported,
+		NamespaceActive:     namespaceActive,
+		NetworkSupported:    networkSupported,
+		NetworkActive:       networkActive,
+		FilesystemMode:      string(request.FilesystemMode),
+		FilesystemActive:    filesystemActive,
+		AllowedMounts:       normalizeMounts(request.AllowedMounts, workspace),
+		InContainer:         detected.Container.InContainer,
+		ContainerMarkers:    append([]string(nil), detected.Container.Markers...),
+		FallbackReason:      strings.Join(dedupeKeepOrder(fallback), "; "),
+		ConfiguredStrategy:  strings.TrimSpace(strategy),
+		ResolutionStatus:    resolution.Status,
+		ResolutionAvailable: resolution.Available,
 	}
 }
 
@@ -360,20 +576,34 @@ func windowsCommandLineArg(arg string) string {
 }
 
 func macOSSandboxProfile(workspace string) string {
+	return macOSSandboxProfileForStatus(workspace, SandboxExecutionStatus{})
+}
+
+func macOSSandboxProfileForStatus(workspace string, status SandboxExecutionStatus) string {
 	quotedWorkspace := strconv.Quote(workspace)
-	return strings.Join([]string{
+	rules := []string{
 		"(version 1)",
 		"(deny default)",
 		"(allow process*)",
 		"(allow signal (target same-sandbox))",
 		"(allow sysctl-read)",
 		"(allow mach-lookup)",
-		"(allow network*)",
 		"(allow file-read*)",
 		"(allow file-write* (subpath " + quotedWorkspace + "))",
 		"(allow file-write* (subpath \"/tmp\"))",
 		"(allow file-write* (subpath \"/private/tmp\"))",
-	}, "\n")
+	}
+	if !status.NetworkActive {
+		rules = append(rules[:6], append([]string{"(allow network*)"}, rules[6:]...)...)
+	}
+	for _, mount := range status.AllowedMounts {
+		mount = strings.TrimSpace(mount)
+		if mount == "" || mount == workspace {
+			continue
+		}
+		rules = append(rules, "(allow file-write* (subpath "+strconv.Quote(mount)+"))")
+	}
+	return strings.Join(rules, "\n")
 }
 
 func detectContainer(inputs DetectionInputs) ContainerStatus {
@@ -417,6 +647,102 @@ func dedupeSorted(values []string) []string {
 		out = append(out, value)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func sandboxStrategyRequestsIsolation(strategy string) bool {
+	switch strings.TrimSpace(strategy) {
+	case "", "off", "none":
+		return false
+	default:
+		return true
+	}
+}
+
+func strategySupportsNamespace(strategy string) bool {
+	switch strategy {
+	case "bwrap", "unshare":
+		return true
+	default:
+		return false
+	}
+}
+
+func strategySupportsNetwork(strategy string) bool {
+	switch strategy {
+	case "bwrap", "unshare", "sandbox-exec":
+		return true
+	default:
+		return false
+	}
+}
+
+func strategySupportsFilesystem(strategy string) bool {
+	switch strategy {
+	case "bwrap", "sandbox-exec", "restricted-token":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeMounts(mounts []string, workspace string) []string {
+	if len(mounts) == 0 {
+		return []string{}
+	}
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		absWorkspace = workspace
+	}
+	out := make([]string, 0, len(mounts))
+	for _, mount := range mounts {
+		mount = strings.TrimSpace(mount)
+		if mount == "" {
+			continue
+		}
+		if !filepath.IsAbs(mount) {
+			mount = filepath.Join(absWorkspace, mount)
+		}
+		if abs, err := filepath.Abs(mount); err == nil {
+			mount = abs
+		}
+		out = append(out, filepath.Clean(mount))
+	}
+	return dedupeKeepOrder(out)
+}
+
+func cloneSandboxRequest(request SandboxRequest) SandboxRequest {
+	if request.AllowedMounts == nil {
+		request.AllowedMounts = []string{}
+	} else {
+		request.AllowedMounts = append([]string(nil), request.AllowedMounts...)
+	}
+	return request
+}
+
+func firstNonEmptySandboxString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func dedupeKeepOrder(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
 	return out
 }
 

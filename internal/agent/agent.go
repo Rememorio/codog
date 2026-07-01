@@ -17978,6 +17978,7 @@ func codogCapabilityFeatures() []string {
 		"api_key_management",
 		"approval_tokens",
 		"auto_compaction",
+		"bash_sandbox_request_status",
 		"background_tasks",
 		"broad_cwd_guard",
 		"bubble_tea_tui",
