@@ -14227,6 +14227,7 @@ type installGitHubAppStepReport struct {
 	Instructions          []string                   `json:"instructions,omitempty"`
 	Messages              []string                   `json:"messages,omitempty"`
 	Warnings              []string                   `json:"warnings,omitempty"`
+	Errors                []string                   `json:"errors,omitempty"`
 	NextCommand           string                     `json:"next_command,omitempty"`
 	ProviderRequestMade   bool                       `json:"provider_request_made"`
 	WorkspaceWillMutate   bool                       `json:"workspace_will_mutate"`
@@ -14832,11 +14833,23 @@ func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubA
 			report.Messages = append(report.Messages, "No warnings were produced by the local setup checks.")
 		}
 	case "ErrorStep":
-		report.Messages = append(report.Messages, "No local setup error was produced by the dry-run check.")
+		a.populateGitHubAppErrorChecks(&report, setupReport, ghPath, ghErr, apiKeyConfigured)
 	default:
 		report.Messages = append(report.Messages, "GitHub App setup step report generated.")
 	}
 	return report
+}
+
+func (a *App) populateGitHubAppErrorChecks(report *installGitHubAppStepReport, setupReport githubsetup.Report, ghPath string, ghErr error, apiKeyConfigured bool) {
+	a.populateGitHubAppSuccessChecks(report, setupReport, ghPath, ghErr, apiKeyConfigured)
+	if len(report.Warnings) == 0 {
+		report.Messages = append(report.Messages, "No local setup errors were produced by the readiness checks.")
+		return
+	}
+	report.Status = "error"
+	report.Errors = append(report.Errors, report.Warnings...)
+	report.Warnings = nil
+	report.Messages = append(report.Messages, fmt.Sprintf("%d setup error(s) need attention.", len(report.Errors)))
 }
 
 func (a *App) populateGitHubAppOAuthChecks(report *installGitHubAppStepReport) {
@@ -15224,6 +15237,9 @@ func renderInstallGitHubAppStepReport(out io.Writer, report installGitHubAppStep
 	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(out, "  Warning          %s\n", warning)
+	}
+	for _, setupErr := range report.Errors {
+		fmt.Fprintf(out, "  Error            %s\n", setupErr)
 	}
 	for _, instruction := range report.Instructions {
 		fmt.Fprintf(out, "  Next             %s\n", instruction)

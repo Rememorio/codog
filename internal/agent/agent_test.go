@@ -7472,6 +7472,20 @@ exit 1
 			require.Contains(t, deepWarningsReport.Messages, "1 warning(s) need attention.")
 			out.Reset()
 
+			require.NoError(t, secretApp.InstallGitHubAppStep("ErrorStep", []string{"--json"}))
+			var errorReport installGitHubAppStepReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &errorReport))
+			require.Equal(t, "ErrorStep", errorReport.Step)
+			require.Equal(t, "error", errorReport.Status)
+			require.True(t, errorReport.ProviderRequestMade)
+			require.NotNil(t, errorReport.GitHubCheck)
+			require.NotNil(t, errorReport.SecretCheck)
+			require.NotNil(t, errorReport.ActionsCheck)
+			require.Contains(t, errorReport.Errors, "2 selected workflow file(s) are not present yet.")
+			require.Empty(t, errorReport.Warnings)
+			require.Contains(t, errorReport.Messages, "1 setup error(s) need attention.")
+			out.Reset()
+
 			successWorkflowDir := filepath.Join(secretWorkspace, ".github", "workflows")
 			require.NoError(t, os.MkdirAll(successWorkflowDir, 0o755))
 			require.NoError(t, os.WriteFile(filepath.Join(successWorkflowDir, "claude.yml"), []byte("name: Claude Code\n"), 0o644))
