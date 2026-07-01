@@ -170,6 +170,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
+			if config.IsFileError(err) {
+				return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+			}
 			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 		}
 		cfg = redactedConfig(cfg)
@@ -239,6 +242,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 
 	cfg, err := config.Load(overrides)
 	if err != nil {
+		if config.IsFileError(err) && isConfigCommand(command) {
+			return renderConfigWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
+		}
 		if config.IsFileError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -725,6 +731,15 @@ func isStatusCommand(command string) bool {
 	}
 }
 
+func isConfigCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "config", "settings", "/config", "/settings":
+		return true
+	default:
+		return false
+	}
+}
+
 func isDoctorCommand(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "doctor", "/doctor":
@@ -814,6 +829,45 @@ func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []strin
 		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
 	}
 	return app.Doctor(doctorArgs)
+}
+
+func renderConfigWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	configArgs := append([]string(nil), rest...)
+	if !argsHaveOutputFormat(configArgs) {
+		configArgs = injectGlobalOutputFormat("config", configArgs, requestedOutputFormat(originalArgs))
+	}
+	req, err := parseConfigInspectionArgs(configArgs)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, req.Format)
+	}
+	_, paths, _ := config.LoadForInspection(overrides)
+	if len(paths) == 0 {
+		paths = configInspectionFallbackPaths(cfg.ConfigHome, overrides.ConfigPath)
+	}
+	report := buildConfigLoadReport(redactedConfig(cfg), paths, command, req.Args, loadErr)
+	if err := renderConfigLoadReport(out, req.Format, report); err != nil {
+		return err
+	}
+	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	if req.Format == "json" {
+		return &ExitError{Code: 1, Err: exitErr, Silent: true}
+	}
+	return &ExitError{Code: 1, Err: exitErr}
+}
+
+func configInspectionFallbackPaths(configHome string, explicit string) []string {
+	if strings.TrimSpace(explicit) != "" {
+		return []string{explicit}
+	}
+	return []string{
+		filepath.Join(configHome, "config.json"),
+		".codog.json",
+		".codog.local.json",
+	}
 }
 
 func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
@@ -18521,6 +18575,7 @@ func codogCapabilityFeatures() []string {
 		"broad_cwd_guard",
 		"bubble_tea_tui",
 		"config_layers",
+		"config_load_degraded",
 		"config_reset",
 		"cost_token_tracking",
 		"doctor_config_load_degraded",
@@ -24966,6 +25021,87 @@ func removeRuleValues(current []string, values []string) []string {
 func (a *App) runtimeConfigPayload(args []string) (any, error) {
 	cfg := redactedConfig(a.Config)
 	return configSectionPayload(cfg, args)
+}
+
+type configLoadReport struct {
+	Kind                string        `json:"kind"`
+	Action              string        `json:"action"`
+	Status              string        `json:"status"`
+	ErrorKind           string        `json:"error_kind"`
+	Message             string        `json:"message"`
+	Hint                string        `json:"hint"`
+	ConfigLoadError     string        `json:"config_load_error"`
+	ConfigLoadErrorKind string        `json:"config_load_error_kind"`
+	Paths               []string      `json:"paths"`
+	Config              config.Config `json:"config"`
+}
+
+func buildConfigLoadReport(cfg config.Config, paths []string, command string, args []string, loadErr error) configLoadReport {
+	action := configActionFromArgs(args)
+	if strings.HasPrefix(strings.TrimSpace(command), "/") && action == "show" {
+		action = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(command)), "/")
+		if action == "settings" {
+			action = "show"
+		}
+		if action == "config" {
+			action = "show"
+		}
+	}
+	kind := buildCLIErrorReport(loadErr).ErrorKind
+	if strings.TrimSpace(kind) == "" {
+		kind = "config_load_failed"
+	}
+	message := strings.TrimSpace(loadErr.Error())
+	return configLoadReport{
+		Kind:                "config",
+		Action:              action,
+		Status:              "error",
+		ErrorKind:           kind,
+		Message:             message,
+		Hint:                "Fix or remove the listed config file, then rerun `codog config paths` or `codog doctor`.",
+		ConfigLoadError:     message,
+		ConfigLoadErrorKind: kind,
+		Paths:               append([]string(nil), paths...),
+		Config:              cfg,
+	}
+}
+
+func configActionFromArgs(args []string) string {
+	if len(args) == 0 {
+		return "show"
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	switch action {
+	case "", "show":
+		return "show"
+	case "get":
+		if len(args) > 1 {
+			return "get:" + strings.ToLower(strings.TrimSpace(args[1]))
+		}
+		return "get"
+	default:
+		return action
+	}
+}
+
+func renderConfigLoadReport(out io.Writer, format string, report configLoadReport) error {
+	if format == "text" {
+		fmt.Fprintln(out, "Config")
+		fmt.Fprintf(out, "  Status           %s\n", report.Status)
+		fmt.Fprintf(out, "  Action           %s\n", report.Action)
+		fmt.Fprintf(out, "  Error kind       %s\n", report.ErrorKind)
+		fmt.Fprintf(out, "  Config load      %s\n", report.ConfigLoadError)
+		if len(report.Paths) != 0 {
+			fmt.Fprintf(out, "  Paths            %s\n", strings.Join(report.Paths, ", "))
+		}
+		fmt.Fprintf(out, "  Model            %s\n", report.Config.Model)
+		fmt.Fprintf(out, "  Permission mode  %s\n", report.Config.PermissionMode)
+		fmt.Fprintf(out, "  Hint             %s\n", report.Hint)
+		return nil
+	}
+	data, _ := json.MarshalIndent(report, "", "  ")
+	fmt.Fprintln(out, string(data))
+	return nil
 }
 
 func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, args []string) error {

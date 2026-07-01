@@ -661,6 +661,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "cwd")
 	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
+	require.Contains(t, report.Features, "config_load_degraded")
 	require.Contains(t, report.Features, "config_reset")
 	require.Contains(t, report.Features, "doctor_config_load_degraded")
 	require.Contains(t, report.Features, "doctor_config_validation")
@@ -2661,6 +2662,63 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 	require.Contains(t, report.Hint, "codog model")
 	require.NotContains(t, out, "config_parse_error")
 	require.NotContains(t, out, "missing_credentials")
+}
+
+func TestConfigDegradesOnMalformedConfigFile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "config"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report struct {
+		Kind                string        `json:"kind"`
+		Action              string        `json:"action"`
+		Status              string        `json:"status"`
+		ErrorKind           string        `json:"error_kind"`
+		Message             string        `json:"message"`
+		Hint                string        `json:"hint"`
+		ConfigLoadError     string        `json:"config_load_error"`
+		ConfigLoadErrorKind string        `json:"config_load_error_kind"`
+		Paths               []string      `json:"paths"`
+		Config              config.Config `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "config", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "config_load_failed", report.ErrorKind)
+	require.Equal(t, "config_load_failed", report.ConfigLoadErrorKind)
+	require.Contains(t, report.ConfigLoadError, "broken.json")
+	require.Contains(t, report.Message, "unexpected end of JSON input")
+	require.Contains(t, report.Hint, "codog doctor")
+	require.Contains(t, report.Paths, configPath)
+	require.NotEmpty(t, report.Config.Model)
+	require.NotEmpty(t, report.Config.PermissionMode)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/config", "paths"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "paths", report.Action)
+	require.Contains(t, report.Paths, configPath)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "text", "config", "paths"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.False(t, exitErr.Silent)
+	require.Contains(t, out, "Config")
+	require.Contains(t, out, "Config load")
+	require.Contains(t, out, "broken.json")
 }
 
 func TestLocalSubcommandErrorContracts(t *testing.T) {
