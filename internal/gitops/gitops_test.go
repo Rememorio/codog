@@ -215,6 +215,81 @@ func TestCheckBranchFreshness(t *testing.T) {
 	require.Equal(t, []string{"git switch topic", "git rebase main", "go test ./..."}, freshness.SuggestedCommands)
 }
 
+func TestCheckBaseCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	workspace := t.TempDir()
+	runGit(t, workspace, "init", "-b", "main")
+	runGit(t, workspace, "config", "user.email", "codog@example.test")
+	runGit(t, workspace, "config", "user.name", "Codog Test")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	baseSHA, err := Run(workspace, "rev-parse", "HEAD")
+	require.NoError(t, err)
+
+	check, err := CheckBaseCommitForWorkspace(workspace, baseSHA)
+	require.NoError(t, err)
+	require.Equal(t, "matches", check.Status)
+	require.True(t, check.Matches)
+	require.Equal(t, "flag", check.Source.Kind)
+	require.Equal(t, baseSHA, check.Expected)
+	require.Equal(t, baseSHA, check.Actual)
+	require.Empty(t, check.Warning)
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "next.txt"), []byte("next\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "feat: next")
+	nextSHA, err := Run(workspace, "rev-parse", "HEAD")
+	require.NoError(t, err)
+
+	check, err = CheckBaseCommitForWorkspace(workspace, baseSHA)
+	require.NoError(t, err)
+	require.Equal(t, "diverged", check.Status)
+	require.False(t, check.Matches)
+	require.Equal(t, baseSHA, check.Expected)
+	require.Equal(t, nextSHA, check.Actual)
+	require.Contains(t, check.Warning, "stale codebase")
+}
+
+func TestResolveExpectedBasePrefersFlagThenCodogThenClaw(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog-base"), []byte("codog-base\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claw-base"), []byte("claw-base\n"), 0o644))
+
+	source, err := ResolveExpectedBase(workspace, "flag-base")
+	require.NoError(t, err)
+	require.Equal(t, &BaseCommitSource{Kind: "flag", Value: "flag-base"}, source)
+
+	source, err = ResolveExpectedBase(workspace, "")
+	require.NoError(t, err)
+	require.Equal(t, "codog_file", source.Kind)
+	require.Equal(t, "codog-base", source.Value)
+	require.Equal(t, filepath.Join(workspace, ".codog-base"), source.Path)
+
+	require.NoError(t, os.Remove(filepath.Join(workspace, ".codog-base")))
+	source, err = ResolveExpectedBase(workspace, "")
+	require.NoError(t, err)
+	require.Equal(t, "claw_file", source.Kind)
+	require.Equal(t, "claw-base", source.Value)
+	require.Equal(t, filepath.Join(workspace, ".claw-base"), source.Path)
+}
+
+func TestCheckBaseCommitNoExpectedBaseAndNotGitRepo(t *testing.T) {
+	workspace := t.TempDir()
+
+	check, err := CheckBaseCommitForWorkspace(workspace, "")
+	require.NoError(t, err)
+	require.Equal(t, "no_expected_base", check.Status)
+	require.True(t, check.Matches)
+
+	check = CheckBaseCommit(workspace, &BaseCommitSource{Kind: "flag", Value: "abc1234"})
+	require.Equal(t, "not_git_repo", check.Status)
+	require.False(t, check.Matches)
+	require.Contains(t, check.Warning, "not inside a git repository")
+}
+
 func TestTagWorkflows(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")

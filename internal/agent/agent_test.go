@@ -5361,6 +5361,35 @@ func TestBranchLockCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestStaleBaseCommandAndSlash(t *testing.T) {
+	workspace := initGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "base.txt"), []byte("base\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "chore: base")
+	baseSHA, err := gitops.Run(workspace, "rev-parse", "HEAD")
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
+	require.NoError(t, app.StaleBase([]string{"--base-commit", baseSHA, "--json"}))
+	require.Contains(t, out.String(), `"kind": "stale_base"`)
+	require.Contains(t, out.String(), `"status": "matches"`)
+	require.Contains(t, out.String(), `"matches": true`)
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "next.txt"), []byte("next\n"), 0o644))
+	runGit(t, workspace, "add", ".")
+	runGit(t, workspace, "commit", "-m", "feat: next")
+
+	require.True(t, app.handleSlash(context.Background(), "/stale-base "+baseSHA, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Stale Base")
+	require.Contains(t, out.String(), "Status           diverged")
+	require.Contains(t, out.String(), "Matches          false")
+	require.Contains(t, out.String(), "stale codebase")
+	require.Empty(t, errOut.String())
+}
+
 func TestTagCommandAndSlash(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello tag\n"), 0o644))

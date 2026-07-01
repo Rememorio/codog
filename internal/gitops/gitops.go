@@ -3,7 +3,9 @@ package gitops
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +50,21 @@ type BranchFreshness struct {
 	SuggestedAction     string            `json:"suggested_action,omitempty"`
 	SuggestedCommands   []string          `json:"suggested_commands,omitempty"`
 	Event               *laneevents.Event `json:"event,omitempty"`
+}
+
+type BaseCommitSource struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+	Path  string `json:"path,omitempty"`
+}
+
+type BaseCommitCheck struct {
+	Status   string            `json:"status"`
+	Matches  bool              `json:"matches"`
+	Source   *BaseCommitSource `json:"source,omitempty"`
+	Expected string            `json:"expected,omitempty"`
+	Actual   string            `json:"actual,omitempty"`
+	Warning  string            `json:"warning,omitempty"`
 }
 
 type LogEntry struct {
@@ -322,6 +339,90 @@ func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, erro
 	return annotateBranchFreshness(freshness), nil
 }
 
+func ResolveExpectedBase(workspace string, flagValue string) (*BaseCommitSource, error) {
+	if value := strings.TrimSpace(flagValue); value != "" {
+		return &BaseCommitSource{Kind: "flag", Value: value}, nil
+	}
+	for _, name := range []string{".codog-base", ".claw-base"} {
+		path := filepath.Join(workspace, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		value := strings.TrimSpace(string(data))
+		if value == "" {
+			continue
+		}
+		kind := "file"
+		if name == ".codog-base" {
+			kind = "codog_file"
+		} else if name == ".claw-base" {
+			kind = "claw_file"
+		}
+		return &BaseCommitSource{Kind: kind, Value: value, Path: path}, nil
+	}
+	return nil, nil
+}
+
+func CheckBaseCommit(workspace string, source *BaseCommitSource) BaseCommitCheck {
+	if source == nil || strings.TrimSpace(source.Value) == "" {
+		return BaseCommitCheck{Status: "no_expected_base", Matches: true}
+	}
+	head, err := resolveRev(workspace, "HEAD")
+	if err != nil {
+		return BaseCommitCheck{
+			Status:  "not_git_repo",
+			Matches: false,
+			Source:  source,
+			Warning: "warning: stale-base check skipped; not inside a git repository.",
+		}
+	}
+	expectedRaw := strings.TrimSpace(source.Value)
+	expected, err := resolveRev(workspace, expectedRaw)
+	if err != nil {
+		if headMatchesRawExpected(head, expectedRaw) {
+			return BaseCommitCheck{Status: "matches", Matches: true, Source: source, Expected: expectedRaw, Actual: head}
+		}
+		check := BaseCommitCheck{Status: "diverged", Matches: false, Source: source, Expected: expectedRaw, Actual: head}
+		check.Warning = FormatStaleBaseWarning(check)
+		return check
+	}
+	if head == expected {
+		return BaseCommitCheck{Status: "matches", Matches: true, Source: source, Expected: expected, Actual: head}
+	}
+	check := BaseCommitCheck{Status: "diverged", Matches: false, Source: source, Expected: expected, Actual: head}
+	check.Warning = FormatStaleBaseWarning(check)
+	return check
+}
+
+func CheckBaseCommitForWorkspace(workspace string, flagValue string) (BaseCommitCheck, error) {
+	source, err := ResolveExpectedBase(workspace, flagValue)
+	if err != nil {
+		return BaseCommitCheck{}, err
+	}
+	return CheckBaseCommit(workspace, source), nil
+}
+
+func FormatStaleBaseWarning(check BaseCommitCheck) string {
+	switch check.Status {
+	case "diverged":
+		return fmt.Sprintf("warning: worktree HEAD (%s) does not match expected base commit (%s). Session may run against a stale codebase.", check.Actual, check.Expected)
+	case "not_git_repo":
+		return "warning: stale-base check skipped; not inside a git repository."
+	default:
+		return ""
+	}
+}
+
+func headMatchesRawExpected(head string, expected string) bool {
+	head = strings.TrimSpace(head)
+	expected = strings.TrimSpace(expected)
+	return head != "" && expected != "" && (strings.HasPrefix(head, expected) || strings.HasPrefix(expected, head))
+}
+
 func annotateBranchFreshness(freshness BranchFreshness) BranchFreshness {
 	if freshness.Behind <= 0 {
 		return freshness
@@ -492,6 +593,14 @@ func ShowTag(workspace, name string) (string, error) {
 
 func Head(workspace string) (string, error) {
 	return git(workspace, "rev-parse", "--short", "HEAD")
+}
+
+func resolveRev(workspace string, rev string) (string, error) {
+	rev = strings.TrimSpace(rev)
+	if rev == "" {
+		return "", errors.New("git revision is required")
+	}
+	return git(workspace, "rev-parse", rev)
 }
 
 func Blame(workspace string, path string, line int) (string, error) {

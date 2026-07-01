@@ -537,6 +537,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Branch(rest)
 	case "branch-lock", "branchlock":
 		return app.BranchLock(rest)
+	case "stale-base", "base-check":
+		return app.StaleBase(rest)
 	case "tag":
 		return app.Tag(rest)
 	case "stash":
@@ -19271,6 +19273,7 @@ func codogCapabilityFeatures() []string {
 		"slash_commands",
 		"sampling_temperature",
 		"speech_output",
+		"stale_base_guard",
 		"stale_branch_guard",
 		"status_config_load_degraded",
 		"status_config_validation",
@@ -19324,6 +19327,7 @@ func builtInCommandNames() []string {
 		"backfill-sessions",
 		"background",
 		"bashes",
+		"base-check",
 		"blame",
 		"branch",
 		"branch-lock",
@@ -19498,6 +19502,7 @@ func builtInCommandNames() []string {
 		"skills",
 		"speak",
 		"stash",
+		"stale-base",
 		"state",
 		"stats",
 		"status",
@@ -20333,6 +20338,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedBranchSlash(resumeSlashArgs("branch", args, format), format)
 	case "/branch-lock", "/branchlock":
 		return a.BranchLock(resumeSlashArgs("branch-lock", args, format))
+	case "/stale-base", "/base-check":
+		return a.StaleBase(resumeSlashArgs("stale-base", args, format))
 	case "/tag":
 		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
 	case "/stash":
@@ -24577,6 +24584,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.BranchLock(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/stale-base", "/base-check":
+		if err := a.StaleBase(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/tag":
 		if err := a.Tag(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -28482,6 +28493,127 @@ func renderBranchLockReport(out io.Writer, report branchLockReport) {
 	fmt.Fprintf(out, "  Collisions       %d\n", report.CollisionCount)
 	for _, collision := range report.Collisions {
 		fmt.Fprintf(out, "  - branch=%s module=%s lanes=%s\n", collision.Branch, collision.Module, strings.Join(collision.LaneIDs, ", "))
+	}
+}
+
+type staleBaseRequest struct {
+	Format     string
+	Action     string
+	BaseCommit string
+}
+
+type staleBaseReport struct {
+	Kind   string                 `json:"kind"`
+	Action string                 `json:"action"`
+	Status string                 `json:"status"`
+	Check  gitops.BaseCommitCheck `json:"check"`
+}
+
+func (a *App) StaleBase(args []string) error {
+	req, err := parseStaleBaseArgs(args)
+	if err != nil {
+		return err
+	}
+	check, err := gitops.CheckBaseCommitForWorkspace(a.Workspace, req.BaseCommit)
+	if err != nil {
+		return err
+	}
+	report := staleBaseReport{
+		Kind:   "stale_base",
+		Action: req.Action,
+		Status: check.Status,
+		Check:  check,
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderStaleBaseReport(a.Out, report)
+	return nil
+}
+
+func parseStaleBaseArgs(args []string) (staleBaseRequest, error) {
+	req := staleBaseRequest{Format: "text", Action: "check"}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			i++
+			if i >= len(args) {
+				return req, errors.New("stale-base output format is required")
+			}
+			req.Format = args[i]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--base-commit" || arg == "--base" || arg == "-b":
+			i++
+			if i >= len(args) {
+				return req, errors.New("stale-base base commit is required")
+			}
+			req.BaseCommit = args[i]
+		case strings.HasPrefix(arg, "--base-commit="):
+			req.BaseCommit = strings.TrimPrefix(arg, "--base-commit=")
+		case strings.HasPrefix(arg, "--base="):
+			req.BaseCommit = strings.TrimPrefix(arg, "--base=")
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown stale-base flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(req.Format, "stale-base")
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	action := strings.ToLower(strings.TrimSpace(positionals[0]))
+	rest := positionals
+	if action == "check" || action == "status" {
+		req.Action = "check"
+		rest = positionals[1:]
+	}
+	if req.Action != "check" {
+		return req, fmt.Errorf("unknown stale-base action %q", positionals[0])
+	}
+	if len(rest) > 1 {
+		return req, errors.New("usage: codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]")
+	}
+	if len(rest) == 1 {
+		if strings.TrimSpace(req.BaseCommit) != "" {
+			return req, errors.New("stale-base accepts only one base commit")
+		}
+		req.BaseCommit = rest[0]
+	}
+	return req, nil
+}
+
+func renderStaleBaseReport(out io.Writer, report staleBaseReport) {
+	check := report.Check
+	fmt.Fprintln(out, "Stale Base")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", check.Status)
+	fmt.Fprintf(out, "  Matches          %t\n", check.Matches)
+	if check.Source != nil {
+		fmt.Fprintf(out, "  Source           %s\n", check.Source.Kind)
+		if check.Source.Path != "" {
+			fmt.Fprintf(out, "  Source path      %s\n", check.Source.Path)
+		}
+	}
+	if check.Expected != "" {
+		fmt.Fprintf(out, "  Expected         %s\n", check.Expected)
+	}
+	if check.Actual != "" {
+		fmt.Fprintf(out, "  Actual           %s\n", check.Actual)
+	}
+	if check.Warning != "" {
+		fmt.Fprintf(out, "  Warning          %s\n", check.Warning)
 	}
 }
 
@@ -35951,7 +36083,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "good-claude", "heapdump", "hooks", "installappstep", "language",
@@ -35960,7 +36092,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
-		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details",
+		"stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
@@ -36283,6 +36415,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"Branch Lock\n\nUsage:\n  codog branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--output-format text|json]\n  codog branchlock [same flags]\n\nDetects branch/module collisions across concurrent lane intents. Input is either a JSON array of intents or an object with an `intents` array. Each intent accepts `lane_id` or `laneId`, `branch`, optional `worktree`, and `modules`.\n",
 			[]string{"intent_count", "collision_count", "collisions", "branch", "module", "lane_ids"},
 			[]string{"ok", "collision", "error"},
+			false,
+		), true
+	case "stale-base", "base-check":
+		return localCommandHelpSpec(
+			"stale-base",
+			"stale-base",
+			"codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--output-format text|json]",
+			"Stale Base\n\nUsage:\n  codog stale-base [check] [BASE_COMMIT] [--base-commit REF] [--output-format text|json]\n  codog base-check [same flags]\n\nChecks whether the current worktree HEAD still matches an expected base commit. The expected base is resolved from `--base-commit`, `.codog-base`, or compatible `.claw-base` in that order.\n",
+			[]string{"status", "matches", "source", "expected", "actual", "warning"},
+			[]string{"matches", "diverged", "no_expected_base", "not_git_repo", "error"},
 			false,
 		), true
 	case "acp":
@@ -37265,6 +37407,7 @@ Usage:
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]
   %s [flags] branch-lock [check] [FILE|JSON] [--file PATH|--input JSON|--stdin] [--json|--output-format text|json]
+  %s [flags] stale-base [check] [BASE_COMMIT] [--base-commit REF] [--json|--output-format text|json]
   %s [flags] tag [list [PATTERN]|create NAME [REF] [-m MESSAGE]|show NAME|delete NAME] [--json|--output-format text|json]
   %s [flags] diff [--staged] [PATH...] [--json|--output-format text|json] | log [count] [--json|--output-format text|json] | blame FILE [line] [--json|--output-format text|json] | commit [--all] MESSAGE [--json|--output-format text|json]
   %s [flags] git status [--json|--output-format text|json] | git diff [--staged] [PATH...] [--json|--output-format text|json] | git branch [ARGS...] | git tag [ARGS...] | git log [count] [--json|--output-format text|json] | git changelog [count] [--json|--output-format text|json] | git blame FILE [line] [--json|--output-format text|json] | git stash [list|push|apply|pop] [ARGS...] [--json|--output-format text|json] | git commit [--all] MESSAGE [--json|--output-format text|json]
