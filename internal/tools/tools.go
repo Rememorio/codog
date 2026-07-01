@@ -6469,7 +6469,7 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 	if err != nil {
 		return "", err
 	}
-	return pretty(task), nil
+	return pretty(taskCompatibilityFields(task)), nil
 }
 
 type RunTaskPacketTool struct {
@@ -6699,7 +6699,45 @@ func (t TaskListTool) Execute(_ context.Context, input json.RawMessage) (string,
 	}
 	tasks = background.FilterBySession(tasks, payload.SessionID)
 	tasks = background.FilterByKind(tasks, payload.Kind)
-	return pretty(map[string]any{"tasks": tasks, "total": len(tasks)}), nil
+	views := make([]map[string]any, 0, len(tasks))
+	for _, task := range tasks {
+		views = append(views, taskCompatibilityFields(task))
+	}
+	return pretty(map[string]any{"tasks": views, "total": len(views), "count": len(views)}), nil
+}
+
+func taskCompatibilityFields(task background.Task) map[string]any {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return map[string]any{
+			"task_id":    task.ID,
+			"created_at": task.StartedAt,
+			"updated_at": taskUpdatedAt(task),
+			"task":       task,
+		}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		fields = map[string]any{}
+	}
+	fields["task_id"] = task.ID
+	fields["created_at"] = task.StartedAt
+	fields["updated_at"] = taskUpdatedAt(task)
+	fields["task"] = task
+	return fields
+}
+
+func taskUpdatedAt(task background.Task) time.Time {
+	updated := task.StartedAt
+	if task.CompletedAt != nil && task.CompletedAt.After(updated) {
+		updated = *task.CompletedAt
+	}
+	for _, message := range task.Messages {
+		if message.CreatedAt.After(updated) {
+			updated = message.CreatedAt
+		}
+	}
+	return updated
 }
 
 func taskIDRequirement(extra ...string) []map[string]any {
@@ -6752,7 +6790,7 @@ func (t TaskStatusTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if err != nil {
 		return "", err
 	}
-	return pretty(task), nil
+	return pretty(taskCompatibilityFields(task)), nil
 }
 
 type TaskGetTool struct {
@@ -6796,7 +6834,7 @@ func (t TaskGetTool) Execute(_ context.Context, input json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	return pretty(task), nil
+	return pretty(taskCompatibilityFields(task)), nil
 }
 
 type TaskUpdateTool struct {

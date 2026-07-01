@@ -2350,11 +2350,36 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, getOut, `"messages": [`)
 	require.Contains(t, getOut, "review logs")
+	var getView struct {
+		ID        string          `json:"id"`
+		TaskID    string          `json:"task_id"`
+		CreatedAt time.Time       `json:"created_at"`
+		UpdatedAt time.Time       `json:"updated_at"`
+		Task      background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(getOut), &getView))
+	require.Equal(t, task.ID, getView.ID)
+	require.Equal(t, task.ID, getView.TaskID)
+	require.Equal(t, task.ID, getView.Task.ID)
+	require.False(t, getView.CreatedAt.IsZero())
+	require.False(t, getView.UpdatedAt.IsZero())
 
 	listOut, err := TaskListTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"session_id":"session-1","kind":"test"}`))
 	require.NoError(t, err)
 	require.Contains(t, listOut, task.ID)
 	require.Contains(t, listOut, `"total": 1`)
+	var listed struct {
+		Count int `json:"count"`
+		Tasks []struct {
+			ID     string `json:"id"`
+			TaskID string `json:"task_id"`
+		} `json:"tasks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(listOut), &listed))
+	require.Equal(t, 1, listed.Count)
+	require.Len(t, listed.Tasks, 1)
+	require.Equal(t, task.ID, listed.Tasks[0].ID)
+	require.Equal(t, task.ID, listed.Tasks[0].TaskID)
 
 	stopOut, err := TaskStopTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+task.ID+`"}`))
 	require.NoError(t, err)
@@ -2411,6 +2436,17 @@ printf 'codog:%s\n' "$*"
 	require.NoError(t, json.Unmarshal([]byte(getOut), &fetched))
 	require.Equal(t, "check auth", fetched.Prompt)
 	require.Equal(t, "audit auth", fetched.Description)
+	var fetchedView struct {
+		TaskID    string          `json:"task_id"`
+		Prompt    string          `json:"prompt"`
+		Task      background.Task `json:"task"`
+		UpdatedAt time.Time       `json:"updated_at"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(getOut), &fetchedView))
+	require.Equal(t, report.TaskID, fetchedView.TaskID)
+	require.Equal(t, "check auth", fetchedView.Prompt)
+	require.Equal(t, "check auth", fetchedView.Task.Prompt)
+	require.False(t, fetchedView.UpdatedAt.IsZero())
 
 	_, err = TaskCreateTool{Workspace: workspace, ConfigHome: configHome, Executable: script}.Execute(context.Background(), []byte(`{"command":"printf ok","prompt":"check auth"}`))
 	require.Error(t, err)
