@@ -309,6 +309,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "setupGitHubActions",
 		},
 		{
+			name:  "github app step local help",
+			args:  []string{"--config", configPath, "ApiKeyStep", "--help", "--output-format", "json"},
+			topic: "ApiKeyStep",
+		},
+		{
 			name:  "api local help",
 			args:  []string{"--config", configPath, "api", "--help", "--output-format", "json"},
 			topic: "api",
@@ -528,11 +533,19 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "ant-trace")
 	require.Contains(t, report.Commands, "api")
+	require.Contains(t, report.Commands, "ApiKeyStep")
 	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "caches")
+	require.Contains(t, report.Commands, "CheckExistingSecretStep")
+	require.Contains(t, report.Commands, "CheckGitHubStep")
+	require.Contains(t, report.Commands, "ChooseRepoStep")
+	require.Contains(t, report.Commands, "CreatingStep")
 	require.Contains(t, report.Commands, "extra-usage-core")
 	require.Contains(t, report.Commands, "extra-usage-noninteractive")
+	require.Contains(t, report.Commands, "ExistingWorkflowStep")
+	require.Contains(t, report.Commands, "ErrorStep")
 	require.Contains(t, report.Commands, "autofix-pr")
+	require.Contains(t, report.Commands, "InstallAppStep")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
@@ -574,6 +587,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
 	require.Contains(t, report.Commands, "workspace")
+	require.Contains(t, report.Commands, "OAuthFlowStep")
+	require.Contains(t, report.Commands, "SuccessStep")
+	require.Contains(t, report.Commands, "WarningsStep")
 	require.Contains(t, report.Commands, "cwd")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_reset")
@@ -609,8 +625,13 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ApiKeyStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
+	require.True(t, commandAcceptsGlobalOutputFormat("CheckGitHubStep"))
+	require.True(t, commandAcceptsGlobalOutputFormat("CreatingStep"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ExistingWorkflowStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("generateSessionName"))
+	require.True(t, commandAcceptsGlobalOutputFormat("SuccessStep"))
 	require.True(t, commandAcceptsGlobalOutputFormat("onboarding"))
 	require.True(t, commandAcceptsGlobalOutputFormat("AddMarketplace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("BrowseMarketplace"))
@@ -5909,6 +5930,69 @@ func TestInstallGitHubAppCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"dry_run": true`)
 	require.Contains(t, cliOut, `"name": "claude"`)
 	require.Contains(t, cliOut, `"name": "review"`)
+}
+
+func TestInstallGitHubAppStepCompatibilityCommands(t *testing.T) {
+	workspace := t.TempDir()
+	workflowPath := filepath.Join(workspace, ".github", "workflows", "claude.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(workflowPath), 0o755))
+	require.NoError(t, os.WriteFile(workflowPath, []byte("custom workflow\n"), 0o644))
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{APIKey: "test-key"},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, app.InstallGitHubAppStep("ApiKeyStep", []string{"--workflow", "claude", "--json"}))
+	var apiReport installGitHubAppStepReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &apiReport))
+	require.Equal(t, "install_github_app_step", apiReport.Kind)
+	require.Equal(t, "ApiKeyStep", apiReport.Step)
+	require.Equal(t, "ok", apiReport.Status)
+	require.True(t, apiReport.APIKeyConfigured)
+	require.False(t, apiReport.ProviderRequestMade)
+	require.False(t, apiReport.WorkspaceWillMutate)
+	require.True(t, apiReport.InstallCommandMutates)
+	require.Contains(t, apiReport.NextCommand, "codog install-github-app")
+	out.Reset()
+
+	require.NoError(t, app.InstallGitHubAppStep("ExistingWorkflowStep", []string{"--workflow", "claude", "--json"}))
+	var existingReport installGitHubAppStepReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &existingReport))
+	require.Equal(t, "ExistingWorkflowStep", existingReport.Step)
+	require.Equal(t, "warn", existingReport.Status)
+	require.Contains(t, existingReport.ExistingWorkflows, workflowPath)
+	require.Contains(t, existingReport.Messages[0], "workflow")
+	out.Reset()
+
+	require.NoError(t, app.InstallGitHubAppStep("CreatingStep", []string{"--workflow", "review", "--secret-name", "CLAUDE_KEY", "--json"}))
+	var creatingReport installGitHubAppStepReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &creatingReport))
+	require.Equal(t, "CreatingStep", creatingReport.Step)
+	require.Equal(t, "planned", creatingReport.Status)
+	require.Contains(t, creatingReport.NextCommand, "--secret-name")
+	require.False(t, fileExists(filepath.Join(workspace, ".github", "workflows", "claude-code-review.yml")))
+	out.Reset()
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "WarningsStep", "--workflow", "claude"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var warningsReport installGitHubAppStepReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &warningsReport))
+	require.Equal(t, "WarningsStep", warningsReport.Step)
+	require.NotEmpty(t, warningsReport.Warnings)
 }
 
 func TestInstallSlackAppCommandAndSlash(t *testing.T) {

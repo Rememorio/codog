@@ -501,6 +501,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.PRComments(ctx, rest)
 	case "install-github-app", "setupGitHubActions":
 		return app.InstallGitHubApp(rest)
+	case "ApiKeyStep", "CheckExistingSecretStep", "CheckGitHubStep", "ChooseRepoStep", "CreatingStep", "ErrorStep", "ExistingWorkflowStep", "InstallAppStep", "OAuthFlowStep", "SuccessStep", "WarningsStep":
+		return app.InstallGitHubAppStep(command, rest)
 	case "install-slack-app":
 		return app.InstallSlackApp(rest)
 	case "stickers":
@@ -12753,6 +12755,30 @@ type installGitHubAppRequest struct {
 	DryRun     bool
 }
 
+type installGitHubAppStepReport struct {
+	Kind                  string                     `json:"kind"`
+	Action                string                     `json:"action"`
+	Status                string                     `json:"status"`
+	Step                  string                     `json:"step"`
+	Command               string                     `json:"command"`
+	Workspace             string                     `json:"workspace"`
+	Repo                  string                     `json:"repo,omitempty"`
+	SecretName            string                     `json:"secret_name"`
+	APIKeyConfigured      bool                       `json:"api_key_configured"`
+	GitHubCLIAvailable    bool                       `json:"github_cli_available"`
+	GitHubCLIPath         string                     `json:"github_cli_path,omitempty"`
+	DocsURL               string                     `json:"docs_url"`
+	Workflows             []githubsetup.WorkflowFile `json:"workflows,omitempty"`
+	ExistingWorkflows     []string                   `json:"existing_workflows,omitempty"`
+	Instructions          []string                   `json:"instructions,omitempty"`
+	Messages              []string                   `json:"messages,omitempty"`
+	Warnings              []string                   `json:"warnings,omitempty"`
+	NextCommand           string                     `json:"next_command,omitempty"`
+	ProviderRequestMade   bool                       `json:"provider_request_made"`
+	WorkspaceWillMutate   bool                       `json:"workspace_will_mutate"`
+	InstallCommandMutates bool                       `json:"install_command_mutates"`
+}
+
 type installSlackAppRequest struct {
 	Format string
 	Target string
@@ -13067,6 +13093,184 @@ func (a *App) InstallGitHubApp(args []string) error {
 	return nil
 }
 
+func (a *App) InstallGitHubAppStep(command string, args []string) error {
+	req, err := parseInstallGitHubAppArgs(args)
+	if err != nil {
+		return err
+	}
+	setupReport, err := githubsetup.Setup(githubsetup.Options{
+		Workspace:  a.Workspace,
+		SecretName: req.SecretName,
+		Workflows:  req.Workflows,
+		Force:      req.Force,
+		DryRun:     true,
+	})
+	if err != nil {
+		return err
+	}
+	report := a.buildInstallGitHubAppStepReport(command, req, setupReport)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderInstallGitHubAppStepReport(a.Out, report)
+	return nil
+}
+
+func installGitHubAppStepCommand(topic string) string {
+	switch strings.ToLower(strings.TrimSpace(topic)) {
+	case "apikeystep":
+		return "ApiKeyStep"
+	case "checkexistingsecretstep":
+		return "CheckExistingSecretStep"
+	case "checkgithubstep":
+		return "CheckGitHubStep"
+	case "chooserepostep":
+		return "ChooseRepoStep"
+	case "creatingstep":
+		return "CreatingStep"
+	case "errorstep":
+		return "ErrorStep"
+	case "existingworkflowstep":
+		return "ExistingWorkflowStep"
+	case "installappstep":
+		return "InstallAppStep"
+	case "oauthflowstep":
+		return "OAuthFlowStep"
+	case "successstep":
+		return "SuccessStep"
+	case "warningsstep":
+		return "WarningsStep"
+	default:
+		return strings.TrimSpace(topic)
+	}
+}
+
+func (a *App) buildInstallGitHubAppStepReport(command string, req installGitHubAppRequest, setupReport githubsetup.Report) installGitHubAppStepReport {
+	ghPath, ghErr := exec.LookPath("gh")
+	existing := []string{}
+	for _, workflow := range setupReport.Workflows {
+		if workflow.Exists {
+			existing = append(existing, workflow.Path)
+		}
+	}
+	apiKeyConfigured := strings.TrimSpace(a.Config.APIKey) != "" ||
+		strings.TrimSpace(a.Config.AuthToken) != "" ||
+		strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != ""
+	report := installGitHubAppStepReport{
+		Kind:                  "install_github_app_step",
+		Action:                "check",
+		Status:                "ok",
+		Step:                  command,
+		Command:               command,
+		Workspace:             setupReport.Workspace,
+		Repo:                  setupReport.Repo,
+		SecretName:            setupReport.SecretName,
+		APIKeyConfigured:      apiKeyConfigured,
+		GitHubCLIAvailable:    ghErr == nil,
+		GitHubCLIPath:         ghPath,
+		DocsURL:               setupReport.DocsURL,
+		Workflows:             setupReport.Workflows,
+		ExistingWorkflows:     existing,
+		Instructions:          append([]string(nil), setupReport.Instructions...),
+		Warnings:              append([]string(nil), setupReport.Warnings...),
+		NextCommand:           installGitHubAppNextCommand(req),
+		ProviderRequestMade:   false,
+		WorkspaceWillMutate:   false,
+		InstallCommandMutates: true,
+	}
+	switch command {
+	case "ApiKeyStep":
+		if apiKeyConfigured {
+			report.Messages = append(report.Messages, "Anthropic credentials are available locally.")
+		} else {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, "No local Anthropic API key or auth token was detected.")
+			report.Warnings = append(report.Warnings, "Set ANTHROPIC_API_KEY or configure Codog credentials before using the workflow.")
+		}
+	case "CheckExistingSecretStep":
+		report.Messages = append(report.Messages, fmt.Sprintf("Repository secret expected: %s", setupReport.SecretName))
+		report.Messages = append(report.Messages, fmt.Sprintf("Use `gh secret set %s --body \"$ANTHROPIC_API_KEY\"` to create or update it.", setupReport.SecretName))
+		if ghErr != nil {
+			report.Status = "warn"
+			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available; secret existence cannot be checked locally.")
+		}
+		if setupReport.Repo == "" {
+			report.Status = "warn"
+			report.Warnings = append(report.Warnings, "No GitHub origin remote was detected; pass a repository to gh manually if needed.")
+		}
+	case "CheckGitHubStep":
+		if setupReport.Repo != "" {
+			report.Messages = append(report.Messages, "GitHub origin remote detected.")
+		} else {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, "No GitHub origin remote was detected.")
+		}
+		if ghErr != nil {
+			report.Status = "warn"
+			report.Warnings = append(report.Warnings, "GitHub CLI `gh` is not available on PATH.")
+		}
+	case "ChooseRepoStep":
+		if setupReport.Repo != "" {
+			report.Messages = append(report.Messages, fmt.Sprintf("Selected repository: %s", setupReport.Repo))
+		} else {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, "Repository selection is unresolved because no GitHub origin remote was detected.")
+		}
+	case "ExistingWorkflowStep":
+		if len(existing) > 0 {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, fmt.Sprintf("%d workflow file(s) already exist.", len(existing)))
+		} else {
+			report.Messages = append(report.Messages, "No selected workflow files exist yet.")
+		}
+	case "CreatingStep":
+		report.Status = "planned"
+		report.Messages = append(report.Messages, "Workflow creation is planned only; this compatibility step does not mutate the workspace.")
+		report.Messages = append(report.Messages, "Run the next command to write workflow files.")
+	case "InstallAppStep":
+		report.Messages = append(report.Messages, "Install or authorize the GitHub App by following the setup documentation.")
+		report.Messages = append(report.Messages, setupReport.DocsURL)
+	case "OAuthFlowStep":
+		report.Messages = append(report.Messages, "If your organization uses OAuth or OIDC, complete provider authorization before enabling workflow automation.")
+	case "SuccessStep":
+		if len(report.Warnings) > 0 {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, "Setup can proceed, but warnings should be reviewed first.")
+		} else {
+			report.Status = "ready"
+			report.Messages = append(report.Messages, "Local GitHub App setup checks are ready.")
+		}
+	case "WarningsStep":
+		if len(report.Warnings) > 0 {
+			report.Status = "warn"
+			report.Messages = append(report.Messages, fmt.Sprintf("%d warning(s) need attention.", len(report.Warnings)))
+		} else {
+			report.Messages = append(report.Messages, "No warnings were produced by the local dry-run setup.")
+		}
+	case "ErrorStep":
+		report.Messages = append(report.Messages, "No local setup error was produced by the dry-run check.")
+	default:
+		report.Messages = append(report.Messages, "GitHub App setup step report generated.")
+	}
+	return report
+}
+
+func installGitHubAppNextCommand(req installGitHubAppRequest) string {
+	args := []string{"codog", "install-github-app"}
+	for _, workflow := range req.Workflows {
+		args = append(args, "--workflow", shellQuote(workflow))
+	}
+	if strings.TrimSpace(req.SecretName) != "" {
+		args = append(args, "--secret-name", shellQuote(req.SecretName))
+	}
+	if req.Force {
+		args = append(args, "--force")
+	}
+	return strings.Join(args, " ")
+}
+
 func parseInstallGitHubAppArgs(args []string) (installGitHubAppRequest, error) {
 	req := installGitHubAppRequest{Format: "text"}
 	for index := 0; index < len(args); index++ {
@@ -13143,6 +13347,41 @@ func renderInstallGitHubAppReport(out io.Writer, report githubsetup.Report) {
 	}
 	for _, instruction := range report.Instructions {
 		fmt.Fprintf(out, "  Next             %s\n", instruction)
+	}
+}
+
+func renderInstallGitHubAppStepReport(out io.Writer, report installGitHubAppStepReport) {
+	fmt.Fprintln(out, "GitHub App Step")
+	fmt.Fprintf(out, "  Step             %s\n", report.Step)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	if report.Repo != "" {
+		fmt.Fprintf(out, "  Repository       %s\n", report.Repo)
+	}
+	fmt.Fprintf(out, "  Secret           %s\n", report.SecretName)
+	fmt.Fprintf(out, "  API key          %t\n", report.APIKeyConfigured)
+	fmt.Fprintf(out, "  GitHub CLI       %t\n", report.GitHubCLIAvailable)
+	if report.GitHubCLIPath != "" {
+		fmt.Fprintf(out, "  gh path          %s\n", report.GitHubCLIPath)
+	}
+	for _, workflow := range report.Workflows {
+		state := "ready"
+		if workflow.Exists {
+			state = "exists"
+		}
+		fmt.Fprintf(out, "  Workflow         %s %s %s\n", workflow.Name, state, workflow.Path)
+	}
+	for _, message := range report.Messages {
+		fmt.Fprintf(out, "  Message          %s\n", message)
+	}
+	for _, warning := range report.Warnings {
+		fmt.Fprintf(out, "  Warning          %s\n", warning)
+	}
+	for _, instruction := range report.Instructions {
+		fmt.Fprintf(out, "  Next             %s\n", instruction)
+	}
+	if report.NextCommand != "" {
+		fmt.Fprintf(out, "  Command          %s\n", report.NextCommand)
 	}
 }
 
@@ -15828,6 +16067,7 @@ func builtInCommandNames() []string {
 		"ant-trace",
 		"api",
 		"api-key",
+		"ApiKeyStep",
 		"app",
 		"autofix-pr",
 		"backfill-sessions",
@@ -15850,7 +16090,10 @@ func builtInCommandNames() []string {
 		"capabilities",
 		"changelog",
 		"checkpoint",
+		"CheckExistingSecretStep",
+		"CheckGitHubStep",
 		"chrome",
+		"ChooseRepoStep",
 		"clear",
 		"code-intel",
 		"color",
@@ -15865,6 +16108,7 @@ func builtInCommandNames() []string {
 		"conversation",
 		"copy",
 		"cost",
+		"CreatingStep",
 		"cron",
 		"cwd",
 		"ctx_viz",
@@ -15879,7 +16123,9 @@ func builtInCommandNames() []string {
 		"effort",
 		"enterprise",
 		"env",
+		"ErrorStep",
 		"exit-plan",
+		"ExistingWorkflowStep",
 		"export",
 		"extra-usage",
 		"extra-usage-core",
@@ -15901,6 +16147,7 @@ func builtInCommandNames() []string {
 		"init-verifiers",
 		"insights",
 		"install",
+		"InstallAppStep",
 		"install-github-app",
 		"install-slack-app",
 		"issue",
@@ -15929,6 +16176,7 @@ func builtInCommandNames() []string {
 		"notifications",
 		"oauth",
 		"oauth-refresh",
+		"OAuthFlowStep",
 		"onboarding",
 		"output-style",
 		"passes",
@@ -15987,6 +16235,7 @@ func builtInCommandNames() []string {
 		"status",
 		"statusline",
 		"stickers",
+		"SuccessStep",
 		"summary",
 		"symbols",
 		"system-prompt",
@@ -16021,6 +16270,7 @@ func builtInCommandNames() []string {
 		"voice",
 		"web-setup",
 		"workspace",
+		"WarningsStep",
 	})
 }
 
@@ -28086,18 +28336,18 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "addmarketplace", "advisor", "agents", "ant-trace", "api", "api-key", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
-		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz", "discoverplugins",
-		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
-		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "heapdump", "hooks", "language",
+	case "add-dir", "addmarketplace", "advisor", "agents", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "blame", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "creatingstep", "cron", "ctx_viz", "discoverplugins",
+		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "existingworkflowstep",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "generate-session-name", "generatesessionname", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "notifications", "oauthflowstep", "onboarding", "output-style", "passes", "perf-issue", "plugin", "plugins", "pr",
 		"pluginsettings", "pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
-		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
+		"stash", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"ultrareview", "usage", "validateplugin", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
+		"ultrareview", "usage", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind":
 		return true
 	default:
 		return false
@@ -28821,6 +29071,17 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"repository", "pull_request", "items", "prompt", "file"},
 			[]string{"ready", "no_comments", "error"},
 			true,
+		), true
+	case "apikeystep", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "creatingstep", "errorstep", "existingworkflowstep", "installappstep", "oauthflowstep", "successstep", "warningsstep":
+		command := installGitHubAppStepCommand(topic)
+		return localCommandHelpSpec(
+			command,
+			command,
+			fmt.Sprintf("codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]", command),
+			fmt.Sprintf("%s\n\nUsage:\n  codog %s [--workflow claude|review|all] [--secret-name NAME] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code GitHub App setup step named `%s`. It performs a non-mutating local dry-run check, reports repository detection, credential readiness, existing workflow files, GitHub CLI availability, warnings, and the concrete `codog install-github-app` command to apply the setup.\n", command, command, command),
+			[]string{"step", "workspace", "repo", "secret_name", "api_key_configured", "github_cli_available", "workflows", "warnings", "next_command"},
+			[]string{"ok", "warn", "planned", "ready", "error"},
+			false,
 		), true
 	case "install-github-app":
 		return localCommandHelpSpec(
