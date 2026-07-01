@@ -327,6 +327,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Unfocus(rest)
 	case "add-dir":
 		return app.AddDir(rest)
+	case "workspace", "cwd":
+		return app.WorkspaceCommand(rest)
 	case "output-style":
 		return app.OutputStyle(rest)
 	case "reset":
@@ -7429,6 +7431,201 @@ func parseAddDirArgs(args []string) (addDirRequest, error) {
 	return req, nil
 }
 
+type workspaceRequest struct {
+	Action string
+	Path   string
+	Format string
+}
+
+type workspaceReport struct {
+	Kind                    string   `json:"kind"`
+	Action                  string   `json:"action"`
+	Status                  string   `json:"status"`
+	Workspace               string   `json:"workspace"`
+	PreviousWorkspace       string   `json:"previous_workspace,omitempty"`
+	Changed                 bool     `json:"changed"`
+	Exists                  bool     `json:"exists"`
+	IsDir                   bool     `json:"is_dir"`
+	GitWorktree             bool     `json:"git_worktree"`
+	ConfigHome              string   `json:"config_home,omitempty"`
+	SessionDir              string   `json:"session_dir,omitempty"`
+	AdditionalDirs          []string `json:"additional_dirs,omitempty"`
+	EffectiveAdditionalDirs []string `json:"effective_additional_dirs,omitempty"`
+	Message                 string   `json:"message,omitempty"`
+}
+
+func (a *App) WorkspaceCommand(args []string) error {
+	req, err := parseWorkspaceArgs(args)
+	if err != nil {
+		return err
+	}
+	previous := a.Workspace
+	switch req.Action {
+	case "status":
+	case "set":
+		next, err := a.resolveWorkspacePath(req.Path)
+		if err != nil {
+			return err
+		}
+		a.Workspace = next
+		a.Sessions = session.NewWorkspaceStore(a.Config.ConfigHome, next)
+		if err := a.refreshBuiltinToolScope(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown workspace action %q", req.Action)
+	}
+	report := a.workspaceReport(req.Action, previous)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderWorkspaceReport(a.Out, report)
+	return nil
+}
+
+func parseWorkspaceArgs(args []string) (workspaceRequest, error) {
+	req := workspaceRequest{Action: "status", Format: "text"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("workspace output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown workspace flag %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "workspace"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show", "pwd":
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected workspace argument %q", rest[1])
+		}
+		req.Action = "status"
+	case "set", "cd", "switch":
+		if len(rest) != 2 {
+			return req, errors.New("usage: codog workspace set PATH")
+		}
+		req.Action = "set"
+		req.Path = rest[1]
+	default:
+		if len(rest) != 1 {
+			return req, fmt.Errorf("unexpected workspace argument %q", rest[1])
+		}
+		req.Action = "set"
+		req.Path = rest[0]
+	}
+	return req, nil
+}
+
+func (a *App) resolveWorkspacePath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("workspace path is required")
+	}
+	if !filepath.IsAbs(path) {
+		base := a.Workspace
+		if strings.TrimSpace(base) == "" {
+			base = "."
+		}
+		path = filepath.Join(base, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("workspace path is not a directory: %s", abs)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	return filepath.Clean(abs), nil
+}
+
+func (a *App) workspaceReport(action string, previous string) workspaceReport {
+	workspace := strings.TrimSpace(a.Workspace)
+	info, err := os.Stat(workspace)
+	exists := err == nil
+	isDir := exists && info.IsDir()
+	sessionDir := ""
+	if a.Sessions != nil {
+		sessionDir = a.Sessions.Dir
+	}
+	effectiveDirs, _ := pathscope.EffectiveDirs(workspace, a.Config.AdditionalDirs)
+	report := workspaceReport{
+		Kind:                    "workspace",
+		Action:                  action,
+		Status:                  "ok",
+		Workspace:               workspace,
+		PreviousWorkspace:       previous,
+		Changed:                 previous != "" && filepath.Clean(previous) != filepath.Clean(workspace),
+		Exists:                  exists,
+		IsDir:                   isDir,
+		GitWorktree:             workspaceIsGitWorktree(workspace),
+		ConfigHome:              a.Config.ConfigHome,
+		SessionDir:              sessionDir,
+		AdditionalDirs:          append([]string(nil), a.Config.AdditionalDirs...),
+		EffectiveAdditionalDirs: effectiveDirs,
+	}
+	if report.Changed {
+		report.Message = "Workspace updated for the current Codog process."
+	} else {
+		report.PreviousWorkspace = ""
+	}
+	return report
+}
+
+func workspaceIsGitWorktree(workspace string) bool {
+	if strings.TrimSpace(workspace) == "" {
+		return false
+	}
+	out, err := gitops.Run(workspace, "rev-parse", "--is-inside-work-tree")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+func renderWorkspaceReport(out io.Writer, report workspaceReport) {
+	fmt.Fprintln(out, "Workspace")
+	fmt.Fprintf(out, "  Path             %s\n", emptyAsNone(report.Workspace))
+	if report.PreviousWorkspace != "" {
+		fmt.Fprintf(out, "  Previous         %s\n", report.PreviousWorkspace)
+	}
+	fmt.Fprintf(out, "  Exists           %t\n", report.Exists)
+	fmt.Fprintf(out, "  Directory        %t\n", report.IsDir)
+	fmt.Fprintf(out, "  Git worktree     %t\n", report.GitWorktree)
+	if report.SessionDir != "" {
+		fmt.Fprintf(out, "  Session dir      %s\n", report.SessionDir)
+	}
+	if len(report.EffectiveAdditionalDirs) != 0 {
+		fmt.Fprintf(out, "  Additional dirs  %s\n", strings.Join(report.EffectiveAdditionalDirs, ", "))
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func (a *App) refreshBuiltinToolScope() error {
 	if a.Tools == nil {
 		return nil
@@ -14494,6 +14691,7 @@ func codogCapabilityFeatures() []string {
 		"telemetry_preferences",
 		"updater",
 		"voice_listen",
+		"workspace_switch",
 		"workspace_tools",
 	})
 }
@@ -14544,6 +14742,7 @@ func builtInCommandNames() []string {
 		"context",
 		"copy",
 		"cost",
+		"cwd",
 		"ctx_viz",
 		"debug-tool-call",
 		"definition",
@@ -14673,6 +14872,7 @@ func builtInCommandNames() []string {
 		"vim",
 		"voice",
 		"web-setup",
+		"workspace",
 	})
 }
 
@@ -17571,6 +17771,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/add-dir":
 		if err := a.AddDir(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/workspace", "/cwd":
+		if err := a.WorkspaceCommand(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/output-style":
@@ -25656,7 +25860,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
-		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
+		"ultrareview", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd":
 		return true
 	default:
 		return false
@@ -25969,6 +26173,22 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"path", "session_id", "nodes", "edges"},
 			[]string{"ok", "error"},
 			true,
+		), true
+	case "workspace", "cwd":
+		command := strings.ToLower(strings.TrimSpace(topic))
+		if command == "cwd" {
+			command = "cwd"
+		} else {
+			command = "workspace"
+		}
+		return localCommandHelpSpec(
+			command,
+			command,
+			"codog workspace [status|PATH|set PATH] [--output-format text|json]",
+			"Workspace\n\nUsage:\n  codog workspace [status|PATH|set PATH] [--output-format text|json]\n  codog cwd [PATH]\n\nShows or changes the current Codog runtime workspace. In REPL this updates subsequent slash commands, tool scope, and the workspace-scoped session store.\n",
+			[]string{"workspace", "previous_workspace", "session_dir", "git_worktree", "effective_additional_dirs"},
+			[]string{"ok", "error"},
+			false,
 		), true
 	case "files":
 		return localCommandHelpSpec(
@@ -26395,6 +26615,7 @@ Usage:
   %s [flags] terminal-setup [status|snippet|install|uninstall] [--shell zsh|bash|fish|powershell] [--path PATH] [--force] [--json|--output-format text|json]
   %s [flags] context [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] ctx_viz [--session ID|--resume ID|latest] [--output PATH] [--json|--output-format text|json]
+  %s [flags] workspace|cwd [status|PATH|set PATH] [--json|--output-format text|json]
   %s [flags] init [--json|--output-format text|json]
   %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]

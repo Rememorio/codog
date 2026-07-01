@@ -211,6 +211,16 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.False(t, *report.RequiresProviderRequest)
 
 	out.Reset()
+	require.NoError(t, renderHelpCommand(&out, []string{"workspace", "--output-format", "json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "workspace", report.Topic)
+	require.Equal(t, "workspace", report.Command)
+	require.Contains(t, report.Help, "runtime workspace")
+	require.Contains(t, report.OutputFields, "session_dir")
+	require.NotNil(t, report.RequiresProviderRequest)
+	require.False(t, *report.RequiresProviderRequest)
+
+	out.Reset()
 	require.NoError(t, renderHelpCommand(&out, []string{"reset", "--output-format", "json"}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "reset", report.Topic)
@@ -336,6 +346,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "reset",
 		},
 		{
+			name:  "workspace local help",
+			args:  []string{"--config", configPath, "workspace", "--help", "--output-format", "json"},
+			topic: "workspace",
+		},
+		{
 			name:  "language local help",
 			args:  []string{"--config", configPath, "language", "--help", "--output-format", "json"},
 			topic: "language",
@@ -418,6 +433,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "reset")
 	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Commands, "telemetry")
+	require.Contains(t, report.Commands, "workspace")
+	require.Contains(t, report.Commands, "cwd")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "config_reset")
 	require.Contains(t, report.Features, "hooks_health")
@@ -427,6 +444,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
+	require.Contains(t, report.Features, "workspace_switch")
 	require.Contains(t, report.Protocols, "mcp_stdio_server")
 	require.Contains(t, report.OutputFormats, "stream-json")
 	require.Greater(t, report.CommandCount, 20)
@@ -438,9 +456,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Greater(t, report.MCP.ExposedToolCount, 10)
 	require.True(t, capabilityReportHasTool(report, "read_file"))
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
+	require.True(t, capabilityReportHasSlash(report, "/workspace"))
 	require.True(t, capabilityReportHasMCPResource(report, "codog://workspace"))
 	require.True(t, capabilityReportHasMCPPrompt(report, "review_changes"))
 	require.True(t, commandAcceptsGlobalOutputFormat("capabilities"))
+	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
+	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
 }
 
 func TestReasoningCommandPersistsPreference(t *testing.T) {
@@ -3506,6 +3527,55 @@ func TestAddDirCommandAndSlashUpdatesToolScope(t *testing.T) {
 	_, err = app.Tools.Execute(context.Background(), "read_file", input, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "escapes workspace")
+	require.Empty(t, errOut.String())
+}
+
+func TestWorkspaceCommandAndSlashSwitchesRuntimeWorkspace(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	next := t.TempDir()
+	var err error
+	workspace, err = filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	next, err = filepath.EvalSymlinks(next)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(next, "next.txt"), []byte("next body\n"), 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.WorkspaceCommand([]string{"--json"}))
+	var report workspaceReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, workspace, report.Workspace)
+	require.False(t, report.Changed)
+	require.Equal(t, session.NewWorkspaceStore(configHome, workspace).Dir, report.SessionDir)
+	out.Reset()
+
+	require.NoError(t, app.WorkspaceCommand([]string{next, "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, next, app.Workspace)
+	require.Equal(t, next, report.Workspace)
+	require.True(t, report.Changed)
+	require.Equal(t, workspace, report.PreviousWorkspace)
+	require.Equal(t, session.NewWorkspaceStore(configHome, next).Dir, app.Sessions.Dir)
+
+	input, _ := json.Marshal(map[string]string{"path": "next.txt"})
+	toolOut, err := app.Tools.Execute(context.Background(), "read_file", input, nil)
+	require.NoError(t, err)
+	require.Contains(t, toolOut, "next body")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/cwd "+workspace, &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Workspace")
+	require.Equal(t, workspace, app.Workspace)
 	require.Empty(t, errOut.String())
 }
 

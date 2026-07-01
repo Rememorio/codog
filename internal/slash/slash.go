@@ -140,6 +140,8 @@ func Specs() []Spec {
 		{Name: "/focus", Usage: "/focus [PATH...]", Description: "Show or add focused context paths."},
 		{Name: "/unfocus", Usage: "/unfocus [PATH...|--all]", Description: "Remove focused context paths."},
 		{Name: "/add-dir", Usage: "/add-dir [PATH...|remove PATH|clear]", Description: "Allow tools to access additional directories."},
+		{Name: "/workspace", Usage: "/workspace [path]", Description: "Show or change the current runtime workspace."},
+		{Name: "/cwd", Usage: "/cwd [path]", Description: "Alias for /workspace."},
 		{Name: "/output-style", Usage: "/output-style [list|show|set|clear]", Description: "Show or change the active output style."},
 		{Name: "/language", Usage: "/language [status|LANGUAGE|clear]", Description: "Show or change the interface language preference."},
 		{Name: "/theme", Usage: "/theme [list|NAME|clear]", Description: "Show or change the terminal theme preference."},
@@ -266,6 +268,8 @@ func AllCandidates(options CandidateOptions) []string {
 		"/cron due",
 		"/cron list",
 		"/cron run-due",
+		"/cwd",
+		"/cwd ",
 		"/debug-tool-call read_file {\"path\":\"go.mod\"}",
 		"/effort high",
 		"/reasoning high",
@@ -413,6 +417,8 @@ func AllCandidates(options CandidateOptions) []string {
 		"/speak",
 		"/speak last",
 		"/speak set-command ",
+		"/workspace",
+		"/workspace ",
 	} {
 		add(candidate)
 	}
