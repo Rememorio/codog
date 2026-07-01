@@ -807,6 +807,40 @@ func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {
 	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "notes.md")))
 }
 
+func TestGlobToolReportsCompatibilityMetadataAndRealTruncation(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "a.go"), []byte("package a\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "b.go"), []byte("package b\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "c.go"), []byte("package c\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("# notes\n"), 0o644))
+
+	registry := NewRegistry(workspace)
+	out, err := registry.Execute(context.Background(), "Glob", []byte(`{"pattern":"*.go","limit":2}`), nil)
+	require.NoError(t, err)
+	var report struct {
+		Files      []string `json:"files"`
+		Filenames  []string `json:"filenames"`
+		NumFiles   int      `json:"numFiles"`
+		DurationMS int64    `json:"durationMs"`
+		DurationMs int64    `json:"duration_ms"`
+		Truncated  bool     `json:"truncated"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{"a.go", "b.go"}, report.Files)
+	require.Equal(t, report.Files, report.Filenames)
+	require.Equal(t, 2, report.NumFiles)
+	require.GreaterOrEqual(t, report.DurationMS, int64(0))
+	require.Equal(t, report.DurationMS, report.DurationMs)
+	require.True(t, report.Truncated)
+
+	out, err = registry.Execute(context.Background(), "Glob", []byte(`{"pattern":"*.md","limit":1}`), nil)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{"notes.md"}, report.Files)
+	require.Equal(t, 1, report.NumFiles)
+	require.False(t, report.Truncated)
+}
+
 func TestDeriveGlobWalkRootUsesFixedPrefix(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "pkg"), 0o755))

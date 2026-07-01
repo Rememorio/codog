@@ -4399,12 +4399,14 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		limit = 200
 	}
 	var files []string
+	started := time.Now()
 	walkRoot := deriveGlobWalkRoot(root, payload.Pattern)
+	collectLimit := limit + 1
 	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if len(files) >= limit {
+		if len(files) >= collectLimit {
 			return filepath.SkipAll
 		}
 		if entry.IsDir() {
@@ -4423,7 +4425,19 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 		return "", err
 	}
 	sort.Strings(files)
-	return pretty(map[string]any{"files": files, "truncated": len(files) >= limit}), nil
+	truncated := len(files) > limit
+	if truncated {
+		files = files[:limit]
+	}
+	durationMS := time.Since(started).Milliseconds()
+	return pretty(map[string]any{
+		"files":       files,
+		"filenames":   files,
+		"numFiles":    len(files),
+		"durationMs":  durationMS,
+		"duration_ms": durationMS,
+		"truncated":   truncated,
+	}), nil
 }
 
 func globPatternMatches(pattern string, rel string, base string) bool {
