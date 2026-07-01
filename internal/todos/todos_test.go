@@ -24,12 +24,14 @@ func TestAddUpdateReplaceClearAndRender(t *testing.T) {
 
 	report, err = Replace(workspace, []Item{
 		{Content: "first"},
-		{ID: "custom", Content: "second", Status: "completed", Priority: "low"},
+		{ID: "custom", Content: "second", ActiveForm: "finishing second", Status: "completed", Priority: "low"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 2, report.Total)
 	require.Equal(t, "todo-1", report.Items[0].ID)
+	require.Equal(t, "first", report.Items[0].ActiveForm)
 	require.Equal(t, "custom", report.Items[1].ID)
+	require.Equal(t, "finishing second", report.Items[1].ActiveForm)
 
 	var out bytes.Buffer
 	RenderText(&out, report)

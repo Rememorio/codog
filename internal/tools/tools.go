@@ -6406,12 +6406,13 @@ func (TodoWriteTool) Definition() anthropic.ToolDefinition {
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"id":       map[string]any{"type": "string"},
-							"content":  map[string]any{"type": "string"},
-							"status":   map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed"}},
-							"priority": map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}},
+							"id":         map[string]any{"type": "string"},
+							"content":    map[string]any{"type": "string"},
+							"activeForm": map[string]any{"type": "string"},
+							"status":     map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed"}},
+							"priority":   map[string]any{"type": "string", "enum": []string{"low", "medium", "high"}},
 						},
-						"required":             []string{"content"},
+						"required":             []string{"content", "status", "activeForm"},
 						"additionalProperties": false,
 					},
 				},
@@ -6431,15 +6432,31 @@ func (t TodoWriteTool) Execute(_ context.Context, input json.RawMessage) (string
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	items := payload.Todos
-	if todoItemsAllCompleted(items) {
-		items = nil
-	}
-	report, err := todos.Replace(t.Workspace, items)
+	oldReport, err := todos.List(t.Workspace)
 	if err != nil {
 		return "", err
 	}
-	return pretty(report), nil
+	submitted := todos.NormalizeItems(payload.Todos)
+	persisted := submitted
+	allCompleted := todoItemsAllCompleted(submitted)
+	if allCompleted {
+		persisted = nil
+	}
+	report, err := todos.Replace(t.Workspace, persisted)
+	if err != nil {
+		return "", err
+	}
+	output := todoWriteOutput{
+		Kind:                    report.Kind,
+		Action:                  report.Action,
+		Status:                  report.Status,
+		Total:                   report.Total,
+		Items:                   report.Items,
+		OldTodos:                todoWriteListItems(oldReport.Items),
+		NewTodos:                todoWriteListItems(submitted),
+		VerificationNudgeNeeded: todoWriteVerificationNudgeNeeded(submitted, allCompleted),
+	}
+	return pretty(output), nil
 }
 
 func todoItemsAllCompleted(items []todos.Item) bool {
@@ -6448,6 +6465,47 @@ func todoItemsAllCompleted(items []todos.Item) bool {
 	}
 	for _, item := range items {
 		if strings.TrimSpace(item.Status) != "completed" {
+			return false
+		}
+	}
+	return true
+}
+
+type todoWriteOutput struct {
+	Kind                    string              `json:"kind"`
+	Action                  string              `json:"action"`
+	Status                  string              `json:"status"`
+	Total                   int                 `json:"total"`
+	Items                   []todos.Item        `json:"items"`
+	OldTodos                []todoWriteListItem `json:"oldTodos"`
+	NewTodos                []todoWriteListItem `json:"newTodos"`
+	VerificationNudgeNeeded bool                `json:"verificationNudgeNeeded"`
+}
+
+type todoWriteListItem struct {
+	Content    string `json:"content"`
+	ActiveForm string `json:"activeForm"`
+	Status     string `json:"status"`
+}
+
+func todoWriteListItems(items []todos.Item) []todoWriteListItem {
+	out := make([]todoWriteListItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, todoWriteListItem{
+			Content:    item.Content,
+			ActiveForm: item.ActiveForm,
+			Status:     item.Status,
+		})
+	}
+	return out
+}
+
+func todoWriteVerificationNudgeNeeded(items []todos.Item, allCompleted bool) bool {
+	if !allCompleted || len(items) < 3 {
+		return false
+	}
+	for _, item := range items {
+		if strings.Contains(strings.ToLower(item.Content), "verif") {
 			return false
 		}
 	}

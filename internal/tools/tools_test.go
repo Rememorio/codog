@@ -1016,18 +1016,84 @@ func TestReadFileToolReadsImages(t *testing.T) {
 
 func TestTodoToolsReadAndWriteWorkspaceTodos(t *testing.T) {
 	workspace := t.TempDir()
-	writeOut, err := TodoWriteTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"todos":[{"content":"write tests","status":"pending","priority":"high"}]}`))
+	writeOut, err := TodoWriteTool{Workspace: workspace}.Execute(context.Background(), []byte(`{
+		"todos": [
+			{
+				"content": "write tests",
+				"activeForm": "writing tests",
+				"status": "pending",
+				"priority": "high"
+			}
+		]
+	}`))
 	require.NoError(t, err)
-	require.Contains(t, writeOut, `"kind": "todos"`)
-	require.Contains(t, writeOut, `"total": 1`)
+	var writeReport struct {
+		Kind     string `json:"kind"`
+		Total    int    `json:"total"`
+		OldTodos []struct {
+			Content string `json:"content"`
+		} `json:"oldTodos"`
+		NewTodos []struct {
+			Content    string `json:"content"`
+			ActiveForm string `json:"activeForm"`
+			Status     string `json:"status"`
+		} `json:"newTodos"`
+		VerificationNudgeNeeded bool `json:"verificationNudgeNeeded"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(writeOut), &writeReport))
+	require.Equal(t, "todos", writeReport.Kind)
+	require.Equal(t, 1, writeReport.Total)
+	require.Empty(t, writeReport.OldTodos)
+	require.Len(t, writeReport.NewTodos, 1)
+	require.Equal(t, "write tests", writeReport.NewTodos[0].Content)
+	require.Equal(t, "writing tests", writeReport.NewTodos[0].ActiveForm)
+	require.False(t, writeReport.VerificationNudgeNeeded)
 
 	readOut, err := TodoReadTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
 	require.NoError(t, err)
 	require.Contains(t, readOut, "write tests")
 
-	clearOut, err := TodoWriteTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"todos":[{"content":"write tests","status":"completed","priority":"high"}]}`))
+	clearOut, err := TodoWriteTool{Workspace: workspace}.Execute(context.Background(), []byte(`{
+		"todos": [
+			{
+				"content": "write tests",
+				"activeForm": "writing tests",
+				"status": "completed",
+				"priority": "high"
+			},
+			{
+				"content": "fix errors",
+				"activeForm": "fixing errors",
+				"status": "completed",
+				"priority": "medium"
+			},
+			{
+				"content": "ship branch",
+				"activeForm": "shipping branch",
+				"status": "completed",
+				"priority": "low"
+			}
+		]
+	}`))
 	require.NoError(t, err)
-	require.Contains(t, clearOut, `"total": 0`)
+	var clearReport struct {
+		Total    int `json:"total"`
+		OldTodos []struct {
+			Content string `json:"content"`
+		} `json:"oldTodos"`
+		NewTodos []struct {
+			Content string `json:"content"`
+			Status  string `json:"status"`
+		} `json:"newTodos"`
+		VerificationNudgeNeeded bool `json:"verificationNudgeNeeded"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(clearOut), &clearReport))
+	require.Equal(t, 0, clearReport.Total)
+	require.Len(t, clearReport.OldTodos, 1)
+	require.Equal(t, "write tests", clearReport.OldTodos[0].Content)
+	require.Len(t, clearReport.NewTodos, 3)
+	require.Equal(t, "completed", clearReport.NewTodos[2].Status)
+	require.True(t, clearReport.VerificationNudgeNeeded)
 	readOut, err = TodoReadTool{Workspace: workspace}.Execute(context.Background(), []byte(`{}`))
 	require.NoError(t, err)
 	require.NotContains(t, readOut, "write tests")

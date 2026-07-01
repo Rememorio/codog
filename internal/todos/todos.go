@@ -14,11 +14,12 @@ import (
 const FileName = "todos.json"
 
 type Item struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"content"`
-	Status    string    `json:"status"`
-	Priority  string    `json:"priority"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Content    string    `json:"content"`
+	ActiveForm string    `json:"activeForm,omitempty"`
+	Status     string    `json:"status"`
+	Priority   string    `json:"priority"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type State struct {
@@ -58,14 +59,14 @@ func Load(workspace string) (State, error) {
 	if state.Kind != "todos" {
 		return State{}, errors.New("todo state kind is invalid")
 	}
-	state.Items = normalizeItems(state.Items)
+	state.Items = NormalizeItems(state.Items)
 	return state, nil
 }
 
 func Save(workspace string, state State) error {
 	state.Kind = "todos"
 	state.UpdatedAt = time.Now().UTC()
-	state.Items = normalizeItems(state.Items)
+	state.Items = NormalizeItems(state.Items)
 	path := Path(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -99,7 +100,7 @@ func List(workspace string) (Report, error) {
 }
 
 func Replace(workspace string, items []Item) (Report, error) {
-	normalized := normalizeItems(items)
+	normalized := NormalizeItems(items)
 	for _, item := range normalized {
 		if strings.TrimSpace(item.Content) == "" {
 			return Report{}, errors.New("todo content is required")
@@ -196,7 +197,9 @@ func RenderText(w io.Writer, report Report) {
 	}
 }
 
-func normalizeItems(items []Item) []Item {
+// NormalizeItems applies stable defaults to todo items before validation,
+// storage, or tool output.
+func NormalizeItems(items []Item) []Item {
 	now := time.Now().UTC()
 	out := make([]Item, 0, len(items))
 	seen := map[string]int{}
@@ -212,6 +215,10 @@ func normalizeItems(items []Item) []Item {
 			seen[item.ID] = 1
 		}
 		item.Content = strings.TrimSpace(item.Content)
+		item.ActiveForm = strings.TrimSpace(item.ActiveForm)
+		if item.ActiveForm == "" {
+			item.ActiveForm = item.Content
+		}
 		item.Status = strings.TrimSpace(item.Status)
 		if item.Status == "" {
 			item.Status = "pending"
