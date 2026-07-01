@@ -40,6 +40,7 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/heapdump")
 	require.Contains(t, out.String(), "/compact")
 	require.Contains(t, out.String(), "/undo")
+	require.Contains(t, out.String(), "/caches")
 	require.Contains(t, out.String(), "/break-cache")
 	require.Contains(t, out.String(), "/usage")
 	require.Contains(t, out.String(), "/stats")

@@ -411,7 +411,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Capabilities(rest)
 	case "cost", "tokens":
 		return app.ShowCost(overrides)
-	case "cache":
+	case "cache", "caches":
 		return app.Cache(rest, overrides)
 	case "break-cache":
 		return app.BreakCache(rest, overrides)
@@ -14758,6 +14758,7 @@ func builtInCommandNames() []string {
 		"bughunter",
 		"build",
 		"cache",
+		"caches",
 		"capabilities",
 		"changelog",
 		"checkpoint",
@@ -17903,7 +17904,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
 	case "/tokens":
 		_ = a.ShowCost(config.FlagOverrides{SessionID: sess.ID})
-	case "/cache":
+	case "/cache", "/caches":
 		if err := a.Cache(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
@@ -26243,7 +26244,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "capabilities", "changelog", "chrome",
+	case "add-dir", "advisor", "agents", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
 		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
@@ -26725,6 +26726,13 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "caches":
+		spec, _ := commandHelpSpecFor("cache")
+		spec.Topic = "caches"
+		spec.Command = "caches"
+		spec.Usage = "codog caches [--session ID|--resume ID|latest] [--output-format text|json]"
+		spec.Text = "Caches\n\nUsage:\n  codog caches [--session ID|--resume ID|latest] [--output-format text|json]\n\nAlias for `codog cache`; shows prompt cache creation and cache read token statistics recorded in the selected session JSONL usage records.\n"
+		return spec, true
 	case "break-cache":
 		return localCommandHelpSpec(
 			"break-cache",
@@ -27094,6 +27102,7 @@ Usage:
   %s [flags] notifications [on|off|toggle|status|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] cost --resume latest
   %s [flags] cache [--session ID|--resume ID|latest] [--json|--output-format text|json]
+  %s [flags] caches [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] break-cache [--session ID|--resume ID|latest] [MESSAGE] [--json|--output-format text|json]
   %s [flags] usage [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] stats [--session ID|--resume ID|latest] [--json|--output-format text|json]

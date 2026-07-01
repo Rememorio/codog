@@ -302,6 +302,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "cache",
 		},
 		{
+			name:  "caches local help",
+			args:  []string{"--config", configPath, "caches", "--help", "--output-format", "json"},
+			topic: "caches",
+		},
+		{
 			name:  "context-noninteractive local help",
 			args:  []string{"--config", configPath, "context-noninteractive", "--help", "--output-format", "json"},
 			topic: "context-noninteractive",
@@ -455,6 +460,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "break-cache")
+	require.Contains(t, report.Commands, "caches")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
@@ -3935,6 +3941,23 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Equal(t, "actual", cache.Source)
 	out.Reset()
 
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome, "model": "claude-haiku"})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--session", "usage-session", "--output-format", "json", "caches"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &cache))
+	require.Equal(t, "cache", cache.Kind)
+	require.Equal(t, "usage-session", cache.SessionID)
+	require.Equal(t, 10, cache.CacheTotalInputTokens)
+
 	require.NoError(t, app.BreakCache([]string{"--session", "usage-session", "--message", "force a new provider prompt prefix", "--json"}, config.FlagOverrides{}))
 	var breakReport breakCacheReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &breakReport))
@@ -4001,6 +4024,11 @@ func TestUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Cache created    6")
 	require.Contains(t, out.String(), "Cache read       4")
 	require.Contains(t, out.String(), "Hit ratio        6.67%")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/caches", sess))
+	require.Contains(t, out.String(), "Prompt Cache")
+	require.Contains(t, out.String(), "Cache created    6")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/break-cache slash marker", sess))
