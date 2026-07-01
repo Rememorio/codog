@@ -336,6 +336,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Advisor(rest)
 	case "max-tokens":
 		return app.MaxTokens(rest)
+	case "temperature":
+		return app.Temperature(rest)
 	case "max-turns":
 		return app.MaxTurns(rest)
 	case "permissions":
@@ -13857,6 +13859,7 @@ func codogCapabilityFeatures() []string {
 		"session_resume",
 		"skills",
 		"slash_commands",
+		"sampling_temperature",
 		"speech_output",
 		"team_watch",
 		"updater",
@@ -14009,6 +14012,7 @@ func builtInCommandNames() []string {
 		"system-prompt",
 		"tag",
 		"tasks",
+		"temperature",
 		"templates",
 		"terminal-setup",
 		"terminalSetup",
@@ -16510,10 +16514,11 @@ func (a *App) hookPromptRunner(cfg config.Config) hooks.PromptRunner {
 		}
 		var streamed strings.Builder
 		assistant, err := a.Client.Stream(ctx, anthropic.Request{
-			Model:     model,
-			MaxTokens: maxTokens,
-			System:    "You are executing a Codog hook. Evaluate the hook prompt and return a concise result for the calling process.",
-			Messages:  []anthropic.Message{anthropic.TextMessage("user", prompt)},
+			Model:       model,
+			MaxTokens:   maxTokens,
+			Temperature: cfg.Temperature,
+			System:      "You are executing a Codog hook. Evaluate the hook prompt and return a concise result for the calling process.",
+			Messages:    []anthropic.Message{anthropic.TextMessage("user", prompt)},
 		}, func(delta string) {
 			streamed.WriteString(delta)
 		})
@@ -17040,6 +17045,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/max-tokens":
 		a.handleMaxTokensSlash(fields[1:])
+	case "/temperature":
+		if err := a.Temperature(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/max-turns":
 		a.handleMaxTurnsSlash(fields[1:])
 	case "/system-prompt":
@@ -17933,6 +17942,196 @@ func (a *App) handleMaxTokensSlash(args []string) {
 	fmt.Fprintf(a.Err, "max_tokens=%d\n", a.Config.MaxTokens)
 }
 
+type temperatureRequest struct {
+	Action string
+	Value  float64
+	Format string
+	Target string
+	Path   string
+}
+
+type temperatureReport struct {
+	Kind        string   `json:"kind"`
+	Action      string   `json:"action"`
+	Status      string   `json:"status"`
+	Configured  bool     `json:"configured"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	Path        string   `json:"path,omitempty"`
+	Message     string   `json:"message,omitempty"`
+}
+
+func (a *App) Temperature(args []string) error {
+	req, err := parseTemperatureArgs(args)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "status":
+	case "set":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "temperature", req.Value); err != nil {
+			return err
+		}
+		value := req.Value
+		a.Config.Temperature = &value
+		req.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "temperature"); err != nil {
+			return err
+		}
+		a.Config.Temperature = nil
+		req.Path = path
+	default:
+		return fmt.Errorf("unknown temperature command %q", req.Action)
+	}
+	report := a.temperatureReport(req.Action, req.Path)
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderTemperatureReport(a.Out, report)
+	return nil
+}
+
+func parseTemperatureArgs(args []string) (temperatureRequest, error) {
+	req := temperatureRequest{Action: "status", Format: "text", Target: "user"}
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("temperature output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("temperature target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("temperature config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown temperature flag %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "temperature"); err != nil {
+		return req, err
+	}
+	if len(rest) == 0 {
+		return req, nil
+	}
+	switch strings.ToLower(rest[0]) {
+	case "status", "show":
+		req.Action = "status"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected temperature argument %q", rest[1])
+		}
+	case "clear", "unset", "reset", "default":
+		req.Action = "clear"
+		if len(rest) > 1 {
+			return req, fmt.Errorf("unexpected temperature argument %q", rest[1])
+		}
+	case "set":
+		req.Action = "set"
+		if len(rest) != 2 {
+			return req, errors.New("usage: codog temperature set VALUE [--target user|project|local|--path PATH]")
+		}
+		value, err := parseTemperatureValue(rest[1])
+		if err != nil {
+			return req, err
+		}
+		req.Value = value
+	default:
+		req.Action = "set"
+		if len(rest) != 1 {
+			return req, fmt.Errorf("unexpected temperature argument %q", rest[1])
+		}
+		value, err := parseTemperatureValue(rest[0])
+		if err != nil {
+			return req, err
+		}
+		req.Value = value
+	}
+	return req, nil
+}
+
+func parseTemperatureValue(raw string) (float64, error) {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return 0, errors.New("temperature must be a number between 0 and 1")
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
+		return 0, errors.New("temperature must be between 0 and 1")
+	}
+	return value, nil
+}
+
+func (a *App) temperatureReport(action string, path string) temperatureReport {
+	report := temperatureReport{
+		Kind:        "temperature",
+		Action:      action,
+		Status:      "ok",
+		Configured:  a.Config.Temperature != nil,
+		Temperature: a.Config.Temperature,
+		Path:        path,
+	}
+	switch {
+	case action == "set":
+		report.Message = "Sampling temperature preference saved."
+	case action == "clear":
+		report.Message = "Sampling temperature preference cleared; provider defaults will be used."
+	case report.Configured:
+		report.Message = "Sampling temperature preference is configured."
+	default:
+		report.Message = "Sampling temperature is unset; provider defaults will be used."
+	}
+	return report
+}
+
+func renderTemperatureReport(out io.Writer, report temperatureReport) {
+	fmt.Fprintln(out, "Temperature")
+	fmt.Fprintf(out, "  Configured       %t\n", report.Configured)
+	if report.Temperature != nil {
+		fmt.Fprintf(out, "  Value            %s\n", formatFloatValue(*report.Temperature))
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
+func formatFloatValue(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
 func (a *App) MaxTurns(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintf(a.Out, "max_turns=%d\n", a.Config.MaxTurns)
@@ -18509,7 +18708,7 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 	}
 	switch strings.ToLower(args[0]) {
 	case "model":
-		return map[string]any{"model": cfg.Model, "advisor_model": cfg.AdvisorModel, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
+		return map[string]any{"model": cfg.Model, "advisor_model": cfg.AdvisorModel, "max_tokens": cfg.MaxTokens, "max_turns": cfg.MaxTurns, "temperature": cfg.Temperature, "reasoning_effort": cfg.ReasoningEffort, "fast_mode": fastModeEnabled(cfg.FastMode)}, nil
 	case "interface", "ui":
 		return map[string]any{"theme": cfg.Theme, "editorMode": cfg.EditorMode}, nil
 	case "privacy", "privacy-settings":
@@ -23256,6 +23455,26 @@ func (v *stringListFlag) String() string {
 	return strings.Join(*v, ",")
 }
 
+type optionalFloatFlag struct {
+	value **float64
+}
+
+func (f optionalFloatFlag) Set(raw string) error {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return err
+	}
+	*f.value = &value
+	return nil
+}
+
+func (f optionalFloatFlag) String() string {
+	if f.value == nil || *f.value == nil {
+		return ""
+	}
+	return strconv.FormatFloat(**f.value, 'f', -1, 64)
+}
+
 func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides, string, []string, error) {
 	if missing, ok := missingToolFlagArgument(args); ok {
 		return base, "", nil, missing
@@ -23289,6 +23508,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.Var(&disallowedTools, "disallowedTools", "deny a tool; repeat or comma-separate")
 	flags.IntVar(&base.MaxTurns, "max-turns", base.MaxTurns, "max model/tool loop iterations")
 	flags.IntVar(&base.MaxTokens, "max-tokens", base.MaxTokens, "maximum output tokens")
+	flags.Var(optionalFloatFlag{value: &base.Temperature}, "temperature", "sampling temperature from 0 to 1")
 	if err := flags.Parse(args); err != nil {
 		return base, "", nil, err
 	}
@@ -23436,7 +23656,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pr-comments", "prompt", "privacy-settings", "project", "rate-limit-options", "reload-plugins",
 		"remote-env", "remote-setup", "reset-limits", "review", "sandbox-toggle",
 		"search", "security-review", "setup", "skills", "speak", "state", "status", "statusline",
-		"stash", "stickers", "stats", "system-prompt", "team", "templates", "terminal-setup", "theme",
+		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup":
 		return true
@@ -23802,6 +24022,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "temperature":
+		return localCommandHelpSpec(
+			"temperature",
+			"temperature",
+			"codog temperature [VALUE|set VALUE|clear] [--target user|project|local] [--output-format text|json]",
+			"Temperature\n\nUsage:\n  codog temperature [VALUE|set VALUE|clear] [--target user|project|local] [--output-format text|json]\n\nShows, stores, or clears the sampling temperature used for provider requests. Values must be between 0 and 1.\n",
+			[]string{"configured", "temperature", "path"},
+			[]string{"ok", "error"},
+			true,
+		), true
 	case "permissions":
 		return localCommandHelpSpec(
 			"permissions",
@@ -24044,6 +24274,7 @@ Usage:
   %s [flags] model [NAME]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]
+  %s [flags] temperature [VALUE|set VALUE|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-turns [N]
   %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
@@ -24160,12 +24391,13 @@ Flags:
   --disallowed-tools TOOL[,TOOL]
   --max-turns N
   --max-tokens N
+  --temperature VALUE
   --json
   --output-format text|json (prompt also accepts stream-json; CODOG_OUTPUT_FORMAT sets the default)
   --config PATH
 
 Environment:
-  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
+  ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
 	return strings.ReplaceAll(help, "%s", exe)
 }

@@ -9,12 +9,13 @@ type ToolDefinition struct {
 }
 
 type Request struct {
-	Model     string           `json:"model"`
-	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system,omitempty"`
-	Messages  []Message        `json:"messages"`
-	Tools     []ToolDefinition `json:"tools,omitempty"`
-	Stream    bool             `json:"stream"`
+	Model       string           `json:"model"`
+	MaxTokens   int              `json:"max_tokens"`
+	Temperature *float64         `json:"temperature,omitempty"`
+	System      string           `json:"system,omitempty"`
+	Messages    []Message        `json:"messages"`
+	Tools       []ToolDefinition `json:"tools,omitempty"`
+	Stream      bool             `json:"stream"`
 }
 
 type Message struct {

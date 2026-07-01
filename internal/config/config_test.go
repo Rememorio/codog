@@ -144,6 +144,34 @@ func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8080/v1", cfg.BaseURL)
 }
 
+func TestLoadTemperatureConfigEnvAndFlags(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"temperature":0.7}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Temperature)
+	require.InDelta(t, 0.7, *cfg.Temperature, 0.0001)
+
+	t.Setenv("CODOG_TEMPERATURE", "0.2")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Temperature)
+	require.InDelta(t, 0.2, *cfg.Temperature, 0.0001)
+
+	override := 0.1
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, Temperature: &override})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Temperature)
+	require.InDelta(t, 0.1, *cfg.Temperature, 0.0001)
+
+	invalid := 1.5
+	_, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, Temperature: &invalid})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_temperature")
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

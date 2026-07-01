@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -300,6 +301,7 @@ type Config struct {
 	SpeechCommand       string                     `json:"speech_command,omitempty"`
 	MaxTokens           int                        `json:"max_tokens,omitempty"`
 	MaxTurns            int                        `json:"max_turns,omitempty"`
+	Temperature         *float64                   `json:"temperature,omitempty"`
 	PermissionMode      string                     `json:"permission_mode,omitempty"`
 	PlanMode            bool                       `json:"-"`
 	Privacy             PrivacyConfig              `json:"privacy_settings,omitempty"`
@@ -337,6 +339,7 @@ type FlagOverrides struct {
 	DisallowedTools []string
 	MaxTurns        int
 	MaxTokens       int
+	Temperature     *float64
 }
 
 func Load(overrides FlagOverrides) (Config, error) {
@@ -383,6 +386,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 	if cfg.AutoCompactMessages <= 0 {
 		cfg.AutoCompactMessages = 40
 	}
+	if err := validateTemperature(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validatePermissionMode(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -420,6 +426,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
 	if err := applyManagedPolicy(&cfg); err != nil {
+		return Config{}, paths, err
+	}
+	if err := validateTemperature(&cfg); err != nil {
 		return Config{}, paths, err
 	}
 	if err := validatePermissionMode(&cfg); err != nil {
@@ -883,6 +892,10 @@ func merge(dst *Config, src Config) {
 	if src.MaxTurns != 0 {
 		dst.MaxTurns = src.MaxTurns
 	}
+	if src.Temperature != nil {
+		value := *src.Temperature
+		dst.Temperature = &value
+	}
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
 	}
@@ -1260,6 +1273,11 @@ func applyEnv(cfg *Config) {
 	if value := os.Getenv("CODOG_REASONING_EFFORT"); value != "" {
 		cfg.ReasoningEffort = value
 	}
+	if value := os.Getenv("CODOG_TEMPERATURE"); value != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			cfg.Temperature = &parsed
+		}
+	}
 	if value, ok := parseBoolEnv("CODOG_FAST_MODE"); ok {
 		cfg.FastMode = &value
 	}
@@ -1348,6 +1366,10 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.MaxTokens != 0 {
 		cfg.MaxTokens = overrides.MaxTokens
+	}
+	if overrides.Temperature != nil {
+		value := *overrides.Temperature
+		cfg.Temperature = &value
 	}
 }
 
@@ -1443,6 +1465,17 @@ func validatePermissionMode(cfg *Config) error {
 	default:
 		return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
 	}
+}
+
+func validateTemperature(cfg *Config) error {
+	if cfg.Temperature == nil {
+		return nil
+	}
+	value := *cfg.Temperature
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
+		return fmt.Errorf("invalid_temperature: temperature must be between 0 and 1")
+	}
+	return nil
 }
 
 func defaultConfigHome() (string, error) {

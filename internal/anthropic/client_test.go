@@ -15,19 +15,28 @@ import (
 )
 
 func TestClientStreamsText(t *testing.T) {
-	server := httptest.NewServer(mockanthropic.Server{Text: "hello from mock"}.Handler())
+	var requestBody map[string]any
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "hello from mock",
+		OnRequest: func(data json.RawMessage) {
+			require.NoError(t, json.Unmarshal(data, &requestBody))
+		},
+	}.Handler())
 	defer server.Close()
 
 	client := New(server.URL, "test", "")
 	var streamed strings.Builder
+	temperature := 0.25
 	msg, err := client.Stream(context.Background(), Request{
-		Model:     "mock",
-		MaxTokens: 64,
-		Messages:  []Message{TextMessage("user", "hi")},
+		Model:       "mock",
+		MaxTokens:   64,
+		Temperature: &temperature,
+		Messages:    []Message{TextMessage("user", "hi")},
 	}, func(delta string) {
 		streamed.WriteString(delta)
 	})
 	require.NoError(t, err)
+	require.InDelta(t, 0.25, requestBody["temperature"].(float64), 0.0001)
 	require.Contains(t, streamed.String(), "hello from mock")
 	require.Len(t, msg.Blocks, 1)
 	require.Contains(t, msg.Blocks[0].Text, "hello from mock")
@@ -43,6 +52,7 @@ func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		require.Equal(t, "gpt-4o", body["model"])
 		require.Equal(t, true, body["stream"])
+		require.InDelta(t, 0.25, body["temperature"].(float64), 0.0001)
 		messages := body["messages"].([]any)
 		require.Equal(t, "system", messages[0].(map[string]any)["role"])
 		require.Equal(t, "Be concise.", messages[0].(map[string]any)["content"])
@@ -69,11 +79,13 @@ func TestClientStreamsOpenAICompatibleText(t *testing.T) {
 
 	client := New(server.URL+"/v1", "openai-key", "")
 	var streamed strings.Builder
+	temperature := 0.25
 	msg, err := client.Stream(context.Background(), Request{
-		Model:     "openai/gpt-4o",
-		MaxTokens: 64,
-		System:    "Be concise.",
-		Messages:  []Message{TextMessage("user", "hi")},
+		Model:       "openai/gpt-4o",
+		MaxTokens:   64,
+		Temperature: &temperature,
+		System:      "Be concise.",
+		Messages:    []Message{TextMessage("user", "hi")},
 	}, func(delta string) {
 		streamed.WriteString(delta)
 	})

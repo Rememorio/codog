@@ -155,6 +155,7 @@ type openAIRequest struct {
 	Stream        bool            `json:"stream"`
 	StreamOptions map[string]bool `json:"stream_options,omitempty"`
 	MaxTokens     int             `json:"max_tokens,omitempty"`
+	Temperature   *float64        `json:"temperature,omitempty"`
 }
 
 type openAIMessage struct {
@@ -263,6 +264,7 @@ func openAIRequestFromAnthropic(req Request) (openAIRequest, error) {
 		Stream:        true,
 		StreamOptions: map[string]bool{"include_usage": true},
 		MaxTokens:     req.MaxTokens,
+		Temperature:   req.Temperature,
 	}
 	return wire, nil
 }

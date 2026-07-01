@@ -107,11 +107,12 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 		}
 		req := anthropic.Request{
-			Model:     r.Config.Model,
-			MaxTokens: r.Config.MaxTokens,
-			System:    system,
-			Messages:  requestMessages,
-			Tools:     r.toolDefinitions(),
+			Model:       r.Config.Model,
+			MaxTokens:   r.Config.MaxTokens,
+			Temperature: r.Config.Temperature,
+			System:      system,
+			Messages:    requestMessages,
+			Tools:       r.toolDefinitions(),
 		}
 		assistant, err := r.Client.Stream(ctx, req, func(delta string) {
 			if r.Out != nil {

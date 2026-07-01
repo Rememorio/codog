@@ -218,6 +218,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "api-key", "--help", "--output-format", "json"},
 			topic: "api-key",
 		},
+		{
+			name:  "temperature local help",
+			args:  []string{"--config", configPath, "temperature", "--help", "--output-format", "json"},
+			topic: "temperature",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -277,9 +282,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "read-only", report.PermissionMode)
 	require.Contains(t, report.Commands, "prompt")
 	require.Contains(t, report.Commands, "capabilities")
+	require.Contains(t, report.Commands, "temperature")
 	require.Contains(t, report.Features, "broad_cwd_guard")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "mcp_server")
+	require.Contains(t, report.Features, "sampling_temperature")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Protocols, "mcp_stdio_server")
 	require.Contains(t, report.OutputFormats, "stream-json")
@@ -667,6 +674,15 @@ func TestParseFlagsSupportsBroadCWDOverride(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--allow-broad-cwd", "prompt", "hello"}, config.FlagOverrides{})
 	require.NoError(t, err)
 	require.True(t, overrides.AllowBroadCWD)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello"}, rest)
+}
+
+func TestParseFlagsSupportsTemperatureOverride(t *testing.T) {
+	overrides, command, rest, err := parseFlags([]string{"--temperature", "0.4", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.NotNil(t, overrides.Temperature)
+	require.InDelta(t, 0.4, *overrides.Temperature, 0.0001)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 }
@@ -2302,6 +2318,56 @@ func TestAPIKeyCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "sk-ant-test-secret")
 	require.NotContains(t, string(data), "api_key")
+	require.Empty(t, errOut.String())
+}
+
+func TestTemperatureCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+		Err:    &errOut,
+	}
+
+	require.NoError(t, app.Temperature([]string{"--json"}))
+	var status temperatureReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "temperature", status.Kind)
+	require.False(t, status.Configured)
+	require.Nil(t, status.Temperature)
+	out.Reset()
+
+	require.NoError(t, app.Temperature([]string{"0.7", "--json"}))
+	var setReport temperatureReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &setReport))
+	require.True(t, setReport.Configured)
+	require.NotNil(t, setReport.Temperature)
+	require.InDelta(t, 0.7, *setReport.Temperature, 0.0001)
+	require.NotNil(t, app.Config.Temperature)
+	require.InDelta(t, 0.7, *app.Config.Temperature, 0.0001)
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var persisted config.Config
+	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.NotNil(t, persisted.Temperature)
+	require.InDelta(t, 0.7, *persisted.Temperature, 0.0001)
+	out.Reset()
+
+	require.Error(t, app.Temperature([]string{"1.5"}))
+	require.NotNil(t, app.Config.Temperature)
+	require.InDelta(t, 0.7, *app.Config.Temperature, 0.0001)
+
+	require.True(t, app.handleSlash(context.Background(), "/temperature clear --json", &session.Session{ID: "session"}))
+	var clearReport temperatureReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &clearReport))
+	require.False(t, clearReport.Configured)
+	require.Nil(t, app.Config.Temperature)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "temperature")
 	require.Empty(t, errOut.String())
 }
 

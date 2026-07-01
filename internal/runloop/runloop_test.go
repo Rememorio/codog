@@ -67,10 +67,12 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 		},
 	}
 	var out strings.Builder
+	temperature := 0.3
 	result, err := Runner{
 		Config: config.Config{
 			Model:               "mock",
 			MaxTokens:           128,
+			Temperature:         &temperature,
 			MaxTurns:            4,
 			AutoCompactMessages: 20,
 		},
@@ -89,6 +91,8 @@ func TestRunnerExecutesToolLoop(t *testing.T) {
 		{MessageIndex: 1, Usage: anthropic.Usage{InputTokens: 12, OutputTokens: 3}},
 		{MessageIndex: 3, Usage: anthropic.Usage{InputTokens: 15, OutputTokens: 2}},
 	}, result.MessageUsages)
+	require.NotNil(t, client.requests[0].Temperature)
+	require.InDelta(t, 0.3, *client.requests[0].Temperature, 0.0001)
 }
 
 func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
