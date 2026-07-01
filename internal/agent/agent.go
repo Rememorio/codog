@@ -433,6 +433,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Undo(rest)
 	case "extra-usage":
 		return app.ExtraUsage(rest)
+	case "extra-usage-core":
+		return app.ExtraUsage(rest)
+	case "extra-usage-noninteractive":
+		return app.ExtraUsage(appendExtraUsageNoOpen(rest))
 	case "rate-limit":
 		return app.RateLimit(rest)
 	case "rate-limit-options":
@@ -475,7 +479,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.CommitPushPR(ctx, rest)
 	case "pr-comments", "pr_comments":
 		return app.PRComments(ctx, rest)
-	case "install-github-app":
+	case "install-github-app", "setupGitHubActions":
 		return app.InstallGitHubApp(rest)
 	case "install-slack-app":
 		return app.InstallSlackApp(rest)
@@ -12617,6 +12621,11 @@ func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
 	return req, nil
 }
 
+func appendExtraUsageNoOpen(args []string) []string {
+	out := append([]string{}, args...)
+	return append(out, "--no-open")
+}
+
 func extraUsageURL(mode string) string {
 	if mode == "admin" {
 		return extraUsageAdminURL
@@ -14968,6 +14977,8 @@ func builtInCommandNames() []string {
 		"exit-plan",
 		"export",
 		"extra-usage",
+		"extra-usage-core",
+		"extra-usage-noninteractive",
 		"fast",
 		"feedback",
 		"files",
@@ -15052,6 +15063,7 @@ func builtInCommandNames() []string {
 		"session",
 		"settings",
 		"setup",
+		"setupGitHubActions",
 		"sessions",
 		"share",
 		"skills",
@@ -26426,12 +26438,12 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 	case "add-dir", "advisor", "agents", "api", "api-key", "background", "blame", "brief", "budget", "bughunter", "cache", "caches", "capabilities", "changelog", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "cron", "ctx_viz",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env",
-		"extra-usage", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
+		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "heapdump", "hooks", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "marketplace",
 		"mcp", "memory", "metrics", "mobile", "notifications", "output-style", "passes", "plugin", "plugins", "pr",
 		"pr-comments", "profile", "prompt", "privacy-settings", "project", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "reset", "reset-limits", "review", "sandbox-toggle",
-		"search", "security-review", "settings", "setup", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "settings", "setup", "setupgithubactions", "skills", "speak", "state", "status", "statusline",
 		"stash", "stickers", "stats", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus",
 		"ultrareview", "usage", "version", "vim", "voice", "web-setup", "workspace", "cwd", "rewind":
@@ -26932,6 +26944,30 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "extra-usage":
+		return localCommandHelpSpec(
+			"extra-usage",
+			"extra-usage",
+			"codog extra-usage [--admin|--personal] [--no-open] [--output-format text|json]",
+			"Extra Usage\n\nUsage:\n  codog extra-usage [--admin|--personal] [--no-open] [--output-format text|json]\n\nOpens or reports the Claude extra usage settings URL and records a local visit count in Codog config.\n",
+			[]string{"mode", "url", "opened", "visit_count", "path"},
+			[]string{"ok", "open_failed", "error"},
+			true,
+		), true
+	case "extra-usage-core":
+		spec, _ := commandHelpSpecFor("extra-usage")
+		spec.Topic = "extra-usage-core"
+		spec.Command = "extra-usage-core"
+		spec.Usage = "codog extra-usage-core [--admin|--personal] [--no-open] [--output-format text|json]"
+		spec.Text = "Extra Usage Core\n\nUsage:\n  codog extra-usage-core [--admin|--personal] [--no-open] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage`; opens or reports the Claude extra usage settings URL and records a local visit count.\n"
+		return spec, true
+	case "extra-usage-noninteractive":
+		spec, _ := commandHelpSpecFor("extra-usage")
+		spec.Topic = "extra-usage-noninteractive"
+		spec.Command = "extra-usage-noninteractive"
+		spec.Usage = "codog extra-usage-noninteractive [--admin|--personal] [--output-format text|json]"
+		spec.Text = "Extra Usage Noninteractive\n\nUsage:\n  codog extra-usage-noninteractive [--admin|--personal] [--output-format text|json]\n\nCompatibility entrypoint for `codog extra-usage --no-open`; reports the Claude extra usage settings URL without launching a browser and records a local visit count.\n"
+		return spec, true
 	case "metrics":
 		return localCommandHelpSpec(
 			"metrics",
@@ -27047,6 +27083,23 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			true,
 		), true
+	case "install-github-app":
+		return localCommandHelpSpec(
+			"install-github-app",
+			"install-github-app",
+			"codog install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--output-format text|json]",
+			"Install GitHub App\n\nUsage:\n  codog install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--output-format text|json]\n\nCreates Claude Code GitHub Actions workflow files for issue comments and pull request review automation.\n",
+			[]string{"workspace", "repo", "secret_name", "workflows", "instructions", "warnings"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "setupgithubactions":
+		spec, _ := commandHelpSpecFor("install-github-app")
+		spec.Topic = "setupGitHubActions"
+		spec.Command = "setupGitHubActions"
+		spec.Usage = "codog setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--output-format text|json]"
+		spec.Text = "Setup GitHub Actions\n\nUsage:\n  codog setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--output-format text|json]\n\nCompatibility entrypoint for `codog install-github-app`; creates Claude Code GitHub Actions workflow files for issue comments and pull request review automation.\n"
+		return spec, true
 	case "skills":
 		return localCommandHelpSpec(
 			"skills",
@@ -27269,6 +27322,7 @@ Usage:
   %s [flags] commit-push-pr MESSAGE [--title TITLE] [--body BODY] [--branch NAME] [--base REF] [--remote NAME] [--staged] [--draft] [--no-pr] [--dry-run] [--json|--output-format text|json]
   %s [flags] pr-comments [PR|URL|NUMBER] [--repo OWNER/REPO] [--json|--output-format text|json]
   %s [flags] install-github-app [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
+  %s [flags] setupGitHubActions [--workflow claude|review|all] [--secret-name NAME] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] install-slack-app [--no-open] [--json|--output-format text|json]
   %s [flags] stickers [--no-open] [--json|--output-format text|json]
   %s [flags] passes [show|set-url URL|clear-url] [--no-open] [--json|--output-format text|json]
@@ -27300,6 +27354,8 @@ Usage:
   %s [flags] insights [--limit N] [--json|--output-format text|json]
   %s [flags] think-back|thinkback-play [--year YYYY] [--limit N] [--output PATH] [--json|--output-format text|json]
   %s [flags] extra-usage [--admin|--personal] [--no-open] [--json|--output-format text|json]
+  %s [flags] extra-usage-core [--admin|--personal] [--no-open] [--json|--output-format text|json]
+  %s [flags] extra-usage-noninteractive [--admin|--personal] [--json|--output-format text|json]
   %s [flags] compact [--session ID|--resume ID|latest] [--keep N] [--json|--output-format text|json]
   %s [flags] undo [--json|--output-format text|json]
   %s [flags] rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--json|--output-format text|json]

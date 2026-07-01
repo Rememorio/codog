@@ -298,6 +298,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "mcp",
 		},
 		{
+			name:  "setupGitHubActions local help",
+			args:  []string{"--config", configPath, "setupGitHubActions", "--help", "--output-format", "json"},
+			topic: "setupGitHubActions",
+		},
+		{
 			name:  "api local help",
 			args:  []string{"--config", configPath, "api", "--help", "--output-format", "json"},
 			topic: "api",
@@ -326,6 +331,16 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			name:  "break-cache local help",
 			args:  []string{"--config", configPath, "break-cache", "--help", "--output-format", "json"},
 			topic: "break-cache",
+		},
+		{
+			name:  "extra-usage core local help",
+			args:  []string{"--config", configPath, "extra-usage-core", "--help", "--output-format", "json"},
+			topic: "extra-usage-core",
+		},
+		{
+			name:  "extra-usage noninteractive local help",
+			args:  []string{"--config", configPath, "extra-usage-noninteractive", "--help", "--output-format", "json"},
+			topic: "extra-usage-noninteractive",
 		},
 		{
 			name:  "notifications local help",
@@ -468,6 +483,8 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "api")
 	require.Contains(t, report.Commands, "break-cache")
 	require.Contains(t, report.Commands, "caches")
+	require.Contains(t, report.Commands, "extra-usage-core")
+	require.Contains(t, report.Commands, "extra-usage-noninteractive")
 	require.Contains(t, report.Commands, "resume")
 	require.Contains(t, report.Commands, "session")
 	require.Contains(t, report.Commands, "clear")
@@ -477,6 +494,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "plan")
 	require.Contains(t, report.Commands, "teleport")
 	require.Contains(t, report.Commands, "bridge")
+	require.Contains(t, report.Commands, "setupGitHubActions")
 	require.Contains(t, report.Commands, "bridge-kick")
 	require.Contains(t, report.Commands, "cron")
 	require.Contains(t, report.Commands, "team")
@@ -5386,6 +5404,24 @@ func TestInstallGitHubAppCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/install-github-app --workflow claude --dry-run", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "GitHub App Setup")
 	require.Empty(t, errOut.String())
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "setupGitHubActions", "--workflow", "all", "--dry-run"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "install_github_app"`)
+	require.Contains(t, cliOut, `"dry_run": true`)
+	require.Contains(t, cliOut, `"name": "claude"`)
+	require.Contains(t, cliOut, `"name": "review"`)
 }
 
 func TestInstallSlackAppCommandAndSlash(t *testing.T) {
@@ -5533,6 +5569,30 @@ func TestExtraUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), extraUsagePersonalURL)
 	require.Equal(t, 2, app.Config.Future.ExtraUsageVisitCount)
 	require.Empty(t, errOut.String())
+
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(app.Workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	openedURL = ""
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "extra-usage-noninteractive", "--admin", "--open", "--path", configPath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Empty(t, openedURL)
+	require.Contains(t, cliOut, `"kind": "extra_usage"`)
+	require.Contains(t, cliOut, `"action": "show"`)
+	require.Contains(t, cliOut, `"mode": "admin"`)
+	require.Contains(t, cliOut, `"opened": false`)
+	require.Contains(t, cliOut, `"visit_count":`)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "extra-usage-core", "--personal", "--no-open", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "extra_usage"`)
+	require.Contains(t, cliOut, `"mode": "personal"`)
+	require.Contains(t, cliOut, `"visit_count":`)
 }
 
 func TestProjectCommandAndSlash(t *testing.T) {
