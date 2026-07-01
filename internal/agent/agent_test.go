@@ -3682,6 +3682,20 @@ func TestPluginMutationErrorContracts(t *testing.T) {
 			hint:      "plugins list",
 		},
 		{
+			name:      "info not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "info", "no-such-plugin"},
+			action:    "show",
+			errorKind: "plugin_not_found",
+			hint:      "plugins list",
+		},
+		{
+			name:      "describe not found",
+			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "describe", "no-such-plugin"},
+			action:    "show",
+			errorKind: "plugin_not_found",
+			hint:      "plugins list",
+		},
+		{
 			name:      "install source not found",
 			args:      []string{"--config", configPath, "--output-format", "json", "plugins", "install", filepath.Join(t.TempDir(), "missing-plugin")},
 			action:    "install",
@@ -3714,6 +3728,56 @@ func TestPluginMutationErrorContracts(t *testing.T) {
 			require.Contains(t, report.Hint, tc.hint)
 		})
 	}
+}
+
+func TestPluginsInfoAndDescribeAliasShow(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	pluginRoot := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(pluginRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"id":"demo","name":"Demo","version":"0.1.0","description":"Demo plugin"}`), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "plugins", "info", "demo"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"id": "demo"`)
+	require.Contains(t, out, `"description": "Demo plugin"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "plugins", "describe", "Demo"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report struct {
+		Kind   string           `json:"kind"`
+		Action string           `json:"action"`
+		Status string           `json:"status"`
+		Plugin plugins.Manifest `json:"plugin"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "plugin", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "demo", report.Plugin.ID)
+	require.Equal(t, "Demo", report.Plugin.Name)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "plugins", "info"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var errorReport actionErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &errorReport))
+	require.Equal(t, "plugins", errorReport.Kind)
+	require.Equal(t, "show", errorReport.Action)
+	require.Equal(t, "missing_argument", errorReport.ErrorKind)
 }
 
 func TestMarketplaceValidateCommand(t *testing.T) {
@@ -13380,6 +13444,16 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	require.True(t, parseReport.ParsedArgs.RequiresTarget)
 	require.Equal(t, []string{"codog", "plugins", "show", "demo"}, parseReport.ParsedArgs.LocalCommand)
 	require.Equal(t, "codog plugins show demo", parseReport.ParsedArgs.NextCommand)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"info", "demo", "--json"}))
+	var parseInfoReport pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &parseInfoReport))
+	require.Equal(t, "show", parseInfoReport.NormalizedAction)
+	require.NotNil(t, parseInfoReport.ParsedArgs)
+	require.Equal(t, "show", parseInfoReport.ParsedArgs.Action)
+	require.Equal(t, "demo", parseInfoReport.ParsedArgs.Target)
+	require.Equal(t, "codog plugins show demo", parseInfoReport.ParsedArgs.NextCommand)
 	out.Reset()
 
 	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"enable", "--json"}))

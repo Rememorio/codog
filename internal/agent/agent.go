@@ -4994,9 +4994,16 @@ func (a *App) Marketplace(args []string) error {
 			return err
 		}
 		payload = map[string]any{"removed": true, "id": args[1]}
-	case "show":
+	case "show", "info", "describe":
 		if len(args) < 2 {
-			return errors.New("usage: codog plugins show ID")
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "plugins",
+				Action:    "show",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "plugins show requires an ID",
+				Hint:      "Usage: codog plugins show ID.",
+			}, format)
 		}
 		if len(args) > 2 {
 			return renderCLIError(a.Out, unexpectedExtraArgsError{
@@ -5008,7 +5015,7 @@ func (a *App) Marketplace(args []string) error {
 		manifest, err := a.findPlugin(args[1])
 		if err != nil {
 			if errors.Is(err, errPluginNotFound) {
-				return renderPluginNotFound(a.Out, args[0], args[1], format)
+				return renderPluginNotFound(a.Out, "show", args[1], format)
 			}
 			return err
 		}
@@ -5020,7 +5027,7 @@ func (a *App) Marketplace(args []string) error {
 			Status:    "error",
 			ErrorKind: "unknown_plugins_action",
 			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      "Use `codog plugins list`, `show`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+			Hint:      "Use `codog plugins list`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
 		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
@@ -5428,7 +5435,7 @@ func parsePluginCompatibilityInvocation(args []string) pluginCompatibilityParsed
 	parsed := pluginCompatibilityParsedArgs{
 		Raw:    append([]string(nil), args...),
 		Action: "list",
-		Usage:  "codog plugins list|show|validate|install|install-remote|update|enable|disable|remove [ID|PATH]",
+		Usage:  "codog plugins list|show|info|describe|validate|install|install-remote|update|enable|disable|remove [ID|PATH]",
 	}
 	if len(args) == 0 {
 		parsed.LocalCommand = []string{"codog", "plugins", "list"}
@@ -5581,7 +5588,7 @@ func pluginCompatibilityCommand(topic string) string {
 func pluginCompatibilityOptions() []string {
 	return []string{
 		"codog plugins list",
-		"codog plugins show ID",
+		"codog plugins show|info|describe ID",
 		"codog plugins validate PATH",
 		"codog marketplace sources",
 		"codog marketplace browse",
@@ -5597,7 +5604,7 @@ func normalizePluginAction(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "list", "ls":
 		return "list"
-	case "show", "details", "detail":
+	case "show", "info", "describe", "details", "detail":
 		return "show"
 	case "sources", "source", "marketplaces", "manage-marketplaces":
 		return "sources"
@@ -20793,7 +20800,7 @@ func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "settings", "remote", "browse", "discover", "updates":
+	case "", "list", "show", "info", "describe", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "settings", "remote", "browse", "discover", "updates":
 		return a.Marketplace(args)
 	default:
 		command := "/plugins"
@@ -35972,8 +35979,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			command,
 			"marketplace",
-			"codog marketplace [list|show ID|validate PATH|sources [list|add|remove|clear]|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
-			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, configures trusted marketplace index URLs, browses remote marketplace indexes, installs signed remote plugins, and updates installed plugins.\n",
+			"codog marketplace [list|show|info|describe ID|validate PATH|sources [list|add|remove|clear]|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
+			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace show|info|describe ID\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, configures trusted marketplace index URLs, browses remote marketplace indexes, installs signed remote plugins, and updates installed plugins. `info` and `describe` are aliases for `show`.\n",
 			[]string{"plugins", "sources", "marketplace_url", "signature_valid", "checksum_valid", "path"},
 			[]string{"ok", "error"},
 			true,
@@ -36439,7 +36446,7 @@ Usage:
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show|info|describe NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
-  %s plugin|plugins|marketplace list|show|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
+  %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp
