@@ -139,6 +139,15 @@ func TestListRefreshesExitedRunningTask(t *testing.T) {
 	require.Equal(t, "exited", tasks[0].Status)
 }
 
+func TestListMissingStoreReturnsEmpty(t *testing.T) {
+	store := Store{Dir: filepath.Join(t.TempDir(), "missing")}
+
+	tasks, err := store.List()
+	require.NoError(t, err)
+	require.Empty(t, tasks)
+	require.NoDirExists(t, store.Dir)
+}
+
 func TestUpdateAppendsTaskMessage(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	now := time.Now().UTC()

@@ -3,7 +3,9 @@ package status
 import (
 	"bytes"
 	"testing"
+	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/stretchr/testify/require"
 )
@@ -25,6 +27,14 @@ func TestBuildParsesGitStatus(t *testing.T) {
 			Chars: 18,
 		}},
 		ToolNames: []string{"bash", "read_file"},
+		LaneBoard: &background.LaneBoard{
+			GeneratedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+			Active: []background.LaneBoardEntry{{
+				TaskID:    "task-1",
+				Status:    "running",
+				Freshness: background.LaneFreshnessHealthy,
+			}},
+		},
 		GitStatus: stringsJoinLines(
 			"## main...origin/main [ahead 1]",
 			" M README.md",
@@ -50,6 +60,11 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, 2, snapshot.Tools.Count)
 	require.True(t, snapshot.Plan.Active)
 	require.Equal(t, "inspect first", snapshot.Plan.Text)
+	require.True(t, snapshot.LaneBoard.StatusJSONSupported)
+	require.Equal(t, background.LaneFreshnessTransportDead, snapshot.LaneBoard.FreshnessStates[2])
+	require.True(t, snapshot.LaneBoard.Available)
+	require.Equal(t, 1, snapshot.LaneBoard.ActiveCount)
+	require.Equal(t, "task-1", snapshot.LaneBoard.Active[0].TaskID)
 }
 
 func TestBuildMarksGitErrorDegraded(t *testing.T) {
@@ -105,6 +120,7 @@ func TestRenderText(t *testing.T) {
 		SessionID:       "session-1",
 		SessionMessages: 3,
 		ToolNames:       []string{"bash"},
+		LaneBoard:       &background.LaneBoard{},
 		GitStatus:       "## main",
 		SandboxDefault:  "sandbox-exec",
 	})
@@ -118,6 +134,7 @@ func TestRenderText(t *testing.T) {
 	require.Contains(t, out.String(), "Plan             inactive")
 	require.Contains(t, out.String(), "Session          session-1")
 	require.Contains(t, out.String(), "Git              branch=main")
+	require.Contains(t, out.String(), "Task lanes       active=0 blocked=0 finished=0")
 	require.Contains(t, out.String(), "Tools            1")
 }
 

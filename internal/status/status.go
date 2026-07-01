@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/gitops"
 )
 
@@ -59,6 +60,8 @@ type Options struct {
 	GitStatus                   string
 	GitError                    string
 	GitFreshness                *gitops.BranchFreshness
+	LaneBoard                   *background.LaneBoard
+	LaneBoardError              string
 	SandboxOS                   string
 	SandboxDefault              string
 	SandboxStrategies           []string
@@ -77,6 +80,7 @@ type Snapshot struct {
 	Plan      PlanStatus      `json:"plan"`
 	Tools     ToolsStatus     `json:"tools"`
 	Git       GitStatus       `json:"git"`
+	LaneBoard LaneBoardStatus `json:"lane_board"`
 	Sandbox   SandboxStatus   `json:"sandbox"`
 	Runtime   RuntimeStatus   `json:"runtime"`
 }
@@ -165,6 +169,20 @@ type GitStatus struct {
 	Raw       string                  `json:"raw,omitempty"`
 }
 
+type LaneBoardStatus struct {
+	StatusJSONSupported bool                        `json:"status_json_supported"`
+	FreshnessStates     []background.LaneFreshness  `json:"freshness_states"`
+	Available           bool                        `json:"available"`
+	Error               string                      `json:"error,omitempty"`
+	ActiveCount         int                         `json:"active_count"`
+	BlockedCount        int                         `json:"blocked_count"`
+	FinishedCount       int                         `json:"finished_count"`
+	GeneratedAt         string                      `json:"generated_at,omitempty"`
+	Active              []background.LaneBoardEntry `json:"active,omitempty"`
+	Blocked             []background.LaneBoardEntry `json:"blocked,omitempty"`
+	Finished            []background.LaneBoardEntry `json:"finished,omitempty"`
+}
+
 type SandboxStatus struct {
 	OS         string   `json:"os"`
 	Default    string   `json:"default,omitempty"`
@@ -181,6 +199,7 @@ type RuntimeStatus struct {
 
 func Build(opts Options) Snapshot {
 	git := parseGitStatus(opts.GitStatus, opts.GitError)
+	laneBoard := buildLaneBoardStatus(opts.LaneBoard, opts.LaneBoardError)
 	status := "ok"
 	if !git.Available {
 		status = "degraded"
@@ -254,7 +273,8 @@ func Build(opts Options) Snapshot {
 			Count: len(opts.ToolNames),
 			Names: append([]string(nil), opts.ToolNames...),
 		},
-		Git: git,
+		Git:       git,
+		LaneBoard: laneBoard,
 		Sandbox: SandboxStatus{
 			OS:         opts.SandboxOS,
 			Default:    opts.SandboxDefault,
@@ -312,7 +332,46 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		fmt.Fprintf(w, "  Git              unavailable: %s\n", snapshot.Git.Error)
 	}
 	fmt.Fprintf(w, "  Sandbox          available=%t default=%s\n", snapshot.Sandbox.Available, snapshot.Sandbox.Default)
+	if snapshot.LaneBoard.Available {
+		fmt.Fprintf(w, "  Task lanes       active=%d blocked=%d finished=%d\n",
+			snapshot.LaneBoard.ActiveCount,
+			snapshot.LaneBoard.BlockedCount,
+			snapshot.LaneBoard.FinishedCount,
+		)
+	} else if snapshot.LaneBoard.Error != "" {
+		fmt.Fprintf(w, "  Task lanes       unavailable: %s\n", snapshot.LaneBoard.Error)
+	}
 	fmt.Fprintf(w, "  Tools            %d\n", snapshot.Tools.Count)
+}
+
+func buildLaneBoardStatus(board *background.LaneBoard, errText string) LaneBoardStatus {
+	status := LaneBoardStatus{
+		StatusJSONSupported: true,
+		FreshnessStates: []background.LaneFreshness{
+			background.LaneFreshnessHealthy,
+			background.LaneFreshnessStalled,
+			background.LaneFreshnessTransportDead,
+			background.LaneFreshnessUnknown,
+		},
+	}
+	if strings.TrimSpace(errText) != "" {
+		status.Error = strings.TrimSpace(errText)
+		return status
+	}
+	if board == nil {
+		return status
+	}
+	status.Available = true
+	status.Active = append([]background.LaneBoardEntry(nil), board.Active...)
+	status.Blocked = append([]background.LaneBoardEntry(nil), board.Blocked...)
+	status.Finished = append([]background.LaneBoardEntry(nil), board.Finished...)
+	status.ActiveCount = len(status.Active)
+	status.BlockedCount = len(status.Blocked)
+	status.FinishedCount = len(status.Finished)
+	if !board.GeneratedAt.IsZero() {
+		status.GeneratedAt = board.GeneratedAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+	return status
 }
 
 func parseGitStatus(raw string, errText string) GitStatus {

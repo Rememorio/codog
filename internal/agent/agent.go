@@ -17960,6 +17960,13 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 			gitFreshness = &freshness
 		}
 	}
+	var laneBoard *background.LaneBoard
+	laneBoardError := ""
+	if board, err := background.NewStore(a.Config.ConfigHome).LaneBoard(30 * time.Second); err == nil {
+		laneBoard = &board
+	} else {
+		laneBoardError = err.Error()
+	}
 	sandboxStatus := sandbox.Detect()
 	executable := ""
 	if path, err := os.Executable(); err == nil {
@@ -18015,6 +18022,8 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		GitStatus:                   gitRaw,
 		GitError:                    gitError,
 		GitFreshness:                gitFreshness,
+		LaneBoard:                   laneBoard,
+		LaneBoardError:              laneBoardError,
 		SandboxOS:                   sandboxStatus.OS,
 		SandboxDefault:              sandboxStatus.Default,
 		SandboxStrategies:           sandboxStatus.Strategies,

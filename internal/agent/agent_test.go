@@ -4785,6 +4785,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Status")
 	require.Contains(t, out.String(), "Model            claude-test")
 	require.Contains(t, out.String(), "Memory files     1")
+	require.Contains(t, out.String(), "Task lanes       active=0 blocked=0 finished=0")
 	require.Contains(t, out.String(), "Tools            81")
 	out.Reset()
 
@@ -4793,6 +4794,10 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"memory_file_count": 1`)
 	require.Contains(t, out.String(), `"id": "source"`)
 	require.Contains(t, out.String(), `"message_count": 1`)
+	require.Contains(t, out.String(), `"lane_board": {`)
+	require.Contains(t, out.String(), `"status_json_supported": true`)
+	require.Contains(t, out.String(), `"transport_dead"`)
+	require.Contains(t, out.String(), `"active_count": 0`)
 	out.Reset()
 
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}

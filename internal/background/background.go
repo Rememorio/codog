@@ -468,11 +468,11 @@ func (s Store) LaneBoardAt(now time.Time, stalledAfter time.Duration) (LaneBoard
 }
 
 func (s Store) List() ([]Task, error) {
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return nil, err
-	}
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []Task{}, nil
+		}
 		return nil, err
 	}
 	tasks := []Task{}
