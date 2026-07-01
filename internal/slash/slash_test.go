@@ -244,6 +244,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/terminal-setup")
 	require.Contains(t, names, "/terminalSetup")
 	require.Contains(t, names, "/tool-details")
+	require.Contains(t, names, "/debug-tool-call")
 	require.Contains(t, names, "/remote-env")
 	require.Contains(t, names, "/remote-setup")
 	require.Contains(t, names, "/web-setup")

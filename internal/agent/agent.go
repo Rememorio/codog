@@ -19851,6 +19851,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.SystemPromptCommand(resumeSlashArgs("system-prompt", args, format))
 	case "/tool-details":
 		return a.ToolDetails(resumeSlashArgs("tool-details", args, format))
+	case "/debug-tool-call":
+		return a.runResumedDebugToolCallSlash(ctx, resumeSlashArgs("debug-tool-call", args, format), resumed, format)
 	case "/model":
 		return a.ResumedModel(resumeSlashArgs("model", args, format))
 	case "/status":
@@ -20072,6 +20074,39 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 			command += " " + action
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
+	}
+}
+
+func (a *App) runResumedDebugToolCallSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {
+	req, err := parseDebugToolCallArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	if !resumedDebugToolCallAllowed(req.Tool) {
+		toolName := strings.TrimSpace(tools.CanonicalToolName(req.Tool))
+		if toolName == "" {
+			toolName = req.Tool
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/debug-tool-call", toolName), format)
+	}
+	return a.DebugToolCall(ctx, args, overrides)
+}
+
+func resumedDebugToolCallAllowed(name string) bool {
+	switch tools.CanonicalToolName(strings.TrimSpace(name)) {
+	case "read_file",
+		"grep",
+		"glob",
+		"ls",
+		"notebook_read",
+		"git_status",
+		"git_diff",
+		"git_log",
+		"git_show",
+		"git_blame":
+		return true
+	default:
+		return false
 	}
 }
 

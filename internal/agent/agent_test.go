@@ -709,6 +709,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	toolDetailsSlash, ok := capabilityReportSlash(report, "/tool-details")
 	require.True(t, ok)
 	require.True(t, toolDetailsSlash.ResumeSupported)
+	debugToolCallSlash, ok := capabilityReportSlash(report, "/debug-tool-call")
+	require.True(t, ok)
+	require.True(t, debugToolCallSlash.ResumeSupported)
 	cronSlash, ok := capabilityReportSlash(report, "/cron")
 	require.True(t, ok)
 	require.True(t, cronSlash.ResumeSupported)
@@ -1844,6 +1847,16 @@ func risky(value any) {
 	require.Equal(t, "bash", resumedToolDetails.Tool.Name)
 	require.Contains(t, resumedToolDetails.Aliases, "Bash")
 
+	out, err = runResumedJSON("/debug-tool-call", "read_file", `{"path":"main.go"}`)
+	require.NoError(t, err)
+	var resumedDebugToolCall debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugToolCall))
+	require.Equal(t, "debug_tool_call", resumedDebugToolCall.Kind)
+	require.Equal(t, "read_file", resumedDebugToolCall.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugToolCall.Permission)
+	require.True(t, resumedDebugToolCall.Success)
+	require.Contains(t, resumedDebugToolCall.Output, "helper")
+
 	out, err = runResumedJSON("/terminal-setup", "status", "--shell", "zsh", "--path", terminalProfilePath)
 	require.NoError(t, err)
 	var resumedTerminalSetup terminalsetup.Report
@@ -2506,6 +2519,8 @@ func risky(value any) {
 		{Command: "/passes", Args: []string{"set-url", "https://example.test/guest"}, Report: "/passes set-url"},
 		{Command: "/passes", Args: []string{"clear-url"}, Report: "/passes clear-url"},
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
+		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
+		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
 		{Command: "/branch", Args: []string{"create", "resume-test"}, Report: "/branch create"},
 		{Command: "/tag", Args: []string{"create", "v9.9.9"}, Report: "/tag create"},
 		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},

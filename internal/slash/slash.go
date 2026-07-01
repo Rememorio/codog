@@ -253,6 +253,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/cron":               true,
 	"/ctx_viz":            true,
 	"/cwd":                true,
+	"/debug-tool-call":    true,
 	"/definition":         true,
 	"/desktop":            true,
 	"/diagnostics":        true,
