@@ -4518,6 +4518,20 @@ type pluginCompatibilityPagination struct {
 	End        int `json:"end"`
 }
 
+type pluginCompatibilityParsedArgs struct {
+	Raw            []string `json:"raw,omitempty"`
+	Action         string   `json:"action"`
+	Target         string   `json:"target,omitempty"`
+	Args           []string `json:"args,omitempty"`
+	Mutation       bool     `json:"mutation"`
+	RequiresTarget bool     `json:"requires_target"`
+	LocalCommand   []string `json:"local_command,omitempty"`
+	NextCommand    string   `json:"next_command,omitempty"`
+	Usage          string   `json:"usage,omitempty"`
+	ErrorKind      string   `json:"error_kind,omitempty"`
+	Error          string   `json:"error,omitempty"`
+}
+
 type pluginCompatibilityReport struct {
 	Kind             string                          `json:"kind"`
 	Action           string                          `json:"action"`
@@ -4533,6 +4547,7 @@ type pluginCompatibilityReport struct {
 	Options          []string                        `json:"options,omitempty"`
 	Args             []string                        `json:"args,omitempty"`
 	NormalizedAction string                          `json:"normalized_action,omitempty"`
+	ParsedArgs       *pluginCompatibilityParsedArgs  `json:"parsed_args,omitempty"`
 	Pagination       *pluginCompatibilityPagination  `json:"pagination,omitempty"`
 	LoadError        string                          `json:"load_error,omitempty"`
 	Message          string                          `json:"message,omitempty"`
@@ -4657,7 +4672,17 @@ func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibi
 	if report.Summary.TrustItems > 0 && command == "PluginTrustWarning" {
 		report.Status = "warn"
 	}
-	if len(req.Args) > 0 {
+	if command == "parseArgs" {
+		parsed := parsePluginCompatibilityInvocation(req.Args)
+		report.ParsedArgs = &parsed
+		report.NormalizedAction = parsed.Action
+		if parsed.ErrorKind != "" {
+			report.Status = "error"
+		}
+		if parsed.Target != "" {
+			report.SelectedPlugin = selectPluginCompatibilityItem(items, parsed.Target)
+		}
+	} else if len(req.Args) > 0 {
 		report.NormalizedAction = normalizePluginAction(req.Args[0])
 		if selected := selectPluginCompatibilityItem(items, req.Args[0]); selected != nil {
 			report.SelectedPlugin = selected
@@ -4690,6 +4715,114 @@ func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibi
 		report.Pagination = &pagination
 	}
 	return report
+}
+
+func parsePluginCompatibilityInvocation(args []string) pluginCompatibilityParsedArgs {
+	parsed := pluginCompatibilityParsedArgs{
+		Raw:    append([]string(nil), args...),
+		Action: "list",
+		Usage:  "codog plugins list|show|validate|install|install-remote|update|enable|disable|remove [ID|PATH]",
+	}
+	if len(args) == 0 {
+		parsed.LocalCommand = []string{"codog", "plugins", "list"}
+		parsed.NextCommand = strings.Join(parsed.LocalCommand, " ")
+		return parsed
+	}
+	actionRaw := strings.TrimSpace(args[0])
+	parsed.Action = normalizePluginAction(actionRaw)
+	parsed.Args = append([]string(nil), args[1:]...)
+	metadata := pluginActionMetadata(parsed.Action)
+	parsed.Mutation = metadata.mutation
+	parsed.RequiresTarget = metadata.requiresTarget
+	if !metadata.known {
+		parsed.ErrorKind = "unknown_plugins_action"
+		parsed.Error = fmt.Sprintf("unknown plugins action %q", actionRaw)
+		parsed.LocalCommand = []string{"codog", "plugins", actionRaw}
+		parsed.NextCommand = strings.Join(parsed.LocalCommand, " ")
+		return parsed
+	}
+	if len(parsed.Args) > 0 {
+		parsed.Target = parsed.Args[0]
+	}
+	if parsed.RequiresTarget && strings.TrimSpace(parsed.Target) == "" {
+		parsed.ErrorKind = "plugin_target_required"
+		parsed.Error = fmt.Sprintf("plugins action %q requires an ID or path", parsed.Action)
+	}
+	if parsed.Target != "" {
+		parsed.LocalCommand = append(pluginActionCommandPrefix(parsed.Action), parsed.Target)
+	} else {
+		parsed.LocalCommand = pluginActionCommandPrefix(parsed.Action)
+	}
+	parsed.NextCommand = strings.Join(shellQuoteArgs(parsed.LocalCommand), " ")
+	return parsed
+}
+
+type pluginActionInfo struct {
+	known          bool
+	mutation       bool
+	requiresTarget bool
+}
+
+func pluginActionMetadata(action string) pluginActionInfo {
+	switch action {
+	case "list", "remote", "updates", "settings", "sources":
+		return pluginActionInfo{known: true}
+	case "show", "validate":
+		return pluginActionInfo{known: true, requiresTarget: true}
+	case "install", "install-remote", "update", "enable", "disable", "remove":
+		return pluginActionInfo{known: true, mutation: true, requiresTarget: true}
+	default:
+		return pluginActionInfo{}
+	}
+}
+
+func pluginActionCommandPrefix(action string) []string {
+	switch action {
+	case "list":
+		return []string{"codog", "plugins", "list"}
+	case "show":
+		return []string{"codog", "plugins", "show"}
+	case "validate":
+		return []string{"codog", "plugins", "validate"}
+	case "install":
+		return []string{"codog", "marketplace", "install"}
+	case "install-remote":
+		return []string{"codog", "marketplace", "install-remote"}
+	case "update":
+		return []string{"codog", "marketplace", "update"}
+	case "enable":
+		return []string{"codog", "marketplace", "enable"}
+	case "disable":
+		return []string{"codog", "marketplace", "disable"}
+	case "remove":
+		return []string{"codog", "marketplace", "remove"}
+	case "remote":
+		return []string{"codog", "marketplace", "browse"}
+	case "updates":
+		return []string{"codog", "marketplace", "updates"}
+	case "settings":
+		return []string{"codog", "marketplace", "settings"}
+	case "sources":
+		return []string{"codog", "marketplace", "sources"}
+	default:
+		return []string{"codog", "plugins", action}
+	}
+}
+
+func shellQuoteArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for index, arg := range args {
+		if index == 0 && arg == "codog" {
+			out = append(out, arg)
+			continue
+		}
+		if strings.ContainsAny(arg, " \t\n'\"") {
+			out = append(out, shellQuote(arg))
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func pluginCompatibilityAction(command string) string {
@@ -4759,8 +4892,16 @@ func normalizePluginAction(raw string) string {
 		return "list"
 	case "show", "details", "detail":
 		return "show"
+	case "sources", "source", "marketplaces", "manage-marketplaces":
+		return "sources"
+	case "settings", "config":
+		return "settings"
 	case "install", "add":
 		return "install"
+	case "install-remote", "remote-install":
+		return "install-remote"
+	case "update", "upgrade":
+		return "update"
 	case "remove", "rm", "delete", "uninstall":
 		return "remove"
 	case "enable", "on":
