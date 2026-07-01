@@ -180,6 +180,10 @@ func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
 		output, err := registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 		return err == nil && strings.Contains(output, "bash-ready:hook-bg")
 	}, 5*time.Second, 50*time.Millisecond)
+	out, err = registry.Execute(ctx, "BashOutputTool", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"bash_id": "`+payload.Task.ID+`"`)
+	require.Contains(t, out, `"kind": "bash"`)
 
 	out, err = registry.Execute(ctx, "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 	require.NoError(t, err)
@@ -393,6 +397,7 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "write_file", CanonicalToolName("Write"))
 	require.Equal(t, "multi_edit", CanonicalToolName("MultiEdit"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutput"))
+	require.Equal(t, "bash_output", CanonicalToolName("BashOutputTool"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
 
 	aliases := ClaudeToolAliases()
@@ -802,7 +807,7 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"ReadTool":                     "read_file",
 		"WriteTool":                    "write_file",
 		"AgentOutputTool":              "task_output",
-		"BashOutputTool":               "task_output",
+		"BashOutputTool":               "bash_output",
 		"GetMcpPromptTool":             "get_mcp_prompt",
 		"KillShell":                    "task_stop",
 		"ListMcpPromptsTool":           "list_mcp_prompts",

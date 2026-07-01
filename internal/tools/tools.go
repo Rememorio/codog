@@ -115,7 +115,7 @@ var claudeToolAliases = map[string]string{
 	"bash":                         "bash",
 	"bashtool":                     "bash",
 	"bashoutput":                   "bash_output",
-	"bashoutputtool":               "task_output",
+	"bashoutputtool":               "bash_output",
 	"brief":                        "brief",
 	"brieftool":                    "brief",
 	"config":                       "config",
