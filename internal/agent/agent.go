@@ -19959,6 +19959,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedStickersSlash(resumeSlashArgs("stickers", args, format), format)
 	case "/passes":
 		return a.runResumedPassesSlash(resumeSlashArgs("passes", args, format), format)
+	case "/heapdump":
+		return a.runResumedHeapDumpSlash(resumeSlashArgs("heapdump", args, format), format)
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/git":
@@ -20496,6 +20498,17 @@ func (a *App) runResumedPassesSlash(args []string, format string) error {
 	}
 	renderPassesReport(a.Out, report)
 	return nil
+}
+
+func (a *App) runResumedHeapDumpSlash(args []string, format string) error {
+	req, err := parseHeapDumpArgs(args)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/heapdump", "default-output"), format)
+	}
+	return a.HeapDump(args)
 }
 
 func (a *App) runResumedBranchSlash(args []string, format string) error {

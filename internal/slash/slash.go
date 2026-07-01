@@ -269,6 +269,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/git":                true,
 	"/help":               true,
 	"/history":            true,
+	"/heapdump":           true,
 	"/hooks":              true,
 	"/hover":              true,
 	"/ide":                true,

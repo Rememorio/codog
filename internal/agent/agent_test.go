@@ -775,6 +775,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	reloadPluginsSlash, ok := capabilityReportSlash(report, "/reload-plugins")
 	require.True(t, ok)
 	require.True(t, reloadPluginsSlash.ResumeSupported)
+	heapdumpSlash, ok := capabilityReportSlash(report, "/heapdump")
+	require.True(t, ok)
+	require.True(t, heapdumpSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
 	require.False(t, commitSlash.ResumeSupported)
@@ -2268,6 +2271,18 @@ func risky(value any) {
 	require.Equal(t, 0, resumedPasses.VisitCount)
 	require.Empty(t, openedURL)
 
+	heapDumpPath := filepath.Join(workspace, "resume-heap.pprof")
+	out, err = runResumedJSON("/heapdump", heapDumpPath, "--no-gc")
+	require.NoError(t, err)
+	var resumedHeapDump heapDumpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHeapDump))
+	require.Equal(t, "heapdump", resumedHeapDump.Kind)
+	require.Equal(t, "ok", resumedHeapDump.Status)
+	require.Equal(t, heapDumpPath, resumedHeapDump.Path)
+	require.False(t, resumedHeapDump.GC)
+	require.Greater(t, resumedHeapDump.Bytes, int64(0))
+	require.FileExists(t, heapDumpPath)
+
 	out, err = runResumedJSON("/files", "--glob", "*.go", "--limit", "5")
 	require.NoError(t, err)
 	var resumedFiles struct {
@@ -2490,6 +2505,7 @@ func risky(value any) {
 		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
 		{Command: "/passes", Args: []string{"set-url", "https://example.test/guest"}, Report: "/passes set-url"},
 		{Command: "/passes", Args: []string{"clear-url"}, Report: "/passes clear-url"},
+		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/branch", Args: []string{"create", "resume-test"}, Report: "/branch create"},
 		{Command: "/tag", Args: []string{"create", "v9.9.9"}, Report: "/tag create"},
 		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},
