@@ -1259,6 +1259,40 @@ func TestPrompterTaskCreateCommandValidation(t *testing.T) {
 	require.Equal(t, "permission_mode", decision.Reason)
 }
 
+func TestPrompterREPLShellValidation(t *testing.T) {
+	var decision PermissionDecision
+	p := &Prompter{
+		Mode: PermissionReadOnly,
+		OnDecision: func(next PermissionDecision) {
+			decision = next
+		},
+	}
+	require.NoError(t, p.Authorize("repl", PermissionDanger, []byte(`{"language":"sh","code":"pwd"}`)))
+	require.True(t, decision.Allowed)
+	require.Equal(t, "repl_validation_read_only", decision.Reason)
+
+	p = &Prompter{Mode: PermissionReadOnly}
+	err := p.Authorize("repl", PermissionDanger, []byte(`{"language":"bash","code":"touch file.txt"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool validation")
+
+	var prompt strings.Builder
+	p = &Prompter{
+		Mode: PermissionDanger,
+		In:   strings.NewReader("n\n"),
+		Err:  &prompt,
+	}
+	err = p.Authorize("repl", PermissionDanger, []byte(`{"language":"shell","code":"rm -rf tmp"}`))
+	require.Error(t, err)
+	require.Contains(t, prompt.String(), "Tool validation warning")
+
+	decision = PermissionDecision{}
+	p = &Prompter{Mode: PermissionReadOnly}
+	decision = p.Decide("repl", PermissionDanger, []byte(`{"language":"python","code":"print('x')"}`))
+	require.False(t, decision.Allowed)
+	require.Equal(t, "requires_confirmation", decision.Reason)
+}
+
 func TestPrompterAlwaysAllowAddsSessionRule(t *testing.T) {
 	var prompt strings.Builder
 	var decisions []PermissionDecision

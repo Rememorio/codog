@@ -865,6 +865,26 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 			}
 		}
 	}
+	if strings.EqualFold(name, "repl") {
+		language, code := replPayloadCommand(input)
+		if isShellREPLLanguage(language) && code != "" {
+			result := bashvalidation.ValidateWithAdditionalDirs(code, string(mode), p.Workspace, p.AdditionalDirs)
+			switch result.Severity {
+			case bashvalidation.SeverityBlock:
+				decision.Reason = "repl_validation"
+				decision.Message = result.Reason
+				return decision
+			case bashvalidation.SeverityConfirm:
+				validationWarning = result.Reason
+			case bashvalidation.SeverityAllow:
+				if mode == PermissionReadOnly && result.Intent == bashvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
+					decision.Allowed = true
+					decision.Reason = "repl_validation_read_only"
+					return decision
+				}
+			}
+		}
+	}
 	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
 	if validationWarning != "" && mode != PermissionAllow {
 		ask = true
@@ -886,7 +906,7 @@ func permissionDecisionError(decision PermissionDecision) error {
 		return fmt.Errorf("permission denied for tool %s by denied_tools", decision.ToolName)
 	case "deny_rule":
 		return fmt.Errorf("permission denied for tool %s by deny rule", decision.ToolName)
-	case "bash_validation", "powershell_validation", "task_create_validation":
+	case "bash_validation", "powershell_validation", "task_create_validation", "repl_validation":
 		if decision.Message != "" {
 			return fmt.Errorf("permission denied for tool %s by tool validation: %s", decision.ToolName, decision.Message)
 		}
@@ -8266,6 +8286,24 @@ func replCommand(language string, code string) ([]string, error) {
 		return []string{"node", "-e", code}, nil
 	default:
 		return nil, fmt.Errorf("unsupported repl language %q", language)
+	}
+}
+
+func replPayloadCommand(input json.RawMessage) (string, string) {
+	var payload struct {
+		Code     string `json:"code"`
+		Language string `json:"language"`
+	}
+	_ = json.Unmarshal(input, &payload)
+	return strings.TrimSpace(payload.Language), strings.TrimSpace(payload.Code)
+}
+
+func isShellREPLLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "sh", "shell", "bash":
+		return true
+	default:
+		return false
 	}
 }
 
