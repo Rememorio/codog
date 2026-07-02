@@ -8283,6 +8283,82 @@ func TestStatuslineReadsClaudeStdinContract(t *testing.T) {
 	require.Contains(t, line, "context=88%-left")
 }
 
+func TestStatuslineRunsConfiguredCommand(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     t.TempDir(),
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+			StatusLine: &config.StatusLineConfig{
+				Type:    "command",
+				Command: "echo custom-status",
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+	}
+
+	require.NoError(t, app.Statusline(nil, config.FlagOverrides{}))
+	require.Equal(t, "custom-status\n", out.String())
+
+	out.Reset()
+	require.NoError(t, app.Statusline([]string{"--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"source": "statusLine_command"`)
+	require.Contains(t, out.String(), `"line": "custom-status"`)
+}
+
+func TestStatuslineSkipsConfiguredCommandWhenHooksDisabled(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	disabled := true
+	app := &App{
+		Config: config.Config{
+			ConfigHome:      t.TempDir(),
+			Model:           "claude-test",
+			PermissionMode:  "workspace-write",
+			DisableAllHooks: &disabled,
+			StatusLine:      &config.StatusLineConfig{Type: "command", Command: "echo custom-status"},
+		},
+		Workspace: workspace,
+		Out:       &out,
+	}
+
+	require.NoError(t, app.Statusline(nil, config.FlagOverrides{}))
+	require.Contains(t, out.String(), "codog")
+	require.Contains(t, out.String(), "claude-test")
+	require.NotContains(t, out.String(), "custom-status")
+}
+
+func TestStatusLineCommandInputUsesClaudeShape(t *testing.T) {
+	workspace := t.TempDir()
+	app := &App{
+		Config: config.Config{
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+			AdditionalDirs: []string{"extra"},
+		},
+		Workspace: workspace,
+	}
+	payload, err := app.statusLineCommandInput(statuslineReport{
+		SessionID:      "session-123",
+		Model:          "claude-test",
+		PermissionMode: "workspace-write",
+	}, claudeStatuslineInput{}, false)
+
+	require.NoError(t, err)
+	var input claudeStatuslineInput
+	require.NoError(t, json.Unmarshal(payload, &input))
+	require.Equal(t, "session-123", input.SessionID)
+	require.Equal(t, "claude-test", input.Model.ID)
+	require.Equal(t, "workspace-write", input.PermissionMode)
+	require.Equal(t, workspace, input.Workspace.CurrentDir)
+	require.Equal(t, workspace, input.Workspace.ProjectDir)
+	require.Equal(t, []string{"extra"}, input.Workspace.AddedDirs)
+	require.NotEmpty(t, input.Version)
+}
+
 func TestStatusDegradesOnMalformedConfigFile(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "broken.json")
 	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))

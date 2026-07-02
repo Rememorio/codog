@@ -844,6 +844,32 @@ func TestLoadAPIKeyHelperReportsFailure(t *testing.T) {
 	require.Contains(t, err.Error(), "apiKeyHelper failed")
 }
 
+func TestLoadStatusLineSettings(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"statusLine":{"type":"command","command":"echo ready","padding":2}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.NotNil(t, cfg.StatusLine)
+	require.Equal(t, "command", cfg.StatusLine.Type)
+	require.Equal(t, "echo ready", cfg.StatusLine.Command)
+	require.NotNil(t, cfg.StatusLine.Padding)
+	require.Equal(t, 2.0, *cfg.StatusLine.Padding)
+}
+
+func TestLoadRejectsInvalidStatusLineSettings(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"statusLine":{"type":"inline","command":"echo ready"}}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_status_line")
+}
+
 func unsetCredentialEnv(t *testing.T) {
 	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
 	unsetProviderRoutingEnv(t)

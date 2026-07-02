@@ -458,6 +458,12 @@ type ManagedPolicy struct {
 	Signature         string          `json:"signature,omitempty"`
 }
 
+type StatusLineConfig struct {
+	Type    string   `json:"type,omitempty"`
+	Command string   `json:"command,omitempty"`
+	Padding *float64 `json:"padding,omitempty"`
+}
+
 type Config struct {
 	APIKey                     string                     `json:"api_key,omitempty"`
 	APIKeyHelper               string                     `json:"apiKeyHelper,omitempty"`
@@ -490,6 +496,7 @@ type Config struct {
 	CleanupPeriodDays          *int                       `json:"cleanupPeriodDays,omitempty"`
 	RespectGitignore           *bool                      `json:"respectGitignore,omitempty"`
 	DisableAllHooks            *bool                      `json:"disableAllHooks,omitempty"`
+	StatusLine                 *StatusLineConfig          `json:"statusLine,omitempty"`
 	EnableAllProjectMCPServers *bool                      `json:"enableAllProjectMcpServers,omitempty"`
 	EnabledMCPJSONServers      []string                   `json:"enabledMcpjsonServers,omitempty"`
 	DisabledMCPJSONServers     []string                   `json:"disabledMcpjsonServers,omitempty"`
@@ -729,6 +736,9 @@ func finalizeConfig(cfg *Config) error {
 		return err
 	}
 	if err := validateForceLoginMethod(cfg); err != nil {
+		return err
+	}
+	if err := validateStatusLineConfig(cfg); err != nil {
 		return err
 	}
 	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
@@ -1368,6 +1378,9 @@ func merge(dst *Config, src Config) {
 		disabled := *src.DisableAllHooks
 		dst.DisableAllHooks = &disabled
 	}
+	if src.StatusLine != nil {
+		dst.StatusLine = cloneStatusLineConfig(src.StatusLine)
+	}
 	if src.EnableAllProjectMCPServers != nil {
 		enabled := *src.EnableAllProjectMCPServers
 		dst.EnableAllProjectMCPServers = &enabled
@@ -1873,6 +1886,18 @@ func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
 	dst.DeniedTools = append(dst.DeniedTools, src.DeniedTools...)
 }
 
+func cloneStatusLineConfig(src *StatusLineConfig) *StatusLineConfig {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	if src.Padding != nil {
+		padding := *src.Padding
+		clone.Padding = &padding
+	}
+	return &clone
+}
+
 func joinPromptAppend(existing string, next string) string {
 	existing = strings.TrimSpace(existing)
 	next = strings.TrimSpace(next)
@@ -2279,6 +2304,26 @@ func validateForceLoginMethod(cfg *Config) error {
 	default:
 		return fmt.Errorf("invalid_force_login_method: unknown forceLoginMethod %q", cfg.ForceLoginMethod)
 	}
+}
+
+func validateStatusLineConfig(cfg *Config) error {
+	if cfg.StatusLine == nil {
+		return nil
+	}
+	typ := strings.TrimSpace(cfg.StatusLine.Type)
+	if typ != "command" {
+		return fmt.Errorf("invalid_status_line: statusLine.type must be %q", "command")
+	}
+	command := strings.TrimSpace(cfg.StatusLine.Command)
+	if command == "" {
+		return fmt.Errorf("invalid_status_line: statusLine.command is required")
+	}
+	cfg.StatusLine.Type = typ
+	cfg.StatusLine.Command = command
+	if cfg.StatusLine.Padding != nil && *cfg.StatusLine.Padding < 0 {
+		return fmt.Errorf("invalid_status_line: statusLine.padding must be non-negative")
+	}
+	return nil
 }
 
 func validateTemperature(cfg *Config) error {

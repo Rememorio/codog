@@ -20522,6 +20522,8 @@ type statuslineReport struct {
 	ClaudeStatuslineInput *claudeStatuslineContext `json:"claude_statusline_input,omitempty"`
 }
 
+const statusLineCommandTimeout = 5 * time.Second
+
 func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
 	format, err := parseSimpleOutputFormat("statusline", args)
 	if err != nil {
@@ -20538,6 +20540,10 @@ func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
 	}
 	if ok {
 		report = report.withClaudeStatuslineInput(claudeInput)
+	}
+	if line, ok := a.runConfiguredStatusLine(report, claudeInput, ok); ok {
+		report.Line = line
+		report.Source = "statusLine_command"
 	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -21362,6 +21368,101 @@ func renderClaudeStatuslineLine(report statuslineReport, ctx claudeStatuslineCon
 		worktreeLabel,
 	}
 	return strings.Join(nonEmptyStrings(parts), " ")
+}
+
+func (a *App) runConfiguredStatusLine(report statuslineReport, input claudeStatuslineInput, hasInput bool) (string, bool) {
+	statusLine := a.Config.StatusLine
+	if statusLine == nil || a.Config.EffectiveDisableAllHooks() {
+		return "", false
+	}
+	if strings.TrimSpace(statusLine.Type) != "command" || strings.TrimSpace(statusLine.Command) == "" {
+		return "", false
+	}
+	payload, err := a.statusLineCommandInput(report, input, hasInput)
+	if err != nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), statusLineCommandTimeout)
+	defer cancel()
+	cmd := statusLineShellCommand(ctx, statusLine.Command)
+	if workspace := strings.TrimSpace(a.Workspace); workspace != "" {
+		cmd.Dir = workspace
+	}
+	cmd.Env = statusLineCommandEnv(a.Config.Env)
+	cmd.Stdin = bytes.NewReader(payload)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+	output := normalizeStatusLineCommandOutput(stdout.String())
+	if output == "" {
+		return "", false
+	}
+	return output, true
+}
+
+func (a *App) statusLineCommandInput(report statuslineReport, input claudeStatuslineInput, hasInput bool) ([]byte, error) {
+	if hasInput {
+		return json.Marshal(input)
+	}
+	workspace := strings.TrimSpace(a.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	if abs, err := filepath.Abs(workspace); err == nil {
+		workspace = abs
+	}
+	input = claudeStatuslineInput{
+		SessionID:      strings.TrimSpace(report.SessionID),
+		CWD:            workspace,
+		PermissionMode: strings.TrimSpace(report.PermissionMode),
+		Model: claudeStatuslineModel{
+			ID:          strings.TrimSpace(report.Model),
+			DisplayName: strings.TrimSpace(report.Model),
+		},
+		Workspace: claudeStatuslineWorkspace{
+			CurrentDir: workspace,
+			ProjectDir: workspace,
+			AddedDirs:  cleanedStrings(a.Config.AdditionalDirs),
+		},
+		Version: version,
+	}
+	return json.Marshal(input)
+}
+
+func statusLineShellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/C", command)
+	}
+	return exec.CommandContext(ctx, "sh", "-c", command)
+}
+
+func statusLineCommandEnv(configEnv map[string]string) []string {
+	env := os.Environ()
+	if len(configEnv) == 0 {
+		return env
+	}
+	for key, value := range configEnv {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func normalizeStatusLineCommandOutput(value string) string {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func nonEmptyStrings(values []string) []string {

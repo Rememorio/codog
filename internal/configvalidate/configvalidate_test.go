@@ -143,6 +143,43 @@ func TestValidateBytesValidatesDisableAllHooksType(t *testing.T) {
 	require.Equal(t, "a boolean", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesStatusLineTypes(t *testing.T) {
+	result := ValidateBytes([]byte(`{"statusLine":{"type":42,"command":true,"padding":"2"}}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 3)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "a string", errorsByField["statusLine.type"])
+	require.Equal(t, "a string", errorsByField["statusLine.command"])
+	require.Equal(t, "a number", errorsByField["statusLine.padding"])
+}
+
+func TestValidateBytesValidatesStatusLineTypeValue(t *testing.T) {
+	result := ValidateBytes([]byte(`{"statusLine":{"type":"inline","command":"echo ready"}}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "statusLine.type", result.Errors[0].Field)
+	require.Equal(t, "invalid_value", result.Errors[0].Kind)
+	require.Equal(t, `"command"`, result.Errors[0].Expected)
+}
+
+func TestValidateBytesRequiresStatusLineCommandShape(t *testing.T) {
+	result := ValidateBytes([]byte(`{"statusLine":{"command":"   "}}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 2)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Kind
+	}
+	require.Equal(t, "missing_required", errorsByField["statusLine.type"])
+	require.Equal(t, "missing_required", errorsByField["statusLine.command"])
+}
+
 func TestValidateBytesValidatesProjectMCPTrustTypes(t *testing.T) {
 	result := ValidateBytes([]byte(`{"enableAllProjectMcpServers":"true","enabledMcpjsonServers":[42],"disabledMcpjsonServers":"demo"}`), "config.json")
 

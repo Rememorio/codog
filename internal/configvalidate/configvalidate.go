@@ -101,6 +101,7 @@ var topLevelFields = []fieldSpec{
 	{"cleanupPeriodDays", FieldNumber},
 	{"respectGitignore", FieldBool},
 	{"disableAllHooks", FieldBool},
+	{"statusLine", FieldObject},
 	{"enableAllProjectMcpServers", FieldBool},
 	{"enabledMcpjsonServers", FieldStringArray},
 	{"disabledMcpjsonServers", FieldStringArray},
@@ -161,6 +162,12 @@ var apiTimeoutFields = []fieldSpec{
 var providerFallbackFields = []fieldSpec{
 	{"primary", FieldString},
 	{"fallbacks", FieldStringArray},
+}
+
+var statusLineFields = []fieldSpec{
+	{"type", FieldString},
+	{"command", FieldString},
+	{"padding", FieldNumber},
 }
 
 var hookFields = []fieldSpec{
@@ -428,6 +435,10 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	if nested, ok := objectAt(object, "providerFallbacks"); ok {
 		validateObject(result, nested, providerFallbackFields, "providerFallbacks", source, path)
 	}
+	if nested, ok := objectAt(object, "statusLine"); ok {
+		validateObject(result, nested, statusLineFields, "statusLine", source, path)
+		validateStatusLineObject(result, nested, source, path)
+	}
 	if nested, ok := objectAt(object, "hooks"); ok {
 		validateObject(result, nested, hookFields, "hooks", source, path)
 	}
@@ -524,6 +535,55 @@ func validateMCPServers(result *Result, servers map[string]any, source []byte, p
 			continue
 		}
 		validateObject(result, serverObject, mcpServerFields, joinField(prefix, name), source, path)
+	}
+}
+
+func validateStatusLineObject(result *Result, statusLine map[string]any, source []byte, path string) {
+	value, ok := statusLine["type"]
+	if !ok {
+		result.addError(Diagnostic{
+			Path:     path,
+			Field:    "statusLine.type",
+			Kind:     "missing_required",
+			Expected: `"command"`,
+			Got:      "missing",
+		})
+	} else if typ, ok := value.(string); ok {
+		if typ != "command" {
+			result.addError(Diagnostic{
+				Path:     path,
+				Field:    "statusLine.type",
+				Line:     findKeyLine(source, "type"),
+				Kind:     "invalid_value",
+				Expected: `"command"`,
+				Got:      fmt.Sprintf("%q", typ),
+			})
+		}
+	}
+	command, ok := statusLine["command"]
+	if !ok {
+		result.addError(Diagnostic{
+			Path:     path,
+			Field:    "statusLine.command",
+			Kind:     "missing_required",
+			Expected: "a non-empty string",
+			Got:      "missing",
+		})
+		return
+	}
+	commandText, ok := command.(string)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(commandText) == "" {
+		result.addError(Diagnostic{
+			Path:     path,
+			Field:    "statusLine.command",
+			Line:     findKeyLine(source, "command"),
+			Kind:     "missing_required",
+			Expected: "a non-empty string",
+			Got:      "empty string",
+		})
 	}
 }
 
