@@ -22618,6 +22618,18 @@ func renderActionError(out io.Writer, report actionErrorReport, format string) e
 	return &ExitError{Code: 1, Err: err}
 }
 
+func renderMissingActionArgument(out io.Writer, kind string, action string, argument string, message string, hint string, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      strings.TrimSpace(kind),
+		Action:    strings.TrimSpace(action),
+		Status:    "error",
+		ErrorKind: "missing_argument",
+		Argument:  strings.TrimSpace(argument),
+		Message:   strings.TrimSpace(message),
+		Hint:      strings.TrimSpace(hint),
+	}, format)
+}
+
 func renderCLIError(out io.Writer, err error, format string) error {
 	report := buildCLIErrorReport(err)
 	exitErr := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
@@ -35996,7 +36008,7 @@ func (a *App) Skills(args []string) error {
 			return err
 		}
 		if len(remaining) < 1 {
-			return errors.New("usage: codog skills invoke NAME [ARGS...] [--json]")
+			return renderMissingActionArgument(a.Out, "skills", "invoke", "skill_name", "skills invoke requires a skill name", "Usage: codog skills invoke NAME [ARGS...] [--json|--output-format text|json]. Run `codog skills list` to see available skills.", format)
 		}
 		skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
@@ -36816,7 +36828,7 @@ func (a *App) Commands(args []string) error {
 			return err
 		}
 		if len(remaining) < 1 {
-			return errors.New("usage: codog commands run NAME [ARGS...] [--json]")
+			return renderMissingActionArgument(a.Out, "commands", "run", "command_name", "commands run requires a command name", "Usage: codog commands run NAME [ARGS...] [--json|--output-format text|json]. Run `codog commands list` to see available commands.", format)
 		}
 		command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
@@ -36960,6 +36972,9 @@ func (a *App) Templates(args []string) error {
 	case "apply":
 		req, err := parseTemplateApplyArgs(rest)
 		if err != nil {
+			if errors.Is(err, errTemplateApplyMissingName) {
+				return renderMissingActionArgument(a.Out, "templates", "apply", "template_name", "templates apply requires a template name", "Usage: codog templates apply NAME [--var key=value] [--json|--output-format text|json]. Run `codog templates list` to see available templates.", req.Format)
+			}
 			return err
 		}
 		tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, req.Name)
@@ -37021,6 +37036,8 @@ type templateApplyRequest struct {
 	Vars   map[string]string
 	Format string
 }
+
+var errTemplateApplyMissingName = errors.New("templates apply missing name")
 
 func parseTemplateOutputArgs(command string, args []string) (string, []string, error) {
 	format := "text"
@@ -37097,7 +37114,7 @@ func parseTemplateApplyArgs(args []string) (templateApplyRequest, error) {
 		return req, fmt.Errorf("unknown templates apply output format %q", req.Format)
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		return req, errors.New("usage: codog templates apply NAME [--var key=value] [--json]")
+		return req, errTemplateApplyMissingName
 	}
 	return req, nil
 }

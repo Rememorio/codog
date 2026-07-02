@@ -13519,6 +13519,20 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.NotEmpty(t, skillReportEntry(showListReport.Skills, "review", "user").Path)
 	out.Reset()
 
+	err := app.Skills([]string{"invoke", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var invokeError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &invokeError))
+	require.Equal(t, "skills", invokeError.Kind)
+	require.Equal(t, "invoke", invokeError.Action)
+	require.Equal(t, "missing_argument", invokeError.ErrorKind)
+	require.Equal(t, "skill_name", invokeError.Argument)
+	out.Reset()
+
 	require.NoError(t, app.Skills([]string{"invoke", "debug", "failing test"}))
 	require.Contains(t, out.String(), `<skill name="debug" source="bundled"`)
 	require.Contains(t, out.String(), "User request: failing test")
@@ -14014,6 +14028,20 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Review {{target}} as {{role}}.")
 	out.Reset()
 
+	err := app.Templates([]string{"apply", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var applyError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &applyError))
+	require.Equal(t, "templates", applyError.Kind)
+	require.Equal(t, "apply", applyError.Action)
+	require.Equal(t, "missing_argument", applyError.ErrorKind)
+	require.Equal(t, "template_name", applyError.Argument)
+	out.Reset()
+
 	require.NoError(t, app.Templates([]string{"apply", "review", "--var", "target=auth", "role=reviewer"}))
 	require.Equal(t, "Review auth as reviewer.\n", out.String())
 	out.Reset()
@@ -14107,6 +14135,20 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	requireCommandSourceRoot(t, sourceReport.Roots, "workspace", filepath.Join(workspace, ".codog", "commands"), true)
 	requireCommandSourceRoot(t, sourceReport.Roots, "claude", filepath.Join(workspace, ".claude", "commands"), true)
 	requireCommandSourceRoot(t, sourceReport.Roots, "user", filepath.Join(configHome, "commands"), true)
+	out.Reset()
+
+	err := app.Commands([]string{"run", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var runError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runError))
+	require.Equal(t, "commands", runError.Kind)
+	require.Equal(t, "run", runError.Action)
+	require.Equal(t, "missing_argument", runError.ErrorKind)
+	require.Equal(t, "command_name", runError.Argument)
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"run", "fix", "bug", "123"}))
