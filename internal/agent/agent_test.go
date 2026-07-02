@@ -7235,6 +7235,33 @@ func TestBackfillSessionsCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, report.InputsAdded)
 }
 
+func TestBackfillSessionsHonorsGlobalJSONOutputFormat(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("legacy", anthropic.TextMessage("user", "legacy prompt")))
+	t.Chdir(workspace)
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "backfill-sessions"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NotContains(t, out, "Backfill Sessions")
+
+	var report session.BackfillReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "backfill_sessions", report.Kind)
+	require.Equal(t, "prompt_history", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.SessionsScanned)
+	require.Equal(t, 1, report.SessionsUpdated)
+	require.Equal(t, 1, report.InputsAdded)
+}
+
 func TestRewindCommandAndSlash(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
