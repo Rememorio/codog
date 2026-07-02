@@ -12708,6 +12708,169 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestPreferenceCompatErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "fast missing output format",
+			args:      []string{"fast", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "fast"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "fast missing target",
+			args:      []string{"fast", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "fast"`, `"option": "--target"`},
+		},
+		{
+			name:      "fast unknown command",
+			args:      []string{"fast", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "fast"`, `"bogus"`},
+		},
+		{
+			name:      "voice missing path",
+			args:      []string{"voice", "--path", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "voice"`, `"option": "--path"`},
+		},
+		{
+			name:      "voice set command missing command",
+			args:      []string{"voice", "set-command"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "voice set-command"`, `"argument": "COMMAND"`},
+		},
+		{
+			name:      "voice invalid timeout",
+			args:      []string{"voice", "--timeout-ms", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--timeout-ms"`, `"value": "-1"`},
+		},
+		{
+			name:      "chrome missing path",
+			args:      []string{"chrome", "--path", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "chrome"`, `"option": "--path"`},
+		},
+		{
+			name:      "chrome unknown command",
+			args:      []string{"chrome", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "chrome"`, `"bogus"`},
+		},
+		{
+			name:      "privacy missing target",
+			args:      []string{"privacy-settings", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "privacy-settings"`, `"option": "--target"`},
+		},
+		{
+			name:      "privacy set missing key",
+			args:      []string{"privacy-settings", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "privacy-settings set"`, `"argument": "KEY"`},
+		},
+		{
+			name:      "privacy invalid key",
+			args:      []string{"privacy-settings", "set", "nope", "on"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "key"`, `"value": "nope"`},
+		},
+		{
+			name:      "privacy invalid value",
+			args:      []string{"privacy-settings", "telemetry", "maybe"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "value"`, `"value": "maybe"`},
+		},
+		{
+			name:      "profile missing output format",
+			args:      []string{"profile", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "profile"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "profile set missing name",
+			args:      []string{"profile", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "profile set"`, `"argument": "NAME"`},
+		},
+		{
+			name:      "telemetry missing target",
+			args:      []string{"telemetry", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "telemetry"`, `"option": "--target"`},
+		},
+		{
+			name:      "telemetry unknown command",
+			args:      []string{"telemetry", "maybe"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "telemetry"`, `"maybe"`},
+		},
+		{
+			name:      "keybindings missing output format",
+			args:      []string{"keybindings", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "keybindings"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "keybindings resolve missing key",
+			args:      []string{"keybindings", "resolve", "repl"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "keybindings resolve"`, `"argument": "KEY"`},
+		},
+		{
+			name:      "keybindings unknown command",
+			args:      []string{"keybindings", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "keybindings"`, `"bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
 func TestThemeErrorsHonorGlobalJSONFormat(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")

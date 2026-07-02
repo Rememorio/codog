@@ -590,23 +590,47 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "fast":
-		return app.Fast(rest)
+		if err := app.Fast(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "voice":
-		return app.Voice(rest)
+		if err := app.Voice(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "listen":
-		return app.Voice(append([]string{"listen"}, rest...))
+		if err := app.Voice(append([]string{"listen"}, rest...)); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "speak":
 		return app.Speak(ctx, rest, overrides)
 	case "chrome":
-		return app.Chrome(rest)
+		if err := app.Chrome(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "privacy-settings":
-		return app.PrivacySettings(rest)
+		if err := app.PrivacySettings(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "profile":
-		return app.Profile(rest)
+		if err := app.Profile(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "telemetry":
-		return app.Telemetry(rest)
+		if err := app.Telemetry(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "keybindings":
-		return app.Keybindings(rest)
+		if err := app.Keybindings(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "notifications":
 		if err := app.Notifications(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -9586,7 +9610,7 @@ func (a *App) Profile(args []string) error {
 		}
 	case "set":
 		if strings.TrimSpace(req.Name) == "" {
-			return errors.New("profile name is required")
+			return requiredArgumentError{Command: "profile set", Argument: "NAME", Usage: profileUsage}
 		}
 		profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, req.Name)
 		if err != nil {
@@ -9626,6 +9650,8 @@ func (a *App) Profile(args []string) error {
 	return nil
 }
 
+const profileUsage = "codog profile [show|list|set|clear] [NAME] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func parseProfileArgs(args []string) (profileRequest, error) {
 	req := profileRequest{Action: "show", Format: "text", Target: "user"}
 	rest := []string{}
@@ -9637,36 +9663,38 @@ func parseProfileArgs(args []string) (profileRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("profile output format is required")
+				return req, missingFlagValueError{Command: "profile", Flag: arg, Usage: profileUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("profile target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "profile", Flag: arg, Usage: profileUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("profile config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "profile", Flag: arg, Usage: profileUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown profile flag %q", arg)
+			return req, unknownOptionError{Command: "profile", Option: arg, Usage: profileUsage}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "profile"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("profile", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -9677,32 +9705,32 @@ func parseProfileArgs(args []string) (profileRequest, error) {
 			req.Name = rest[1]
 		}
 		if len(rest) > 2 {
-			return req, fmt.Errorf("unexpected profile argument %q", rest[2])
+			return req, unexpectedExtraArgsError{Command: "profile " + strings.ToLower(rest[0]), Args: rest[2:], Usage: profileUsage}
 		}
 	case "list":
 		req.Action = "list"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected profile argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "profile list", Args: rest[1:], Usage: profileUsage}
 		}
 	case "set", "switch", "use":
 		req.Action = "set"
 		if len(rest) < 2 {
-			return req, errors.New("profile name is required")
+			return req, requiredArgumentError{Command: "profile set", Argument: "NAME", Usage: profileUsage}
 		}
 		req.Name = rest[1]
 		if len(rest) > 2 {
-			return req, fmt.Errorf("unexpected profile argument %q", rest[2])
+			return req, unexpectedExtraArgsError{Command: "profile " + strings.ToLower(rest[0]), Args: rest[2:], Usage: profileUsage}
 		}
 	case "clear", "reset", "unset":
 		req.Action = "clear"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected profile argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "profile " + strings.ToLower(rest[0]), Args: rest[1:], Usage: profileUsage}
 		}
 	default:
 		req.Action = "set"
 		req.Name = rest[0]
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected profile argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "profile", Args: rest[1:], Usage: profileUsage}
 		}
 	}
 	return req, nil
@@ -14176,6 +14204,8 @@ type fastReport struct {
 	Path     string `json:"path,omitempty"`
 }
 
+const fastUsage = "codog fast [status|on|off|toggle|clear] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Fast(args []string) error {
 	req, err := parseFastArgs(args)
 	if err != nil {
@@ -14243,39 +14273,44 @@ func parseFastArgs(args []string) (fastRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("fast output format is required")
+				return req, missingFlagValueError{Command: "fast", Flag: arg, Usage: fastUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("fast target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "fast", Flag: arg, Usage: fastUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("fast config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "fast", Flag: arg, Usage: fastUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "fast", Option: arg, Usage: fastUsage}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "fast"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("fast", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected fast argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "fast " + strings.ToLower(rest[0]), Args: rest[1:], Usage: fastUsage}
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
@@ -14289,7 +14324,7 @@ func parseFastArgs(args []string) (fastRequest, error) {
 	case "clear", "reset", "unset":
 		req.Action = "clear"
 	default:
-		return req, fmt.Errorf("unknown fast command %q", rest[0])
+		return req, unexpectedExtraArgsError{Command: "fast", Args: []string{rest[0]}, Usage: fastUsage}
 	}
 	return req, nil
 }
@@ -14336,6 +14371,8 @@ type voiceReport struct {
 	Message           string `json:"message,omitempty"`
 }
 
+const voiceUsage = "codog voice [status|on|off|toggle|set-command|clear-command|clear|test|listen] [--command COMMAND] [--input TEXT] [--timeout-ms N] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Voice(args []string) error {
 	req, err := parseVoiceArgs(args)
 	if err != nil {
@@ -14349,7 +14386,7 @@ func (a *App) Voice(args []string) error {
 			next = !boolPtrEnabled(a.Config.VoiceEnabled)
 		}
 		if next && !externalCommandAvailable(a.Config.VoiceCommand) {
-			return errors.New("voice mode requires a configured executable command; run `codog voice set-command COMMAND`")
+			return requiredArgumentError{Command: "voice on", Argument: "COMMAND", Usage: voiceUsage}
 		}
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
@@ -14363,7 +14400,7 @@ func (a *App) Voice(args []string) error {
 	case "set-command":
 		command := strings.TrimSpace(req.Command)
 		if command == "" {
-			return errors.New("voice command is required")
+			return requiredArgumentError{Command: "voice set-command", Argument: "COMMAND", Usage: voiceUsage}
 		}
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
@@ -14407,6 +14444,9 @@ func (a *App) Voice(args []string) error {
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
+			if runErr != nil {
+				return &ExitError{Code: 1, Err: runErr, Silent: true}
+			}
 		} else {
 			renderVoiceReport(a.Out, report)
 		}
@@ -14438,39 +14478,39 @@ func parseVoiceArgs(args []string) (voiceRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("voice output format is required")
+				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("voice target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("voice config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--command":
 			index++
-			if index >= len(args) {
-				return req, errors.New("voice command is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
 			}
 			req.Command = args[index]
 		case strings.HasPrefix(arg, "--command="):
 			req.Command = strings.TrimPrefix(arg, "--command=")
 		case arg == "--input" || arg == "--stdin":
 			index++
-			if index >= len(args) {
-				return req, errors.New("voice input is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
 			}
 			req.Input = args[index]
 		case strings.HasPrefix(arg, "--input="):
@@ -14479,27 +14519,32 @@ func parseVoiceArgs(args []string) (voiceRequest, error) {
 			req.Input = strings.TrimPrefix(arg, "--stdin=")
 		case arg == "--timeout-ms":
 			index++
-			if index >= len(args) {
-				return req, errors.New("voice timeout is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "voice", Flag: arg, Usage: voiceUsage}
 			}
-			timeout, err := strconv.Atoi(args[index])
-			if err != nil || timeout < 0 {
-				return req, errors.New("voice timeout must be a non-negative integer")
+			timeout, err := parseNonNegativeIntOption(args[index], "--timeout-ms", voiceUsage)
+			if err != nil {
+				return req, err
 			}
 			req.TimeoutMS = timeout
 		case strings.HasPrefix(arg, "--timeout-ms="):
-			timeout, err := strconv.Atoi(strings.TrimPrefix(arg, "--timeout-ms="))
-			if err != nil || timeout < 0 {
-				return req, errors.New("voice timeout must be a non-negative integer")
+			timeout, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--timeout-ms="), "--timeout-ms", voiceUsage)
+			if err != nil {
+				return req, err
 			}
 			req.TimeoutMS = timeout
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "voice", Option: arg, Usage: voiceUsage}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "voice"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("voice", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -14526,10 +14571,13 @@ func parseVoiceArgs(args []string) (voiceRequest, error) {
 	case "clear", "reset", "unset":
 		req.Action = "clear"
 	default:
-		return req, fmt.Errorf("unknown voice command %q", rest[0])
+		return req, unexpectedExtraArgsError{Command: "voice", Args: []string{rest[0]}, Usage: voiceUsage}
 	}
 	if req.Action != "set-command" && len(rest) > 1 {
-		return req, fmt.Errorf("unexpected voice argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "voice " + strings.ToLower(rest[0]), Args: rest[1:], Usage: voiceUsage}
+	}
+	if req.Action == "set-command" && strings.TrimSpace(req.Command) == "" {
+		return req, requiredArgumentError{Command: "voice set-command", Argument: "COMMAND", Usage: voiceUsage}
 	}
 	return req, nil
 }
@@ -15121,6 +15169,8 @@ type chromeReport struct {
 	Message        string `json:"message,omitempty"`
 }
 
+const chromeUsage = "codog chrome [status|on|off|toggle|clear|install|permissions|reconnect] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Chrome(args []string) error {
 	req, err := parseChromeArgs(args)
 	if err != nil {
@@ -15196,36 +15246,38 @@ func parseChromeArgs(args []string) (chromeRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("chrome output format is required")
+				return req, missingFlagValueError{Command: "chrome", Flag: arg, Usage: chromeUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("chrome target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "chrome", Flag: arg, Usage: chromeUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("chrome config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "chrome", Flag: arg, Usage: chromeUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown chrome flag %q", arg)
+			return req, unknownOptionError{Command: "chrome", Option: arg, Usage: chromeUsage}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "chrome"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("chrome", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -15247,10 +15299,10 @@ func parseChromeArgs(args []string) (chromeRequest, error) {
 	case "reconnect", "connect":
 		req.Action = "reconnect"
 	default:
-		return req, fmt.Errorf("unknown chrome command %q", rest[0])
+		return req, unexpectedExtraArgsError{Command: "chrome", Args: []string{rest[0]}, Usage: chromeUsage}
 	}
 	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected chrome argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "chrome " + strings.ToLower(rest[0]), Args: rest[1:], Usage: chromeUsage}
 	}
 	return req, nil
 }
@@ -15822,6 +15874,8 @@ type telemetryReport struct {
 	Message    string `json:"message,omitempty"`
 }
 
+const telemetryUsage = "codog telemetry [status|on|off|toggle|clear] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Telemetry(args []string) error {
 	req, err := parseTelemetryArgs(args)
 	if err != nil {
@@ -15880,37 +15934,39 @@ func parseTelemetryArgs(args []string) (telemetryRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("telemetry output format is required")
+				return req, missingFlagValueError{Command: "telemetry", Flag: arg, Usage: telemetryUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("telemetry target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "telemetry", Flag: arg, Usage: telemetryUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("telemetry config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "telemetry", Flag: arg, Usage: telemetryUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return req, fmt.Errorf("unknown telemetry flag %q", arg)
+				return req, unknownOptionError{Command: "telemetry", Option: arg, Usage: telemetryUsage}
 			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "telemetry"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("telemetry", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -15926,10 +15982,10 @@ func parseTelemetryArgs(args []string) (telemetryRequest, error) {
 	case "clear", "reset", "unset", "default":
 		req.Action = "clear"
 	default:
-		return req, fmt.Errorf("unknown telemetry command %q", rest[0])
+		return req, unexpectedExtraArgsError{Command: "telemetry", Args: []string{rest[0]}, Usage: telemetryUsage}
 	}
 	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected telemetry argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "telemetry " + strings.ToLower(rest[0]), Args: rest[1:], Usage: telemetryUsage}
 	}
 	return req, nil
 }
@@ -15968,6 +16024,7 @@ func renderTelemetryReport(out io.Writer, report telemetryReport) {
 
 func parsePrivacyArgs(args []string) (privacyRequest, error) {
 	req := privacyRequest{Action: "show", Format: "text", Target: "user"}
+	const usage = "codog privacy-settings [show|set|enable|disable|clear] [KEY] [on|off] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -15977,51 +16034,65 @@ func parsePrivacyArgs(args []string) (privacyRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("privacy-settings output format is required")
+				return req, missingFlagValueError{Command: "privacy-settings", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("privacy-settings target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "privacy-settings", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("privacy-settings config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "privacy-settings", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "privacy-settings", Option: arg, Usage: usage}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "privacy-settings"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("privacy-settings", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	action := strings.ToLower(rest[0])
 	switch action {
 	case "show", "status", "list":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[1:], Usage: usage}
+		}
 		req.Action = "show"
 		return req, nil
 	case "set":
 		if len(rest) < 3 {
-			return req, errors.New("usage: privacy-settings set KEY on|off")
+			if len(rest) < 2 {
+				return req, requiredArgumentError{Command: "privacy-settings set", Argument: "KEY", Usage: usage}
+			}
+			return req, requiredArgumentError{Command: "privacy-settings set", Argument: "VALUE", Usage: usage}
 		}
-		key, err := canonicalPrivacyKey(rest[1])
+		if len(rest) > 3 {
+			return req, unexpectedExtraArgsError{Command: "privacy-settings set", Args: rest[3:], Usage: usage}
+		}
+		key, err := canonicalPrivacyKey(rest[1], usage)
 		if err != nil {
 			return req, err
 		}
-		value, err := parseOnOff(rest[2])
+		value, err := parseOnOff(rest[2], usage)
 		if err != nil {
 			return req, err
 		}
@@ -16031,9 +16102,12 @@ func parsePrivacyArgs(args []string) (privacyRequest, error) {
 		return req, nil
 	case "enable", "enabled", "on":
 		if len(rest) < 2 {
-			return req, errors.New("privacy setting key is required")
+			return req, requiredArgumentError{Command: "privacy-settings " + action, Argument: "KEY", Usage: usage}
 		}
-		key, err := canonicalPrivacyKey(rest[1])
+		if len(rest) > 2 {
+			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[2:], Usage: usage}
+		}
+		key, err := canonicalPrivacyKey(rest[1], usage)
 		if err != nil {
 			return req, err
 		}
@@ -16043,9 +16117,12 @@ func parsePrivacyArgs(args []string) (privacyRequest, error) {
 		return req, nil
 	case "disable", "disabled", "off":
 		if len(rest) < 2 {
-			return req, errors.New("privacy setting key is required")
+			return req, requiredArgumentError{Command: "privacy-settings " + action, Argument: "KEY", Usage: usage}
 		}
-		key, err := canonicalPrivacyKey(rest[1])
+		if len(rest) > 2 {
+			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[2:], Usage: usage}
+		}
+		key, err := canonicalPrivacyKey(rest[1], usage)
 		if err != nil {
 			return req, err
 		}
@@ -16055,9 +16132,12 @@ func parsePrivacyArgs(args []string) (privacyRequest, error) {
 		return req, nil
 	case "clear", "reset", "unset":
 		if len(rest) < 2 {
-			return req, errors.New("privacy setting key is required")
+			return req, requiredArgumentError{Command: "privacy-settings " + action, Argument: "KEY", Usage: usage}
 		}
-		key, err := canonicalPrivacyKey(rest[1])
+		if len(rest) > 2 {
+			return req, unexpectedExtraArgsError{Command: "privacy-settings " + action, Args: rest[2:], Usage: usage}
+		}
+		key, err := canonicalPrivacyKey(rest[1], usage)
 		if err != nil {
 			return req, err
 		}
@@ -16066,13 +16146,13 @@ func parsePrivacyArgs(args []string) (privacyRequest, error) {
 		return req, nil
 	default:
 		if len(rest) != 2 {
-			return req, fmt.Errorf("unknown privacy-settings command %q", rest[0])
+			return req, unexpectedExtraArgsError{Command: "privacy-settings", Args: []string{rest[0]}, Usage: usage}
 		}
-		key, err := canonicalPrivacyKey(rest[0])
+		key, err := canonicalPrivacyKey(rest[0], usage)
 		if err != nil {
 			return req, err
 		}
-		value, err := parseOnOff(rest[1])
+		value, err := parseOnOff(rest[1], usage)
 		if err != nil {
 			return req, err
 		}
@@ -16131,7 +16211,7 @@ func (a *App) setPrivacyValue(key string, value *bool) {
 	}
 }
 
-func canonicalPrivacyKey(raw string) (string, error) {
+func canonicalPrivacyKey(raw string, usage string) (string, error) {
 	key := strings.ToLower(strings.TrimSpace(raw))
 	key = strings.ReplaceAll(key, "_", "-")
 	switch key {
@@ -16142,7 +16222,12 @@ func canonicalPrivacyKey(raw string) (string, error) {
 	case "history", "prompt-history", "prompt-history-enabled":
 		return "prompt_history_enabled", nil
 	default:
-		return "", fmt.Errorf("unknown privacy setting %q", raw)
+		return "", invalidFlagValueError{
+			Flag:    "key",
+			Value:   raw,
+			Message: "privacy setting must be telemetry, crash-reports, or prompt-history",
+			Usage:   usage,
+		}
 	}
 }
 
@@ -16159,7 +16244,7 @@ func privacyLabel(key string) string {
 	}
 }
 
-func parseOnOff(raw string) (bool, error) {
+func parseOnOff(raw string, usage string) (bool, error) {
 	value := strings.ToLower(strings.TrimSpace(raw))
 	switch value {
 	case "on", "enable", "enabled", "yes", "y":
@@ -16169,7 +16254,12 @@ func parseOnOff(raw string) (bool, error) {
 	default:
 		parsed, err := strconv.ParseBool(value)
 		if err != nil {
-			return false, fmt.Errorf("expected on or off, got %q", raw)
+			return false, invalidFlagValueError{
+				Flag:    "value",
+				Value:   raw,
+				Message: "value must be on or off",
+				Usage:   usage,
+			}
 		}
 		return parsed, nil
 	}
@@ -16355,6 +16445,8 @@ func (a *App) Keybindings(args []string) error {
 	}
 }
 
+const keybindingsUsage = "codog keybindings [show|path|init|validate|resolve CONTEXT KEY] [--path PATH] [--force] [--output-format text|json]"
+
 func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 	req := keybindingsRequest{Action: "show", Format: "text"}
 	actionSet := false
@@ -16366,7 +16458,7 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("keybindings output format is required")
+				return req, missingFlagValueError{Command: "keybindings", Flag: arg, Usage: keybindingsUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -16375,14 +16467,14 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 			req.Force = true
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("keybindings path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "keybindings", Flag: arg, Usage: keybindingsUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown keybindings flag %q", arg)
+			return req, unknownOptionError{Command: "keybindings", Option: arg, Usage: keybindingsUsage}
 		default:
 			if actionSet {
 				req.Args = append(req.Args, arg)
@@ -16400,24 +16492,29 @@ func parseKeybindingsArgs(args []string) (keybindingsRequest, error) {
 			case "resolve", "match":
 				req.Action = "resolve"
 			default:
-				return req, fmt.Errorf("unknown keybindings command %q", arg)
+				return req, unexpectedExtraArgsError{Command: "keybindings", Args: []string{arg}, Usage: keybindingsUsage}
 			}
 			actionSet = true
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "keybindings"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("keybindings", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	switch req.Action {
 	case "resolve":
 		if len(req.Args) < 2 {
-			return req, errors.New("usage: codog keybindings resolve CONTEXT KEY [--json]")
+			if len(req.Args) == 0 {
+				return req, requiredArgumentError{Command: "keybindings resolve", Argument: "CONTEXT", Usage: keybindingsUsage}
+			}
+			return req, requiredArgumentError{Command: "keybindings resolve", Argument: "KEY", Usage: keybindingsUsage}
 		}
 		req.Context = req.Args[0]
 		req.Key = strings.Join(req.Args[1:], " ")
 	case "show", "path", "init", "validate":
 		if len(req.Args) != 0 {
-			return req, fmt.Errorf("unexpected keybindings argument %q", req.Args[0])
+			return req, unexpectedExtraArgsError{Command: "keybindings " + req.Action, Args: req.Args, Usage: keybindingsUsage}
 		}
 	}
 	return req, nil
@@ -27387,6 +27484,19 @@ func parsePositiveIntOption(value string, option string, usage string) (int, err
 			Flag:    option,
 			Value:   value,
 			Message: strings.TrimLeft(option, "-") + " must be a positive integer",
+			Usage:   usage,
+		}
+	}
+	return parsed, nil
+}
+
+func parseNonNegativeIntOption(value string, option string, usage string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed < 0 {
+		return 0, invalidFlagValueError{
+			Flag:    option,
+			Value:   value,
+			Message: strings.TrimLeft(option, "-") + " must be a non-negative integer",
 			Usage:   usage,
 		}
 	}
