@@ -16,6 +16,9 @@ import (
 // Options contains the runtime inputs needed to build a status snapshot.
 type Options struct {
 	Version                     string
+	FormatSource                string
+	FormatRaw                   string
+	FormatOverridden            bool
 	ConfigLoadError             string
 	ConfigLoadErrorKind         string
 	Workspace                   string
@@ -91,6 +94,9 @@ type Snapshot struct {
 	Kind                string               `json:"kind"`
 	Action              string               `json:"action"`
 	Status              string               `json:"status"`
+	FormatSource        string               `json:"format_source"`
+	FormatRaw           string               `json:"format_raw"`
+	FormatOverridden    bool                 `json:"format_overridden"`
 	ConfigLoadError     string               `json:"config_load_error,omitempty"`
 	ConfigLoadErrorKind string               `json:"config_load_error_kind,omitempty"`
 	Version             string               `json:"version"`
@@ -311,6 +317,9 @@ func Build(opts Options) Snapshot {
 		Kind:                "status",
 		Action:              "show",
 		Status:              status,
+		FormatSource:        defaultString(strings.TrimSpace(opts.FormatSource), "default"),
+		FormatRaw:           strings.TrimSpace(opts.FormatRaw),
+		FormatOverridden:    opts.FormatOverridden,
 		ConfigLoadError:     strings.TrimSpace(opts.ConfigLoadError),
 		ConfigLoadErrorKind: strings.TrimSpace(opts.ConfigLoadErrorKind),
 		Version:             opts.Version,
@@ -443,6 +452,13 @@ func buildAllowedToolsStatus(opts Options) AllowedToolsStatus {
 		Available:  available,
 		Aliases:    aliases,
 	}
+}
+
+func defaultString(value string, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 func RenderText(w io.Writer, snapshot Snapshot) {

@@ -20317,6 +20317,7 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
+	formatSource, formatRaw, formatOverridden := statusOutputFormatProvenance(args, overrides)
 	var active *session.Session
 	sessionRef := overrides.Resume
 	if sessionRef == "" {
@@ -20336,8 +20337,37 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	if len(overrides.AllowedTools) != 0 {
 		allowedToolSource = "flag"
 	}
-	a.renderStatus(format, active, allowedToolSource)
+	a.renderStatus(format, active, allowedToolSource, formatSource, formatRaw, formatOverridden)
 	return nil
+}
+
+func statusOutputFormatProvenance(args []string, overrides config.FlagOverrides) (source string, raw string, overridden bool) {
+	envValue := strings.TrimSpace(os.Getenv("CODOG_OUTPUT_FORMAT"))
+	if !overrides.OutputFormatSubcommandExplicit && strings.TrimSpace(overrides.OutputFormatSource) != "" {
+		return overrides.OutputFormatSource, overrides.OutputFormatRaw, overrides.OutputFormatOverridden
+	}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "--json":
+			return "flag", "json", envValue != "" || overrides.OutputFormatSource == "env"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index < len(args) {
+				return "flag", strings.TrimSpace(args[index]), envValue != "" || overrides.OutputFormatSource == "env"
+			}
+			return "flag", "", envValue != "" || overrides.OutputFormatSource == "env"
+		case strings.HasPrefix(arg, "--output-format="):
+			return "flag", strings.TrimSpace(strings.TrimPrefix(arg, "--output-format=")), envValue != "" || overrides.OutputFormatSource == "env"
+		}
+	}
+	if strings.TrimSpace(overrides.OutputFormatSource) != "" {
+		return overrides.OutputFormatSource, overrides.OutputFormatRaw, overrides.OutputFormatOverridden
+	}
+	if envValue != "" {
+		return "env", envValue, false
+	}
+	return "default", "", false
 }
 
 type statuslineReport struct {
@@ -21566,8 +21596,13 @@ func (a *App) renderPromptHistory(format string, sessionID string, entries []ses
 	return nil
 }
 
-func (a *App) renderStatus(format string, active *session.Session, allowedToolSource string) {
-	snapshot := a.statusSnapshotWithAllowedToolSource(active, allowedToolSource)
+func (a *App) renderStatus(format string, active *session.Session, allowedToolSource string, formatSource string, formatRaw string, formatOverridden bool) {
+	snapshot := a.statusSnapshotWithOptions(active, statusSnapshotOptions{
+		AllowedToolSource: allowedToolSource,
+		FormatSource:      formatSource,
+		FormatRaw:         formatRaw,
+		FormatOverridden:  formatOverridden,
+	})
 	if format == "json" {
 		data, _ := json.MarshalIndent(snapshot, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -21577,10 +21612,17 @@ func (a *App) renderStatus(format string, active *session.Session, allowedToolSo
 }
 
 func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
-	return a.statusSnapshotWithAllowedToolSource(active, "")
+	return a.statusSnapshotWithOptions(active, statusSnapshotOptions{})
 }
 
-func (a *App) statusSnapshotWithAllowedToolSource(active *session.Session, allowedToolSource string) localstatus.Snapshot {
+type statusSnapshotOptions struct {
+	AllowedToolSource string
+	FormatSource      string
+	FormatRaw         string
+	FormatOverridden  bool
+}
+
+func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnapshotOptions) localstatus.Snapshot {
 	sessionCount := -1
 	if a.Sessions != nil {
 		sessions, err := a.Sessions.List()
@@ -21648,6 +21690,9 @@ func (a *App) statusSnapshotWithAllowedToolSource(active *session.Session, allow
 	hookValidation := buildHookValidation(a.Config.Hooks)
 	return localstatus.Build(localstatus.Options{
 		Version:                     version,
+		FormatSource:                opts.FormatSource,
+		FormatRaw:                   opts.FormatRaw,
+		FormatOverridden:            opts.FormatOverridden,
 		ConfigLoadError:             a.ConfigLoadError,
 		ConfigLoadErrorKind:         a.ConfigLoadErrorKind,
 		Workspace:                   a.Workspace,
@@ -21692,7 +21737,7 @@ func (a *App) statusSnapshotWithAllowedToolSource(active *session.Session, allow
 		PlanUpdatedAt:               planState.UpdatedAt,
 		MemoryFiles:                 memoryStatuses,
 		ToolNames:                   toolNames,
-		AllowedToolSource:           allowedToolSource,
+		AllowedToolSource:           opts.AllowedToolSource,
 		AllowedToolEntries:          append([]string(nil), a.Config.PermissionRules.Allow...),
 		ToolAliases:                 tools.ClaudeToolAliases(),
 		SessionID:                   sessionID,
@@ -27619,7 +27664,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	}
 	switch fields[0] {
 	case "/status":
-		a.renderStatus("text", sess, "")
+		a.renderStatus("text", sess, "", "default", "", false)
 	case "/statusline":
 		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -43778,6 +43823,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	if err := flags.Parse(args); err != nil {
 		return base, "", nil, err
 	}
+	base.OutputFormatSource, base.OutputFormatRaw, base.OutputFormatOverridden = globalOutputFormatProvenance(outputFormat, jsonOutput)
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
 	rest := flags.Args()
@@ -43810,7 +43856,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	command, rest := rest[0], rest[1:]
 	outputFormat = resolveGlobalOutputFormat(outputFormat, jsonOutput)
-	if outputFormat != "" && commandAcceptsGlobalOutputFormat(command) && !argsHaveOutputFormat(rest) {
+	base.OutputFormatSubcommandExplicit = argsHaveOutputFormat(rest)
+	if outputFormat != "" && commandAcceptsGlobalOutputFormat(command) && !base.OutputFormatSubcommandExplicit {
 		expected := []string{"text", "json"}
 		if strings.EqualFold(command, "prompt") {
 			expected = []string{"text", "json", "stream-json"}
@@ -43950,6 +43997,21 @@ func normalizeOutputFormat(command, value string, expected []string) (string, er
 		}
 	}
 	return "", outputFormatError{Command: command, Value: value, Expected: expected}
+}
+
+func globalOutputFormatProvenance(outputFormat string, jsonOutput bool) (source string, raw string, overridden bool) {
+	envValue := strings.TrimSpace(os.Getenv("CODOG_OUTPUT_FORMAT"))
+	outputFormat = strings.TrimSpace(outputFormat)
+	if outputFormat != "" {
+		return "flag", outputFormat, envValue != ""
+	}
+	if jsonOutput {
+		return "flag", "json", envValue != ""
+	}
+	if envValue != "" {
+		return "env", envValue, false
+	}
+	return "default", "", false
 }
 
 func resolveGlobalOutputFormat(outputFormat string, jsonOutput bool) string {

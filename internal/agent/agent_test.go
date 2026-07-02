@@ -3957,7 +3957,9 @@ func TestBroadWorkspaceGuard(t *testing.T) {
 func TestParseFlagsSupportsPrintAliases(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"-p", "hello"}, config.FlagOverrides{})
 	require.NoError(t, err)
-	require.Equal(t, config.FlagOverrides{}, overrides)
+	require.Equal(t, "default", overrides.OutputFormatSource)
+	require.Empty(t, overrides.OutputFormatRaw)
+	require.False(t, overrides.OutputFormatOverridden)
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 
@@ -4710,7 +4712,9 @@ func TestParseFlagsSupportsSystemPromptOverrides(t *testing.T) {
 func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{"--output-format", "json", "status"}, config.FlagOverrides{})
 	require.NoError(t, err)
-	require.Equal(t, config.FlagOverrides{}, overrides)
+	require.Equal(t, "flag", overrides.OutputFormatSource)
+	require.Equal(t, "json", overrides.OutputFormatRaw)
+	require.False(t, overrides.OutputFormatOverridden)
 	require.Equal(t, "status", command)
 	require.Equal(t, []string{"--output-format", "json"}, rest)
 
@@ -7943,6 +7947,8 @@ func TestDoctorDegradesOnMalformedConfigFile(t *testing.T) {
 func TestStatusCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{}"), 0o644))
 	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Status memory."), 0o644))
@@ -7986,7 +7992,10 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"transport_dead"`)
 	require.Contains(t, out.String(), `"active_count": 0`)
 	var statusReport struct {
-		Workspace struct {
+		FormatSource     string `json:"format_source"`
+		FormatRaw        string `json:"format_raw"`
+		FormatOverridden bool   `json:"format_overridden"`
+		Workspace        struct {
 			MemoryFiles []struct {
 				Name           string `json:"name"`
 				Source         string `json:"source"`
@@ -8005,6 +8014,9 @@ func TestStatusCommandAndSlash(t *testing.T) {
 		} `json:"allowed_tools"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Equal(t, "flag", statusReport.FormatSource)
+	require.Equal(t, "json", statusReport.FormatRaw)
+	require.False(t, statusReport.FormatOverridden)
 	require.Len(t, statusReport.Workspace.MemoryFiles, 1)
 	require.Equal(t, "AGENTS.md", statusReport.Workspace.MemoryFiles[0].Name)
 	require.Equal(t, "agents_md", statusReport.Workspace.MemoryFiles[0].Source)
@@ -8024,6 +8036,26 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Equal(t, "flag", statusReport.AllowedTools.Source)
 	require.True(t, statusReport.AllowedTools.Restricted)
 	out.Reset()
+
+	t.Setenv("CODOG_OUTPUT_FORMAT", "json")
+	outText, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var envStatus localstatus.Snapshot
+	require.NoError(t, json.Unmarshal([]byte(outText), &envStatus))
+	require.Equal(t, "env", envStatus.FormatSource)
+	require.Equal(t, "json", envStatus.FormatRaw)
+	require.False(t, envStatus.FormatOverridden)
+
+	outText, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "status"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(outText), &envStatus))
+	require.Equal(t, "flag", envStatus.FormatSource)
+	require.Equal(t, "json", envStatus.FormatRaw)
+	require.True(t, envStatus.FormatOverridden)
 
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}
 	require.True(t, app.handleSlash(context.Background(), "/status", sess))

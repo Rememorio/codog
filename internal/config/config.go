@@ -413,21 +413,25 @@ type MutationReport struct {
 }
 
 type FlagOverrides struct {
-	ConfigPath      string
-	SessionID       string
-	Resume          string
-	Model           string
-	BaseURL         string
-	SystemPrompt    string
-	AppendPrompt    string
-	PermissionMode  string
-	SkipPermissions bool
-	AllowBroadCWD   bool
-	AllowedTools    []string
-	DisallowedTools []string
-	MaxTurns        int
-	MaxTokens       int
-	Temperature     *float64
+	ConfigPath                     string
+	SessionID                      string
+	Resume                         string
+	Model                          string
+	BaseURL                        string
+	SystemPrompt                   string
+	AppendPrompt                   string
+	PermissionMode                 string
+	SkipPermissions                bool
+	AllowBroadCWD                  bool
+	AllowedTools                   []string
+	DisallowedTools                []string
+	OutputFormatSource             string
+	OutputFormatRaw                string
+	OutputFormatOverridden         bool
+	OutputFormatSubcommandExplicit bool
+	MaxTurns                       int
+	MaxTokens                      int
+	Temperature                    *float64
 }
 
 func Load(overrides FlagOverrides) (Config, error) {

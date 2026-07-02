@@ -12,14 +12,17 @@ import (
 
 func TestBuildParsesGitStatus(t *testing.T) {
 	snapshot := Build(Options{
-		Version:        "test-version",
-		Workspace:      "/repo/codog",
-		Model:          "claude-test",
-		PermissionMode: "workspace-write",
-		AuthConfigured: true,
-		PlanActive:     true,
-		PlanText:       "inspect first",
-		PlanUpdatedAt:  "2026-01-01T00:00:00Z",
+		Version:          "test-version",
+		FormatSource:     "flag",
+		FormatRaw:        "json",
+		FormatOverridden: true,
+		Workspace:        "/repo/codog",
+		Model:            "claude-test",
+		PermissionMode:   "workspace-write",
+		AuthConfigured:   true,
+		PlanActive:       true,
+		PlanText:         "inspect first",
+		PlanUpdatedAt:    "2026-01-01T00:00:00Z",
 		MemoryFiles: []MemoryFileStatus{{
 			Path:  "/repo/codog/AGENTS.md",
 			Name:  "AGENTS.md",
@@ -50,6 +53,9 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	})
 
 	require.Equal(t, "ok", snapshot.Status)
+	require.Equal(t, "flag", snapshot.FormatSource)
+	require.Equal(t, "json", snapshot.FormatRaw)
+	require.True(t, snapshot.FormatOverridden)
 	require.Equal(t, "codog", snapshot.Workspace.Name)
 	require.Equal(t, 1, snapshot.Workspace.MemoryFileCount)
 	require.Equal(t, "AGENTS.md", snapshot.Workspace.MemoryFiles[0].Name)
@@ -81,6 +87,9 @@ func TestBuildReportsDefaultAllowedTools(t *testing.T) {
 		GitStatus:   "## main",
 	})
 
+	require.Equal(t, "default", snapshot.FormatSource)
+	require.Empty(t, snapshot.FormatRaw)
+	require.False(t, snapshot.FormatOverridden)
 	require.False(t, snapshot.AllowedTools.Restricted)
 	require.Equal(t, "default", snapshot.AllowedTools.Source)
 	require.Empty(t, snapshot.AllowedTools.Entries)
