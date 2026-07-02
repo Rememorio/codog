@@ -256,6 +256,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/api-key":            true,
 	"/app":                true,
 	"/advisor":            true,
+	"/autofix-pr":         true,
 	"/background":         true,
 	"/bashes":             true,
 	"/base-check":         true,

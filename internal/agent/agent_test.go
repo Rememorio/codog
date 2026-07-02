@@ -1059,6 +1059,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	reviewRemoteSlash, ok := capabilityReportSlash(report, "/reviewRemote")
 	require.True(t, ok)
 	require.True(t, reviewRemoteSlash.ResumeSupported)
+	autofixPRSlash, ok := capabilityReportSlash(report, "/autofix-pr")
+	require.True(t, ok)
+	require.True(t, autofixPRSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/new"))
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
@@ -10800,6 +10803,19 @@ exit 1
 	require.NoError(t, err)
 	require.Contains(t, cliOut, `"kind": "autofix_pr"`)
 	require.Contains(t, cliOut, `"actionable_comments": 2`)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "latest", "--output-format", "json", "/autofix-pr", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var resumedAutofix autofixpr.Report
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &resumedAutofix))
+	require.Equal(t, "autofix_pr", resumedAutofix.Kind)
+	require.Equal(t, "ready", resumedAutofix.Status)
+	require.Equal(t, "acme/widgets", resumedAutofix.Repository)
+	require.Equal(t, 42, resumedAutofix.PullRequest)
+	require.Equal(t, 2, resumedAutofix.Actionable)
+	require.Contains(t, resumedAutofix.Prompt, "script.sh:2")
 
 	require.True(t, app.handleSlash(context.Background(), "/autofix-pr 42 --repo acme/widgets", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Autofix PR")
