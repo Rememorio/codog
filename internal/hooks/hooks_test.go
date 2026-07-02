@@ -283,6 +283,66 @@ func TestRunPayloadParsesMessagesForNonPreToolHook(t *testing.T) {
 	require.Equal(t, []string{"post note", "because", "ctx"}, report.Results[0].Messages)
 }
 
+func TestRunPayloadStopsOnStructuredHookBlock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	marker := filepath.Join(workspace, "after-block")
+	report, err := Runner{Workspace: workspace}.RunPayload(context.Background(), []string{
+		`printf '%s' '{"continue":false,"reason":"stop here"}'`,
+		"touch " + strconv.Quote(marker),
+	}, Payload{
+		Event:  "post_tool_use",
+		Tool:   "bash",
+		Input:  `{"command":"git status"}`,
+		Output: "done",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "denied", report.Status)
+	require.True(t, report.Denied)
+	require.Len(t, report.Results, 1)
+	require.True(t, report.Results[0].Denied)
+	require.Equal(t, []string{"stop here"}, report.Results[0].Messages)
+	require.NoFileExists(t, marker)
+}
+
+func TestPostToolUseReturnsErrorOnStructuredHookBlock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	runner := Runner{
+		Workspace: t.TempDir(),
+		Config: config.HookConfig{
+			PostToolUseCommands: []config.HookCommand{{Matcher: "bash", Command: `printf '%s' '{"decision":"block","reason":"blocked after tool"}'`}},
+		},
+	}
+	err := runner.PostToolUse(context.Background(), "bash", []byte(`{"command":"git status"}`), "done", false)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "PostToolUse hook denied tool bash")
+	require.ErrorContains(t, err, "blocked after tool")
+}
+
+func TestRunPayloadTreatsExitCodeTwoAsHookDeny(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{Workspace: t.TempDir()}.RunPayload(context.Background(), []string{
+		`printf 'deny from exit two'; exit 2`,
+	}, Payload{
+		Event: "post_tool_use",
+		Tool:  "bash",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "denied", report.Status)
+	require.True(t, report.Denied)
+	require.Len(t, report.Results, 1)
+	require.False(t, report.Results[0].Success)
+	require.True(t, report.Results[0].Denied)
+	require.Equal(t, 2, report.Results[0].ExitCode)
+	require.Equal(t, []string{"deny from exit two"}, report.Results[0].Messages)
+}
+
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	t.Setenv("HOOK_TOKEN", "secret-token")
 	t.Setenv("HOOK_IGNORED", "ignored")

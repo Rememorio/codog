@@ -84,6 +84,7 @@ type CommandResult struct {
 	Stdout     string   `json:"stdout,omitempty"`
 	Stderr     string   `json:"stderr,omitempty"`
 	Messages   []string `json:"messages,omitempty"`
+	Denied     bool     `json:"denied,omitempty"`
 	ExitCode   int      `json:"exit_code"`
 	DurationMS int64    `json:"duration_ms"`
 	Success    bool     `json:"success"`
@@ -97,6 +98,7 @@ type RunReport struct {
 	Status   string          `json:"status"`
 	Count    int             `json:"count"`
 	Disabled bool            `json:"disabled,omitempty"`
+	Denied   bool            `json:"denied,omitempty"`
 	Results  []CommandResult `json:"results"`
 }
 
@@ -118,7 +120,13 @@ type PreToolUseOutput struct {
 }
 
 func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error {
-	_, _, err := r.PreToolUseReport(ctx, tool, input)
+	report, output, err := r.PreToolUseReport(ctx, tool, input)
+	if err != nil {
+		return err
+	}
+	if output.Denied {
+		return hookDeniedError(report)
+	}
 	return err
 }
 
@@ -465,7 +473,13 @@ func HooksForPayload(cfg config.HookConfig, payload Payload) []config.HookComman
 }
 
 func (r Runner) run(ctx context.Context, hookList []config.HookCommand, payload Payload) error {
-	_, err := r.RunHooks(ctx, hookList, payload)
+	report, err := r.RunHooks(ctx, hookList, payload)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
 	return err
 }
 
@@ -509,6 +523,11 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 	for index, hook := range hookList {
 		result, err := r.runOneHook(ctx, hook, index, payload, data, timeout)
 		report.Results = append(report.Results, result)
+		if result.Denied {
+			report.Status = "denied"
+			report.Denied = true
+			return report, nil
+		}
 		if err != nil {
 			return report, err
 		}
@@ -632,6 +651,30 @@ func hookMessagesFromStdout(payload Payload, command string, stdout string, stde
 		return nil
 	}
 	return parsed.Messages
+}
+
+func hookStdoutDenied(payload Payload, command string, stdout string, stderr string) bool {
+	parsed, ok := parseHookStdout(payload.Event, firstNonEmpty(payload.ToolName, payload.Tool), command, stdout, stderr)
+	return ok && parsed.Denied
+}
+
+func hookDeniedError(report RunReport) error {
+	event := claudeHookEventName(report.Event)
+	tool := strings.TrimSpace(report.Tool)
+	message := event + " hook denied"
+	if tool != "" {
+		message += " tool " + tool
+	}
+	for _, result := range report.Results {
+		if !result.Denied {
+			continue
+		}
+		if detail := strings.TrimSpace(strings.Join(result.Messages, "\n")); detail != "" {
+			return errors.New(message + ": " + detail)
+		}
+		break
+	}
+	return errors.New(message)
 }
 
 func formatInvalidHookOutput(event string, tool string, command string, detail string, stdout string, stderr string) string {
@@ -884,6 +927,7 @@ func (r Runner) runPromptHook(ctx context.Context, hook config.HookCommand, payl
 	result.DurationMS = time.Since(started).Milliseconds()
 	result.Stdout = output
 	result.Messages = hookMessagesFromStdout(payload, result.Command, result.Stdout, "")
+	result.Denied = hookStdoutDenied(payload, result.Command, result.Stdout, "")
 	if hookCtx.Err() == context.DeadlineExceeded {
 		result.Success = false
 		result.ExitCode = -1
@@ -963,6 +1007,7 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		Stdout:     stdout.String(),
 		Stderr:     stderr.String(),
 		Messages:   hookMessagesFromStdout(payload, command, stdout.String(), stderr.String()),
+		Denied:     hookStdoutDenied(payload, command, stdout.String(), stderr.String()),
 		ExitCode:   0,
 		DurationMS: duration,
 		Success:    true,
@@ -976,6 +1021,14 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 	if err != nil {
 		result.Success = false
 		result.ExitCode = hookExitCode(err)
+		if result.ExitCode == 2 {
+			result.Denied = true
+			if len(result.Messages) == 0 {
+				result.Messages = []string{fmt.Sprintf("%s hook denied tool %s", claudeHookEventName(payload.Event), firstNonEmpty(payload.ToolName, payload.Tool, "<empty>"))}
+			}
+			result.Error = strings.Join(result.Messages, "\n")
+			return result, nil
+		}
 		result.Error = err.Error()
 		if diagnostic := invalidHookOutputDiagnostic(payload, command, result.Stdout, result.Stderr); diagnostic != "" {
 			result.Error = diagnostic
@@ -1057,6 +1110,7 @@ func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, payloa
 	}
 	result.Stdout = string(body)
 	result.Messages = hookMessagesFromStdout(payload, result.Command, result.Stdout, "")
+	result.Denied = hookStdoutDenied(payload, result.Command, result.Stdout, "")
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		result.Success = false
 		result.ExitCode = resp.StatusCode

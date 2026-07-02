@@ -12,7 +12,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
-	require.GreaterOrEqual(t, report.Total, 17)
+	require.GreaterOrEqual(t, report.Total, 18)
 	require.Equal(t, "actual", report.UsageSummary.Source)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 	require.Greater(t, report.EstimatedCost, 0.0)
@@ -31,6 +31,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, preToolHook.OK)
 	require.Equal(t, 1, preToolHook.ToolCalls)
 	require.Contains(t, preToolHook.Output, "pre hook harness ok")
+
+	postToolHook := findScenario(t, report, "post_tool_hook_blocks_result")
+	require.True(t, postToolHook.OK)
+	require.Equal(t, 1, postToolHook.ToolCalls)
+	require.Contains(t, postToolHook.Output, "post hook block harness ok")
 
 	grepChunks := findScenario(t, report, "grep_chunk_assembly")
 	require.True(t, grepChunks.OK)

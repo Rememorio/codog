@@ -201,6 +201,44 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		{
+			name:       "post_tool_hook_blocks_result",
+			permission: tools.PermissionWorkspace,
+			hooks: config.HookConfig{
+				PostToolUseCommands: []config.HookCommand{{
+					Matcher: "write_file",
+					Command: `printf '%s' '{"continue":false,"reason":"post hook blocked result"}'`,
+				}},
+			},
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "write_file",
+					Input: json.RawMessage(`{"path":"post-hook.txt","content":"written before post hook\n"}`),
+				}}},
+				{Text: "post hook block harness ok"},
+			},
+			prompt: "write with post hook",
+			verify: func(workspace string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "post hook block harness ok") {
+					return fmt.Errorf("missing post-tool hook final response")
+				}
+				if err := expectToolCalls(result, 1, true); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "PostToolUse hook denied tool write_file: post hook blocked result") {
+					return fmt.Errorf("post-tool hook denial was not surfaced: %s", result.ToolCalls[0].Output)
+				}
+				data, err := os.ReadFile(filepath.Join(workspace, "post-hook.txt"))
+				if err != nil {
+					return err
+				}
+				if string(data) != "written before post hook\n" {
+					return fmt.Errorf("unexpected post-hook file content %q", string(data))
+				}
+				return nil
+			},
+		},
+		{
 			name: "multi_tool_turn_roundtrip",
 			turns: []mockanthropic.Turn{
 				{ToolUses: []mockanthropic.ToolUse{

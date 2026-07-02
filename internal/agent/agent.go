@@ -12872,6 +12872,14 @@ func renderHooksRun(out io.Writer, report hooks.RunReport) {
 		if result.StatusCode != 0 {
 			fmt.Fprintf(out, "    status: %d\n", result.StatusCode)
 		}
+		if result.Denied {
+			fmt.Fprintf(out, "    denied: true\n")
+		}
+		for _, message := range result.Messages {
+			if strings.TrimSpace(message) != "" {
+				fmt.Fprintf(out, "    message: %s\n", strings.ReplaceAll(strings.TrimSpace(message), "\n", "\n             "))
+			}
+		}
 		if strings.TrimSpace(result.Stdout) != "" {
 			fmt.Fprintf(out, "    stdout: %s\n", strings.ReplaceAll(strings.TrimSpace(result.Stdout), "\n", "\n            "))
 		}
