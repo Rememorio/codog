@@ -80,6 +80,7 @@ type BackfillReport struct {
 	SessionsScanned       int                      `json:"sessions_scanned"`
 	SessionsUpdated       int                      `json:"sessions_updated"`
 	InputsAdded           int                      `json:"inputs_added"`
+	IdentityUpdates       int                      `json:"identity_updates"`
 	SkippedWithInputs     int                      `json:"skipped_with_inputs"`
 	SkippedDisabled       int                      `json:"skipped_disabled"`
 	BackfilledSessions    []BackfilledSession      `json:"backfilled_sessions,omitempty"`
@@ -87,9 +88,10 @@ type BackfillReport struct {
 }
 
 type BackfilledSession struct {
-	ID     string `json:"id"`
-	Path   string `json:"path"`
-	Inputs int    `json:"inputs"`
+	ID              string `json:"id"`
+	Path            string `json:"path"`
+	Inputs          int    `json:"inputs"`
+	IdentityUpdated bool   `json:"identity_updated,omitempty"`
 }
 
 type BackfillSkippedSession struct {
@@ -875,13 +877,20 @@ func (s *Store) BackfillPromptHistory() (BackfillReport, error) {
 		if len(inputs) == 0 {
 			continue
 		}
+		identityRecord, identityUpdated := sessionIdentityBackfillRecord(sess.ID, s.Workspace, records)
 		records = append(records, inputs...)
+		if identityUpdated {
+			records = append(records, identityRecord)
+		}
 		if err := s.writeRecords(sess.Path, records); err != nil {
 			return BackfillReport{}, err
 		}
 		report.SessionsUpdated++
 		report.InputsAdded += len(inputs)
-		report.BackfilledSessions = append(report.BackfilledSessions, BackfilledSession{ID: sess.ID, Path: sess.Path, Inputs: len(inputs)})
+		if identityUpdated {
+			report.IdentityUpdates++
+		}
+		report.BackfilledSessions = append(report.BackfilledSessions, BackfilledSession{ID: sess.ID, Path: sess.Path, Inputs: len(inputs), IdentityUpdated: identityUpdated})
 	}
 	return report, nil
 }
@@ -985,6 +994,52 @@ func promptInputsFromRecords(sessionID string, records []Record) []Record {
 		}
 	}
 	return inputs
+}
+
+func sessionIdentityBackfillRecord(id string, workspace string, records []Record) (Record, bool) {
+	var identity SessionIdentity
+	hadExplicitIdentity := false
+	hadExplicitTitle := false
+	hadExplicitPurpose := false
+	for _, record := range records {
+		if record.Type != "session_identity" || record.Identity == nil {
+			continue
+		}
+		hadExplicitIdentity = true
+		identity = *record.Identity
+		hadExplicitTitle = strings.TrimSpace(identity.Title) != ""
+		hadExplicitPurpose = strings.TrimSpace(identity.Purpose) != ""
+	}
+	prompt := firstPromptTextFromRecords(records)
+	if prompt == "" {
+		return Record{}, false
+	}
+	next := normalizeSessionIdentity(id, workspace, identity)
+	updated := false
+	if shouldEnrichIdentityTitle(next.Title, id, hadExplicitIdentity, hadExplicitTitle) {
+		title := sessionIdentityTitleFromText(prompt)
+		if strings.TrimSpace(title) != "" && title != next.Title {
+			next.Title = title
+			updated = true
+		}
+	}
+	if !hadExplicitPurpose && strings.TrimSpace(next.Purpose) == "" {
+		purpose := sessionIdentityPurposeFromText(prompt)
+		if strings.TrimSpace(purpose) != "" {
+			next.Purpose = purpose
+			updated = true
+		}
+	}
+	next = normalizeSessionIdentity(id, workspace, next)
+	if !updated {
+		return Record{}, false
+	}
+	return Record{
+		Type:      "session_identity",
+		Time:      time.Now().UTC(),
+		SessionID: id,
+		Identity:  &next,
+	}, true
 }
 
 func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (ReplaceResult, error) {
