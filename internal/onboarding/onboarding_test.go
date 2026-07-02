@@ -58,5 +58,5 @@ func TestAnalyzeNeedsSetup(t *testing.T) {
 	require.Equal(t, "Python", report.PrimaryLanguage)
 	require.Contains(t, report.Recommendations, "add a README that explains setup and verification")
 	require.Contains(t, report.Recommendations, "add or document a repeatable test command")
-	require.Contains(t, report.Recommendations, "run `codog init` or add AGENTS.md/.codog/instructions.md")
+	require.Contains(t, report.Recommendations, "run `codog init` or add AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, or .codog/instructions.md")
 }

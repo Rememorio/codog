@@ -19,9 +19,14 @@ const MaxFileBytes = 64 * 1024
 // as project memory.
 var CandidateNames = []string{
 	"AGENTS.md",
+	"AGENTS.local.md",
 	"CLAUDE.md",
+	"CLAUDE.local.md",
 	filepath.Join(".claude", "CLAUDE.md"),
 	"CLAW.md",
+	"CLAW.local.md",
+	filepath.Join(".claw", "CLAUDE.md"),
+	filepath.Join(".claw", "instructions.md"),
 	filepath.Join(".codog", "instructions.md"),
 }
 
@@ -507,11 +512,11 @@ func Summaries(files []File) []Summary {
 
 func sourceForName(name string) string {
 	switch filepath.ToSlash(name) {
-	case "CLAUDE.md", ".claude/CLAUDE.md":
+	case "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", ".claw/CLAUDE.md":
 		return "claude_md"
-	case "CLAW.md":
+	case "CLAW.md", "CLAW.local.md", ".claw/instructions.md":
 		return "claw_md"
-	case "AGENTS.md":
+	case "AGENTS.md", "AGENTS.local.md":
 		return "agents_md"
 	case ".codog/instructions.md":
 		return "codog_instructions"
@@ -548,7 +553,7 @@ func RenderReport(w io.Writer, report Report) {
 	fmt.Fprintf(w, "  Instruction files %d\n", report.InstructionFiles)
 	fmt.Fprintln(w, "Discovered files")
 	if report.InstructionFiles == 0 {
-		fmt.Fprintln(w, "  No AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, CLAW.md, or .codog/instructions.md files discovered in the current workspace ancestry.")
+		fmt.Fprintf(w, "  No project memory files discovered in the current workspace ancestry. Checked: %s.\n", strings.Join(candidateNamesDisplay(), ", "))
 		return
 	}
 	for i, file := range report.Files {
@@ -589,8 +594,15 @@ func discoverBetween(workspace string, boundary string) ([]File, error) {
 	var files []File
 	for _, dir := range dirs {
 		for _, name := range CandidateNames {
-			path := filepath.Join(dir, name)
-			if _, ok := seen[path]; ok {
+			path, ok, err := resolveCandidatePath(dir, name)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			key := canonicalPath(path)
+			if _, ok := seen[key]; ok {
 				continue
 			}
 			file, ok, err := readCandidate(path, dir, name)
@@ -599,11 +611,54 @@ func discoverBetween(workspace string, boundary string) ([]File, error) {
 			}
 			if ok {
 				files = append(files, file)
-				seen[path] = struct{}{}
+				seen[key] = struct{}{}
 			}
 		}
 	}
 	return files, nil
+}
+
+func resolveCandidatePath(dir string, name string) (string, bool, error) {
+	exact := filepath.Join(dir, name)
+	if _, err := os.Stat(exact); err == nil {
+		return exact, true, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", false, err
+	}
+
+	current := dir
+	for _, part := range strings.Split(filepath.Clean(name), string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		entries, err := os.ReadDir(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", false, nil
+			}
+			return "", false, err
+		}
+		match := ""
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				match = entry.Name()
+				break
+			}
+		}
+		if match == "" {
+			return "", false, nil
+		}
+		current = filepath.Join(current, match)
+	}
+	return current, true, nil
+}
+
+func candidateNamesDisplay() []string {
+	out := make([]string, 0, len(CandidateNames))
+	for _, name := range CandidateNames {
+		out = append(out, filepath.ToSlash(name))
+	}
+	return out
 }
 
 func readCandidate(path string, scope string, name string) (File, bool, error) {

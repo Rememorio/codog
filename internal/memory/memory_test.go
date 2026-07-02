@@ -50,6 +50,53 @@ func TestDiscoverUsesGitRootAsBoundary(t *testing.T) {
 	require.Equal(t, "git root instructions", strings.TrimSpace(files[0].Body))
 }
 
+func TestDiscoverSupportsExpandedMemoryNames(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".claw"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".codog"), 0o755))
+	for _, name := range []string{
+		"AGENTS.local.md",
+		"CLAUDE.local.md",
+		"CLAW.local.md",
+		filepath.Join(".claw", "CLAUDE.md"),
+		filepath.Join(".claw", "instructions.md"),
+		filepath.Join(".codog", "instructions.md"),
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(filepath.ToSlash(name)+" body"), 0o644))
+	}
+
+	files, err := discoverBetween(root, root)
+
+	require.NoError(t, err)
+	require.Len(t, files, 6)
+	require.Equal(t, []string{
+		"AGENTS.local.md",
+		"CLAUDE.local.md",
+		"CLAW.local.md",
+		".claw/CLAUDE.md",
+		".claw/instructions.md",
+		".codog/instructions.md",
+	}, memoryNames(files))
+	require.Contains(t, strings.TrimSpace(files[3].Body), ".claw/CLAUDE.md")
+}
+
+func TestDiscoverMatchesMemoryNamesCaseInsensitively(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".ClAuDe"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "agents.md"), []byte("lowercase agents"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".ClAuDe", "claude.md"), []byte("mixed claude"), 0o644))
+
+	files, err := discoverBetween(root, root)
+
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+	require.Equal(t, "AGENTS.md", files[0].Name)
+	require.Equal(t, "lowercase agents", strings.TrimSpace(files[0].Body))
+	require.Equal(t, ".claude/CLAUDE.md", files[1].Name)
+	require.Equal(t, "mixed claude", strings.TrimSpace(files[1].Body))
+	require.True(t, strings.EqualFold(filepath.Join(root, ".ClAuDe", "claude.md"), files[1].Path), files[1].Path)
+}
+
 func TestDiscoverTruncatesLargeFiles(t *testing.T) {
 	root := t.TempDir()
 	body := strings.Repeat("a", MaxFileBytes+10)
@@ -62,6 +109,14 @@ func TestDiscoverTruncatesLargeFiles(t *testing.T) {
 	require.True(t, files[0].Truncated)
 	require.Len(t, files[0].Body, MaxFileBytes)
 	require.Equal(t, MaxFileBytes, files[0].Chars)
+}
+
+func memoryNames(files []File) []string {
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		names = append(names, file.Name)
+	}
+	return names
 }
 
 func TestRenderMemoryBlock(t *testing.T) {
@@ -218,7 +273,8 @@ func TestRenderReportWithAndWithoutFiles(t *testing.T) {
 	var out bytes.Buffer
 	RenderReport(&out, Report{WorkingDirectory: "/repo", InstructionFiles: 0})
 	require.Contains(t, out.String(), "Memory")
-	require.Contains(t, out.String(), "No AGENTS.md")
+	require.Contains(t, out.String(), "No project memory files discovered")
+	require.Contains(t, out.String(), ".claw/instructions.md")
 	out.Reset()
 
 	RenderReport(&out, Report{

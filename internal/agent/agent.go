@@ -20382,7 +20382,7 @@ func buildMemoryErrorReport(action string, err error) actionErrorReport {
 	case strings.Contains(message, "no memory files found"):
 		report.ErrorKind = "no_memory_files"
 		report.Message = "no project memory files were found"
-		report.Hint = "Create AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, CLAW.md, or .codog/instructions.md, or run `codog memory ensure AGENTS.md`."
+		report.Hint = "Create AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, CLAW.md, .claw/CLAUDE.md, .claw/instructions.md, or .codog/instructions.md, or run `codog memory ensure AGENTS.md`."
 	case strings.Contains(message, "memory file path is required"):
 		report.ErrorKind = "memory_file_required"
 		report.Argument = "path"

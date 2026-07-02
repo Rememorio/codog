@@ -112,7 +112,9 @@ secrets.
 
 | Location | Purpose |
 | --- | --- |
-| `AGENTS.md` | Project instructions loaded into the agent context |
+| `AGENTS.md`, `CLAUDE.md`, `CLAW.md` | Project instructions loaded into the agent context |
+| `AGENTS.local.md`, `CLAUDE.local.md`, `CLAW.local.md` | Local instruction overrides |
+| `.claude/CLAUDE.md`, `.claw/CLAUDE.md`, `.claw/instructions.md`, `.codog/instructions.md` | Tool-scoped project instructions |
 | `.codog.json` | Shared project configuration |
 | `.codog.local.json` | Uncommitted local overrides |
 | `.codog/commands` | Project slash commands |

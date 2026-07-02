@@ -209,7 +209,7 @@ func (s scanState) report() Report {
 	report.Checks = []Check{
 		check("README", report.HasReadme, "README file found", "add a README that explains setup and verification", first(report.ReadmeFiles)),
 		check("Tests", report.HasTests, "test entry point found", "add or document a repeatable test command", first(report.TestFiles)),
-		check("Project guidance", len(report.InstructionFiles) > 0, "project instruction file found", "run `codog init` or add AGENTS.md/.codog/instructions.md", first(report.InstructionFiles)),
+		check("Project guidance", len(report.InstructionFiles) > 0, "project instruction file found", "run `codog init` or add AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, or .codog/instructions.md", first(report.InstructionFiles)),
 		check("Codog config", len(report.ConfigFiles) > 0, "Codog project config found", "run `codog init` to create shared defaults", first(report.ConfigFiles)),
 		check("Git", report.GitRepository, "git repository detected", "initialize git before using branch and PR workflows", ""),
 	}
@@ -251,7 +251,7 @@ func isReadme(name string) bool {
 
 func isInstruction(rel string, name string) bool {
 	switch rel {
-	case "AGENTS.md", "CLAUDE.md", "CLAW.md", ".codog/instructions.md":
+	case "AGENTS.md", "AGENTS.local.md", "CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "CLAW.md", "CLAW.local.md", ".claw/CLAUDE.md", ".claw/instructions.md", ".codog/instructions.md":
 		return true
 	default:
 		return strings.HasSuffix(name, ".agents.md")
