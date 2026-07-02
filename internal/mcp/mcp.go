@@ -26,6 +26,7 @@ var ccrProxyPathMarkers = []string{"/v2/session_ingress/shttp/mcp/", "/v2/ccr-se
 type ServerStatus struct {
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
+	Lifecycle       LifecycleStatus `json:"lifecycle"`
 	Command         string          `json:"command,omitempty"`
 	URL             string          `json:"url,omitempty"`
 	Signature       string          `json:"signature,omitempty"`
@@ -41,6 +42,7 @@ type ServerStatus struct {
 type InitializeResult struct {
 	Server          string          `json:"server"`
 	Status          string          `json:"status"`
+	Lifecycle       LifecycleStatus `json:"lifecycle"`
 	ProtocolVersion string          `json:"protocol_version,omitempty"`
 	Capabilities    json.RawMessage `json:"capabilities,omitempty"`
 	ServerInfo      json.RawMessage `json:"server_info,omitempty"`
@@ -50,12 +52,29 @@ type InitializeResult struct {
 type AuthStatusResult struct {
 	Server        string          `json:"server"`
 	Status        string          `json:"status"`
+	Lifecycle     LifecycleStatus `json:"lifecycle"`
 	ServerInfo    json.RawMessage `json:"server_info,omitempty"`
 	Capabilities  json.RawMessage `json:"capabilities,omitempty"`
 	ToolCount     int             `json:"tool_count"`
 	ResourceCount int             `json:"resource_count"`
 	ResourceError string          `json:"resource_error,omitempty"`
 	Error         string          `json:"error,omitempty"`
+}
+
+// LifecycleStatus reports the current MCP lifecycle phase and the last
+// recoverable or fatal error surfaced by that lifecycle.
+type LifecycleStatus struct {
+	Phase               string          `json:"phase"`
+	LastSuccessfulPhase string          `json:"last_successful_phase,omitempty"`
+	Error               *LifecycleError `json:"error,omitempty"`
+}
+
+// LifecycleError describes a structured MCP lifecycle failure.
+type LifecycleError struct {
+	Phase       string            `json:"phase"`
+	Message     string            `json:"message"`
+	Context     map[string]string `json:"context,omitempty"`
+	Recoverable bool              `json:"recoverable"`
 }
 
 type ToolInfo struct {
@@ -107,6 +126,75 @@ type PromptGetResult struct {
 	Prompt string          `json:"prompt"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
+}
+
+func lifecycleReady(phase string) LifecycleStatus {
+	phase = strings.TrimSpace(phase)
+	if phase == "" {
+		phase = "ready"
+	}
+	return LifecycleStatus{Phase: phase, LastSuccessfulPhase: phase}
+}
+
+func lifecycleFailure(phase string, message string, recoverable bool, context map[string]string) LifecycleStatus {
+	phase = strings.TrimSpace(phase)
+	if phase == "" {
+		phase = "error_surfacing"
+	}
+	return LifecycleStatus{
+		Phase:               "error_surfacing",
+		LastSuccessfulPhase: previousLifecyclePhase(phase),
+		Error: &LifecycleError{
+			Phase:       phase,
+			Message:     message,
+			Context:     cleanLifecycleContext(context),
+			Recoverable: recoverable,
+		},
+	}
+}
+
+func previousLifecyclePhase(phase string) string {
+	switch phase {
+	case "server_registration":
+		return "config_load"
+	case "spawn_connect":
+		return "server_registration"
+	case "initialize_handshake":
+		return "spawn_connect"
+	case "tool_discovery":
+		return "initialize_handshake"
+	case "resource_discovery":
+		return "tool_discovery"
+	case "ready":
+		return "resource_discovery"
+	case "invocation":
+		return "ready"
+	case "shutdown":
+		return "ready"
+	case "cleanup":
+		return "shutdown"
+	default:
+		return ""
+	}
+}
+
+func cleanLifecycleContext(context map[string]string) map[string]string {
+	if len(context) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range context {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 type ServerTransport struct {
@@ -433,6 +521,7 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 	if result.Error != "" {
 		status.Status = "error"
 		status.Error = result.Error
+		status.Lifecycle = lifecycleFailure("tool_discovery", result.Error, true, map[string]string{"server": name})
 		return status
 	}
 	tools := make([]string, 0, len(result.Tools))
@@ -442,12 +531,14 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 	sort.Strings(tools)
 	status.ToolCount = len(tools)
 	status.Tools = tools
+	status.Lifecycle = lifecycleReady("ready")
 	return status
 }
 
 func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
 	status := ServerStatus{
 		Name:       name,
+		Lifecycle:  lifecycleReady("server_registration"),
 		Command:    server.Command,
 		URL:        redactedURL(server.URL),
 		Signature:  ServerSignature(server),
@@ -455,6 +546,7 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 	}
 	if isHTTPServer(server) {
 		initialized := Initialize(ctx, name, server)
+		status.Lifecycle = initialized.Lifecycle
 		status.ProtocolVersion = initialized.ProtocolVersion
 		status.ServerInfo = initialized.ServerInfo
 		if initialized.Error != "" {
@@ -463,21 +555,25 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 			return status
 		}
 		status.Status = "ok"
+		status.Lifecycle = lifecycleReady("ready")
 		return status
 	}
 	if strings.TrimSpace(server.Command) == "" {
 		status.Status = "missing_command"
 		status.Error = "missing command"
+		status.Lifecycle = lifecycleFailure("config_load", "missing command", false, map[string]string{"server": name})
 		return status
 	}
 	resolved, err := exec.LookPath(server.Command)
 	if err != nil {
 		status.Status = "command_not_found"
 		status.Error = err.Error()
+		status.Lifecycle = lifecycleFailure("spawn_connect", err.Error(), true, map[string]string{"server": name, "command": server.Command})
 		return status
 	}
 	status.ResolvedPath = resolved
 	initialized := Initialize(ctx, name, server)
+	status.Lifecycle = initialized.Lifecycle
 	status.ProtocolVersion = initialized.ProtocolVersion
 	status.ServerInfo = initialized.ServerInfo
 	if initialized.Error != "" {
@@ -486,6 +582,7 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 		return status
 	}
 	status.Status = "ok"
+	status.Lifecycle = lifecycleReady("ready")
 	return status
 }
 
@@ -495,7 +592,7 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 		return result
 	}
 	if server.Command == "" {
-		return InitializeResult{Server: serverName, Status: "error", Error: "missing command"}
+		return InitializeResult{Server: serverName, Status: "error", Error: "missing command", Lifecycle: lifecycleFailure("config_load", "missing command", false, map[string]string{"server": serverName})}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -506,14 +603,14 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("spawn_connect", err.Error(), true, map[string]string{"server": serverName})}
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("spawn_connect", err.Error(), true, map[string]string{"server": serverName})}
 	}
 	if err := cmd.Start(); err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("spawn_connect", err.Error(), true, map[string]string{"server": serverName, "command": server.Command})}
 	}
 	defer cmd.Process.Kill()
 
@@ -528,14 +625,17 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
 		},
 	}); err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: mcpError(err, &stderr).Error()}
+		message := mcpError(err, &stderr).Error()
+		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
 	resp, err := readResponse(reader)
 	if err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: mcpError(err, &stderr).Error()}
+		message := mcpError(err, &stderr).Error()
+		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
 	if resp.Error != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: mcpError(errors.New(resp.Error.Message), &stderr).Error()}
+		message := mcpError(errors.New(resp.Error.Message), &stderr).Error()
+		return InitializeResult{Server: serverName, Status: "error", Error: message, Lifecycle: lifecycleFailure("initialize_handshake", message, true, map[string]string{"server": serverName})}
 	}
 	_ = send(stdin, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"})
 
@@ -545,11 +645,12 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 		ServerInfo      json.RawMessage `json:"serverInfo"`
 	}
 	if err := json.Unmarshal(resp.Result, &payload); err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("initialize_handshake", err.Error(), true, map[string]string{"server": serverName})}
 	}
 	return InitializeResult{
 		Server:          serverName,
 		Status:          "ok",
+		Lifecycle:       lifecycleReady("initialize_handshake"),
 		ProtocolVersion: payload.ProtocolVersion,
 		Capabilities:    payload.Capabilities,
 		ServerInfo:      payload.ServerInfo,
@@ -559,11 +660,12 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 func InspectAuth(ctx context.Context, serverName string, server config.MCPServerConfig) AuthStatusResult {
 	initialized := Initialize(ctx, serverName, server)
 	if initialized.Error != "" {
-		return AuthStatusResult{Server: serverName, Status: "error", Error: initialized.Error}
+		return AuthStatusResult{Server: serverName, Status: "error", Error: initialized.Error, Lifecycle: initialized.Lifecycle}
 	}
 	result := AuthStatusResult{
 		Server:       serverName,
 		Status:       initialized.Status,
+		Lifecycle:    lifecycleReady("initialize_handshake"),
 		ServerInfo:   initialized.ServerInfo,
 		Capabilities: initialized.Capabilities,
 	}
@@ -571,15 +673,18 @@ func InspectAuth(ctx context.Context, serverName string, server config.MCPServer
 	if tools.Error != "" {
 		result.Status = "error"
 		result.Error = tools.Error
+		result.Lifecycle = lifecycleFailure("tool_discovery", tools.Error, true, map[string]string{"server": serverName})
 		return result
 	}
 	result.ToolCount = len(tools.Tools)
 	resources := ListResources(ctx, serverName, server)
 	if resources.Error != "" {
 		result.ResourceError = resources.Error
+		result.Lifecycle = lifecycleFailure("resource_discovery", resources.Error, true, map[string]string{"server": serverName})
 		return result
 	}
 	result.ResourceCount = countJSONArrayField(resources.Resources, "resources")
+	result.Lifecycle = lifecycleReady("ready")
 	return result
 }
 
@@ -856,7 +961,7 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 
 func initializeHTTP(ctx context.Context, serverName string, server config.MCPServerConfig) (InitializeResult, string) {
 	if strings.TrimSpace(server.URL) == "" {
-		return InitializeResult{Server: serverName, Status: "error", Error: "missing url"}, ""
+		return InitializeResult{Server: serverName, Status: "error", Error: "missing url", Lifecycle: lifecycleFailure("config_load", "missing url", false, map[string]string{"server": serverName})}, ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -872,10 +977,10 @@ func initializeHTTP(ctx context.Context, serverName string, server config.MCPSer
 		},
 	}, "")
 	if err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}, sessionID
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("initialize_handshake", err.Error(), true, map[string]string{"server": serverName, "url": redactedURL(server.URL)})}, sessionID
 	}
 	if resp.Error != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: resp.Error.Message}, sessionID
+		return InitializeResult{Server: serverName, Status: "error", Error: resp.Error.Message, Lifecycle: lifecycleFailure("initialize_handshake", resp.Error.Message, true, map[string]string{"server": serverName, "url": redactedURL(server.URL)})}, sessionID
 	}
 	var payload struct {
 		ProtocolVersion string          `json:"protocolVersion"`
@@ -883,11 +988,12 @@ func initializeHTTP(ctx context.Context, serverName string, server config.MCPSer
 		ServerInfo      json.RawMessage `json:"serverInfo"`
 	}
 	if err := json.Unmarshal(resp.Result, &payload); err != nil {
-		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}, sessionID
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error(), Lifecycle: lifecycleFailure("initialize_handshake", err.Error(), true, map[string]string{"server": serverName, "url": redactedURL(server.URL)})}, sessionID
 	}
 	return InitializeResult{
 		Server:          serverName,
 		Status:          "ok",
+		Lifecycle:       lifecycleReady("initialize_handshake"),
 		ProtocolVersion: payload.ProtocolVersion,
 		Capabilities:    payload.Capabilities,
 		ServerInfo:      payload.ServerInfo,

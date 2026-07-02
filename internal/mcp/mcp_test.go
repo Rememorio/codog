@@ -55,6 +55,9 @@ func TestCallToolAndReadResource(t *testing.T) {
 
 	auth := InspectAuth(context.Background(), "test", server)
 	require.Equal(t, "ok", auth.Status)
+	require.Equal(t, "ready", auth.Lifecycle.Phase)
+	require.Equal(t, "ready", auth.Lifecycle.LastSuccessfulPhase)
+	require.Nil(t, auth.Lifecycle.Error)
 	require.Contains(t, string(auth.ServerInfo), `"name":"test"`)
 	require.Equal(t, 1, auth.ToolCount)
 	require.Equal(t, 1, auth.ResourceCount)
@@ -104,6 +107,8 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	cfg := config.MCPServerConfig{URL: server.URL + "/mcp?token=secret", Headers: map[string]string{"Authorization": "Bearer token"}}
 	ready := Preflight(context.Background(), "remote", cfg)
 	require.Equal(t, "ok", ready.Status)
+	require.Equal(t, "ready", ready.Lifecycle.Phase)
+	require.Nil(t, ready.Lifecycle.Error)
 	require.Contains(t, ready.URL, "token=%5Bredacted%5D")
 	require.NotContains(t, ready.URL, "secret")
 	require.Equal(t, "2024-11-05", ready.ProtocolVersion)
@@ -143,6 +148,27 @@ func TestListToolsIncludesProcessStderr(t *testing.T) {
 
 	tools := ListTools(context.Background(), "test", server)
 	require.Contains(t, tools.Error, "mcp boot failed")
+
+	inspected := Inspect(context.Background(), "test", server)
+	require.Equal(t, "error", inspected.Status)
+	require.Equal(t, "error_surfacing", inspected.Lifecycle.Phase)
+	require.Equal(t, "initialize_handshake", inspected.Lifecycle.Error.Phase)
+	require.True(t, inspected.Lifecycle.Error.Recoverable)
+}
+
+func TestInspectClassifiesToolDiscoveryFailures(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1", "CODOG_MCP_FAIL_TOOLS=1"},
+	}
+
+	inspected := Inspect(context.Background(), "test", server)
+	require.Equal(t, "error", inspected.Status)
+	require.Equal(t, "error_surfacing", inspected.Lifecycle.Phase)
+	require.Equal(t, "tool_discovery", inspected.Lifecycle.Error.Phase)
+	require.True(t, inspected.Lifecycle.Error.Recoverable)
+	require.Contains(t, inspected.Error, "tool discovery failed")
 }
 
 func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
@@ -153,12 +179,18 @@ func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
 	}
 	ready := Preflight(context.Background(), "test", server)
 	require.Equal(t, "ok", ready.Status)
+	require.Equal(t, "ready", ready.Lifecycle.Phase)
+	require.Equal(t, "ready", ready.Lifecycle.LastSuccessfulPhase)
+	require.Nil(t, ready.Lifecycle.Error)
 	require.NotEmpty(t, ready.ResolvedPath)
 	require.Equal(t, "2024-11-05", ready.ProtocolVersion)
 	require.Contains(t, string(ready.ServerInfo), `"name":"test"`)
 
 	missing := Preflight(context.Background(), "missing", config.MCPServerConfig{Command: filepath.Join(t.TempDir(), "missing-mcp")})
 	require.Equal(t, "command_not_found", missing.Status)
+	require.Equal(t, "error_surfacing", missing.Lifecycle.Phase)
+	require.Equal(t, "spawn_connect", missing.Lifecycle.Error.Phase)
+	require.True(t, missing.Lifecycle.Error.Recoverable)
 	require.Contains(t, missing.Error, "missing-mcp")
 
 	statuses := InspectAll(context.Background(), map[string]config.MCPServerConfig{
@@ -167,7 +199,9 @@ func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
 	})
 	require.Equal(t, []string{"missing", "test"}, []string{statuses[0].Name, statuses[1].Name})
 	require.Equal(t, "command_not_found", statuses[0].Status)
+	require.Equal(t, "spawn_connect", statuses[0].Lifecycle.Error.Phase)
 	require.Equal(t, "ok", statuses[1].Status)
+	require.Equal(t, "ready", statuses[1].Lifecycle.Phase)
 	require.Equal(t, 1, statuses[1].ToolCount)
 	require.Equal(t, []string{"echo"}, statuses[1].Tools)
 }
@@ -278,6 +312,10 @@ func TestMCPHelperProcess(t *testing.T) {
 				"serverInfo":      map[string]any{"name": "test", "version": "0.0.0"},
 			})
 		case "tools/list":
+			if os.Getenv("CODOG_MCP_FAIL_TOOLS") == "1" {
+				writeMCPError(id, "tool discovery failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"tools": []map[string]any{{
 				"name":        "echo",
 				"description": "Echo text.",
@@ -323,6 +361,12 @@ func TestMCPHelperProcess(t *testing.T) {
 
 func writeMCP(id any, result map[string]any) {
 	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, _ := json.Marshal(payload)
+	fmt.Println(string(data))
+}
+
+func writeMCPError(id any, message string) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]string{"message": message}}
 	data, _ := json.Marshal(payload)
 	fmt.Println(string(data))
 }
