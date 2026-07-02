@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -192,4 +193,32 @@ func TestInstallNewTarget(t *testing.T) {
 	data, err := os.ReadFile(target)
 	require.NoError(t, err)
 	require.Equal(t, "new", string(data))
+}
+
+func TestListArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "codog-0.1.0-test")
+	second := filepath.Join(dir, "codog-0.2.0-test")
+	require.NoError(t, os.WriteFile(first, []byte("old"), 0o644))
+	require.NoError(t, os.WriteFile(second, []byte("newer"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "download.tmp"), []byte("partial"), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o755))
+	now := time.Now()
+	require.NoError(t, os.Chtimes(first, now.Add(-time.Hour), now.Add(-time.Hour)))
+	require.NoError(t, os.Chtimes(second, now, now))
+
+	artifacts, err := ListArtifacts(dir)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 2)
+	require.Equal(t, "codog-0.2.0-test", artifacts[0].Name)
+	require.Equal(t, second, artifacts[0].Path)
+	require.Equal(t, int64(5), artifacts[0].Size)
+	require.True(t, artifacts[0].Executable)
+	require.NotEmpty(t, artifacts[0].ModifiedAt)
+	require.Equal(t, "codog-0.1.0-test", artifacts[1].Name)
+	require.False(t, artifacts[1].Executable)
+
+	missing, err := ListArtifacts(filepath.Join(dir, "missing"))
+	require.NoError(t, err)
+	require.Empty(t, missing)
 }

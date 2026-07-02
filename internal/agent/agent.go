@@ -3676,16 +3676,19 @@ type updaterCommandReport struct {
 }
 
 type updaterStatusReport struct {
-	CurrentVersion string   `json:"current_version"`
-	Platform       string   `json:"platform"`
-	Executable     string   `json:"executable,omitempty"`
-	ConfigHome     string   `json:"config_home,omitempty"`
-	UpdateDir      string   `json:"update_dir,omitempty"`
-	DefaultTarget  string   `json:"default_target,omitempty"`
-	BackupPath     string   `json:"backup_path,omitempty"`
-	BackupPresent  bool     `json:"backup_present"`
-	TargetPresent  bool     `json:"target_present"`
-	Commands       []string `json:"commands"`
+	CurrentVersion string                 `json:"current_version"`
+	Platform       string                 `json:"platform"`
+	Executable     string                 `json:"executable,omitempty"`
+	ConfigHome     string                 `json:"config_home,omitempty"`
+	UpdateDir      string                 `json:"update_dir,omitempty"`
+	DefaultTarget  string                 `json:"default_target,omitempty"`
+	BackupPath     string                 `json:"backup_path,omitempty"`
+	BackupPresent  bool                   `json:"backup_present"`
+	TargetPresent  bool                   `json:"target_present"`
+	Artifacts      []updater.ArtifactInfo `json:"artifacts"`
+	ArtifactCount  int                    `json:"artifact_count"`
+	Warnings       []string               `json:"warnings,omitempty"`
+	Commands       []string               `json:"commands"`
 }
 
 type installerStatusReport struct {
@@ -3745,6 +3748,12 @@ func (a *App) updaterStatusReport(action string) updaterStatusReport {
 	if strings.TrimSpace(a.Config.ConfigHome) != "" {
 		updateDir = filepath.Join(a.Config.ConfigHome, "updater")
 	}
+	artifacts, err := updater.ListArtifacts(updateDir)
+	warnings := []string{}
+	if err != nil {
+		warnings = append(warnings, "Could not list updater artifacts: "+err.Error())
+		artifacts = []updater.ArtifactInfo{}
+	}
 	return updaterStatusReport{
 		CurrentVersion: version,
 		Platform:       updater.PlatformKey(),
@@ -3755,6 +3764,9 @@ func (a *App) updaterStatusReport(action string) updaterStatusReport {
 		BackupPath:     backupPath,
 		BackupPresent:  backupPresent,
 		TargetPresent:  targetPresent,
+		Artifacts:      artifacts,
+		ArtifactCount:  len(artifacts),
+		Warnings:       warnings,
 		Commands:       []string{"status", "show", "check", "verify", "download", "install", "rollback"},
 	}
 }

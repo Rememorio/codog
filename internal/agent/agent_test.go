@@ -22533,6 +22533,10 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 	target := filepath.Join(dir, "codog")
 	require.NoError(t, os.WriteFile(target, []byte("current"), 0o755))
 	require.NoError(t, os.WriteFile(target+".bak", []byte("previous"), 0o755))
+	updateDir := filepath.Join(dir, "updater")
+	require.NoError(t, os.MkdirAll(updateDir, 0o755))
+	artifactPath := filepath.Join(updateDir, "codog-0.2.0-test")
+	require.NoError(t, os.WriteFile(artifactPath, []byte("downloaded"), 0o755))
 
 	var out bytes.Buffer
 	app := &App{
@@ -22549,16 +22553,23 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 		OutputFields  []string `json:"output_fields"`
 		StatusValues  []string `json:"status_values"`
 		Result        struct {
-			CurrentVersion string   `json:"current_version"`
-			Platform       string   `json:"platform"`
-			Executable     string   `json:"executable"`
-			ConfigHome     string   `json:"config_home"`
-			UpdateDir      string   `json:"update_dir"`
-			DefaultTarget  string   `json:"default_target"`
-			BackupPath     string   `json:"backup_path"`
-			BackupPresent  bool     `json:"backup_present"`
-			TargetPresent  bool     `json:"target_present"`
-			Commands       []string `json:"commands"`
+			CurrentVersion string `json:"current_version"`
+			Platform       string `json:"platform"`
+			Executable     string `json:"executable"`
+			ConfigHome     string `json:"config_home"`
+			UpdateDir      string `json:"update_dir"`
+			DefaultTarget  string `json:"default_target"`
+			BackupPath     string `json:"backup_path"`
+			BackupPresent  bool   `json:"backup_present"`
+			TargetPresent  bool   `json:"target_present"`
+			Artifacts      []struct {
+				Name       string `json:"name"`
+				Path       string `json:"path"`
+				Size       int64  `json:"size"`
+				Executable bool   `json:"executable"`
+			} `json:"artifacts"`
+			ArtifactCount int      `json:"artifact_count"`
+			Commands      []string `json:"commands"`
 		} `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
@@ -22578,6 +22589,12 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 	require.Equal(t, target+".bak", report.Result.BackupPath)
 	require.True(t, report.Result.BackupPresent)
 	require.True(t, report.Result.TargetPresent)
+	require.Equal(t, 1, report.Result.ArtifactCount)
+	require.Len(t, report.Result.Artifacts, 1)
+	require.Equal(t, "codog-0.2.0-test", report.Result.Artifacts[0].Name)
+	require.Equal(t, artifactPath, report.Result.Artifacts[0].Path)
+	require.Equal(t, int64(len("downloaded")), report.Result.Artifacts[0].Size)
+	require.True(t, report.Result.Artifacts[0].Executable)
 	require.Contains(t, report.Result.Commands, "check")
 	require.Contains(t, report.Result.Commands, "rollback")
 

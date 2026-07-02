@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,6 +70,15 @@ type RollbackResult struct {
 	Target     string `json:"target"`
 	BackupPath string `json:"backup_path"`
 	RolledBack bool   `json:"rolled_back"`
+}
+
+// ArtifactInfo describes one downloaded updater artifact on disk.
+type ArtifactInfo struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modified_at"`
+	Executable bool   `json:"executable"`
 }
 
 // Check fetches an update manifest and compares it to the current version.
@@ -333,6 +343,46 @@ func Rollback(targetPath string) (RollbackResult, error) {
 // PlatformKey returns the manifest platform key for the current GOOS/GOARCH.
 func PlatformKey() string {
 	return runtime.GOOS + "-" + runtime.GOARCH
+}
+
+// ListArtifacts returns downloaded updater artifacts from dir.
+func ListArtifacts(dir string) ([]ArtifactInfo, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return []ArtifactInfo{}, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []ArtifactInfo{}, nil
+		}
+		return nil, err
+	}
+	artifacts := []ArtifactInfo{}
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, entry.Name())
+		artifacts = append(artifacts, ArtifactInfo{
+			Name:       entry.Name(),
+			Path:       path,
+			Size:       info.Size(),
+			ModifiedAt: info.ModTime().UTC().Format(time.RFC3339Nano),
+			Executable: info.Mode().Perm()&0o111 != 0,
+		})
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		if artifacts[i].ModifiedAt == artifacts[j].ModifiedAt {
+			return artifacts[i].Name < artifacts[j].Name
+		}
+		return artifacts[i].ModifiedAt > artifacts[j].ModifiedAt
+	})
+	return artifacts, nil
 }
 
 func selectDownload(manifest Manifest, platform string) (string, string, string, error) {
