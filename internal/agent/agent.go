@@ -260,7 +260,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			if err != nil {
 				return nil
 			}
-			return runSetupHookPayload(ctx, hooks.Runner{Config: cfg.Hooks, Workspace: workspace, ConfigHome: cfg.ConfigHome}, workspace, "init", report.Status)
+			return runSetupHookPayload(ctx, hooks.Runner{Config: cfg.Hooks, Workspace: workspace, ConfigHome: cfg.ConfigHome, Disabled: cfg.EffectiveDisableAllHooks()}, workspace, "init", report.Status)
 		})
 	}
 	if command == "state" {
@@ -11182,6 +11182,7 @@ type hooksListReport struct {
 	Kind                       string               `json:"kind"`
 	Action                     string               `json:"action"`
 	Status                     string               `json:"status"`
+	Disabled                   bool                 `json:"disabled,omitempty"`
 	PreToolUse                 []string             `json:"pre_tool_use"`
 	PostToolUse                []string             `json:"post_tool_use"`
 	PostToolUseFailure         []string             `json:"post_tool_use_failure"`
@@ -11234,6 +11235,7 @@ type hooksHealthReport struct {
 	Kind            string               `json:"kind"`
 	Action          string               `json:"action"`
 	Status          string               `json:"status"`
+	Disabled        bool                 `json:"disabled,omitempty"`
 	Workspace       string               `json:"workspace"`
 	Event           string               `json:"event"`
 	MatcherTarget   string               `json:"matcher_target"`
@@ -11286,7 +11288,8 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		report := hooksListReport{
 			Kind:                       "hooks",
 			Action:                     "list",
-			Status:                     "ok",
+			Status:                     hooksStatus(a.Config),
+			Disabled:                   a.Config.EffectiveDisableAllHooks(),
 			PreToolUse:                 append([]string(nil), a.Config.Hooks.PreToolUse...),
 			PostToolUse:                append([]string(nil), a.Config.Hooks.PostToolUse...),
 			PostToolUseFailure:         append([]string(nil), a.Config.Hooks.PostToolUseFailure...),
@@ -11354,6 +11357,12 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		payload := hooksPayloadForHealth(req)
 		matched := hooks.HooksForPayload(a.Config.Hooks, payload)
 		report := buildHooksHealthReport(a.Config.Hooks, a.Workspace, payload, matched)
+		if a.Config.EffectiveDisableAllHooks() {
+			report.Status = "disabled"
+			report.Disabled = true
+			report.MatchedCount = 0
+			report.Matched = nil
+		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
 			fmt.Fprintln(a.Out, string(data))
@@ -11599,6 +11608,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Workspace:    a.Workspace,
 			ConfigHome:   a.Config.ConfigHome,
 			Timeout:      timeout,
+			Disabled:     a.Config.EffectiveDisableAllHooks(),
 			PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
 		}
 		report, runErr := runner.RunHooks(ctx, hookList, payload)
@@ -11699,6 +11709,13 @@ func buildHooksHealthReport(cfg config.HookConfig, workspace string, payload hoo
 	}
 }
 
+func hooksStatus(cfg config.Config) string {
+	if cfg.EffectiveDisableAllHooks() {
+		return "disabled"
+	}
+	return "ok"
+}
+
 func hookMatcherTarget(payload hooks.Payload) string {
 	switch payload.Event {
 	case "notification":
@@ -11796,6 +11813,10 @@ func hookConfiguredCount(cfg config.HookConfig, event string) int {
 
 func renderHooksHealth(out io.Writer, report hooksHealthReport) {
 	fmt.Fprintln(out, "Hooks Health")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.Disabled {
+		fmt.Fprintf(out, "  Disabled         true\n")
+	}
 	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
 	fmt.Fprintf(out, "  Event            %s\n", report.Event)
 	fmt.Fprintf(out, "  Matcher target   %s\n", emptyAsNone(report.MatcherTarget))
@@ -12228,6 +12249,10 @@ func hookCommandsForList(commands []config.HookCommand, legacy []string) []hookC
 
 func renderHooksList(out io.Writer, report hooksListReport) {
 	fmt.Fprintln(out, "Hooks")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.Disabled {
+		fmt.Fprintf(out, "  Disabled         true\n")
+	}
 	fmt.Fprintf(out, "  Pre tool use     %d\n", len(report.PreToolUse))
 	for _, command := range report.PreToolUseCommands {
 		fmt.Fprintf(out, "    %s\n", renderHookCommandSummary(command))
@@ -12338,6 +12363,10 @@ func renderHookCommandSummary(command hookCommandSummary) string {
 
 func renderHooksRun(out io.Writer, report hooks.RunReport) {
 	fmt.Fprintln(out, "Hook Run")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.Disabled {
+		fmt.Fprintf(out, "  Disabled         true\n")
+	}
 	fmt.Fprintf(out, "  Event            %s\n", report.Event)
 	fmt.Fprintf(out, "  Tool             %s\n", report.Tool)
 	fmt.Fprintf(out, "  Commands         %d\n", report.Count)
@@ -21752,7 +21781,11 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 	}
 	planState, _ := planmode.Load(a.Workspace)
 	mcpValidation := buildMCPValidation(a.Config.MCPServers)
-	hookValidation := buildHookValidation(a.Config.Hooks)
+	runtimeHooks := a.Config.Hooks
+	if a.Config.EffectiveDisableAllHooks() {
+		runtimeHooks = config.HookConfig{}
+	}
+	hookValidation := buildHookValidation(runtimeHooks)
 	return localstatus.Build(localstatus.Options{
 		Version:                     version,
 		FormatSource:                opts.FormatSource,
@@ -21771,29 +21804,29 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		AutoCompactMessages:         a.Config.AutoCompactMessages,
 		AuthConfigured:              a.Config.APIKey != "" || a.Config.AuthToken != "",
 		MCPServerCount:              len(a.Config.MCPServers),
-		UserPromptSubmitHookCount:   len(a.Config.Hooks.UserPromptSubmit),
-		SessionStartHookCount:       len(a.Config.Hooks.SessionStart),
-		SessionEndHookCount:         len(a.Config.Hooks.SessionEnd),
-		SetupHookCount:              len(a.Config.Hooks.Setup),
-		PreHookCount:                len(a.Config.Hooks.PreToolUse),
-		PostHookCount:               len(a.Config.Hooks.PostToolUse),
-		PostFailureHookCount:        len(a.Config.Hooks.PostToolUseFailure),
-		PermissionRequestHookCount:  len(a.Config.Hooks.PermissionRequest),
-		PermissionDeniedHookCount:   len(a.Config.Hooks.PermissionDenied),
-		StopHookCount:               len(a.Config.Hooks.Stop),
-		StopFailureHookCount:        len(a.Config.Hooks.StopFailure),
-		PreCompactHookCount:         len(a.Config.Hooks.PreCompact),
-		PostCompactHookCount:        len(a.Config.Hooks.PostCompact),
-		NotificationHookCount:       len(a.Config.Hooks.Notification),
-		SubagentStartHookCount:      len(a.Config.Hooks.SubagentStart),
-		SubagentStopHookCount:       len(a.Config.Hooks.SubagentStop),
-		WorktreeCreateHookCount:     len(a.Config.Hooks.WorktreeCreate),
-		WorktreeRemoveHookCount:     len(a.Config.Hooks.WorktreeRemove),
-		CwdChangedHookCount:         len(a.Config.Hooks.CwdChanged),
-		TaskCreatedHookCount:        len(a.Config.Hooks.TaskCreated),
-		TaskCompletedHookCount:      len(a.Config.Hooks.TaskCompleted),
-		InstructionsLoadedHookCount: len(a.Config.Hooks.InstructionsLoaded),
-		FileChangedHookCount:        len(a.Config.Hooks.FileChanged),
+		UserPromptSubmitHookCount:   len(runtimeHooks.UserPromptSubmit),
+		SessionStartHookCount:       len(runtimeHooks.SessionStart),
+		SessionEndHookCount:         len(runtimeHooks.SessionEnd),
+		SetupHookCount:              len(runtimeHooks.Setup),
+		PreHookCount:                len(runtimeHooks.PreToolUse),
+		PostHookCount:               len(runtimeHooks.PostToolUse),
+		PostFailureHookCount:        len(runtimeHooks.PostToolUseFailure),
+		PermissionRequestHookCount:  len(runtimeHooks.PermissionRequest),
+		PermissionDeniedHookCount:   len(runtimeHooks.PermissionDenied),
+		StopHookCount:               len(runtimeHooks.Stop),
+		StopFailureHookCount:        len(runtimeHooks.StopFailure),
+		PreCompactHookCount:         len(runtimeHooks.PreCompact),
+		PostCompactHookCount:        len(runtimeHooks.PostCompact),
+		NotificationHookCount:       len(runtimeHooks.Notification),
+		SubagentStartHookCount:      len(runtimeHooks.SubagentStart),
+		SubagentStopHookCount:       len(runtimeHooks.SubagentStop),
+		WorktreeCreateHookCount:     len(runtimeHooks.WorktreeCreate),
+		WorktreeRemoveHookCount:     len(runtimeHooks.WorktreeRemove),
+		CwdChangedHookCount:         len(runtimeHooks.CwdChanged),
+		TaskCreatedHookCount:        len(runtimeHooks.TaskCreated),
+		TaskCompletedHookCount:      len(runtimeHooks.TaskCompleted),
+		InstructionsLoadedHookCount: len(runtimeHooks.InstructionsLoaded),
+		FileChangedHookCount:        len(runtimeHooks.FileChanged),
 		EnabledSkillCount:           len(a.Config.EnabledSkills),
 		MCPValidation:               mcpValidation,
 		HookValidation:              hookValidation,
@@ -42459,6 +42492,7 @@ func (a *App) lifecycleHookRunner() hooks.Runner {
 		Config:       cfg.Hooks,
 		Workspace:    a.Workspace,
 		ConfigHome:   cfg.ConfigHome,
+		Disabled:     cfg.EffectiveDisableAllHooks(),
 		PromptRunner: a.hookPromptRunner(cfg),
 	}
 }
@@ -42863,6 +42897,7 @@ func (a *App) checkSessionWatchPaths(ctx context.Context, req hooksRequest, watc
 		ConfigHome:   a.Config.ConfigHome,
 		SessionID:    watched.SessionID,
 		Timeout:      time.Duration(req.TimeoutMS) * time.Millisecond,
+		Disabled:     a.Config.EffectiveDisableAllHooks(),
 		PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
 	}
 	var firstErr error

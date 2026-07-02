@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/Rememorio/codog/internal/config"
@@ -39,6 +40,27 @@ func TestRunPayloadCapturesHookOutput(t *testing.T) {
 	require.Contains(t, report.Results[0].Stdout, "done")
 	require.Contains(t, report.Results[0].Stdout, "true")
 	require.Contains(t, report.Results[0].Stderr, "err")
+}
+
+func TestRunPayloadDisabledSkipsHookExecution(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	marker := filepath.Join(workspace, "marker")
+	report, err := Runner{Workspace: workspace, Disabled: true}.RunPayload(context.Background(), []string{"touch " + strconv.Quote(marker)}, Payload{
+		Event: "pre_tool_use",
+		Tool:  "read_file",
+		Input: `{"path":"README.md"}`,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "hooks", report.Kind)
+	require.Equal(t, "disabled", report.Status)
+	require.True(t, report.Disabled)
+	require.Equal(t, 0, report.Count)
+	require.Empty(t, report.Results)
+	require.NoFileExists(t, marker)
 }
 
 func TestRunPayloadReturnsPartialFailureReport(t *testing.T) {

@@ -77,6 +77,15 @@ func TestValidateBytesValidatesRespectGitignoreType(t *testing.T) {
 	require.Equal(t, "a boolean", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesDisableAllHooksType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"disableAllHooks":"true"}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "disableAllHooks", result.Errors[0].Field)
+	require.Equal(t, "a boolean", result.Errors[0].Expected)
+}
+
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
 	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true,"extra":true}}}`)
 

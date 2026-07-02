@@ -96,6 +96,7 @@ var topLevelFields = []fieldSpec{
 	{"auto_compact_messages", FieldNumber},
 	{"cleanupPeriodDays", FieldNumber},
 	{"respectGitignore", FieldBool},
+	{"disableAllHooks", FieldBool},
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},

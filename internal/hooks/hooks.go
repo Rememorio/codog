@@ -26,6 +26,7 @@ type Runner struct {
 	ConfigHome   string
 	SessionID    string
 	Timeout      time.Duration
+	Disabled     bool
 	PromptRunner PromptRunner
 }
 
@@ -87,11 +88,13 @@ type CommandResult struct {
 }
 
 type RunReport struct {
-	Kind    string          `json:"kind"`
-	Event   string          `json:"event"`
-	Tool    string          `json:"tool,omitempty"`
-	Count   int             `json:"count"`
-	Results []CommandResult `json:"results"`
+	Kind     string          `json:"kind"`
+	Event    string          `json:"event"`
+	Tool     string          `json:"tool,omitempty"`
+	Status   string          `json:"status"`
+	Count    int             `json:"count"`
+	Disabled bool            `json:"disabled,omitempty"`
+	Results  []CommandResult `json:"results"`
 }
 
 type SessionStartOutput struct {
@@ -457,8 +460,15 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 		Kind:    "hooks",
 		Event:   payload.Event,
 		Tool:    payload.Tool,
+		Status:  "ok",
 		Count:   len(hookList),
 		Results: []CommandResult{},
+	}
+	if r.Disabled {
+		report.Status = "disabled"
+		report.Disabled = true
+		report.Count = 0
+		return report, nil
 	}
 	if len(hookList) == 0 {
 		return report, nil

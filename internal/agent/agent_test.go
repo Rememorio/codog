@@ -12503,6 +12503,43 @@ func TestSessionStartHookOutputUpdatesSessionContext(t *testing.T) {
 	require.Contains(t, string(watchData), filepath.ToSlash(watchPath))
 }
 
+func TestHooksDisabledSkipsRunAndReportsStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	marker := filepath.Join(workspace, "disabled-hook.json")
+	disabled := true
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			DisableAllHooks: &disabled,
+			Hooks: config.HookConfig{
+				UserPromptSubmit: []string{"cat > " + shellQuote(marker)},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"list", "--json"}))
+	require.Contains(t, out.String(), `"status": "disabled"`)
+	require.Contains(t, out.String(), `"disabled": true`)
+	require.Contains(t, out.String(), `"user_prompt_submit"`)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"health", "user-prompt-submit", "--json"}))
+	require.Contains(t, out.String(), `"status": "disabled"`)
+	require.Contains(t, out.String(), `"matched_count": 0`)
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "user-prompt-submit", "--input", "hello", "--json"}))
+	require.Contains(t, out.String(), `"status": "disabled"`)
+	require.Contains(t, out.String(), `"count": 0`)
+	require.NoFileExists(t, marker)
+}
+
 func TestHooksWatchPathsCheckTriggersFileChangedHooks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

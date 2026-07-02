@@ -447,6 +447,7 @@ type Config struct {
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	CleanupPeriodDays   *int                       `json:"cleanupPeriodDays,omitempty"`
 	RespectGitignore    *bool                      `json:"respectGitignore,omitempty"`
+	DisableAllHooks     *bool                      `json:"disableAllHooks,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
 	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
 	ProviderFallbacks   ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
@@ -577,6 +578,11 @@ func (c Config) EffectiveRespectGitignore() bool {
 		return true
 	}
 	return *c.RespectGitignore
+}
+
+// EffectiveDisableAllHooks reports whether hook execution is globally disabled.
+func (c Config) EffectiveDisableAllHooks() bool {
+	return c.DisableAllHooks != nil && *c.DisableAllHooks
 }
 
 func defaultConfig() (Config, error) {
@@ -1159,6 +1165,10 @@ func merge(dst *Config, src Config) {
 	if src.RespectGitignore != nil {
 		respect := *src.RespectGitignore
 		dst.RespectGitignore = &respect
+	}
+	if src.DisableAllHooks != nil {
+		disabled := *src.DisableAllHooks
+		dst.DisableAllHooks = &disabled
 	}
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
