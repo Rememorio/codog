@@ -176,6 +176,8 @@ func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, candidates, "/compact")
 	require.Contains(t, candidates, "/completion")
 	require.Contains(t, candidates, "/code-intel")
+	require.Contains(t, candidates, "/code-intel lsp actions")
+	require.Contains(t, candidates, "/code-intel lsp query ")
 	require.Contains(t, candidates, "/code-intel notebook-read ")
 	require.Contains(t, candidates, "/commands")
 	require.Contains(t, candidates, "/config auth")

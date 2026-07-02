@@ -89,25 +89,115 @@ type lspPublishDiagnosticsParams struct {
 	Diagnostics []LSPDiagnostic `json:"diagnostics"`
 }
 
-func NormalizeLSPAction(action string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "diagnostics":
-		return "diagnostics", nil
-	case "hover":
-		return "hover", nil
-	case "definition", "goto_definition":
-		return "definition", nil
-	case "references", "find_references":
-		return "references", nil
-	case "completion", "completions":
-		return "completion", nil
-	case "symbols", "document_symbols":
-		return "symbols", nil
-	case "format", "formatting":
-		return "format", nil
-	default:
-		return "", fmt.Errorf("unknown lsp action %q", action)
+type LSPActionInfo struct {
+	Name             string   `json:"name"`
+	Method           string   `json:"method,omitempty"`
+	Aliases          []string `json:"aliases,omitempty"`
+	RequiresDocument bool     `json:"requires_document"`
+	RequiresPosition bool     `json:"requires_position"`
+	Description      string   `json:"description,omitempty"`
+}
+
+var lspActionInfos = []LSPActionInfo{
+	{
+		Name:             "diagnostics",
+		Aliases:          []string{"diagnostic", "publish-diagnostics", "publishDiagnostics"},
+		RequiresDocument: true,
+		Description:      "Open a document and return diagnostics published by the language server.",
+	},
+	{
+		Name:             "hover",
+		Method:           "textDocument/hover",
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return hover information at a document position.",
+	},
+	{
+		Name:             "definition",
+		Method:           "textDocument/definition",
+		Aliases:          []string{"goto_definition", "goto-definition", "go-to-definition", "gotoDefinition"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return definitions for the symbol at a document position.",
+	},
+	{
+		Name:             "references",
+		Method:           "textDocument/references",
+		Aliases:          []string{"find_references", "find-references", "findReferences"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return references for the symbol at a document position.",
+	},
+	{
+		Name:             "completion",
+		Method:           "textDocument/completion",
+		Aliases:          []string{"completions", "complete"},
+		RequiresDocument: true,
+		RequiresPosition: true,
+		Description:      "Return completion candidates at a document position.",
+	},
+	{
+		Name:             "symbols",
+		Method:           "textDocument/documentSymbol",
+		Aliases:          []string{"document_symbols", "document-symbols", "documentSymbols"},
+		RequiresDocument: true,
+		Description:      "Return document symbols for a file.",
+	},
+	{
+		Name:             "format",
+		Method:           "textDocument/formatting",
+		Aliases:          []string{"formatting", "format_document", "document_formatting", "document-formatting", "documentFormatting"},
+		RequiresDocument: true,
+		Description:      "Return formatted document text using LSP text edits.",
+	},
+}
+
+func SupportedLSPActions() []LSPActionInfo {
+	out := make([]LSPActionInfo, len(lspActionInfos))
+	for i, info := range lspActionInfos {
+		info.Aliases = append([]string(nil), info.Aliases...)
+		out[i] = info
 	}
+	return out
+}
+
+func NormalizeLSPAction(action string) (string, error) {
+	normalized := normalizeLSPActionToken(action)
+	for _, info := range lspActionInfos {
+		if normalizeLSPActionToken(info.Name) == normalized {
+			return info.Name, nil
+		}
+		for _, alias := range info.Aliases {
+			if normalizeLSPActionToken(alias) == normalized {
+				return info.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("unknown lsp action %q; supported actions: %s", action, strings.Join(supportedLSPActionNames(), ", "))
+}
+
+func supportedLSPActionNames() []string {
+	names := make([]string, 0, len(lspActionInfos))
+	for _, info := range lspActionInfos {
+		names = append(names, info.Name)
+	}
+	return names
+}
+
+func normalizeLSPActionToken(action string) string {
+	action = strings.TrimSpace(action)
+	var b strings.Builder
+	for index, r := range action {
+		if r == '-' || r == '_' || r == ' ' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' && index > 0 {
+			b.WriteRune(r + ('a' - 'A'))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
 }
 
 func (s LSPStore) Query(ctx context.Context, language string, request LSPQueryRequest) (LSPQueryResult, error) {

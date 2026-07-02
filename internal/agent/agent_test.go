@@ -29,6 +29,7 @@ import (
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
+	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
@@ -13176,6 +13177,17 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"language": "go"`)
 	out.Reset()
 
+	require.NoError(t, app.CodeIntel([]string{"lsp", "actions"}))
+	var actions codeIntelLSPActionsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &actions))
+	require.Equal(t, "lsp_actions", actions.Kind)
+	require.Equal(t, "actions", actions.Action)
+	require.Equal(t, "ok", actions.Status)
+	require.GreaterOrEqual(t, actions.Count, 5)
+	require.True(t, lspActionExists(actions.Actions, "definition", "textDocument/definition"))
+	require.True(t, lspActionExists(actions.Actions, "references", "textDocument/references"))
+	out.Reset()
+
 	require.NoError(t, app.CodeIntel([]string{"lsp", "start", "go", "sleep", "30"}))
 	require.Contains(t, out.String(), `"language": "go"`)
 	require.Contains(t, out.String(), `"status": "running"`)
@@ -13188,6 +13200,15 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 
 	require.NoError(t, app.CodeIntel([]string{"lsp", "stop", "go"}))
 	require.Contains(t, out.String(), `"status": "stopped"`)
+}
+
+func lspActionExists(actions []codeintel.LSPActionInfo, name string, method string) bool {
+	for _, action := range actions {
+		if action.Name == name && action.Method == method {
+			return true
+		}
+	}
+	return false
 }
 
 func TestOAuthTokenCommands(t *testing.T) {

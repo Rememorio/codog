@@ -20730,7 +20730,7 @@ func (a *App) runResumedCodeIntelLSPSlash(args []string, format string) error {
 	}
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch action {
-	case "list", "discover", "status", "query", "request":
+	case "list", "actions", "capabilities", "discover", "status", "query", "request":
 		return a.CodeIntelLSP(args)
 	case "start", "stop":
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/code-intel lsp", action), format)
@@ -23457,6 +23457,16 @@ func (a *App) CodeIntelLSP(args []string) error {
 	}
 	var payload any
 	switch args[0] {
+	case "actions", "capabilities":
+		actions := codeintel.SupportedLSPActions()
+		payload = codeIntelLSPActionsReport{
+			Kind:    "lsp_actions",
+			Action:  "actions",
+			Status:  "ok",
+			Count:   len(actions),
+			Actions: actions,
+			Message: "LSP query actions are resolved locally; start a language server before running `code-intel lsp query`.",
+		}
 	case "discover":
 		payload = codeintel.DefaultLSPCandidates()
 	case "start":
@@ -23522,6 +23532,15 @@ func (a *App) CodeIntelLSP(args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type codeIntelLSPActionsReport struct {
+	Kind    string                    `json:"kind"`
+	Action  string                    `json:"action"`
+	Status  string                    `json:"status"`
+	Count   int                       `json:"count"`
+	Actions []codeintel.LSPActionInfo `json:"actions"`
+	Message string                    `json:"message,omitempty"`
 }
 
 func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOverrides) error {
@@ -38177,7 +38196,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"code-intel",
 			"code-intel",
 			"codog code-intel [symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp] [ARGS...] [--output-format text|json]",
-			"Code Intel\n\nUsage:\n  codog code-intel symbols [--output-format text|json]\n  codog code-intel diagnostics [patterns...] [--output-format text|json]\n  codog code-intel completion PREFIX [--output-format text|json]\n  codog code-intel format PATH [--write] [--output-format text|json]\n  codog code-intel notebook-read NOTEBOOK [--cell-index N] [--include-outputs] [--output-format text|json]\n  codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]\n  codog code-intel lsp [discover|list|status|query|start|stop]\n\nRuns local code intelligence helpers, notebook inspection/editing, and LSP bridge operations without making a provider request.\n",
+			"Code Intel\n\nUsage:\n  codog code-intel symbols [--output-format text|json]\n  codog code-intel diagnostics [patterns...] [--output-format text|json]\n  codog code-intel completion PREFIX [--output-format text|json]\n  codog code-intel format PATH [--write] [--output-format text|json]\n  codog code-intel notebook-read NOTEBOOK [--cell-index N] [--include-outputs] [--output-format text|json]\n  codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]\n  codog code-intel lsp [actions|discover|list|status|query|start|stop]\n\nRuns local code intelligence helpers, notebook inspection/editing, and LSP bridge operations without making a provider request.\n",
 			[]string{"kind", "total", "symbols", "diagnostics", "result", "path"},
 			[]string{"ok", "error"},
 			true,

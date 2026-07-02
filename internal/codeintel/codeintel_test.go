@@ -284,11 +284,19 @@ func TestApplyLSPTextEdits(t *testing.T) {
 
 func TestNormalizeLSPActionAliases(t *testing.T) {
 	cases := map[string]string{
-		"goto_definition":  "definition",
-		"find_references":  "references",
-		"completions":      "completion",
-		"document_symbols": "symbols",
-		"formatting":       "format",
+		"goto_definition":     "definition",
+		"goto-definition":     "definition",
+		"gotoDefinition":      "definition",
+		"find_references":     "references",
+		"find-references":     "references",
+		"findReferences":      "references",
+		"completions":         "completion",
+		"document_symbols":    "symbols",
+		"document-symbols":    "symbols",
+		"documentSymbols":     "symbols",
+		"document-formatting": "format",
+		"documentFormatting":  "format",
+		"formatting":          "format",
 	}
 	for input, expected := range cases {
 		actual, err := NormalizeLSPAction(input)
@@ -297,6 +305,8 @@ func TestNormalizeLSPActionAliases(t *testing.T) {
 	}
 	_, err := NormalizeLSPAction("unknown")
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "supported actions")
+	require.NotEmpty(t, SupportedLSPActions())
 }
 
 func TestFakeLSPServer(t *testing.T) {
