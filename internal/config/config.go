@@ -1,15 +1,20 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/codog/internal/envfile"
 	"github.com/Rememorio/codog/internal/modelrouting"
@@ -20,6 +25,7 @@ const (
 	DefaultBaseURL                  = modelrouting.DefaultAnthropicBaseURL
 	DefaultModel                    = "claude-sonnet-4-5"
 	sessionDefaultCleanupPeriodDays = 30
+	apiKeyHelperTimeout             = 5 * time.Second
 )
 
 type HookConfig struct {
@@ -454,6 +460,7 @@ type ManagedPolicy struct {
 
 type Config struct {
 	APIKey                     string                     `json:"api_key,omitempty"`
+	APIKeyHelper               string                     `json:"apiKeyHelper,omitempty"`
 	AuthToken                  string                     `json:"auth_token,omitempty"`
 	OAuthProfile               string                     `json:"oauth_profile,omitempty"`
 	ForceLoginMethod           string                     `json:"forceLoginMethod,omitempty"`
@@ -593,6 +600,9 @@ func Load(overrides FlagOverrides) (Config, error) {
 
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
+	if err := applyAPIKeyHelper(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := applyManagedPolicy(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -625,6 +635,9 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	}
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
+	if err := applyAPIKeyHelper(&cfg); err != nil {
+		return Config{}, paths, err
+	}
 	if err := applyManagedPolicy(&cfg); err != nil {
 		return Config{}, paths, err
 	}
@@ -641,6 +654,9 @@ func Default(overrides FlagOverrides) (Config, error) {
 	}
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
+	if err := applyAPIKeyHelper(&cfg); err != nil {
+		return Config{}, err
+	}
 	if err := applyManagedPolicy(&cfg); err != nil {
 		return Config{}, err
 	}
@@ -1248,6 +1264,9 @@ func parseJSONStringSlice(data json.RawMessage) []string {
 func merge(dst *Config, src Config) {
 	if src.APIKey != "" {
 		dst.APIKey = src.APIKey
+	}
+	if src.APIKeyHelper != "" {
+		dst.APIKeyHelper = src.APIKeyHelper
 	}
 	if src.AuthToken != "" {
 		dst.AuthToken = src.AuthToken
@@ -2080,6 +2099,47 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 		value := *overrides.Temperature
 		cfg.Temperature = &value
 	}
+}
+
+func applyAPIKeyHelper(cfg *Config) error {
+	command := strings.TrimSpace(cfg.APIKeyHelper)
+	if command == "" || strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.AuthToken) != "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), apiKeyHelperTimeout)
+	defer cancel()
+	cmd := shellCommandContext(ctx, command)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("apiKeyHelper timed out after %s", apiKeyHelperTimeout)
+		}
+		return fmt.Errorf("apiKeyHelper failed: %w", err)
+	}
+	key := firstNonEmptyLine(stdout.String())
+	if key == "" {
+		return errors.New("apiKeyHelper returned no API key")
+	}
+	cfg.APIKey = key
+	return nil
+}
+
+func shellCommandContext(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/C", command)
+	}
+	return exec.CommandContext(ctx, "sh", "-c", command)
+}
+
+func firstNonEmptyLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func applyManagedPolicy(cfg *Config) error {

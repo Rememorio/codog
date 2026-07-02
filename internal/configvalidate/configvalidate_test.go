@@ -38,6 +38,24 @@ func TestValidateBytesReportsWrongTypesAndLineNumbers(t *testing.T) {
 	require.Equal(t, "a string", result.Errors[1].Got)
 }
 
+func TestValidateBytesAcceptsAPIKeyHelper(t *testing.T) {
+	result := ValidateBytes([]byte(`{"apiKeyHelper":"security find-generic-password -w -s anthropic"}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
+func TestValidateBytesReportsAPIKeyHelperWrongType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"apiKeyHelper":true}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "apiKeyHelper", result.Errors[0].Field)
+	require.Equal(t, "wrong_type", result.Errors[0].Kind)
+	require.Equal(t, "a string", result.Errors[0].Expected)
+}
+
 func TestValidateBytesReportsDeprecatedCompatibilityAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"permissionMode":"plan","mcpServers":{}}`), "config.json")
 

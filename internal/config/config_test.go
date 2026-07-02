@@ -793,6 +793,66 @@ func TestLoadRejectsInvalidForceLoginMethod(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_force_login_method")
 }
 
+func TestLoadAPIKeyHelper(t *testing.T) {
+	unsetCredentialEnv(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"apiKeyHelper":"echo helper-secret"}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "echo helper-secret", cfg.APIKeyHelper)
+	require.Equal(t, "helper-secret", cfg.APIKey)
+}
+
+func TestLoadAPIKeyHelperDoesNotOverrideConfiguredCredential(t *testing.T) {
+	unsetCredentialEnv(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"api_key":"config-secret","apiKeyHelper":"echo helper-secret"}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "config-secret", cfg.APIKey)
+}
+
+func TestLoadAPIKeyHelperDoesNotOverrideEnvCredential(t *testing.T) {
+	unsetEnv(t, "ANTHROPIC_AUTH_TOKEN")
+	unsetProviderRoutingEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "env-secret")
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"apiKeyHelper":"echo helper-secret"}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "env-secret", cfg.APIKey)
+}
+
+func TestLoadAPIKeyHelperReportsFailure(t *testing.T) {
+	unsetCredentialEnv(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"apiKeyHelper":"exit 7"}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "apiKeyHelper failed")
+}
+
+func unsetCredentialEnv(t *testing.T) {
+	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
+	unsetProviderRoutingEnv(t)
+}
+
+func unsetProviderRoutingEnv(t *testing.T) {
+	unsetEnv(t, "CODOG_MODEL", "OPENAI_API_KEY", "XAI_API_KEY", "DASHSCOPE_API_KEY")
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

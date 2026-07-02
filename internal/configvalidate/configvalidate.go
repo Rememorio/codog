@@ -71,6 +71,7 @@ type deprecatedField struct {
 var topLevelFields = []fieldSpec{
 	{"$schema", FieldString},
 	{"api_key", FieldString},
+	{"apiKeyHelper", FieldString},
 	{"auth_token", FieldString},
 	{"oauth_profile", FieldString},
 	{"forceLoginMethod", FieldString},
