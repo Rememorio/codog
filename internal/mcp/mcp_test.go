@@ -31,6 +31,8 @@ func TestCallToolAndReadResource(t *testing.T) {
 
 	call := CallTool(context.Background(), "test", server, "echo", json.RawMessage(`{"text":"hi"}`))
 	require.Empty(t, call.Error)
+	require.Equal(t, "ready", call.Lifecycle.Phase)
+	require.Nil(t, call.Lifecycle.Error)
 	require.Contains(t, string(call.Result), "hi")
 
 	resources := ListResources(context.Background(), "test", server)
@@ -122,6 +124,7 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 
 	call := CallTool(context.Background(), "remote", cfg, "echo", json.RawMessage(`{"text":"hi"}`))
 	require.Empty(t, call.Error)
+	require.Equal(t, "ready", call.Lifecycle.Phase)
 	require.Contains(t, string(call.Result), "hi remote")
 
 	read := ReadResource(context.Background(), "remote", cfg, "codog://remote")
@@ -169,6 +172,23 @@ func TestInspectClassifiesToolDiscoveryFailures(t *testing.T) {
 	require.Equal(t, "tool_discovery", inspected.Lifecycle.Error.Phase)
 	require.True(t, inspected.Lifecycle.Error.Recoverable)
 	require.Contains(t, inspected.Error, "tool discovery failed")
+}
+
+func TestCallToolClassifiesInvocationFailures(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1", "CODOG_MCP_FAIL_CALL=1"},
+	}
+
+	call := CallTool(context.Background(), "test", server, "echo", json.RawMessage(`{"text":"hi"}`))
+	require.Equal(t, "test", call.Server)
+	require.Equal(t, "echo", call.Tool)
+	require.Contains(t, call.Error, "tool call failed")
+	require.Equal(t, "error_surfacing", call.Lifecycle.Phase)
+	require.Equal(t, "invocation", call.Lifecycle.Error.Phase)
+	require.True(t, call.Lifecycle.Error.Recoverable)
+	require.Equal(t, "echo", call.Lifecycle.Error.Context["tool"])
 }
 
 func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
@@ -327,6 +347,10 @@ func TestMCPHelperProcess(t *testing.T) {
 				},
 			}}})
 		case "tools/call":
+			if os.Getenv("CODOG_MCP_FAIL_CALL") == "1" {
+				writeMCPError(id, "tool call failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
 		case "resources/list":
 			writeMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})

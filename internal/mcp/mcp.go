@@ -90,10 +90,11 @@ type ToolListResult struct {
 }
 
 type ToolCallResult struct {
-	Server string          `json:"server"`
-	Tool   string          `json:"tool"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  string          `json:"error,omitempty"`
+	Server    string          `json:"server"`
+	Tool      string          `json:"tool"`
+	Lifecycle LifecycleStatus `json:"lifecycle"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 type ResourceListResult struct {
@@ -829,9 +830,14 @@ func CallTool(ctx context.Context, serverName string, server config.MCPServerCon
 		},
 	})
 	if err != nil {
-		return ToolCallResult{Server: serverName, Tool: toolName, Error: err.Error()}
+		return ToolCallResult{
+			Server:    serverName,
+			Tool:      toolName,
+			Lifecycle: lifecycleFailure("invocation", err.Error(), true, map[string]string{"server": serverName, "tool": toolName}),
+			Error:     err.Error(),
+		}
 	}
-	return ToolCallResult{Server: serverName, Tool: toolName, Result: result}
+	return ToolCallResult{Server: serverName, Tool: toolName, Lifecycle: lifecycleReady("ready"), Result: result}
 }
 
 func ListResources(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceListResult {
