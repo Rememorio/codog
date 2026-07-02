@@ -2521,6 +2521,35 @@ func risky(value any) {
 	require.True(t, resumedVoice.CommandConfigured)
 	require.Equal(t, "codog-test-voice-helper", resumedVoice.Command)
 
+	out, err = runResumedJSON("/voice", "set-command", "codog-test-voice-resume")
+	require.NoError(t, err)
+	var resumedVoiceSetCommand voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceSetCommand))
+	require.Equal(t, "voice", resumedVoiceSetCommand.Kind)
+	require.Equal(t, "set-command", resumedVoiceSetCommand.Action)
+	require.True(t, resumedVoiceSetCommand.CommandConfigured)
+	require.Equal(t, "codog-test-voice-resume", resumedVoiceSetCommand.Command)
+	require.NotEmpty(t, resumedVoiceSetCommand.Path)
+
+	out, err = runResumedJSON("/voice", "off")
+	require.NoError(t, err)
+	var resumedVoiceOff voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceOff))
+	require.Equal(t, "voice", resumedVoiceOff.Kind)
+	require.Equal(t, "off", resumedVoiceOff.Action)
+	require.False(t, resumedVoiceOff.Enabled)
+	require.NotEmpty(t, resumedVoiceOff.Path)
+
+	out, err = runResumedJSON("/voice", "clear")
+	require.NoError(t, err)
+	var resumedVoiceClear voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceClear))
+	require.Equal(t, "voice", resumedVoiceClear.Kind)
+	require.Equal(t, "clear", resumedVoiceClear.Action)
+	require.False(t, resumedVoiceClear.Enabled)
+	require.False(t, resumedVoiceClear.CommandConfigured)
+	require.NotEmpty(t, resumedVoiceClear.Path)
+
 	out, err = runResumedJSON("/speak", "status")
 	require.NoError(t, err)
 	var resumedSpeak speakReport
@@ -2529,6 +2558,25 @@ func risky(value any) {
 	require.Equal(t, "status", resumedSpeak.Action)
 	require.True(t, resumedSpeak.CommandConfigured)
 	require.Equal(t, "codog-test-speech-helper", resumedSpeak.Command)
+
+	out, err = runResumedJSON("/speak", "set-command", "codog-test-speech-resume")
+	require.NoError(t, err)
+	var resumedSpeakSetCommand speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakSetCommand))
+	require.Equal(t, "speak", resumedSpeakSetCommand.Kind)
+	require.Equal(t, "set-command", resumedSpeakSetCommand.Action)
+	require.True(t, resumedSpeakSetCommand.CommandConfigured)
+	require.Equal(t, "codog-test-speech-resume", resumedSpeakSetCommand.Command)
+	require.NotEmpty(t, resumedSpeakSetCommand.Path)
+
+	out, err = runResumedJSON("/speak", "clear")
+	require.NoError(t, err)
+	var resumedSpeakClear speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakClear))
+	require.Equal(t, "speak", resumedSpeakClear.Kind)
+	require.Equal(t, "clear", resumedSpeakClear.Action)
+	require.False(t, resumedSpeakClear.CommandConfigured)
+	require.NotEmpty(t, resumedSpeakClear.Path)
 
 	out, err = runResumedJSON("/vim")
 	require.NoError(t, err)
@@ -2775,6 +2823,26 @@ func risky(value any) {
 	require.Equal(t, "show", resumedAdvisor.Action)
 	require.Equal(t, "claude-advisor", resumedAdvisor.Model)
 	require.Equal(t, "claude-test", resumedAdvisor.MainModel)
+
+	out, err = runResumedJSON("/advisor", "claude-opus")
+	require.NoError(t, err)
+	var resumedAdvisorSet advisorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAdvisorSet))
+	require.Equal(t, "advisor", resumedAdvisorSet.Kind)
+	require.Equal(t, "set", resumedAdvisorSet.Action)
+	require.Equal(t, "claude-opus", resumedAdvisorSet.Model)
+	require.Equal(t, "claude-test", resumedAdvisorSet.MainModel)
+	require.NotEmpty(t, resumedAdvisorSet.Path)
+
+	out, err = runResumedJSON("/advisor", "off")
+	require.NoError(t, err)
+	var resumedAdvisorClear advisorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAdvisorClear))
+	require.Equal(t, "advisor", resumedAdvisorClear.Kind)
+	require.Equal(t, "clear", resumedAdvisorClear.Action)
+	require.Empty(t, resumedAdvisorClear.Model)
+	require.Equal(t, "claude-test", resumedAdvisorClear.MainModel)
+	require.NotEmpty(t, resumedAdvisorClear.Path)
 
 	out, err = runResumedJSON("/sandbox")
 	require.NoError(t, err)
@@ -3521,22 +3589,15 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"logout"}, Report: "/oauth logout"},
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
-		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
-		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
-		{Command: "/voice", Args: []string{"set-command", "say"}, Report: "/voice set-command"},
 		{Command: "/voice", Args: []string{"on"}, Report: "/voice on"},
-		{Command: "/voice", Args: []string{"off"}, Report: "/voice off"},
 		{Command: "/voice", Args: []string{"toggle"}, Report: "/voice toggle"},
 		{Command: "/voice", Args: []string{"test"}, Report: "/voice test"},
 		{Command: "/voice", Args: []string{"listen"}, Report: "/voice listen"},
-		{Command: "/voice", Args: []string{"clear"}, Report: "/voice clear"},
 		{Command: "/listen", Args: nil, Report: "/listen"},
 		{Command: "/speak", Args: nil, Report: "/speak speak"},
 		{Command: "/speak", Args: []string{"hello"}, Report: "/speak speak"},
 		{Command: "/speak", Args: []string{"last"}, Report: "/speak speak"},
 		{Command: "/speak", Args: []string{"test"}, Report: "/speak test"},
-		{Command: "/speak", Args: []string{"set-command", "say"}, Report: "/speak set-command"},
-		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},

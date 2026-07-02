@@ -24078,13 +24078,6 @@ func (a *App) runResumedRemoteSetupSlash(args []string, overrides config.FlagOve
 }
 
 func (a *App) runResumedAdvisorSlash(args []string, format string) error {
-	req, err := parseAdvisorArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "show" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/advisor", req.Action), format)
-	}
 	return a.Advisor(args)
 }
 
@@ -24093,10 +24086,12 @@ func (a *App) runResumedVoiceSlash(args []string, format string) error {
 	if err != nil {
 		return err
 	}
-	if req.Action != "status" {
+	switch req.Action {
+	case "status", "set-command", "off", "clear-command", "clear":
+		return a.Voice(args)
+	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/voice", req.Action), format)
 	}
-	return a.Voice(args)
 }
 
 func (a *App) runResumedSpeakSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {
@@ -24104,10 +24099,12 @@ func (a *App) runResumedSpeakSlash(ctx context.Context, args []string, overrides
 	if err != nil {
 		return err
 	}
-	if req.Action != "status" {
+	switch req.Action {
+	case "status", "set-command", "clear-command", "clear":
+		return a.Speak(ctx, args, overrides)
+	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/speak", req.Action), format)
 	}
-	return a.Speak(ctx, args, overrides)
 }
 
 func (a *App) runResumedSandboxToggleSlash(args []string, format string) error {
