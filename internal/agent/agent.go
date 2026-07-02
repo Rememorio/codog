@@ -885,49 +885,49 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "reload-plugins":
 		return wrapStructured(app.ReloadPlugins(rest))
 	case "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow", "PluginTrustWarning", "UnifiedInstalledCell", "parseArgs", "pluginDetailsHelpers", "usePagination":
-		return app.PluginCompatibility(command, rest)
+		return wrapStructured(app.PluginCompatibility(command, rest))
 	case "AddMarketplace":
-		return app.Marketplace(append([]string{"sources", "add"}, rest...))
+		return wrapStructured(app.Marketplace(append([]string{"sources", "add"}, rest...)))
 	case "ManageMarketplaces":
-		return app.Marketplace(append([]string{"sources"}, rest...))
+		return wrapStructured(app.Marketplace(append([]string{"sources"}, rest...)))
 	case "BrowseMarketplace", "DiscoverPlugins":
-		return app.Marketplace(append([]string{"browse"}, rest...))
+		return wrapStructured(app.Marketplace(append([]string{"browse"}, rest...)))
 	case "ValidatePlugin":
-		return app.Marketplace(append([]string{"validate"}, rest...))
+		return wrapStructured(app.Marketplace(append([]string{"validate"}, rest...)))
 	case "ManagePlugins":
-		return app.Marketplace(rest)
+		return wrapStructured(app.Marketplace(rest))
 	case "PluginSettings":
-		return app.Marketplace(append([]string{"settings"}, rest...))
+		return wrapStructured(app.Marketplace(append([]string{"settings"}, rest...)))
 	case "plugin", "plugins", "marketplace":
-		return app.Marketplace(rest)
+		return wrapStructured(app.Marketplace(rest))
 	case "login":
-		return app.Login(rest)
+		return wrapStructured(app.Login(rest))
 	case "logout":
-		return app.Logout(rest)
+		return wrapStructured(app.Logout(rest))
 	case "oauth":
 		if err := app.OAuth(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "oauth-refresh":
-		return app.OAuthRefresh(rest)
+		return wrapStructured(app.OAuthRefresh(rest))
 	case "addCommand":
-		return app.MCP(ctx, append([]string{"add"}, rest...))
+		return wrapStructured(app.MCP(ctx, append([]string{"add"}, rest...)))
 	case "xaaIdpCommand":
-		return app.XAAIDPCommand(ctx, rest)
+		return wrapStructured(app.XAAIDPCommand(ctx, rest))
 	case "providers":
 		if err := app.Providers(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "createMovedToPluginCommand":
-		return app.MovedToPluginCommand(rest)
+		return wrapStructured(app.MovedToPluginCommand(rest))
 	case "exit":
-		return app.ExitCompatibility(rest)
+		return wrapStructured(app.ExitCompatibility(rest))
 	case "good-claude":
-		return app.GoodClaude(rest)
+		return wrapStructured(app.GoodClaude(rest))
 	case "brief":
-		return app.Brief(rest)
+		return wrapStructured(app.Brief(rest))
 	case "status":
 		return wrapStructured(app.Status(rest, overrides))
 	case "statusline":
@@ -971,58 +971,58 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "doctor":
 		return wrapStructured(app.Doctor(rest))
 	case "sandbox":
-		return app.Sandbox()
+		return wrapStructured(app.Sandbox())
 	case "sandbox-toggle":
 		if err := app.SandboxToggle(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "heapdump":
-		return app.HeapDump(rest)
+		return wrapStructured(app.HeapDump(rest))
 	case "symbols":
-		return app.Symbols(rest)
+		return wrapStructured(app.Symbols(rest))
 	case "diagnostics":
-		return app.Diagnostics(ctx, rest)
+		return wrapStructured(app.Diagnostics(ctx, rest))
 	case "map":
-		return app.Map(rest)
+		return wrapStructured(app.Map(rest))
 	case "references":
-		return app.References(rest)
+		return wrapStructured(app.References(rest))
 	case "definition":
-		return app.Definition(rest)
+		return wrapStructured(app.Definition(rest))
 	case "hover":
-		return app.Hover(rest)
+		return wrapStructured(app.Hover(rest))
 	case "teleport":
-		return app.Teleport(rest)
+		return wrapStructured(app.Teleport(rest))
 	case "completion":
-		return app.Completion(rest)
+		return wrapStructured(app.Completion(rest))
 	case "format":
-		return app.Format(rest)
+		return wrapStructured(app.Format(rest))
 	case "code-intel":
-		return app.CodeIntel(rest)
+		return wrapStructured(app.CodeIntel(rest))
 	case "notebook-read":
-		return app.CodeIntel(append([]string{"notebook-read"}, rest...))
+		return wrapStructured(app.CodeIntel(append([]string{"notebook-read"}, rest...)))
 	case "notebook-edit":
-		return app.CodeIntel(append([]string{"notebook-edit"}, rest...))
+		return wrapStructured(app.CodeIntel(append([]string{"notebook-edit"}, rest...)))
 	case "remote":
-		return app.Remote(rest)
+		return wrapStructured(app.Remote(rest))
 	case "remote-env":
-		return app.RemoteEnv(rest)
+		return wrapStructured(app.RemoteEnv(rest))
 	case "remote-setup", "web-setup":
-		return app.RemoteSetup(rest, overrides)
+		return wrapStructured(app.RemoteSetup(rest, overrides))
 	case "bridge", "remote-control", "rc":
-		return app.Bridge(rest)
+		return wrapStructured(app.Bridge(rest))
 	case "bridge-kick":
-		return app.BridgeKick(rest)
+		return wrapStructured(app.BridgeKick(rest))
 	case "desktop", "app":
-		return app.Desktop(rest, overrides)
+		return wrapStructured(app.Desktop(rest, overrides))
 	case "mobile":
-		return app.Mobile(rest, overrides)
+		return wrapStructured(app.Mobile(rest, overrides))
 	case "ios", "android":
-		return app.Mobile(append([]string{command}, rest...), overrides)
+		return wrapStructured(app.Mobile(append([]string{command}, rest...), overrides))
 	case "ide":
-		return app.IDE(rest)
+		return wrapStructured(app.IDE(rest))
 	case "debug-tool-call":
-		return app.DebugToolCall(ctx, rest, overrides)
+		return wrapStructured(app.DebugToolCall(ctx, rest, overrides))
 	case "updater":
 		if err := app.Updater(ctx, rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -1044,14 +1044,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "dump-manifests":
-		return app.DumpManifests(rest)
+		return wrapStructured(app.DumpManifests(rest))
 	case "system-prompt":
 		if err := app.SystemPromptCommand(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "tool-details":
-		return app.ToolDetails(rest)
+		return wrapStructured(app.ToolDetails(rest))
 	default:
 		if command != "" {
 			if len(rest) == 0 {
@@ -1918,6 +1918,7 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 }
 
 func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
+	const usage = "codog remote-env [show|set|clear] [--target user|project|local] [--path PATH] [--enabled on|off] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--json|--output-format text|json]"
 	req := remoteEnvRequest{Action: "show", Format: "text", Target: "user"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -1927,32 +1928,32 @@ func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-env output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-env target is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-env path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--enabled":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-env enabled value is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
 			}
 			enabled, err := parseOnOffBool(args[index])
 			if err != nil {
@@ -1969,8 +1970,8 @@ func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
 			req.Enabled = enabled
 		case arg == "--auth-token":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-env auth token is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
 			}
 			req.AuthToken = args[index]
 		case strings.HasPrefix(arg, "--auth-token="):
@@ -1979,31 +1980,35 @@ func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
 			req.ClearToken = true
 		case arg == "--lease-seconds":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-env lease seconds is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-env", Flag: arg, Usage: usage}
 			}
-			seconds, err := strconv.Atoi(args[index])
-			if err != nil || seconds < 0 {
-				return req, errors.New("remote-env lease seconds must be a non-negative integer")
+			seconds, err := parseNonNegativeIntOption(args[index], "--lease-seconds", usage)
+			if err != nil {
+				return req, err
 			}
 			req.SetLease = true
 			req.LeaseSeconds = seconds
 		case strings.HasPrefix(arg, "--lease-seconds="):
-			seconds, err := strconv.Atoi(strings.TrimPrefix(arg, "--lease-seconds="))
-			if err != nil || seconds < 0 {
-				return req, errors.New("remote-env lease seconds must be a non-negative integer")
+			seconds, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--lease-seconds="), "--lease-seconds", usage)
+			if err != nil {
+				return req, err
 			}
 			req.SetLease = true
 			req.LeaseSeconds = seconds
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "remote-env", Option: arg, Usage: usage}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "remote-env"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("remote-env", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected remote-env argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "remote-env", Args: rest[1:], Usage: usage}
 	}
 	if len(rest) == 1 {
 		switch strings.ToLower(rest[0]) {
@@ -2014,13 +2019,14 @@ func parseRemoteEnvArgs(args []string) (remoteEnvRequest, error) {
 		case "clear", "reset", "unset":
 			req.Action = "clear"
 		default:
-			return req, fmt.Errorf("unknown remote-env command %q", rest[0])
+			return req, unexpectedExtraArgsError{Command: "remote-env", Args: []string{rest[0]}, Usage: usage}
 		}
 	}
 	return req, nil
 }
 
 func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remoteSetupRequest, error) {
+	const usage = "codog remote-setup [status|enable|disable|clear] [--addr ADDR] [--target user|project|local] [--path PATH] [--auth-token TOKEN] [--clear-auth-token] [--lease-seconds N] [--session ID|--resume ID] [--json|--output-format text|json]"
 	req := remoteSetupRequest{
 		Action:    "status",
 		Format:    "text",
@@ -2036,40 +2042,40 @@ func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remote
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--addr":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup addr is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.Addr = args[index]
 		case strings.HasPrefix(arg, "--addr="):
 			req.Addr = strings.TrimPrefix(arg, "--addr=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup target is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--auth-token":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup auth token is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.AuthToken = args[index]
 		case strings.HasPrefix(arg, "--auth-token="):
@@ -2078,34 +2084,34 @@ func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remote
 			req.ClearToken = true
 		case arg == "--lease-seconds":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup lease seconds is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
-			seconds, err := strconv.Atoi(args[index])
-			if err != nil || seconds < 0 {
-				return req, errors.New("remote-setup lease seconds must be a non-negative integer")
+			seconds, err := parseNonNegativeIntOption(args[index], "--lease-seconds", usage)
+			if err != nil {
+				return req, err
 			}
 			req.SetLease = true
 			req.LeaseSeconds = seconds
 		case strings.HasPrefix(arg, "--lease-seconds="):
-			seconds, err := strconv.Atoi(strings.TrimPrefix(arg, "--lease-seconds="))
-			if err != nil || seconds < 0 {
-				return req, errors.New("remote-setup lease seconds must be a non-negative integer")
+			seconds, err := parseNonNegativeIntOption(strings.TrimPrefix(arg, "--lease-seconds="), "--lease-seconds", usage)
+			if err != nil {
+				return req, err
 			}
 			req.SetLease = true
 			req.LeaseSeconds = seconds
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("remote-setup resume session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "remote-setup", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
@@ -2117,10 +2123,10 @@ func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remote
 			req.Action = "disable"
 			actionSet = true
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown remote-setup flag %q", arg)
+			return req, unknownOptionError{Command: "remote-setup", Option: arg, Usage: usage}
 		default:
 			if actionSet {
-				return req, fmt.Errorf("unexpected remote-setup argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "remote-setup", Args: []string{arg}, Usage: usage}
 			}
 			switch strings.ToLower(arg) {
 			case "status", "show", "check":
@@ -2132,14 +2138,16 @@ func parseRemoteSetupArgs(args []string, overrides config.FlagOverrides) (remote
 			case "clear", "reset", "unset":
 				req.Action = "clear"
 			default:
-				return req, fmt.Errorf("unknown remote-setup command %q", arg)
+				return req, unexpectedExtraArgsError{Command: "remote-setup", Args: []string{arg}, Usage: usage}
 			}
 			actionSet = true
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "remote-setup"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("remote-setup", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if req.AuthToken != "" && req.ClearToken {
 		return req, errors.New("remote-setup cannot set and clear auth token in the same command")
 	}
@@ -2425,6 +2433,7 @@ func (a *App) BridgeKick(args []string) error {
 }
 
 func parseIDEArgs(args []string) (ideRequest, error) {
+	const usage = "codog ide [status|clear] [--json|--output-format text|json]"
 	req := ideRequest{Action: "status", Format: "text"}
 	actionSet := false
 	for index := 0; index < len(args); index++ {
@@ -2434,17 +2443,17 @@ func parseIDEArgs(args []string) (ideRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ide output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ide", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown ide flag %q", arg)
+			return req, unknownOptionError{Command: "ide", Option: arg, Usage: usage}
 		default:
 			if actionSet {
-				return req, fmt.Errorf("unexpected ide argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "ide", Args: []string{arg}, Usage: usage}
 			}
 			action := strings.ToLower(arg)
 			switch action {
@@ -2453,20 +2462,21 @@ func parseIDEArgs(args []string) (ideRequest, error) {
 			case "clear", "reset", "disconnect":
 				req.Action = "clear"
 			default:
-				return req, fmt.Errorf("unknown ide action %q", arg)
+				return req, unexpectedExtraArgsError{Command: "ide", Args: []string{arg}, Usage: usage}
 			}
 			actionSet = true
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-		return req, nil
-	default:
-		return req, fmt.Errorf("unknown ide output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("ide", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
+	return req, nil
 }
 
 func parseBridgeKickArgs(args []string) (bridgeKickRequest, error) {
+	const usage = "codog bridge-kick [status|clear|FAULT [ARG...]] [--json|--output-format text|json]"
 	req := bridgeKickRequest{Action: "status", Format: "text"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
@@ -2476,21 +2486,23 @@ func parseBridgeKickArgs(args []string) (bridgeKickRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("bridge-kick output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "bridge-kick", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown bridge-kick flag %q", arg)
+			return req, unknownOptionError{Command: "bridge-kick", Option: arg, Usage: usage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "bridge-kick"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("bridge-kick", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) != 0 {
 		req.Action = strings.ToLower(positionals[0])
 		req.Args = positionals[1:]
@@ -27364,6 +27376,7 @@ func renderFormat(out io.Writer, report formatReport) {
 func parseCodeIntelOutputArgs(command string, args []string) (string, []string, error) {
 	format := "text"
 	rest := []string{}
+	usage := "codog " + command + " [ARGS...] [--json|--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -27371,8 +27384,8 @@ func parseCodeIntelOutputArgs(command string, args []string) (string, []string, 
 			format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return "", nil, fmt.Errorf("%s output format is required", command)
+			if missingFlagValueAt(args, index) {
+				return "", nil, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -27381,15 +27394,15 @@ func parseCodeIntelOutputArgs(command string, args []string) (string, []string, 
 			rest = append(rest, arg)
 		}
 	}
-	switch format {
-	case "text", "json":
-		return format, rest, nil
-	default:
-		return "", nil, fmt.Errorf("unknown %s output format %q", command, format)
+	normalizedFormat, err := normalizeOutputFormat(command, format, []string{"text", "json"})
+	if err != nil {
+		return "", nil, err
 	}
+	return normalizedFormat, rest, nil
 }
 
 func parseMapArgs(args []string) (string, []string, int, int, error) {
+	const usage = "codog map [PATH] [--depth N] [--limit N] [--json|--output-format text|json]"
 	format, rest, err := parseCodeIntelOutputArgs("map", args)
 	if err != nil {
 		return "", nil, 0, 0, err
@@ -27402,32 +27415,32 @@ func parseMapArgs(args []string) (string, []string, int, int, error) {
 		switch {
 		case arg == "--depth":
 			index++
-			if index >= len(rest) {
-				return "", nil, 0, 0, errors.New("map depth is required")
+			if missingFlagValueAt(rest, index) {
+				return "", nil, 0, 0, missingFlagValueError{Command: "map", Flag: arg, Usage: usage}
 			}
-			parsed, err := parsePositiveInt(rest[index], "map depth")
+			parsed, err := parsePositiveIntOption(rest[index], "--depth", usage)
 			if err != nil {
 				return "", nil, 0, 0, err
 			}
 			depth = parsed
 		case strings.HasPrefix(arg, "--depth="):
-			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--depth="), "map depth")
+			parsed, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--depth="), "--depth", usage)
 			if err != nil {
 				return "", nil, 0, 0, err
 			}
 			depth = parsed
 		case arg == "--limit":
 			index++
-			if index >= len(rest) {
-				return "", nil, 0, 0, errors.New("map limit is required")
+			if missingFlagValueAt(rest, index) {
+				return "", nil, 0, 0, missingFlagValueError{Command: "map", Flag: arg, Usage: usage}
 			}
-			parsed, err := parsePositiveInt(rest[index], "map limit")
+			parsed, err := parsePositiveIntOption(rest[index], "--limit", usage)
 			if err != nil {
 				return "", nil, 0, 0, err
 			}
 			limit = parsed
 		case strings.HasPrefix(arg, "--limit="):
-			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "map limit")
+			parsed, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return "", nil, 0, 0, err
 			}
@@ -27440,6 +27453,7 @@ func parseMapArgs(args []string) (string, []string, int, int, error) {
 }
 
 func parseSymbolLimitArgs(command string, args []string) (string, []string, int, error) {
+	usage := "codog " + command + " [PATH] [--limit N] [--json|--output-format text|json]"
 	format, rest, err := parseCodeIntelOutputArgs(command, args)
 	if err != nil {
 		return "", nil, 0, err
@@ -27451,16 +27465,16 @@ func parseSymbolLimitArgs(command string, args []string) (string, []string, int,
 		switch {
 		case arg == "--limit":
 			index++
-			if index >= len(rest) {
-				return "", nil, 0, fmt.Errorf("%s limit is required", command)
+			if missingFlagValueAt(rest, index) {
+				return "", nil, 0, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
-			parsed, err := parsePositiveInt(rest[index], command+" limit")
+			parsed, err := parsePositiveIntOption(rest[index], "--limit", usage)
 			if err != nil {
 				return "", nil, 0, err
 			}
 			limit = parsed
 		case strings.HasPrefix(arg, "--limit="):
-			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), command+" limit")
+			parsed, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return "", nil, 0, err
 			}
@@ -27473,6 +27487,7 @@ func parseSymbolLimitArgs(command string, args []string) (string, []string, int,
 }
 
 func parseHoverArgs(args []string) (string, []string, int, error) {
+	const usage = "codog hover [PATH] [--context N] [--json|--output-format text|json]"
 	format, rest, err := parseCodeIntelOutputArgs("hover", args)
 	if err != nil {
 		return "", nil, 0, err
@@ -27484,16 +27499,16 @@ func parseHoverArgs(args []string) (string, []string, int, error) {
 		switch {
 		case arg == "--context":
 			index++
-			if index >= len(rest) {
-				return "", nil, 0, errors.New("hover context is required")
+			if missingFlagValueAt(rest, index) {
+				return "", nil, 0, missingFlagValueError{Command: "hover", Flag: arg, Usage: usage}
 			}
-			parsed, err := parsePositiveInt(rest[index], "hover context")
+			parsed, err := parsePositiveIntOption(rest[index], "--context", usage)
 			if err != nil {
 				return "", nil, 0, err
 			}
 			contextLines = parsed
 		case strings.HasPrefix(arg, "--context="):
-			parsed, err := parsePositiveInt(strings.TrimPrefix(arg, "--context="), "hover context")
+			parsed, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--context="), "--context", usage)
 			if err != nil {
 				return "", nil, 0, err
 			}
@@ -27506,6 +27521,7 @@ func parseHoverArgs(args []string) (string, []string, int, error) {
 }
 
 func parseFormatArgs(args []string) (string, []string, bool, error) {
+	const usage = "codog format [PATH] [--write[=true|false]] [--json|--output-format text|json]"
 	format, rest, err := parseCodeIntelOutputArgs("format", args)
 	if err != nil {
 		return "", nil, false, err
@@ -27519,7 +27535,7 @@ func parseFormatArgs(args []string) (string, []string, bool, error) {
 		case strings.HasPrefix(arg, "--write="):
 			parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, "--write="))
 			if err != nil {
-				return "", nil, false, fmt.Errorf("format write must be a boolean")
+				return "", nil, false, invalidFlagValueError{Flag: "--write", Value: strings.TrimPrefix(arg, "--write="), Message: "format write must be a boolean", Usage: usage}
 			}
 			write = parsed
 		default:
@@ -31759,6 +31775,7 @@ func (a *App) DebugToolCall(ctx context.Context, args []string, overrides config
 }
 
 func parseDebugToolCallArgs(args []string, overrides config.FlagOverrides) (debugToolCallRequest, error) {
+	const usage = "codog debug-tool-call TOOL JSON [--session ID|--resume ID] [--json|--output-format text|json]"
 	req := debugToolCallRequest{Format: "text", SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID)}
 	inputParts := []string{}
 	for index := 0; index < len(args); index++ {
@@ -31768,30 +31785,30 @@ func parseDebugToolCallArgs(args []string, overrides config.FlagOverrides) (debu
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("debug-tool-call output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "debug-tool-call", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("debug-tool-call session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "debug-tool-call", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("debug-tool-call resume session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "debug-tool-call", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case strings.HasPrefix(arg, "-") && req.Tool == "":
-			return req, fmt.Errorf("unknown debug-tool-call flag %q", arg)
+			return req, unknownOptionError{Command: "debug-tool-call", Option: arg, Usage: usage}
 		default:
 			if req.Tool == "" {
 				req.Tool = arg
@@ -31800,18 +31817,20 @@ func parseDebugToolCallArgs(args []string, overrides config.FlagOverrides) (debu
 			inputParts = append(inputParts, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "debug-tool-call"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("debug-tool-call", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if strings.TrimSpace(req.Tool) == "" {
-		return req, errors.New("usage: codog debug-tool-call TOOL JSON")
+		return req, requiredArgumentError{Command: "debug-tool-call", Argument: "TOOL", Usage: usage}
 	}
 	input := strings.TrimSpace(strings.Join(inputParts, " "))
 	if input == "" {
-		return req, errors.New("usage: codog debug-tool-call TOOL JSON")
+		return req, requiredArgumentError{Command: "debug-tool-call", Argument: "JSON", Usage: usage}
 	}
 	if !json.Valid([]byte(input)) {
-		return req, errors.New("debug-tool-call input must be valid JSON")
+		return req, invalidFlagValueError{Flag: "JSON", Value: input, Message: "debug-tool-call input must be valid JSON", Usage: usage}
 	}
 	req.Input = json.RawMessage(input)
 	return req, nil

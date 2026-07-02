@@ -20386,6 +20386,138 @@ func TestLocalCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 	}
 }
 
+func TestLongTailCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		kind     string
+		contains []string
+	}{
+		{
+			name:     "remote env invalid lease",
+			args:     []string{"remote-env", "--lease-seconds", "many"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--lease-seconds"`, `"value": "many"`},
+		},
+		{
+			name:     "remote setup missing addr",
+			args:     []string{"remote-setup", "--addr"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "remote-setup"`, `"option": "--addr"`},
+		},
+		{
+			name:     "ide unknown option",
+			args:     []string{"ide", "--bogus"},
+			kind:     "unknown_option",
+			contains: []string{`"command": "ide"`, `"option": "--bogus"`},
+		},
+		{
+			name:     "bridge kick missing format",
+			args:     []string{"bridge-kick", "--output-format"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "bridge-kick"`, `"option": "--output-format"`},
+		},
+		{
+			name:     "completion missing limit",
+			args:     []string{"completion", "--limit"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "completion"`, `"option": "--limit"`},
+		},
+		{
+			name:     "map invalid depth",
+			args:     []string{"map", "--depth", "many"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--depth"`, `"value": "many"`},
+		},
+		{
+			name:     "hover missing context",
+			args:     []string{"hover", "--context"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "hover"`, `"option": "--context"`},
+		},
+		{
+			name:     "format invalid write",
+			args:     []string{"format", "--write=maybe"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--write"`, `"value": "maybe"`},
+		},
+		{
+			name:     "debug tool call missing json",
+			args:     []string{"debug-tool-call", "read_file"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "debug-tool-call"`, `"argument": "JSON"`},
+		},
+		{
+			name:     "debug tool call invalid json",
+			args:     []string{"debug-tool-call", "read_file", "{bad"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "JSON"`, `"debug-tool-call input must be valid JSON"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.kind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
+func TestLongTailCommandFallbackErrorsAreStructured(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "marketplace install missing path", args: []string{"marketplace", "install"}},
+		{name: "oauth refresh unknown option", args: []string{"oauth-refresh", "--bogus"}},
+		{name: "bridge unknown action", args: []string{"bridge", "bogus"}},
+		{name: "mobile unknown flag", args: []string{"mobile", "--bogus"}},
+		{name: "desktop unknown flag", args: []string{"desktop", "--bogus"}},
+		{name: "code intel unknown command", args: []string{"code-intel", "bogus"}},
+		{name: "notebook read missing path", args: []string{"notebook-read"}},
+		{name: "tool details missing name", args: []string{"tool-details"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 1, exitErr.Code)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "error", report.Status)
+			require.NotEmpty(t, report.Kind)
+			require.NotEmpty(t, report.ErrorKind)
+			require.NotEmpty(t, report.Message)
+			require.NotEmpty(t, report.Hint)
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)
