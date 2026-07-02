@@ -20518,6 +20518,136 @@ func TestLongTailCommandFallbackErrorsAreStructured(t *testing.T) {
 	}
 }
 
+func TestRemainingCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		kind     string
+		contains []string
+	}{
+		{
+			name:     "history invalid limit",
+			args:     []string{"history", "--limit", "many"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--limit"`, `"value": "many"`},
+		},
+		{
+			name:     "summary missing session",
+			args:     []string{"summary", "--session"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "summary"`, `"option": "--session"`},
+		},
+		{
+			name:     "rewind invalid messages",
+			args:     []string{"rewind", "--messages", "0"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--messages"`, `"value": "0"`},
+		},
+		{
+			name:     "focus missing output format",
+			args:     []string{"focus", "--output-format"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "focus"`, `"option": "--output-format"`},
+		},
+		{
+			name:     "add dir remove missing path",
+			args:     []string{"add-dir", "remove"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "add-dir remove"`, `"argument": "PATH"`},
+		},
+		{
+			name:     "validation missing output format",
+			args:     []string{"validation", "--output-format"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "validation"`, `"option": "--output-format"`},
+		},
+		{
+			name:     "workspace set missing path",
+			args:     []string{"workspace", "set"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "workspace set"`, `"argument": "PATH"`},
+		},
+		{
+			name:     "allowed tools add missing tool",
+			args:     []string{"allowed-tools", "add"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "allowed-tools add"`, `"argument": "TOOL"`},
+		},
+		{
+			name:     "clear missing output format",
+			args:     []string{"clear", "--output-format"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "clear"`, `"option": "--output-format"`},
+		},
+		{
+			name:     "plan set missing text",
+			args:     []string{"plan", "set"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "plan set"`, `"argument": "TEXT"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.kind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
+func TestRemainingCommandFallbackErrorsAreStructured(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "resume extra argument", args: []string{"resume", "one", "two"}},
+		{name: "conversation missing export format", args: []string{"conversation", "--format"}},
+		{name: "generate session name missing source", args: []string{"generate-session-name", "--source"}},
+		{name: "rename missing session", args: []string{"rename", "--session"}},
+		{name: "todos unknown action", args: []string{"todos", "bogus"}},
+		{name: "mcp remove missing server", args: []string{"mcp", "remove"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 1, exitErr.Code)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "error", report.Status)
+			require.NotEmpty(t, report.Kind)
+			require.NotEmpty(t, report.ErrorKind)
+			require.NotEmpty(t, report.Message)
+			require.NotEmpty(t, report.Hint)
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)

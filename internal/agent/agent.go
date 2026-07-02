@@ -463,46 +463,46 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return app.promptWithOutput(ctx, input, overrides, req.Format, req.Compact)
 	case "acp":
-		return app.ACP(ctx, rest)
+		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
-		return app.BTW(ctx, rest, overrides, nil)
+		return wrapStructured(app.BTW(ctx, rest, overrides, nil))
 	case "config":
-		return app.ConfigCommand(rest)
+		return wrapStructured(app.ConfigCommand(rest))
 	case "session", "sessions":
 		if err := app.SessionsCommand(rest); err != nil {
 			return renderSessionsCommandError(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "resume":
-		return app.ResumeCommand(rest)
+		return wrapStructured(app.ResumeCommand(rest))
 	case "clear":
-		return app.ClearCommand(rest)
+		return wrapStructured(app.ClearCommand(rest))
 	case "conversation":
-		return app.Conversation(rest, overrides)
+		return wrapStructured(app.Conversation(rest, overrides))
 	case "backfill-sessions":
-		return app.BackfillSessions(rest)
+		return wrapStructured(app.BackfillSessions(rest))
 	case "generateSessionName", "generatesessionname", "generate-session-name":
-		return app.GenerateSessionName(rest, overrides)
+		return wrapStructured(app.GenerateSessionName(rest, overrides))
 	case "rename":
-		return app.Rename(rest, overrides)
+		return wrapStructured(app.Rename(rest, overrides))
 	case "history", "prompt-history":
-		return app.History(rest, overrides)
+		return wrapStructured(app.History(rest, overrides))
 	case "summary":
-		return app.Summary(rest, overrides)
+		return wrapStructured(app.Summary(rest, overrides))
 	case "rewind", "checkpoint":
-		return app.Rewind(rest, overrides)
+		return wrapStructured(app.Rewind(rest, overrides))
 	case "todos":
-		return app.Todos(rest)
+		return wrapStructured(app.Todos(rest))
 	case "focus":
-		return app.Focus(rest)
+		return wrapStructured(app.Focus(rest))
 	case "unfocus":
-		return app.Unfocus(rest)
+		return wrapStructured(app.Unfocus(rest))
 	case "add-dir":
-		return app.AddDir(rest)
+		return wrapStructured(app.AddDir(rest))
 	case "validation":
-		return app.Validation(rest)
+		return wrapStructured(app.Validation(rest))
 	case "workspace", "cwd":
-		return app.WorkspaceCommand(rest)
+		return wrapStructured(app.WorkspaceCommand(rest))
 	case "output-style":
 		if err := app.OutputStyle(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -564,7 +564,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "allowed-tools":
-		return app.AllowedTools(rest)
+		return wrapStructured(app.AllowedTools(rest))
 	case "language":
 		if err := app.Language(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -611,7 +611,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "speak":
-		return app.Speak(ctx, rest, overrides)
+		return wrapStructured(app.Speak(ctx, rest, overrides))
 	case "chrome":
 		if err := app.Chrome(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -663,14 +663,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "mcp":
-		return app.MCP(ctx, rest)
+		return wrapStructured(app.MCP(ctx, rest))
 	case "capabilities":
 		if err := app.Capabilities(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "cost", "tokens":
-		return app.ShowCost(overrides)
+		return wrapStructured(app.ShowCost(overrides))
 	case "cache", "caches":
 		if err := app.Cache(rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -772,11 +772,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "plan":
-		return app.Plan(rest)
+		return wrapStructured(app.Plan(rest))
 	case "ultraplan":
-		return app.Plan(rest)
+		return wrapStructured(app.Plan(rest))
 	case "exit-plan":
-		return app.Plan(append([]string{"exit"}, rest...))
+		return wrapStructured(app.Plan(append([]string{"exit"}, rest...)))
 	case "export":
 		if err := app.ExportWithOverrides(rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -13025,6 +13025,7 @@ func (a *App) Validation(args []string) error {
 }
 
 func parseValidationArgs(args []string) (string, []string, error) {
+	const usage = "codog validation [add-dir] [PATH...] [--json|--output-format text|json]"
 	format := "text"
 	var paths []string
 	actionSeen := false
@@ -13035,8 +13036,8 @@ func parseValidationArgs(args []string) (string, []string, error) {
 			format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return "", nil, errors.New("validation output format is required")
+			if missingFlagValueAt(args, index) {
+				return "", nil, missingFlagValueError{Command: "validation", Flag: arg, Usage: usage}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -13049,10 +13050,11 @@ func parseValidationArgs(args []string) (string, []string, error) {
 			paths = append(paths, arg)
 		}
 	}
-	if err := validateTextOrJSON(format, "validation"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("validation", format, []string{"text", "json"})
+	if err != nil {
 		return "", nil, err
 	}
-	return format, paths, nil
+	return normalizedFormat, paths, nil
 }
 
 type addDirRequest struct {
@@ -13062,6 +13064,7 @@ type addDirRequest struct {
 }
 
 func parseAddDirArgs(args []string) (addDirRequest, error) {
+	const usage = "codog add-dir [list|add|remove|clear] [PATH...] [--json|--output-format text|json]"
 	req := addDirRequest{Format: "text", Action: "list"}
 	var positionals []string
 	for i := 0; i < len(args); i++ {
@@ -13071,8 +13074,8 @@ func parseAddDirArgs(args []string) (addDirRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			i++
-			if i >= len(args) {
-				return req, errors.New("add-dir output format is required")
+			if missingFlagValueAt(args, i) {
+				return req, missingFlagValueError{Command: "add-dir", Flag: arg, Usage: usage}
 			}
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -13085,14 +13088,14 @@ func parseAddDirArgs(args []string) (addDirRequest, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown add-dir output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("add-dir", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) == 0 {
 		if req.Action == "remove" {
-			return req, errors.New("add-dir remove requires at least one path")
+			return req, requiredArgumentError{Command: "add-dir remove", Argument: "PATH", Usage: usage}
 		}
 		return req, nil
 	}
@@ -13118,7 +13121,7 @@ func parseAddDirArgs(args []string) (addDirRequest, error) {
 		}
 	}
 	if (req.Action == "add" || req.Action == "remove") && len(req.Paths) == 0 {
-		return req, fmt.Errorf("add-dir %s requires at least one path", req.Action)
+		return req, requiredArgumentError{Command: "add-dir " + req.Action, Argument: "PATH", Usage: usage}
 	}
 	return req, nil
 }
@@ -13182,6 +13185,7 @@ func (a *App) WorkspaceCommand(args []string) error {
 }
 
 func parseWorkspaceArgs(args []string) (workspaceRequest, error) {
+	const usage = "codog workspace [status|set PATH] [--json|--output-format text|json]"
 	req := workspaceRequest{Action: "status", Format: "text"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -13191,40 +13195,45 @@ func parseWorkspaceArgs(args []string) (workspaceRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("workspace output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "workspace", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return req, fmt.Errorf("unknown workspace flag %q", arg)
+				return req, unknownOptionError{Command: "workspace", Option: arg, Usage: usage}
 			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "workspace"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("workspace", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show", "pwd":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected workspace argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "workspace status", Args: rest[1:], Usage: usage}
 		}
 		req.Action = "status"
 	case "set", "cd", "switch":
 		if len(rest) != 2 {
-			return req, errors.New("usage: codog workspace set PATH")
+			if len(rest) < 2 {
+				return req, requiredArgumentError{Command: "workspace set", Argument: "PATH", Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "workspace set", Args: rest[2:], Usage: usage}
 		}
 		req.Action = "set"
 		req.Path = rest[1]
 	default:
 		if len(rest) != 1 {
-			return req, fmt.Errorf("unexpected workspace argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "workspace", Args: rest[1:], Usage: usage}
 		}
 		req.Action = "set"
 		req.Path = rest[0]
@@ -13370,6 +13379,7 @@ func (a *App) renderFocusReport(format string, report focus.Report) error {
 }
 
 func parseFocusArgs(command string, args []string) (string, []string, error) {
+	usage := "codog " + command + " [PATH...] [--json|--output-format text|json]"
 	format := "text"
 	var paths []string
 	for index := 0; index < len(args); index++ {
@@ -13379,8 +13389,8 @@ func parseFocusArgs(command string, args []string) (string, []string, error) {
 			format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return "", nil, fmt.Errorf("%s output format is required", command)
+			if missingFlagValueAt(args, index) {
+				return "", nil, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -13389,12 +13399,11 @@ func parseFocusArgs(command string, args []string) (string, []string, error) {
 			paths = append(paths, arg)
 		}
 	}
-	switch format {
-	case "text", "json":
-		return format, paths, nil
-	default:
-		return "", nil, fmt.Errorf("unknown %s output format %q", command, format)
+	normalizedFormat, err := normalizeOutputFormat(command, format, []string{"text", "json"})
+	if err != nil {
+		return "", nil, err
 	}
+	return normalizedFormat, paths, nil
 }
 
 type outputStyleRequest struct {
@@ -26257,6 +26266,7 @@ func stripJSONOnlyOutputFormat(command string, args []string) ([]string, string,
 }
 
 func parsePlanArgs(args []string) (planRequest, error) {
+	const usage = "codog plan [show|enter|set TEXT|exit|clear] [--json|--output-format text|json]"
 	req := planRequest{Action: "show", Format: "text"}
 	textParts := []string{}
 	actionSet := false
@@ -26267,14 +26277,14 @@ func parsePlanArgs(args []string) (planRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("plan output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "plan", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown plan flag %q", arg)
+			return req, unknownOptionError{Command: "plan", Option: arg, Usage: usage}
 		case !actionSet && isPlanAction(arg):
 			req.Action = normalizePlanAction(arg)
 			actionSet = true
@@ -26282,17 +26292,17 @@ func parsePlanArgs(args []string) (planRequest, error) {
 			textParts = append(textParts, arg)
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown plan output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("plan", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	req.Text = strings.TrimSpace(strings.Join(textParts, " "))
 	if req.Text != "" && req.Action == "show" {
 		req.Action = "enter"
 	}
 	if (req.Action == "set") && req.Text == "" {
-		return req, errors.New("plan text is required")
+		return req, requiredArgumentError{Command: "plan set", Argument: "TEXT", Usage: usage}
 	}
 	return req, nil
 }
@@ -26324,6 +26334,7 @@ func normalizePlanAction(value string) string {
 }
 
 func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyRequest, error) {
+	const usage = "codog history [SESSION|LIMIT] [--session ID] [--limit N] [--json|--output-format text|json]"
 	req := historyRequest{Format: "text", Limit: prompthistory.DefaultLimit}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -26341,43 +26352,43 @@ func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyReq
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("history output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--limit" || arg == "-n":
 			index++
-			if index >= len(args) {
-				return req, errors.New("history limit is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
 			}
-			limit, err := parseHistoryLimit(args[index])
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parseHistoryLimit(strings.TrimPrefix(arg, "--limit="))
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("history session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "history", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown history flag %q", arg)
+			return req, unknownOptionError{Command: "history", Option: arg, Usage: usage}
 		default:
 			limit, err := strconv.Atoi(arg)
 			if err == nil {
 				if limit <= 0 {
-					return req, errors.New("history limit must be positive")
+					return req, invalidFlagValueError{Flag: "LIMIT", Value: arg, Message: "history limit must be positive", Usage: usage}
 				}
 				req.Limit = limit
 				continue
@@ -26386,32 +26397,22 @@ func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyReq
 				req.SessionID = arg
 				continue
 			}
-			return req, fmt.Errorf("unexpected history argument %q", arg)
+			return req, unexpectedExtraArgsError{Command: "history", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown history output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("history", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = "latest"
 	}
 	return req, nil
 }
 
-func parseHistoryLimit(value string) (int, error) {
-	limit, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, err
-	}
-	if limit <= 0 {
-		return 0, errors.New("history limit must be positive")
-	}
-	return limit, nil
-}
-
 func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryRequest, error) {
+	const usage = "codog summary [SESSION] [--session ID|--resume ID] [--json|--output-format text|json]"
 	req := summaryRequest{Format: "text"}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -26429,43 +26430,43 @@ func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryReq
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("summary output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "summary", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("summary session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "summary", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("summary resume id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "summary", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown summary flag %q", arg)
+			return req, unknownOptionError{Command: "summary", Option: arg, Usage: usage}
 		default:
 			if req.SessionID == "" || session.IsSessionReferenceAlias(req.SessionID) {
 				req.SessionID = arg
 				continue
 			}
-			return req, fmt.Errorf("unexpected summary argument %q", arg)
+			return req, unexpectedExtraArgsError{Command: "summary", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown summary output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("summary", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = "latest"
 	}
@@ -26473,6 +26474,7 @@ func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryReq
 }
 
 func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSession string) (rewindRequest, error) {
+	const usage = "codog rewind [SESSION|COUNT] [--session ID|--resume ID] [--messages N] [--json|--output-format text|json]"
 	req := rewindRequest{Format: "text", Messages: 2, SessionID: defaultSession}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -26490,51 +26492,51 @@ func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSessi
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rewind output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rewind session id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rewind resume id is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case arg == "--messages" || arg == "-n":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rewind message count is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "rewind", Flag: arg, Usage: usage}
 			}
-			count, err := parseRewindCount(args[index])
+			count, err := parsePositiveIntOption(args[index], "--messages", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Messages = count
 		case strings.HasPrefix(arg, "--messages="):
-			count, err := parseRewindCount(strings.TrimPrefix(arg, "--messages="))
+			count, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--messages="), "--messages", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Messages = count
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown rewind flag %q", arg)
+			return req, unknownOptionError{Command: "rewind", Option: arg, Usage: usage}
 		default:
 			count, err := strconv.Atoi(arg)
 			if err == nil {
 				if count <= 0 {
-					return req, errors.New("rewind message count must be positive")
+					return req, invalidFlagValueError{Flag: "COUNT", Value: arg, Message: "rewind message count must be positive", Usage: usage}
 				}
 				req.Messages = count
 				continue
@@ -26543,26 +26545,15 @@ func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSessi
 				req.SessionID = arg
 				continue
 			}
-			return req, fmt.Errorf("unexpected rewind argument %q", arg)
+			return req, unexpectedExtraArgsError{Command: "rewind", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown rewind output format %q", req.Format)
-	}
-	return req, nil
-}
-
-func parseRewindCount(value string) (int, error) {
-	count, err := strconv.Atoi(value)
+	normalizedFormat, err := normalizeOutputFormat("rewind", req.Format, []string{"text", "json"})
 	if err != nil {
-		return 0, err
+		return req, err
 	}
-	if count <= 0 {
-		return 0, errors.New("rewind message count must be positive")
-	}
-	return count, nil
+	req.Format = normalizedFormat
+	return req, nil
 }
 
 func parseFilesArgs(args []string) (filesRequest, error) {
@@ -32156,6 +32147,7 @@ func (a *App) AllowedTools(args []string) error {
 }
 
 func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
+	const usage = "codog allowed-tools [list|add TOOL...|remove TOOL...|clear] [--target user|project|local] [--path PATH] [--json|--output-format text|json]"
 	req := allowedToolsRequest{Action: "list", Format: "text", Target: "user"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
@@ -32165,37 +32157,39 @@ func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("allowed-tools output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "allowed-tools", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("allowed-tools target is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "allowed-tools", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("allowed-tools config path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "allowed-tools", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown allowed-tools flag %q", arg)
+			return req, unknownOptionError{Command: "allowed-tools", Option: arg, Usage: usage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "allowed-tools"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("allowed-tools", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) == 0 {
 		return req, nil
 	}
@@ -32203,27 +32197,27 @@ func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
 	case "list", "show":
 		req.Action = strings.ToLower(strings.TrimSpace(positionals[0]))
 		if len(positionals) > 1 {
-			return req, fmt.Errorf("unexpected allowed-tools argument %q", positionals[1])
+			return req, unexpectedExtraArgsError{Command: "allowed-tools " + req.Action, Args: positionals[1:], Usage: usage}
 		}
 	case "add":
 		req.Action = "add"
 		req.Tools = append([]string(nil), positionals[1:]...)
 		if len(req.Tools) == 0 {
-			return req, errors.New("usage: codog allowed-tools add TOOL [TOOL...]")
+			return req, requiredArgumentError{Command: "allowed-tools add", Argument: "TOOL", Usage: usage}
 		}
 	case "remove", "rm", "delete":
 		req.Action = "remove"
 		req.Tools = append([]string(nil), positionals[1:]...)
 		if len(req.Tools) == 0 {
-			return req, errors.New("usage: codog allowed-tools remove TOOL [TOOL...]")
+			return req, requiredArgumentError{Command: "allowed-tools remove", Argument: "TOOL", Usage: usage}
 		}
 	case "clear":
 		req.Action = "clear"
 		if len(positionals) > 1 {
-			return req, fmt.Errorf("unexpected allowed-tools argument %q", positionals[1])
+			return req, unexpectedExtraArgsError{Command: "allowed-tools clear", Args: positionals[1:], Usage: usage}
 		}
 	default:
-		return req, fmt.Errorf("unknown allowed-tools action: %s", positionals[0])
+		return req, unexpectedExtraArgsError{Command: "allowed-tools", Args: []string{positionals[0]}, Usage: usage}
 	}
 	return req, nil
 }
@@ -38661,6 +38655,7 @@ func renderClearConfirmationRequired(out io.Writer, format string) error {
 }
 
 func parseClearCommandFormat(args []string) (string, error) {
+	const usage = "codog clear [--confirm] [--json|--output-format text|json]"
 	format := "text"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -38671,22 +38666,24 @@ func parseClearCommandFormat(args []string) (string, error) {
 			format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return "", errors.New("clear output format is required")
+			if missingFlagValueAt(args, index) {
+				return "", missingFlagValueError{Command: "clear", Flag: arg, Usage: usage}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			format = strings.TrimPrefix(arg, "--output-format=")
 		default:
-			return "", fmt.Errorf("unknown clear flag %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return "", unknownOptionError{Command: "clear", Option: arg, Usage: usage}
+			}
+			return "", unexpectedExtraArgsError{Command: "clear", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch format {
-	case "text", "json":
-		return format, nil
-	default:
-		return "", fmt.Errorf("unknown clear output format %q", format)
+	normalizedFormat, err := normalizeOutputFormat("clear", format, []string{"text", "json"})
+	if err != nil {
+		return "", err
 	}
+	return normalizedFormat, nil
 }
 
 func renderClearCommand(out io.Writer, report clearCommandReport) {
