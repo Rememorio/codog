@@ -44291,6 +44291,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	if missing, ok := missingToolFlagArgument(args); ok {
 		return base, "", nil, missing
 	}
+	if err := rejectDuplicatePermissionModeFlags(args); err != nil {
+		return base, "", nil, err
+	}
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	printMode := false
@@ -44376,6 +44379,61 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
 	return base, command, rest, nil
+}
+
+func rejectDuplicatePermissionModeFlags(args []string) error {
+	seen := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		if arg == "" {
+			continue
+		}
+		if arg == "--" {
+			break
+		}
+		if !strings.HasPrefix(arg, "-") {
+			break
+		}
+		consumedValue := false
+		switch {
+		case arg == "--permission-mode" || arg == "-permission-mode":
+			seen = append(seen, arg)
+			if index+1 < len(args) {
+				index++
+				consumedValue = true
+			}
+		case strings.HasPrefix(arg, "--permission-mode="), strings.HasPrefix(arg, "-permission-mode="):
+			seen = append(seen, strings.SplitN(arg, "=", 2)[0])
+		case arg == "--skip-permissions" || arg == "-skip-permissions" || arg == "--dangerously-skip-permissions" || arg == "-dangerously-skip-permissions":
+			seen = append(seen, arg)
+		}
+		if !consumedValue && globalFlagConsumesNext(arg) && !strings.Contains(arg, "=") && index+1 < len(args) {
+			index++
+		}
+	}
+	if len(seen) <= 1 {
+		return nil
+	}
+	return invalidFlagValueError{
+		Flag:    "--permission-mode",
+		Value:   strings.Join(seen, ","),
+		Message: "permission mode was specified multiple times",
+		Usage:   "codog [--permission-mode MODE | --skip-permissions] COMMAND",
+	}
+}
+
+func globalFlagConsumesNext(arg string) bool {
+	switch arg {
+	case "--config", "-config", "--cwd", "-cwd", "-C", "--C", "--directory", "-directory",
+		"--model", "-model", "--base-url", "-base-url", "--system-prompt", "-system-prompt",
+		"--append-system-prompt", "-append-system-prompt", "--session", "-session",
+		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
+		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
+		"--max-tokens", "-max-tokens", "--temperature", "-temperature":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasExplicitEmptyPositional(args []string) bool {

@@ -4906,6 +4906,29 @@ func TestInvalidPermissionModeJSONContract(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_permission_mode")
 }
 
+func TestDuplicatePermissionModeFlagJSONContract(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--permission-mode", "read-only", "--permission-mode", "danger-full-access", "status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_flag_value", report.Kind)
+	require.Equal(t, "invalid_flag_value", report.ErrorKind)
+	require.Equal(t, "--permission-mode", report.Option)
+	require.Contains(t, report.Message, "specified multiple times")
+	require.Contains(t, report.Hint, "--skip-permissions")
+}
+
 func TestInvalidOutputFormatJSONContract(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--output-format", "YAML", "status"}, config.FlagOverrides{})
@@ -6143,6 +6166,16 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 		require.Equal(t, name, command)
 		require.Equal(t, []string{"arg", "--output-format", "json"}, rest)
 	}
+}
+
+func TestParseFlagsRejectsDuplicatePermissionMode(t *testing.T) {
+	_, _, _, err := parseFlags([]string{"--permission-mode", "read-only", "--permission-mode=danger-full-access", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "permission mode was specified multiple times")
+
+	_, _, _, err = parseFlags([]string{"--permission-mode", "workspace-write", "--skip-permissions", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "permission mode was specified multiple times")
 }
 
 func TestParseFlagsSupportsOutputFormatEnv(t *testing.T) {
