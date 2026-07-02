@@ -22079,7 +22079,7 @@ func unknownSlashCommandReport(command string, extraSuggestions []string) slashE
 func unknownSlashCompatibilityNote(command string) string {
 	name := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(command), "/"))
 	if strings.HasPrefix(name, "oh-my-claudecode:") {
-		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog does not yet load plugin slash commands from that namespace, Claude statusline stdin, or OMC session hooks."
+		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog loads compatible Markdown commands from project `.omc/commands` and explicit compatible config roots; Claude statusline stdin and OMC session hooks remain separate integrations."
 	}
 	return ""
 }

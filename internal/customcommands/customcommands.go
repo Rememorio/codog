@@ -249,6 +249,7 @@ func roots(configHome, workspace string) []root {
 		{path: filepath.Join(workspace, ".claude", "commands"), source: "claude"},
 		{path: filepath.Join(workspace, ".codog", "commands"), source: "workspace"},
 	}
+	out = append(out, compatibilityRoots(workspace, false)...)
 	manifests, err := plugins.Load(workspace)
 	if err != nil {
 		return out
@@ -265,6 +266,7 @@ func rootsByPrecedence(configHome, workspace string) []root {
 		{path: filepath.Join(workspace, ".claude", "commands"), source: "claude"},
 		{path: filepath.Join(configHome, "commands"), source: "user"},
 	}
+	base = append(base, compatibilityRoots(workspace, true)...)
 	manifests, err := plugins.Load(workspace)
 	if err != nil {
 		return base
@@ -300,6 +302,14 @@ func sourceLabel(source string) string {
 		return "Workspace commands"
 	case source == "claude":
 		return "Claude-compatible workspace commands"
+	case source == "omc":
+		return "OMC-compatible commands"
+	case source == "claw":
+		return "Claw-compatible commands"
+	case source == "codex":
+		return "Codex-compatible commands"
+	case source == "agents":
+		return "Agents-compatible commands"
 	case strings.HasPrefix(source, "plugin:"):
 		return "Plugin commands"
 	default:
@@ -323,11 +333,81 @@ func sourceRank(source string) int {
 		return 1
 	case source == "user":
 		return 2
-	case strings.HasPrefix(source, "plugin:"):
+	case source == "omc", source == "claw", source == "codex", source == "agents":
 		return 3
-	default:
+	case strings.HasPrefix(source, "plugin:"):
 		return 4
+	default:
+		return 5
 	}
+}
+
+func compatibilityRoots(workspace string, precedence bool) []root {
+	seen := map[string]bool{}
+	out := []root{}
+	add := func(path string, source string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		clean := filepath.Clean(path)
+		if seen[clean] {
+			return
+		}
+		if info, err := os.Stat(clean); err != nil || !info.IsDir() {
+			return
+		}
+		seen[clean] = true
+		out = append(out, root{path: clean, source: source})
+	}
+	addPrefixed := func(prefix string, source string) {
+		if strings.TrimSpace(prefix) == "" {
+			return
+		}
+		add(filepath.Join(prefix, "commands"), source)
+	}
+	addPrefixed(os.Getenv("CLAW_CONFIG_HOME"), "claw")
+	addPrefixed(os.Getenv("CODEX_HOME"), "codex")
+	if claudeConfigDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); claudeConfigDir != "" {
+		add(filepath.Join(claudeConfigDir, "commands"), "claude")
+	}
+	for _, ancestor := range workspaceAncestors(workspace) {
+		add(filepath.Join(ancestor, ".omc", "commands"), "omc")
+		add(filepath.Join(ancestor, ".claw", "commands"), "claw")
+		add(filepath.Join(ancestor, ".codex", "commands"), "codex")
+		add(filepath.Join(ancestor, ".agents", "commands"), "agents")
+	}
+	if precedence {
+		return out
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if sourceRank(out[i].source) == sourceRank(out[j].source) {
+			return out[i].path < out[j].path
+		}
+		return sourceRank(out[i].source) < sourceRank(out[j].source)
+	})
+	return out
+}
+
+func workspaceAncestors(workspace string) []string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return nil
+	}
+	current, err := filepath.Abs(workspace)
+	if err != nil {
+		current = filepath.Clean(workspace)
+	}
+	out := []string{}
+	for {
+		out = append(out, current)
+		next := filepath.Dir(current)
+		if next == current {
+			break
+		}
+		current = next
+	}
+	return out
 }
 
 func commandRootsForPlugin(manifest plugins.Manifest) []root {
