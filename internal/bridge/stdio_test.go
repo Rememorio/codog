@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,9 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"sessions/append_message"`)
 	require.Contains(t, out.String(), `"sessions/append_input"`)
 	require.Contains(t, out.String(), `"sessions/rewind"`)
+	require.Contains(t, out.String(), `"sessions/history"`)
+	require.Contains(t, out.String(), `"sessions/rename"`)
+	require.Contains(t, out.String(), `"sessions/delete"`)
 	require.Contains(t, out.String(), `"sessions/prompt"`)
 	require.Contains(t, out.String(), `"workspace/files"`)
 	require.Contains(t, out.String(), `"workspace/search"`)
@@ -76,6 +80,33 @@ func TestBridgeSessionMutations(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "bridge prompt", entries[0].Text)
+}
+
+func TestBridgeSessionHistoryRenameAndDelete(t *testing.T) {
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	require.NoError(t, store.AppendInput("ide-session", "first prompt"))
+	require.NoError(t, store.AppendInput("ide-session", "second prompt"))
+	require.NoError(t, store.Append("ide-session", anthropic.TextMessage("user", "hello")))
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"sessions/history","params":{"session_id":"ide-session","limit":1}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"sessions/rename","params":{"session_id":"ide-session","new_session_id":"renamed-ide-session"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"sessions/delete","params":{"id":"renamed-ide-session"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test"}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"session_history"`)
+	require.Contains(t, out.String(), `"count":1`)
+	require.Contains(t, out.String(), `"text":"second prompt"`)
+	require.NotContains(t, out.String(), `"text":"first prompt"`)
+	require.Contains(t, out.String(), `"action":"rename"`)
+	require.Contains(t, out.String(), `"old_id":"ide-session"`)
+	require.Contains(t, out.String(), `"new_id":"renamed-ide-session"`)
+	require.Contains(t, out.String(), `"action":"delete"`)
+	require.Contains(t, out.String(), `"id":"renamed-ide-session"`)
+	require.NoFileExists(t, filepath.Join(store.Dir, "ide-session.jsonl"))
+	require.NoFileExists(t, filepath.Join(store.Dir, "renamed-ide-session.jsonl"))
 }
 
 func TestBridgeSessionPromptStartsBackgroundTask(t *testing.T) {

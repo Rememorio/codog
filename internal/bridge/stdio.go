@@ -89,6 +89,9 @@ func (s Server) handle(req Request) (any, *Error) {
 				"sessions/append_message",
 				"sessions/append_input",
 				"sessions/rewind",
+				"sessions/history",
+				"sessions/rename",
+				"sessions/delete",
 				"sessions/prompt",
 				"workspace/info",
 				"workspace/files",
@@ -174,6 +177,24 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "sessions/rewind":
 		result, err := s.sessionRewind(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/history":
+		result, err := s.sessionHistory(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/rename":
+		result, err := s.sessionRename(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/delete":
+		result, err := s.sessionDelete(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -855,6 +876,97 @@ func (s Server) sessionRewind(params json.RawMessage) (any, error) {
 	return s.Sessions.Rewind(id, payload.RemoveMessages)
 }
 
+func (s Server) sessionHistory(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID        string `json:"id"`
+		SessionID string `json:"session_id"`
+		Limit     int    `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := firstNonEmpty(payload.ID, payload.SessionID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	entries, err := s.Sessions.PromptHistory(id)
+	if err != nil {
+		return nil, err
+	}
+	if payload.Limit > 0 && len(entries) > payload.Limit {
+		entries = entries[len(entries)-payload.Limit:]
+	}
+	return map[string]any{
+		"kind":    "session_history",
+		"id":      id,
+		"count":   len(entries),
+		"entries": entries,
+	}, nil
+}
+
+func (s Server) sessionRename(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID           string `json:"id"`
+		SessionID    string `json:"session_id"`
+		NewID        string `json:"new_id"`
+		NewSessionID string `json:"new_session_id"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := firstNonEmpty(payload.ID, payload.SessionID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	newID := firstNonEmpty(payload.NewID, payload.NewSessionID)
+	if newID == "" {
+		return nil, errors.New("new_id is required")
+	}
+	result, err := s.Sessions.Rename(id, newID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"kind":          "session_mutation",
+		"action":        "rename",
+		"status":        "ok",
+		"old_id":        result.OldID,
+		"new_id":        result.NewID,
+		"old_path":      result.OldPath,
+		"new_path":      result.NewPath,
+		"message_count": result.MessageCount,
+	}, nil
+}
+
+func (s Server) sessionDelete(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID        string `json:"id"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := firstNonEmpty(payload.ID, payload.SessionID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	sess, err := s.Sessions.Open(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Sessions.Delete(id); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"kind":          "session_mutation",
+		"action":        "delete",
+		"status":        "ok",
+		"id":            sess.ID,
+		"path":          sess.Path,
+		"message_count": len(sess.Messages),
+	}, nil
+}
+
 func (s Server) sessionPrompt(params json.RawMessage) (any, error) {
 	var payload struct {
 		ID     string `json:"id"`
@@ -989,6 +1101,15 @@ func parseBridgeBackgroundID(params json.RawMessage) (string, error) {
 		return "", errors.New("id is required")
 	}
 	return id, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func bridgeShellQuote(value string) string {
