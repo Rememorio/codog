@@ -18650,6 +18650,90 @@ func TestOAuthTokenCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"deleted":true`)
 }
 
+func TestOAuthErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "unknown oauth action",
+			args:      []string{"oauth", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "oauth"`, `"bogus"`},
+		},
+		{
+			name:      "unknown provider action",
+			args:      []string{"oauth", "provider", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "oauth provider"`, `"bogus"`},
+		},
+		{
+			name:      "unknown token action",
+			args:      []string{"oauth", "token", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "oauth token"`, `"bogus"`},
+		},
+		{
+			name:      "unknown device action",
+			args:      []string{"oauth", "device", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "oauth device"`, `"bogus"`},
+		},
+		{
+			name:      "unknown browser action",
+			args:      []string{"oauth", "browser", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "oauth browser"`, `"bogus"`},
+		},
+		{
+			name:      "missing token",
+			args:      []string{"oauth", "token", "show"},
+			kind:      "oauth_token_missing",
+			errorKind: "oauth_token_missing",
+			contains:  []string{`"kind": "oauth_token_missing"`},
+		},
+		{
+			name:      "missing output format value",
+			args:      []string{"oauth", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "oauth"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"oauth", "status", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestLoginLogoutAliases(t *testing.T) {
 	configHome := t.TempDir()
 	var out bytes.Buffer

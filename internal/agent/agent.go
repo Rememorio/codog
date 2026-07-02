@@ -755,7 +755,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "logout":
 		return app.Logout(rest)
 	case "oauth":
-		return app.OAuth(rest)
+		if err := app.OAuth(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "oauth-refresh":
 		return app.OAuthRefresh(rest)
 	case "addCommand":
@@ -9175,6 +9178,14 @@ func parseOAuthRefreshArgs(args []string) (string, error) {
 	return profile, nil
 }
 
+const (
+	oauthUsage         = "codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete"
+	oauthProviderUsage = "codog oauth provider save|list|show|delete"
+	oauthTokenUsage    = "codog oauth token save|show|status|refresh|revoke|delete"
+	oauthDeviceUsage   = "codog oauth device start|poll|login|status"
+	oauthBrowserUsage  = "codog oauth browser start|exchange|login|status"
+)
+
 // OAuth runs local OAuth helper commands for provider profiles and tokens.
 func (a *App) OAuth(args []string) error {
 	var err error
@@ -9236,7 +9247,11 @@ func (a *App) OAuth(args []string) error {
 		return nil
 	}
 	if args[0] != "token" {
-		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete")
+		return unexpectedExtraArgsError{
+			Command: "oauth",
+			Args:    []string{args[0]},
+			Usage:   oauthUsage,
+		}
 	}
 	if len(args) < 2 {
 		status := oauth.InspectStatus(a.Config.ConfigHome, "", time.Now().UTC())
@@ -9311,7 +9326,11 @@ func (a *App) OAuth(args []string) error {
 		fmt.Fprintln(a.Out, `{"deleted":true}`)
 		return nil
 	default:
-		return fmt.Errorf("unknown oauth token command %q", args[1])
+		return unexpectedExtraArgsError{
+			Command: "oauth token",
+			Args:    []string{args[1]},
+			Usage:   oauthTokenUsage,
+		}
 	}
 }
 
@@ -9325,15 +9344,27 @@ func normalizeOAuthJSONArgs(args []string) ([]string, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return nil, errors.New("oauth output format is required")
+				return nil, missingFlagValueError{
+					Command: "oauth",
+					Flag:    arg,
+					Usage:   oauthUsage,
+				}
 			}
 			if !strings.EqualFold(strings.TrimSpace(args[index]), "json") {
-				return nil, fmt.Errorf("unknown oauth output format %q", args[index])
+				return nil, outputFormatError{
+					Command:  "oauth",
+					Value:    args[index],
+					Expected: []string{"json"},
+				}
 			}
 		case strings.HasPrefix(arg, "--output-format="):
 			format := strings.TrimPrefix(arg, "--output-format=")
 			if !strings.EqualFold(strings.TrimSpace(format), "json") {
-				return nil, fmt.Errorf("unknown oauth output format %q", format)
+				return nil, outputFormatError{
+					Command:  "oauth",
+					Value:    format,
+					Expected: []string{"json"},
+				}
 			}
 		default:
 			out = append(out, arg)
@@ -9412,7 +9443,11 @@ func (a *App) oauthProvider(args []string) error {
 		}
 		payload = map[string]any{"deleted": true, "name": args[1]}
 	default:
-		return fmt.Errorf("unknown oauth provider command %q", args[0])
+		return unexpectedExtraArgsError{
+			Command: "oauth provider",
+			Args:    []string{args[0]},
+			Usage:   oauthProviderUsage,
+		}
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
@@ -10464,7 +10499,11 @@ func (a *App) oauthBrowser(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	default:
-		return fmt.Errorf("unknown oauth browser command %q", args[0])
+		return unexpectedExtraArgsError{
+			Command: "oauth browser",
+			Args:    []string{args[0]},
+			Usage:   oauthBrowserUsage,
+		}
 	}
 }
 
@@ -10565,7 +10604,11 @@ func (a *App) oauthDevice(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	default:
-		return fmt.Errorf("unknown oauth device command %q", args[0])
+		return unexpectedExtraArgsError{
+			Command: "oauth device",
+			Args:    []string{args[0]},
+			Usage:   oauthDeviceUsage,
+		}
 	}
 }
 
@@ -23654,6 +23697,15 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Action:    "abort",
 			Message:   sessionNotFoundMessage(message),
 			Hint:      "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl/.json session path.",
+		}
+	}
+	if errors.Is(err, oauth.ErrNoToken) {
+		return cliErrorReport{
+			Kind:      "oauth_token_missing",
+			ErrorKind: "oauth_token_missing",
+			Status:    "error",
+			Message:   "no oauth token is saved",
+			Hint:      "Run `codog oauth token save ACCESS_TOKEN` or complete `codog login` before using token-dependent OAuth commands.",
 		}
 	}
 	var credentialsErr anthropic.MissingCredentialsError
