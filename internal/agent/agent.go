@@ -20006,7 +20006,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		memory.RenderShowReport(out, report)
 	case "add":
 		if len(req.Rest) == 0 {
-			return errors.New("usage: codog memory add TEXT [--json]")
+			return renderMissingActionArgument(out, "memory", "add", "text", "memory add requires text", "Usage: codog memory add TEXT [--json|--output-format text|json].", req.Format)
 		}
 		report, err := memory.Append(workspace, strings.Join(req.Rest, " "))
 		if err != nil {
@@ -20020,7 +20020,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		memory.RenderAppendReport(out, report)
 	case "search", "relevant":
 		if len(req.Rest) == 0 {
-			return errors.New("usage: codog memory search QUERY [--limit N] [--json]")
+			return renderMissingActionArgument(out, "memory", "search", "query", "memory search requires a query", "Usage: codog memory search QUERY [--limit N] [--json|--output-format text|json].", req.Format)
 		}
 		report, err := memory.Search(workspace, strings.Join(req.Rest, " "), req.Limit)
 		if err != nil {

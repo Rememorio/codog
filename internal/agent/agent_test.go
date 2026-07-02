@@ -8190,11 +8190,38 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "secret body")
 	out.Reset()
 
+	err := app.Memory([]string{"add", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var addError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &addError))
+	require.Equal(t, "memory", addError.Kind)
+	require.Equal(t, "add", addError.Action)
+	require.Equal(t, "missing_argument", addError.ErrorKind)
+	require.Equal(t, "text", addError.Argument)
+	out.Reset()
+
 	require.NoError(t, app.Memory([]string{"add", "Use", "focused", "tests."}))
 	require.Contains(t, out.String(), "Memory Updated")
 	data, err := os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "Use focused tests.")
+	out.Reset()
+
+	err = app.Memory([]string{"search", "--json"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var searchError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &searchError))
+	require.Equal(t, "memory", searchError.Kind)
+	require.Equal(t, "search", searchError.Action)
+	require.Equal(t, "missing_argument", searchError.ErrorKind)
+	require.Equal(t, "query", searchError.Argument)
 	out.Reset()
 
 	require.NoError(t, app.Memory([]string{"search", "focused", "--limit", "1", "--json"}))
