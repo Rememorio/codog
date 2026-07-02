@@ -1866,9 +1866,17 @@ func risky(value any) {
 	var statusReport struct {
 		Kind    string `json:"kind"`
 		Session struct {
-			Active       bool   `json:"active"`
-			ID           string `json:"id"`
-			MessageCount int    `json:"message_count"`
+			Active              bool   `json:"active"`
+			ID                  string `json:"id"`
+			MessageCount        int    `json:"message_count"`
+			CreatedAtMS         int64  `json:"created_at_ms"`
+			UpdatedAtMS         int64  `json:"updated_at_ms"`
+			ModifiedEpochMillis int64  `json:"modified_epoch_millis"`
+			Lifecycle           struct {
+				Kind   string `json:"kind"`
+				Signal string `json:"signal"`
+				Saved  bool   `json:"saved"`
+			} `json:"lifecycle"`
 		} `json:"session"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &statusReport))
@@ -1876,6 +1884,12 @@ func risky(value any) {
 	require.True(t, statusReport.Session.Active)
 	require.Equal(t, "resume-slash", statusReport.Session.ID)
 	require.Equal(t, 4, statusReport.Session.MessageCount)
+	require.NotZero(t, statusReport.Session.CreatedAtMS)
+	require.NotZero(t, statusReport.Session.UpdatedAtMS)
+	require.NotZero(t, statusReport.Session.ModifiedEpochMillis)
+	require.Equal(t, "saved_only", statusReport.Session.Lifecycle.Kind)
+	require.Equal(t, "saved only", statusReport.Session.Lifecycle.Signal)
+	require.True(t, statusReport.Session.Lifecycle.Saved)
 
 	exportPath := filepath.Join(workspace, "resume-export.json")
 	out, err = captureStdout(t, func() error {

@@ -61,6 +61,13 @@ type Options struct {
 	SessionPath                 string
 	SessionMessages             int
 	SessionCount                int
+	SessionCreatedAtMS          int64
+	SessionUpdatedAtMS          int64
+	SessionModifiedEpochMillis  int64
+	SessionParentSessionID      string
+	SessionBranchName           string
+	SessionLifecycleKind        string
+	SessionLifecycleSignal      string
 	GitStatus                   string
 	GitError                    string
 	GitFreshness                *gitops.BranchFreshness
@@ -146,11 +153,24 @@ type ConfigStatus struct {
 }
 
 type SessionStatus struct {
-	Active       bool   `json:"active"`
-	ID           string `json:"id,omitempty"`
-	Path         string `json:"path,omitempty"`
-	MessageCount int    `json:"message_count"`
-	SavedCount   int    `json:"saved_count"`
+	Active              bool                    `json:"active"`
+	ID                  string                  `json:"id,omitempty"`
+	Path                string                  `json:"path,omitempty"`
+	MessageCount        int                     `json:"message_count"`
+	SavedCount          int                     `json:"saved_count"`
+	CreatedAtMS         int64                   `json:"created_at_ms,omitempty"`
+	UpdatedAtMS         int64                   `json:"updated_at_ms,omitempty"`
+	ModifiedEpochMillis int64                   `json:"modified_epoch_millis,omitempty"`
+	ParentSessionID     string                  `json:"parent_session_id,omitempty"`
+	BranchName          string                  `json:"branch_name,omitempty"`
+	Lifecycle           *SessionLifecycleStatus `json:"lifecycle,omitempty"`
+}
+
+type SessionLifecycleStatus struct {
+	Kind      string `json:"kind"`
+	Signal    string `json:"signal"`
+	Saved     bool   `json:"saved"`
+	Abandoned bool   `json:"abandoned"`
 }
 
 type PlanStatus struct {
@@ -300,11 +320,17 @@ func Build(opts Options) Snapshot {
 			EnabledSkillCount:           opts.EnabledSkillCount,
 		},
 		Session: SessionStatus{
-			Active:       opts.SessionID != "",
-			ID:           opts.SessionID,
-			Path:         opts.SessionPath,
-			MessageCount: opts.SessionMessages,
-			SavedCount:   opts.SessionCount,
+			Active:              opts.SessionID != "",
+			ID:                  opts.SessionID,
+			Path:                opts.SessionPath,
+			MessageCount:        opts.SessionMessages,
+			SavedCount:          opts.SessionCount,
+			CreatedAtMS:         opts.SessionCreatedAtMS,
+			UpdatedAtMS:         opts.SessionUpdatedAtMS,
+			ModifiedEpochMillis: opts.SessionModifiedEpochMillis,
+			ParentSessionID:     strings.TrimSpace(opts.SessionParentSessionID),
+			BranchName:          strings.TrimSpace(opts.SessionBranchName),
+			Lifecycle:           buildSessionLifecycleStatus(opts),
 		},
 		Plan: PlanStatus{
 			Active:    opts.PlanActive,
@@ -334,6 +360,30 @@ func Build(opts Options) Snapshot {
 	}
 }
 
+func buildSessionLifecycleStatus(opts Options) *SessionLifecycleStatus {
+	if strings.TrimSpace(opts.SessionID) == "" {
+		return nil
+	}
+	kind := strings.TrimSpace(opts.SessionLifecycleKind)
+	signal := strings.TrimSpace(opts.SessionLifecycleSignal)
+	if kind == "" {
+		kind = "saved_only"
+		signal = "saved only"
+		if opts.SessionMessages == 0 {
+			kind = "empty"
+			signal = "empty saved session"
+		}
+	}
+	if signal == "" {
+		signal = strings.ReplaceAll(kind, "_", " ")
+	}
+	return &SessionLifecycleStatus{
+		Kind:   kind,
+		Signal: signal,
+		Saved:  true,
+	}
+}
+
 func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintln(w, "Status")
 	fmt.Fprintf(w, "  Version          %s\n", snapshot.Version)
@@ -354,6 +404,15 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintf(w, "  Auth configured  %t\n", snapshot.Config.AuthConfigured)
 	if snapshot.Session.Active {
 		fmt.Fprintf(w, "  Session          %s (%d messages)\n", snapshot.Session.ID, snapshot.Session.MessageCount)
+		if snapshot.Session.Lifecycle != nil && snapshot.Session.Lifecycle.Signal != "" {
+			fmt.Fprintf(w, "  Session state    %s\n", snapshot.Session.Lifecycle.Signal)
+		}
+		if snapshot.Session.ParentSessionID != "" {
+			fmt.Fprintf(w, "  Session parent   %s\n", snapshot.Session.ParentSessionID)
+		}
+		if snapshot.Session.BranchName != "" {
+			fmt.Fprintf(w, "  Session branch   %s\n", snapshot.Session.BranchName)
+		}
 	} else {
 		fmt.Fprintf(w, "  Session          none (%d saved)\n", snapshot.Session.SavedCount)
 	}

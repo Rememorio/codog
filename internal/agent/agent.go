@@ -21093,10 +21093,12 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 	}
 	var sessionID, sessionPath string
 	var sessionMessages int
+	var sessionMetadata session.SessionMetadata
 	if active != nil {
 		sessionID = active.ID
 		sessionPath = active.Path
 		sessionMessages = len(active.Messages)
+		sessionMetadata = active.Metadata
 	}
 	var toolNames []string
 	if a.Tools != nil {
@@ -21191,6 +21193,11 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		SessionPath:                 sessionPath,
 		SessionMessages:             sessionMessages,
 		SessionCount:                sessionCount,
+		SessionCreatedAtMS:          timeMillis(sessionMetadata.CreatedAt),
+		SessionUpdatedAtMS:          timeMillis(sessionMetadata.UpdatedAt),
+		SessionModifiedEpochMillis:  timeMillis(sessionMetadata.ModifiedAt),
+		SessionParentSessionID:      sessionMetadata.ParentSessionID,
+		SessionBranchName:           sessionMetadata.BranchName,
 		GitStatus:                   gitRaw,
 		GitError:                    gitError,
 		GitFreshness:                gitFreshness,
