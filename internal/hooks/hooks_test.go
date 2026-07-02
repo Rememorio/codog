@@ -135,6 +135,21 @@ func TestSessionHooksMatchClaudeSourceAndReason(t *testing.T) {
 	require.Contains(t, string(data), `"reason":"resume"`)
 }
 
+func TestSessionStartOutputFromReportParsesHookSpecificOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{Workspace: t.TempDir()}.RunPayload(context.Background(), []string{`printf '%s' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"repo is warm","initialUserMessage":"continue from hook","watchPaths":["/tmp/a","/tmp/b"]}}'`}, Payload{
+		Event: "session_start",
+		Input: `{"hook_event_name":"SessionStart","source":"startup","session_id":"session-1"}`,
+	})
+	require.NoError(t, err)
+	output := SessionStartOutputFromReport(report)
+	require.Equal(t, []string{"repo is warm"}, output.AdditionalContexts)
+	require.Equal(t, []string{"continue from hook"}, output.InitialMessages)
+	require.Equal(t, []string{"/tmp/a", "/tmp/b"}, output.WatchPaths)
+}
+
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	t.Setenv("HOOK_TOKEN", "secret-token")
 	t.Setenv("HOOK_IGNORED", "ignored")

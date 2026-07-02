@@ -94,6 +94,12 @@ type RunReport struct {
 	Results []CommandResult `json:"results"`
 }
 
+type SessionStartOutput struct {
+	AdditionalContexts []string `json:"additional_contexts,omitempty"`
+	InitialMessages    []string `json:"initial_messages,omitempty"`
+	WatchPaths         []string `json:"watch_paths,omitempty"`
+}
+
 func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error {
 	payload := Payload{
 		Event: "pre_tool_use",
@@ -157,12 +163,17 @@ func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {
 }
 
 func (r Runner) SessionStart(ctx context.Context, input string) error {
+	_, err := r.SessionStartReport(ctx, input)
+	return err
+}
+
+func (r Runner) SessionStartReport(ctx context.Context, input string) (RunReport, error) {
 	payload := Payload{
 		Event: "session_start",
 		Tool:  sessionHookMatcherValue(input, "source"),
 		Input: input,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) SessionEnd(ctx context.Context, input string, reason string) error {
@@ -468,6 +479,64 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 		}
 	}
 	return report, nil
+}
+
+func SessionStartOutputFromReport(report RunReport) SessionStartOutput {
+	var out SessionStartOutput
+	for _, result := range report.Results {
+		if !result.Success {
+			continue
+		}
+		parsed, ok := parseSessionStartStdout(result.Stdout)
+		if !ok {
+			continue
+		}
+		out.AdditionalContexts = append(out.AdditionalContexts, parsed.AdditionalContexts...)
+		out.InitialMessages = append(out.InitialMessages, parsed.InitialMessages...)
+		out.WatchPaths = append(out.WatchPaths, parsed.WatchPaths...)
+	}
+	out.AdditionalContexts = compactStrings(out.AdditionalContexts)
+	out.InitialMessages = compactStrings(out.InitialMessages)
+	out.WatchPaths = compactStrings(out.WatchPaths)
+	return out
+}
+
+func parseSessionStartStdout(stdout string) (SessionStartOutput, bool) {
+	stdout = strings.TrimSpace(stdout)
+	if stdout == "" || !strings.HasPrefix(stdout, "{") {
+		return SessionStartOutput{}, false
+	}
+	var raw struct {
+		AdditionalContext  string   `json:"additionalContext"`
+		InitialUserMessage string   `json:"initialUserMessage"`
+		WatchPaths         []string `json:"watchPaths"`
+		HookSpecificOutput *struct {
+			HookEventName      string   `json:"hookEventName"`
+			AdditionalContext  string   `json:"additionalContext"`
+			InitialUserMessage string   `json:"initialUserMessage"`
+			WatchPaths         []string `json:"watchPaths"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		return SessionStartOutput{}, false
+	}
+	output := SessionStartOutput{
+		AdditionalContexts: []string{raw.AdditionalContext},
+		InitialMessages:    []string{raw.InitialUserMessage},
+		WatchPaths:         append([]string(nil), raw.WatchPaths...),
+	}
+	if raw.HookSpecificOutput != nil {
+		output.AdditionalContexts = append(output.AdditionalContexts, raw.HookSpecificOutput.AdditionalContext)
+		output.InitialMessages = append(output.InitialMessages, raw.HookSpecificOutput.InitialUserMessage)
+		output.WatchPaths = append(output.WatchPaths, raw.HookSpecificOutput.WatchPaths...)
+	}
+	output.AdditionalContexts = compactStrings(output.AdditionalContexts)
+	output.InitialMessages = compactStrings(output.InitialMessages)
+	output.WatchPaths = compactStrings(output.WatchPaths)
+	if len(output.AdditionalContexts) == 0 && len(output.InitialMessages) == 0 && len(output.WatchPaths) == 0 {
+		return SessionStartOutput{}, false
+	}
+	return output, true
 }
 
 func (r Runner) hookInputData(payload Payload) ([]byte, error) {

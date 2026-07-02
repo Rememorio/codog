@@ -38341,7 +38341,99 @@ func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, so
 	}
 	runner := a.lifecycleHookRunner()
 	runner.SessionID = sess.ID
-	return runner.SessionStart(ctx, string(data))
+	report, err := runner.SessionStartReport(ctx, string(data))
+	if err != nil {
+		return err
+	}
+	return a.applySessionStartHookOutput(sess, hooks.SessionStartOutputFromReport(report))
+}
+
+func (a *App) applySessionStartHookOutput(sess *session.Session, output hooks.SessionStartOutput) error {
+	if sess == nil || a.Sessions == nil {
+		return nil
+	}
+	if len(output.AdditionalContexts) > 0 {
+		text := "SessionStart hook additional context:\n\n" + strings.Join(output.AdditionalContexts, "\n\n")
+		if err := a.appendHookSessionMessage(sess, anthropic.TextMessage("user", text)); err != nil {
+			return err
+		}
+	}
+	for _, message := range output.InitialMessages {
+		if err := a.appendHookSessionMessage(sess, anthropic.TextMessage("user", message)); err != nil {
+			return err
+		}
+	}
+	if len(output.WatchPaths) > 0 {
+		if err := a.persistSessionStartWatchPaths(sess.ID, output.WatchPaths); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) appendHookSessionMessage(sess *session.Session, msg anthropic.Message) error {
+	if err := a.Sessions.Append(sess.ID, msg); err != nil {
+		return err
+	}
+	sess.Messages = append(sess.Messages, msg)
+	return nil
+}
+
+type sessionStartWatchPathReport struct {
+	Kind      string   `json:"kind"`
+	SessionID string   `json:"session_id"`
+	Paths     []string `json:"paths"`
+}
+
+func (a *App) persistSessionStartWatchPaths(sessionID string, paths []string) error {
+	configHome := strings.TrimSpace(a.Config.ConfigHome)
+	if configHome == "" || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	clean := cleanedStrings(paths)
+	if len(clean) == 0 {
+		return nil
+	}
+	dir := filepath.Join(configHome, "hooks", "watch-paths")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(sessionStartWatchPathReport{
+		Kind:      "session_start_watch_paths",
+		SessionID: sessionID,
+		Paths:     clean,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, safeHookStateName(sessionID)+".json"), append(data, '\n'), 0o644)
+}
+
+func safeHookStateName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "session"
+	}
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	name := strings.Trim(builder.String(), ".")
+	if name == "" {
+		return "session"
+	}
+	return name
 }
 
 func (a *App) ensureSessionIdentity(sess *session.Session, purpose string, input string) error {

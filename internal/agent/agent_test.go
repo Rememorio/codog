@@ -11116,6 +11116,47 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestSessionStartHookOutputUpdatesSessionContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	watchPath := filepath.Join(workspace, "watched.md")
+	hookOutput := `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"repo is already indexed","initialUserMessage":"continue from hook","watchPaths":["` + filepath.ToSlash(watchPath) + `"]}}`
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+			Hooks: config.HookConfig{
+				SessionStartCommands: []config.HookCommand{{Matcher: "startup", Command: "printf '%s' " + shellQuote(hookOutput)}},
+			},
+		},
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       io.Discard,
+	}
+	sess, err := app.Sessions.Open("hook-session")
+	require.NoError(t, err)
+
+	require.NoError(t, app.runSessionStartHook(context.Background(), sess, "startup"))
+	require.Len(t, sess.Messages, 2)
+	require.Equal(t, "user", sess.Messages[0].Role)
+	require.Contains(t, sess.Messages[0].Content[0].Text, "SessionStart hook additional context")
+	require.Contains(t, sess.Messages[0].Content[0].Text, "repo is already indexed")
+	require.Equal(t, "continue from hook", sess.Messages[1].Content[0].Text)
+
+	reloaded, err := app.Sessions.OpenExisting("hook-session")
+	require.NoError(t, err)
+	require.Len(t, reloaded.Messages, 2)
+	require.Contains(t, reloaded.Messages[0].Content[0].Text, "repo is already indexed")
+	watchData, err := os.ReadFile(filepath.Join(configHome, "hooks", "watch-paths", "hook-session.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(watchData), filepath.ToSlash(watchPath))
+}
+
 func TestPluginHooksLoadedByRunCLI(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
