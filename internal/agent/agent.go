@@ -855,9 +855,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "upgrade":
-		return app.Upgrade(ctx, rest)
+		if err := app.Upgrade(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "install":
-		return app.Install(ctx, rest)
+		if err := app.Install(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "enterprise":
 		if err := app.Enterprise(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -3501,10 +3507,14 @@ func stripJSONStatusFlags(command string, args []string) ([]string, error) {
 		case arg == "--output-format":
 			index++
 			if index >= len(args) {
-				return nil, fmt.Errorf("%s output format is required", command)
+				return nil, missingFlagValueError{
+					Command: command,
+					Flag:    "--output-format",
+					Usage:   fmt.Sprintf("codog %s [--json|--output-format json]", command),
+				}
 			}
 			if !strings.EqualFold(args[index], "json") {
-				return nil, fmt.Errorf("unknown %s output format %q", command, args[index])
+				return nil, outputFormatError{Command: command, Value: args[index], Expected: []string{"json"}}
 			}
 		default:
 			out = append(out, arg)

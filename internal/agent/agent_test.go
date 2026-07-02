@@ -20166,6 +20166,27 @@ func TestUpdaterErrorsHonorGlobalJSONFormat(t *testing.T) {
 			errorKind: "unexpected_extra_args",
 			contains:  []string{`"command": "updater"`, `"bogus"`},
 		},
+		{
+			name:      "upgrade verify missing URL and public key",
+			args:      []string{"upgrade", "verify"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "updater verify"`, `"argument": "URL PUBLIC_KEY"`},
+		},
+		{
+			name:      "upgrade install missing artifact",
+			args:      []string{"upgrade", "install"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "updater install"`, `"argument": "ARTIFACT"`},
+		},
+		{
+			name:      "install invalid output format",
+			args:      []string{"install", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`, `"json"`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := captureStdout(t, func() error {
