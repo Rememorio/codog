@@ -246,12 +246,41 @@ type PrivacyConfig struct {
 }
 
 type MCPServerConfig struct {
-	Command  string            `json:"command,omitempty"`
-	Args     []string          `json:"args,omitempty"`
-	Env      []string          `json:"env,omitempty"`
-	URL      string            `json:"url,omitempty"`
-	Headers  map[string]string `json:"headers,omitempty"`
-	Required bool              `json:"required,omitempty"`
+	Command       string            `json:"command,omitempty"`
+	Args          []string          `json:"args,omitempty"`
+	Env           []string          `json:"env,omitempty"`
+	URL           string            `json:"url,omitempty"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	HeadersHelper string            `json:"headers_helper,omitempty"`
+	Required      bool              `json:"required,omitempty"`
+}
+
+func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
+	type rawMCPServerConfig struct {
+		Command            string            `json:"command,omitempty"`
+		Args               []string          `json:"args,omitempty"`
+		Env                []string          `json:"env,omitempty"`
+		URL                string            `json:"url,omitempty"`
+		Headers            map[string]string `json:"headers,omitempty"`
+		HeadersHelper      string            `json:"headers_helper,omitempty"`
+		HeadersHelperCamel string            `json:"headersHelper,omitempty"`
+		Required           bool              `json:"required,omitempty"`
+	}
+	var raw rawMCPServerConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Command = raw.Command
+	m.Args = raw.Args
+	m.Env = raw.Env
+	m.URL = raw.URL
+	m.Headers = raw.Headers
+	m.HeadersHelper = raw.HeadersHelper
+	if strings.TrimSpace(raw.HeadersHelperCamel) != "" {
+		m.HeadersHelper = raw.HeadersHelperCamel
+	}
+	m.Required = raw.Required
+	return nil
 }
 
 type SandboxConfig struct {

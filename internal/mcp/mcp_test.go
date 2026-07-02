@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,9 +74,10 @@ func TestCallToolAndReadResource(t *testing.T) {
 func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
 		var req map[string]any
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(t, "Bearer dynamic", r.Header.Get("Authorization"))
+		require.Equal(t, "helper-token", r.Header.Get("X-Helper"))
 		method, _ := req["method"].(string)
 		id := req["id"]
 		switch method {
@@ -111,7 +113,11 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := config.MCPServerConfig{URL: server.URL + "/mcp?token=secret", Headers: map[string]string{"Authorization": "Bearer token"}}
+	cfg := config.MCPServerConfig{
+		URL:           server.URL + "/mcp?token=secret",
+		Headers:       map[string]string{"Authorization": "Bearer static"},
+		HeadersHelper: headersHelperCommand(),
+	}
 	ready := Preflight(context.Background(), "remote", cfg)
 	require.Equal(t, "ok", ready.Status)
 	require.Equal(t, "ready", ready.Lifecycle.Phase)
@@ -141,11 +147,26 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 	require.True(t, description.Valid)
 	require.Equal(t, "http", description.Transport.ID)
 	require.Equal(t, []string{"Authorization"}, description.Details.HeaderKeys)
+	require.True(t, description.Details.HeadersHelperConfigured)
 	require.Contains(t, description.Details.URL, "token=%5Bredacted%5D")
 	require.NotContains(t, description.Details.URL, "secret")
 	require.Contains(t, ServerSignature(cfg), "token=%5Bredacted%5D")
 	require.NotContains(t, ServerSignature(cfg), "secret")
 	require.NotContains(t, ServerConfigHash(cfg), "secret")
+	require.NotContains(t, ServerConfigHash(cfg), "dynamic")
+}
+
+func TestParseHeadersHelperOutput(t *testing.T) {
+	fromJSON, err := parseHeadersHelperOutput([]byte(`{"Authorization":"Bearer token","X-Trace":"trace"}`))
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"Authorization": "Bearer token", "X-Trace": "trace"}, fromJSON)
+
+	fromLines, err := parseHeadersHelperOutput([]byte("Authorization: Bearer token\nX-Trace=trace\n"))
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"Authorization": "Bearer token", "X-Trace": "trace"}, fromLines)
+
+	_, err = parseHeadersHelperOutput([]byte("not-a-header"))
+	require.ErrorContains(t, err, "KEY=VALUE")
 }
 
 func TestListToolsIncludesProcessStderr(t *testing.T) {
@@ -460,6 +481,29 @@ func TestMCPHelperProcess(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+func TestMCPHeadersHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_MCP_HEADERS_HELPER") != "1" {
+		return
+	}
+	fmt.Println(`{"Authorization":"Bearer dynamic","X-Helper":"helper-token"}`)
+	os.Exit(0)
+}
+
+func shellQuote(value string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func headersHelperCommand() string {
+	command := shellQuote(os.Args[0]) + " -test.run=TestMCPHeadersHelperProcess"
+	if runtime.GOOS == "windows" {
+		return "set CODOG_MCP_HEADERS_HELPER=1&& " + command
+	}
+	return "CODOG_MCP_HEADERS_HELPER=1 " + command
 }
 
 func writeMCP(id any, result map[string]any) {

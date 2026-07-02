@@ -384,6 +384,23 @@ func TestLoadTemperatureConfigEnvAndFlags(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_temperature")
 }
 
+func TestLoadMCPHeadersHelperAliases(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"mcp_servers": {
+			"snake": {"url": "https://snake.example/mcp", "headers_helper": "./snake-helper"},
+			"camel": {"url": "https://camel.example/mcp", "headersHelper": "./camel-helper"}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "./snake-helper", cfg.MCPServers["snake"].HeadersHelper)
+	require.Equal(t, "./camel-helper", cfg.MCPServers["camel"].HeadersHelper)
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

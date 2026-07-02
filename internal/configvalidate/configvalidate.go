@@ -190,6 +190,8 @@ var mcpServerFields = []fieldSpec{
 	{"env", FieldStringArray},
 	{"url", FieldString},
 	{"headers", FieldObject},
+	{"headers_helper", FieldString},
+	{"headersHelper", FieldString},
 	{"required", FieldBool},
 }
 

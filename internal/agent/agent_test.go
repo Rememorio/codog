@@ -12824,16 +12824,35 @@ func TestMCPAddCommandCompatibility(t *testing.T) {
 	require.Contains(t, string(stored), `"A=B"`)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "add", "remote", "--url", "https://example.test/mcp", "--header", "Authorization=Bearer token", "--required"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "add", "remote", "--url", "https://example.test/mcp", "--header", "Authorization=Bearer token", "--headers-helper", "./headers-helper", "--required"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, `"name": "remote"`)
 	require.Contains(t, out, `"required": true`)
+	require.Contains(t, out, `"headers_helper": "./headers-helper"`)
 	stored, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(stored), `"url": "https://example.test/mcp"`)
 	require.Contains(t, string(stored), `"Authorization": "Bearer token"`)
+	require.Contains(t, string(stored), `"headers_helper": "./headers-helper"`)
 	require.Contains(t, string(stored), `"required": true`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "show", "remote"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var show mcpShowReport
+	require.NoError(t, json.Unmarshal([]byte(out), &show))
+	require.NotNil(t, show.Server)
+	require.True(t, show.Server.Details.HeadersHelperConfigured)
+	require.NotContains(t, out, "./headers-helper")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "mcp", "show", "remote"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Headers helper   configured")
+	require.NotContains(t, out, "./headers-helper")
 }
 
 func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {

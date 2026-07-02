@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -227,11 +228,12 @@ type ServerTransport struct {
 
 // ServerDetails contains redacted transport-specific configuration details.
 type ServerDetails struct {
-	Command    string   `json:"command,omitempty"`
-	URL        string   `json:"url,omitempty"`
-	ArgsCount  int      `json:"args_count"`
-	EnvKeys    []string `json:"env_keys,omitempty"`
-	HeaderKeys []string `json:"header_keys,omitempty"`
+	Command                 string   `json:"command,omitempty"`
+	URL                     string   `json:"url,omitempty"`
+	ArgsCount               int      `json:"args_count"`
+	EnvKeys                 []string `json:"env_keys,omitempty"`
+	HeaderKeys              []string `json:"header_keys,omitempty"`
+	HeadersHelperConfigured bool     `json:"headers_helper_configured,omitempty"`
 }
 
 // ServerDescriptor is a redacted, user-facing description of one MCP server.
@@ -325,9 +327,10 @@ func ServerSignature(server config.MCPServerConfig) string {
 func ServerConfigHash(server config.MCPServerConfig) string {
 	if isHTTPServer(server) {
 		rendered := fmt.Sprintf(
-			"http|%s|%s|",
+			"http|%s|%s|%s|",
 			UnwrapCCRProxyURL(server.URL),
 			renderHeaderSignature(server.Headers),
+			strings.TrimSpace(server.HeadersHelper),
 		)
 		return stableHexHash(fmt.Sprintf("required:%t|%s", server.Required, rendered))
 	}
@@ -350,8 +353,9 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 			Transport: ServerTransport{ID: "http", Label: "http"},
 			Summary:   httpServerSummary(server),
 			Details: ServerDetails{
-				URL:        redactedURL(server.URL),
-				HeaderKeys: headerKeys(server.Headers),
+				URL:                     redactedURL(server.URL),
+				HeaderKeys:              headerKeys(server.Headers),
+				HeadersHelperConfigured: strings.TrimSpace(server.HeadersHelper) != "",
 			},
 		}
 	}
@@ -389,7 +393,13 @@ func httpServerSummary(server config.MCPServerConfig) string {
 		return "missing url"
 	}
 	if len(server.Headers) == 0 {
+		if strings.TrimSpace(server.HeadersHelper) != "" {
+			return url + " (headers helper)"
+		}
 		return url
+	}
+	if strings.TrimSpace(server.HeadersHelper) != "" {
+		return fmt.Sprintf("%s (%d header keys, headers helper)", url, len(server.Headers))
 	}
 	return fmt.Sprintf("%s (%d header keys)", url, len(server.Headers))
 }
@@ -1128,7 +1138,11 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", "2024-11-05")
-	for key, value := range server.Headers {
+	headers, err := resolveHTTPHeaders(ctx, server)
+	if err != nil {
+		return rpcResponse{}, "", err
+	}
+	for key, value := range headers {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			continue
@@ -1169,6 +1183,93 @@ func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequ
 		return rpcResponse{}, nextSessionID, err
 	}
 	return decoded, nextSessionID, nil
+}
+
+func resolveHTTPHeaders(ctx context.Context, server config.MCPServerConfig) (map[string]string, error) {
+	headers := map[string]string{}
+	for key, value := range server.Headers {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		headers[key] = value
+	}
+	helperHeaders, err := headersFromHelper(ctx, server.HeadersHelper)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range helperHeaders {
+		headers[key] = value
+	}
+	return headers, nil
+}
+
+func headersFromHelper(ctx context.Context, helper string) (map[string]string, error) {
+	helper = strings.TrimSpace(helper)
+	if helper == "" {
+		return nil, nil
+	}
+	helperCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	name, args := shellCommand(helper)
+	output, err := exec.CommandContext(helperCtx, name, args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("mcp headers_helper failed: %w: %s", err, clipMCPText(strings.TrimSpace(string(output)), 2048))
+	}
+	return parseHeadersHelperOutput(output)
+}
+
+func shellCommand(command string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "cmd", []string{"/C", command}
+	}
+	return "/bin/sh", []string{"-c", command}
+}
+
+func parseHeadersHelperOutput(output []byte) (map[string]string, error) {
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(text, "{") {
+		var raw map[string]string
+		if err := json.Unmarshal([]byte(text), &raw); err != nil {
+			return nil, fmt.Errorf("mcp headers_helper JSON output is invalid: %w", err)
+		}
+		return compactHeaderMap(raw), nil
+	}
+	headers := map[string]string{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			key, value, ok = strings.Cut(line, ":")
+		}
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("mcp headers_helper line must use KEY=VALUE or KEY: VALUE: %s", line)
+		}
+		headers[key] = strings.TrimSpace(value)
+	}
+	return headers, nil
+}
+
+func compactHeaderMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func validateHTTPServerURL(rawURL string) (string, error) {

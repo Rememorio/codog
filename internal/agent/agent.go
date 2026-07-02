@@ -39239,6 +39239,9 @@ func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
 		if len(report.Server.Details.HeaderKeys) > 0 {
 			fmt.Fprintf(out, "  Header keys      %s\n", strings.Join(report.Server.Details.HeaderKeys, ", "))
 		}
+		if report.Server.Details.HeadersHelperConfigured {
+			fmt.Fprintln(out, "  Headers helper   configured")
+		}
 		fmt.Fprintf(out, "  Signature        %s\n", report.Signature)
 		fmt.Fprintf(out, "  Config hash      %s\n", report.ConfigHash)
 		return
@@ -39317,7 +39320,7 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] | add NAME --url URL [--header KEY=VALUE] [--required] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] | add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
 
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
@@ -39486,14 +39489,14 @@ func (a *App) mcpAdd(args []string, format string) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, errMCPAddMissingName):
-			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--required].", format)
+			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required].", format)
 		case errors.Is(err, errMCPAddMissingCommand):
-			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--required].", format)
+			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required].", format)
 		}
 		return err
 	}
 	path := filepath.Join(a.Config.ConfigHome, "config.json")
-	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers, Required: req.Required}
+	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers, HeadersHelper: req.HeadersHelper, Required: req.Required}
 	report, err := config.SetFileValue(path, "mcp_servers."+req.Name, server)
 	if err != nil {
 		return err
@@ -39724,13 +39727,14 @@ func renderXAAIDPReport(out io.Writer, report xaaIDPReport) {
 }
 
 type mcpAddRequest struct {
-	Name     string
-	Command  string
-	Args     []string
-	Env      []string
-	URL      string
-	Headers  map[string]string
-	Required bool
+	Name          string
+	Command       string
+	Args          []string
+	Env           []string
+	URL           string
+	Headers       map[string]string
+	HeadersHelper string
+	Required      bool
 }
 
 var (
@@ -39773,6 +39777,16 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 			if err := addMCPHeader(req.Headers, strings.TrimPrefix(arg, "--header=")); err != nil {
 				return req, err
 			}
+		case arg == "--headers-helper" || arg == "--headersHelper":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mcp add headers helper value is required")
+			}
+			req.HeadersHelper = args[index]
+		case strings.HasPrefix(arg, "--headers-helper="):
+			req.HeadersHelper = strings.TrimPrefix(arg, "--headers-helper=")
+		case strings.HasPrefix(arg, "--headersHelper="):
+			req.HeadersHelper = strings.TrimPrefix(arg, "--headersHelper=")
 		case arg == "--required":
 			req.Required = true
 		case arg == "--optional":
@@ -39805,12 +39819,16 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		}
 		req.URL = strings.TrimSpace(req.URL)
 	} else {
+		if strings.TrimSpace(req.HeadersHelper) != "" {
+			return req, errors.New("mcp add --headers-helper requires --url")
+		}
 		if len(positionals) < 2 {
 			return req, errMCPAddMissingCommand
 		}
 		req.Command = positionals[1]
 		req.Args = append([]string(nil), positionals[2:]...)
 	}
+	req.HeadersHelper = strings.TrimSpace(req.HeadersHelper)
 	req.Env = compactMCPEnv(req.Env)
 	for _, value := range req.Env {
 		if key, _, ok := strings.Cut(value, "="); !ok || strings.TrimSpace(key) == "" {
@@ -45130,7 +45148,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"mcp",
 			"mcp",
 			"codog mcp [list|serve|self|show|info|describe|add|remove|tools [SERVER]|auth [SERVER]|call|resources [SERVER]|resource-templates [SERVER]|read|prompts [SERVER]|prompt]",
-			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp tools|auth|resources|resource-templates|prompts [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio MCP clients, tools, resources, and prompts. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
+			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|auth|resources|resource-templates|prompts [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, and prompts. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,

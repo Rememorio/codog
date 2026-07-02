@@ -35,6 +35,7 @@ func resolvePluginMCPServer(manifest Manifest, server config.MCPServerConfig) co
 	server.Args = argsub.SubstituteVariablesInList(server.Args, variables)
 	server.URL = argsub.SubstituteVariables(server.URL, variables)
 	server.Headers = substituteStringMapVariables(server.Headers, variables)
+	server.HeadersHelper = argsub.SubstituteVariables(server.HeadersHelper, variables)
 	env := []string{
 		"CLAUDE_PLUGIN_ROOT=" + variables["CLAUDE_PLUGIN_ROOT"],
 		"CLAUDE_PLUGIN_DATA=" + variables["CLAUDE_PLUGIN_DATA"],
