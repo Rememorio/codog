@@ -23,6 +23,7 @@ import (
 	"github.com/Rememorio/codog/internal/usage"
 )
 
+// Report summarizes one deterministic mock parity harness run.
 type Report struct {
 	OK            bool             `json:"ok"`
 	Passed        int              `json:"passed"`
@@ -37,6 +38,7 @@ type Report struct {
 	Scenarios     []ScenarioReport `json:"scenarios"`
 }
 
+// ScenarioReport records the outcome of one mock parity scenario.
 type ScenarioReport struct {
 	Name                 string        `json:"name"`
 	OK                   bool          `json:"ok"`
@@ -68,6 +70,8 @@ type scenario struct {
 	verifyRequests      func([]anthropic.Request) error
 }
 
+// Run executes the deterministic mock parity harness against the local agent
+// loop without contacting an external provider.
 func Run(ctx context.Context) (Report, error) {
 	scenarios := []scenario{
 		{

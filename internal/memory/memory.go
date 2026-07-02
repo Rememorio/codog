@@ -346,7 +346,7 @@ func Search(workspace string, query string, limit int) (SearchReport, error) {
 		}
 		return left.match.LineNumber < right.match.LineNumber
 	})
-	out := make([]SearchMatch, 0, minInt(limit, len(matches)))
+	out := make([]SearchMatch, 0, min(limit, len(matches)))
 	for index, match := range matches {
 		if index >= limit {
 			break
@@ -691,11 +691,4 @@ func escapeAttr(value string) string {
 	value = strings.ReplaceAll(value, "\"", "&quot;")
 	value = strings.ReplaceAll(value, "<", "&lt;")
 	return value
-}
-
-func minInt(a int, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

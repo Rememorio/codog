@@ -18,10 +18,13 @@ import (
 
 const defaultSystemPrompt = "You are Codog, a Go-native coding agent CLI. Be concise, inspect before editing, and use tools when they materially help."
 
+// ModelClient streams one Anthropic-compatible request and returns the final
+// assistant message.
 type ModelClient interface {
 	Stream(context.Context, anthropic.Request, func(string)) (anthropic.AssistantMessage, error)
 }
 
+// ToolCall records one tool invocation and the result returned to the model.
 type ToolCall struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -30,6 +33,7 @@ type ToolCall struct {
 	IsError bool   `json:"is_error"`
 }
 
+// TurnResult is the complete state produced by one runner invocation.
 type TurnResult struct {
 	Messages      []anthropic.Message `json:"messages"`
 	MessageUsages []MessageUsage      `json:"message_usages,omitempty"`
@@ -37,11 +41,15 @@ type TurnResult struct {
 	Iterations    int                 `json:"iterations"`
 }
 
+// MessageUsage links provider usage metadata to the assistant message that
+// produced it.
 type MessageUsage struct {
 	MessageIndex int             `json:"message_index"`
 	Usage        anthropic.Usage `json:"usage"`
 }
 
+// Runner coordinates model streaming, tool execution, hooks, and compaction
+// for a single user prompt.
 type Runner struct {
 	Config           config.Config
 	Client           ModelClient
@@ -56,6 +64,8 @@ type Runner struct {
 	OnToolUse        func(ToolCall)
 }
 
+// Run submits input with prior messages, executes tool loops until the model
+// stops, and returns the updated conversation state.
 func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input string) (TurnResult, error) {
 	if r.Client == nil {
 		return TurnResult{}, errors.New("missing model client")
@@ -350,6 +360,8 @@ func (r Runner) emitToolUse(call ToolCall) {
 	}
 }
 
+// CompactMessages replaces older messages with a synthetic summary while
+// preserving the most recent keep messages verbatim.
 func CompactMessages(messages []anthropic.Message, keep int) []anthropic.Message {
 	if !shouldCompactMessages(messages, keep) {
 		return messages
@@ -367,6 +379,7 @@ func shouldCompactMessages(messages []anthropic.Message, keep int) bool {
 	return keep > 0 && len(messages) > keep
 }
 
+// CompactHookPayload returns the JSON payload sent to pre-compaction hooks.
 func CompactHookPayload(source string, sessionID string, messages int, keep int) string {
 	data, err := json.Marshal(map[string]any{
 		"source":     source,
@@ -380,6 +393,7 @@ func CompactHookPayload(source string, sessionID string, messages int, keep int)
 	return string(data)
 }
 
+// MarshalToolInput renders a raw tool input object for logging and callbacks.
 func MarshalToolInput(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return "{}"

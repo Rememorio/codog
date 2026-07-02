@@ -24273,24 +24273,11 @@ func levenshteinDistance(a, b string) int {
 			if ra != rb {
 				cost = 1
 			}
-			curr[j+1] = minInt(curr[j]+1, prev[j+1]+1, prev[j]+cost)
+			curr[j+1] = min(curr[j]+1, prev[j+1]+1, prev[j]+cost)
 		}
 		prev, curr = curr, prev
 	}
 	return prev[len(br)]
-}
-
-func minInt(values ...int) int {
-	if len(values) == 0 {
-		return 0
-	}
-	min := values[0]
-	for _, value := range values[1:] {
-		if value < min {
-			min = value
-		}
-	}
-	return min
 }
 
 func parseSimpleOutputFormat(command string, args []string) (string, error) {
@@ -30979,7 +30966,6 @@ func (a *App) Git(args []string) error {
 	default:
 		return fmt.Errorf("unknown git command %q", args[0])
 	}
-	return nil
 }
 
 func rewriteLeadingGitOutputFormat(args []string) ([]string, error) {

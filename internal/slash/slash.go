@@ -551,7 +551,7 @@ func levenshteinDistance(left string, right string) int {
 			if leftRune != rightRune {
 				substitutionCost = 1
 			}
-			current[rightIndex+1] = minInt(
+			current[rightIndex+1] = min(
 				previous[rightIndex+1]+1,
 				current[rightIndex]+1,
 				previous[rightIndex]+substitutionCost,
@@ -560,16 +560,6 @@ func levenshteinDistance(left string, right string) int {
 		previous, current = current, previous
 	}
 	return previous[len(rightRunes)]
-}
-
-func minInt(values ...int) int {
-	best := values[0]
-	for _, value := range values[1:] {
-		if value < best {
-			best = value
-		}
-	}
-	return best
 }
 
 func Candidates(prefix string) []string {

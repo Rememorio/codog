@@ -10,6 +10,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 )
 
+// Options configures the local mock rate-limit server.
 type Options struct {
 	Addr         string
 	Failures     int
@@ -17,6 +18,7 @@ type Options struct {
 	Text         string
 }
 
+// Report describes the mock server endpoint and rate-limit behavior.
 type Report struct {
 	Kind         string   `json:"kind"`
 	Action       string   `json:"action"`
@@ -30,6 +32,7 @@ type Report struct {
 	Messages     []string `json:"messages,omitempty"`
 }
 
+// Normalize fills defaults and clamps invalid option values.
 func Normalize(options Options) Options {
 	if strings.TrimSpace(options.Addr) == "" {
 		options.Addr = ":8089"
@@ -46,6 +49,7 @@ func Normalize(options Options) Options {
 	return options
 }
 
+// BuildReport returns a user-facing description of the mock server setup.
 func BuildReport(action string, options Options) Report {
 	options = Normalize(options)
 	baseURL := BaseURL(options.Addr)
@@ -70,6 +74,8 @@ func BuildReport(action string, options Options) Report {
 	}
 }
 
+// Handler returns an Anthropic-compatible HTTP handler with deterministic rate
+// limiting behavior.
 func Handler(options Options) http.Handler {
 	options = Normalize(options)
 	retryAfter := ""
@@ -87,6 +93,7 @@ func Handler(options Options) http.Handler {
 	}.Handler()
 }
 
+// BaseURL converts a listen address into the client-facing base URL.
 func BaseURL(addr string) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
@@ -102,6 +109,7 @@ func BaseURL(addr string) string {
 	return strings.TrimRight(host, "/")
 }
 
+// RenderText writes a human-readable mock server report.
 func RenderText(out io.Writer, report Report) {
 	fmt.Fprintln(out, "Mock Limits")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)

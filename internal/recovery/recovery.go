@@ -271,7 +271,7 @@ func (s Store) Attempt(scenario Scenario, opts AttemptOptions) (AttemptReport, e
 	}
 
 	entry.AttemptCount++
-	entry.AttemptsRemaining = maxInt(0, recipe.MaxAttempts-entry.AttemptCount)
+	entry.AttemptsRemaining = max(0, recipe.MaxAttempts-entry.AttemptCount)
 	entry.State = StateRunning
 	entry.StartedAt = &now
 	entry.FinishedAt = nil
@@ -433,11 +433,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func maxInt(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }

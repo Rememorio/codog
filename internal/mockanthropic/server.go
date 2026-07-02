@@ -16,10 +16,6 @@ type Server struct {
 
 	RateLimitFailures int
 	RetryAfter        string
-
-	mu      sync.Mutex
-	request int
-	attempt int
 }
 
 type Turn struct {
@@ -34,25 +30,32 @@ type ToolUse struct {
 	InputDeltas []string
 }
 
+type handlerState struct {
+	config  Server
+	mu      sync.Mutex
+	request int
+	attempt int
+}
+
 func (s Server) Handler() http.Handler {
-	server := &s
+	state := &handlerState{config: s}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/messages", server.messages)
+	mux.HandleFunc("/v1/messages", state.messages)
 	return mux
 }
 
-func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
+func (s *handlerState) messages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.OnRequest != nil {
+	if s.config.OnRequest != nil {
 		data, _ := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
-		s.OnRequest(json.RawMessage(append([]byte(nil), data...)))
+		s.config.OnRequest(json.RawMessage(append([]byte(nil), data...)))
 	}
 	if s.shouldRateLimit() {
-		if strings.TrimSpace(s.RetryAfter) != "" {
-			w.Header().Set("retry-after", strings.TrimSpace(s.RetryAfter))
+		if strings.TrimSpace(s.config.RetryAfter) != "" {
+			w.Header().Set("retry-after", strings.TrimSpace(s.config.RetryAfter))
 		}
 		http.Error(w, "mock rate limit", http.StatusTooManyRequests)
 		return
@@ -106,25 +109,25 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	writeEvent(w, map[string]any{"type": "message_stop"})
 }
 
-func (s *Server) shouldRateLimit() bool {
+func (s *handlerState) shouldRateLimit() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.attempt++
-	return s.RateLimitFailures > 0 && s.attempt <= s.RateLimitFailures
+	return s.config.RateLimitFailures > 0 && s.attempt <= s.config.RateLimitFailures
 }
 
-func (s *Server) nextTurn() Turn {
+func (s *handlerState) nextTurn() Turn {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.Turns) == 0 {
-		return Turn{Text: s.Text}
+	if len(s.config.Turns) == 0 {
+		return Turn{Text: s.config.Text}
 	}
 	index := s.request
 	s.request++
-	if index >= len(s.Turns) {
-		index = len(s.Turns) - 1
+	if index >= len(s.config.Turns) {
+		index = len(s.config.Turns) - 1
 	}
-	return s.Turns[index]
+	return s.config.Turns[index]
 }
 
 func writeTextBlock(w http.ResponseWriter, index int, text string) {

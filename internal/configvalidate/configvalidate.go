@@ -646,24 +646,11 @@ func editDistance(left, right string) int {
 			if leftRune != rightRune {
 				cost = 1
 			}
-			current[rightIndex+1] = minInt(previous[rightIndex+1]+1, current[rightIndex]+1, previous[rightIndex]+cost)
+			current[rightIndex+1] = min(previous[rightIndex+1]+1, current[rightIndex]+1, previous[rightIndex]+cost)
 		}
 		copy(previous, current)
 	}
 	return previous[len(rightRunes)]
-}
-
-func minInt(values ...int) int {
-	if len(values) == 0 {
-		return 0
-	}
-	out := values[0]
-	for _, value := range values[1:] {
-		if value < out {
-			out = value
-		}
-	}
-	return out
 }
 
 func findKeyLine(source []byte, key string) *int {
