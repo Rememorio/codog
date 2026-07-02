@@ -3977,6 +3977,19 @@ func risky(value any) {
 	require.True(t, resumedHooksRun.Results[0].Success)
 	require.Contains(t, resumedHooksRun.Results[0].Stdout, "hook-ok")
 
+	watchPathsDir := filepath.Join(configHome, "hooks", "watch-paths")
+	require.NoError(t, os.MkdirAll(watchPathsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(watchPathsDir, "resume-slash.json"), []byte(`{"kind":"session_start_watch_paths","session_id":"resume-slash","paths":["main.go"]}`), 0o644))
+	out, err = runResumedJSON("/hooks", "watch-paths", "list", "resume-slash")
+	require.NoError(t, err)
+	var resumedHooksWatchPaths hooksWatchPathsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHooksWatchPaths))
+	require.Equal(t, "hooks_watch_paths", resumedHooksWatchPaths.Kind)
+	require.Equal(t, "list", resumedHooksWatchPaths.Action)
+	require.Equal(t, "ok", resumedHooksWatchPaths.Status)
+	require.Equal(t, "resume-slash", resumedHooksWatchPaths.SessionID)
+	require.Equal(t, []string{"main.go"}, resumedHooksWatchPaths.Paths)
+
 	out, err = runResumedJSON("/agents", "list")
 	require.NoError(t, err)
 	var resumedAgents agentsListReport

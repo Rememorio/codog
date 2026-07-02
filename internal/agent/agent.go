@@ -25205,7 +25205,7 @@ func (a *App) runResumedHooksSlash(ctx context.Context, args []string, format st
 		return err
 	}
 	switch req.Action {
-	case "list", "health", "run":
+	case "list", "health", "run", "watch-paths":
 		return a.Hooks(ctx, args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/hooks", req.Action), format)
