@@ -6210,6 +6210,28 @@ func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {
 	require.Contains(t, errOut.String(), "session resumed: source")
 }
 
+func TestResumeLatestSlashSkipsCurrentSession(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	require.NoError(t, store.Append("older-session", anthropic.TextMessage("user", "previous conversation")))
+	require.NoError(t, store.Append("zz-current-session", anthropic.TextMessage("user", "current conversation")))
+	sess, err := store.Open("zz-current-session")
+	require.NoError(t, err)
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{Model: "mock", PermissionMode: "workspace-write"},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       io.Discard,
+		Err:       &errOut,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/resume latest", sess))
+	require.Equal(t, "older-session", sess.ID)
+	require.Len(t, sess.Messages, 1)
+	require.Contains(t, errOut.String(), "session resumed: older-session")
+}
+
 func TestResumeRestoresTodosFromTranscript(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)

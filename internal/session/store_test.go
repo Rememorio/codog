@@ -85,6 +85,16 @@ func TestLatestIDSkipsEmptySessions(t *testing.T) {
 	require.Equal(t, "real-session", latest)
 }
 
+func TestLatestIDExcludingSkipsExcludedSession(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("older-session", anthropic.TextMessage("user", "older")))
+	require.NoError(t, store.Append("zz-current-session", anthropic.TextMessage("user", "current")))
+
+	latest, err := store.LatestIDExcluding("zz-current-session")
+	require.NoError(t, err)
+	require.Equal(t, "older-session", latest)
+}
+
 func TestLatestAnyIDIncludesEmptySessions(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("real-session", anthropic.TextMessage("user", "hello")))

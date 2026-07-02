@@ -767,17 +767,28 @@ func (s *Store) List() ([]Session, error) {
 
 // LatestID returns the newest visible session that contains at least one message.
 func (s *Store) LatestID() (string, error) {
+	return s.LatestIDExcluding("")
+}
+
+// LatestIDExcluding returns the newest non-empty session other than excludeID.
+func (s *Store) LatestIDExcluding(excludeID string) (string, error) {
 	sessions, err := s.List()
 	if err != nil {
 		return "", err
 	}
-	if len(sessions) == 0 {
-		return "", ErrNoSessions
-	}
+	excludeID = strings.TrimSpace(excludeID)
+	visible := 0
 	for _, sess := range sessions {
+		if excludeID != "" && sess.ID == excludeID {
+			continue
+		}
+		visible++
 		if len(sess.Messages) > 0 {
 			return sess.ID, nil
 		}
+	}
+	if visible == 0 {
+		return "", ErrNoSessions
 	}
 	return "", ErrAllSessionsEmpty
 }

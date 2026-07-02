@@ -28741,6 +28741,14 @@ func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *sessio
 		fmt.Fprintln(a.Err, "usage: /resume [session-id|latest]")
 		return
 	}
+	if id == "latest" && sess != nil {
+		latest, err := a.Sessions.LatestIDExcluding(sess.ID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		id = latest
+	}
 	next, err := a.Sessions.Open(id)
 	if err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
