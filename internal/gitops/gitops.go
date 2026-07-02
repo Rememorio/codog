@@ -135,6 +135,14 @@ func DiffWithOptions(workspace string, options DiffOptions) (string, error) {
 	return git(workspace, args...)
 }
 
+func IsNoGitRepoError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "not a git repository")
+}
+
 func Log(workspace string, limit int) (string, error) {
 	if limit <= 0 {
 		limit = 20

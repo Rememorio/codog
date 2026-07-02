@@ -5497,6 +5497,36 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.Contains(t, diffJSON.Diff, "+again")
 }
 
+func TestDiffNonGitDirReportsTypedJSON(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	t.Chdir(workspace)
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "diff"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NotContains(t, out, "usage: git diff")
+	require.NotContains(t, out, "config_load_failed")
+
+	var report diffReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "diff", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "no_git_repo", report.Result)
+	require.Equal(t, "no_git_repo", report.ErrorKind)
+	require.Contains(t, report.Message, "git repository")
+	require.Contains(t, report.Hint, "git init")
+}
+
 func TestGitSlashDiffAndCommit(t *testing.T) {
 	workspace := initGitRepo(t)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello slash\n"), 0o644))

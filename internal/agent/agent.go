@@ -28676,14 +28676,18 @@ type diffRequest struct {
 }
 
 type diffReport struct {
-	Kind   string   `json:"kind"`
-	Action string   `json:"action"`
-	Status string   `json:"status"`
-	Staged bool     `json:"staged"`
-	Empty  bool     `json:"empty"`
-	Bytes  int      `json:"bytes"`
-	Paths  []string `json:"paths,omitempty"`
-	Diff   string   `json:"diff"`
+	Kind      string   `json:"kind"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	Result    string   `json:"result,omitempty"`
+	ErrorKind string   `json:"error_kind,omitempty"`
+	Message   string   `json:"message,omitempty"`
+	Hint      string   `json:"hint,omitempty"`
+	Staged    bool     `json:"staged"`
+	Empty     bool     `json:"empty"`
+	Bytes     int      `json:"bytes"`
+	Paths     []string `json:"paths,omitempty"`
+	Diff      string   `json:"diff"`
 }
 
 func (a *App) Diff(args []string) error {
@@ -28693,6 +28697,12 @@ func (a *App) Diff(args []string) error {
 	}
 	report, err := a.buildDiffReport(req)
 	if err != nil {
+		if req.Format == "json" && gitops.IsNoGitRepoError(err) {
+			report = buildDiffNoGitRepoReport(req)
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
 		return err
 	}
 	if req.Format == "json" {
@@ -28719,6 +28729,22 @@ func (a *App) buildDiffReport(req diffRequest) (diffReport, error) {
 		Paths:  append([]string(nil), req.Paths...),
 		Diff:   diff,
 	}, nil
+}
+
+func buildDiffNoGitRepoReport(req diffRequest) diffReport {
+	return diffReport{
+		Kind:      "diff",
+		Action:    "show",
+		Status:    "error",
+		Result:    "no_git_repo",
+		ErrorKind: "no_git_repo",
+		Message:   "not inside a git repository",
+		Hint:      "Run `git init` in this workspace or run `codog diff` from an existing git repository.",
+		Staged:    req.Staged,
+		Empty:     true,
+		Paths:     append([]string(nil), req.Paths...),
+		Diff:      "",
+	}
 }
 
 func parseDiffArgs(args []string) (diffRequest, error) {

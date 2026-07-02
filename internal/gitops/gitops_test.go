@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,13 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	status, err = Status(workspace)
 	require.NoError(t, err)
 	require.True(t, strings.Contains(status, "## main") || strings.Contains(status, "## master"))
+}
+
+func TestIsNoGitRepoError(t *testing.T) {
+	require.False(t, IsNoGitRepoError(nil))
+	require.False(t, IsNoGitRepoError(errors.New("permission denied")))
+	require.True(t, IsNoGitRepoError(errors.New("fatal: not a git repository (or any of the parent directories): .git")))
+	require.True(t, IsNoGitRepoError(errors.New("warning: Not a git repository. Use --no-index to compare two paths outside a working tree")))
 }
 
 func TestStashWorkflows(t *testing.T) {
