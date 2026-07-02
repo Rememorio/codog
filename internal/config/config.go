@@ -2038,7 +2038,7 @@ func applyEnv(cfg *Config) {
 		cfg.AuthToken = value
 	}
 	applyRoutedProviderEnv(cfg, genericBaseURLSet, genericCredentialSet, lookup)
-	if value := lookup("CODOG_ADVISOR_MODEL"); value != "" {
+	if value, _ := lookupFirstEnv(lookup, "CODOG_ADVISOR_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"); value != "" {
 		cfg.AdvisorModel = value
 	}
 	if value := lookup("CODOG_SYSTEM_PROMPT"); value != "" {
@@ -2100,7 +2100,7 @@ func applyEnv(cfg *Config) {
 	if value, ok := parseBoolEnv("CODOG_NOTIFICATIONS_ENABLED", lookup); ok {
 		cfg.Future.NotificationsEnabled = &value
 	}
-	if value := lookup("CODOG_CONFIG_HOME"); value != "" {
+	if value, _ := lookupFirstEnv(lookup, "CODOG_CONFIG_HOME", "CLAUDE_CONFIG_HOME", "CLAUDE_CONFIG_DIR"); value != "" {
 		cfg.ConfigHome = expandHome(value)
 	}
 	if value := lookup("CODOG_MAX_TURNS"); value != "" {
@@ -2510,8 +2510,10 @@ func validateAPITimeoutConfig(cfg APITimeoutConfig) error {
 }
 
 func defaultConfigHome() (string, error) {
-	if value := os.Getenv("CODOG_CONFIG_HOME"); value != "" {
-		return expandHome(value), nil
+	for _, name := range []string{"CODOG_CONFIG_HOME", "CLAUDE_CONFIG_HOME", "CLAUDE_CONFIG_DIR"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return expandHome(value), nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

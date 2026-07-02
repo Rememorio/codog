@@ -633,6 +633,51 @@ func TestLoadAnthropicDefaultAndClaudeModelAliases(t *testing.T) {
 	require.Equal(t, "CLAUDE_MODEL", cfg.ModelEnvVar)
 }
 
+func TestLoadAnthropicSmallFastModelAlias(t *testing.T) {
+	unsetEnv(t, "CODOG_ADVISOR_MODEL", "ANTHROPIC_SMALL_FAST_MODEL")
+	t.Setenv("ANTHROPIC_SMALL_FAST_MODEL", "claude-haiku-4-5")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-haiku-4-5", cfg.AdvisorModel)
+
+	t.Setenv("CODOG_ADVISOR_MODEL", "claude-sonnet-advisor")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-sonnet-advisor", cfg.AdvisorModel)
+}
+
+func TestLoadClaudeConfigHomeAliases(t *testing.T) {
+	codogHome := filepath.Join(t.TempDir(), "codog-home")
+	claudeHome := filepath.Join(t.TempDir(), "claude-home")
+	claudeDir := filepath.Join(t.TempDir(), "claude-dir")
+	unsetEnv(t, "CODOG_CONFIG_HOME", "CLAUDE_CONFIG_HOME", "CLAUDE_CONFIG_DIR")
+	t.Setenv("CLAUDE_CONFIG_HOME", claudeHome)
+
+	cfg, paths, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, claudeHome, cfg.ConfigHome)
+	require.Equal(t, filepath.Join(claudeHome, "config.json"), paths[0])
+
+	t.Setenv("CLAUDE_CONFIG_HOME", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	cfg, paths, err = LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, claudeDir, cfg.ConfigHome)
+	require.Equal(t, filepath.Join(claudeDir, "config.json"), paths[0])
+
+	t.Setenv("CODOG_CONFIG_HOME", codogHome)
+	cfg, paths, err = LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, codogHome, cfg.ConfigHome)
+	require.Equal(t, filepath.Join(codogHome, "config.json"), paths[0])
+}
+
 func TestLoadDashScopeEnvironmentForQwenModel(t *testing.T) {
 	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "DASHSCOPE_BASE_URL")
 	t.Setenv("CODOG_MODEL", "qwen-plus")
