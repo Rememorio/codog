@@ -44369,8 +44369,13 @@ func (a *App) runTaskCreatedHook(ctx context.Context, task background.Task) {
 		}
 		return
 	}
-	if err := a.lifecycleHookRunner().TaskCreated(ctx, task.ID, taskKindForHook(task), task.Status, input); err != nil && a.Err != nil {
+	report, err := a.lifecycleHookRunner().TaskCreatedReport(ctx, task.ID, taskKindForHook(task), task.Status, input)
+	if err != nil && a.Err != nil {
 		fmt.Fprintf(a.Err, "task created hook error: %v\n", err)
+	}
+	a.renderLifecycleHookFeedback("task created", report)
+	if report.Denied && a.Err != nil {
+		fmt.Fprintf(a.Err, "task created hook denied: %s\n", hookReportDeniedMessage(report))
 	}
 }
 
@@ -44382,8 +44387,13 @@ func (a *App) runTaskCompletedHook(ctx context.Context, task background.Task, re
 		}
 		return
 	}
-	if err := a.lifecycleHookRunner().TaskCompleted(ctx, task.ID, taskKindForHook(task), task.Status, reason, input); err != nil && a.Err != nil {
+	report, err := a.lifecycleHookRunner().TaskCompletedReport(ctx, task.ID, taskKindForHook(task), task.Status, reason, input)
+	if err != nil && a.Err != nil {
 		fmt.Fprintf(a.Err, "task completed hook error: %v\n", err)
+	}
+	a.renderLifecycleHookFeedback("task completed", report)
+	if report.Denied && a.Err != nil {
+		fmt.Fprintf(a.Err, "task completed hook denied: %s\n", hookReportDeniedMessage(report))
 	}
 }
 

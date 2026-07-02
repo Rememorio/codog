@@ -16185,6 +16185,43 @@ func TestSessionEndHookFeedbackIsVisible(t *testing.T) {
 	require.Contains(t, errOut.String(), "session end context")
 }
 
+func TestTaskHookFeedbackIsVisible(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			Hooks: config.HookConfig{
+				TaskCreatedCommands: []config.HookCommand{{
+					Matcher: "agent",
+					Command: `printf '%s' '{"systemMessage":"task created note","hookSpecificOutput":{"additionalContext":"task created context"}}'`,
+				}},
+				TaskCompletedCommands: []config.HookCommand{{
+					Matcher: "agent",
+					Command: `printf '%s' '{"systemMessage":"task completed note","hookSpecificOutput":{"additionalContext":"task completed context"}}'`,
+				}},
+			},
+		},
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+	task := background.Task{ID: "task-1", Kind: "agent", Status: "running", Command: "echo ok"}
+
+	app.runTaskCreatedHook(context.Background(), task)
+	require.Contains(t, errOut.String(), "task created hook feedback:")
+	require.Contains(t, errOut.String(), "task created note")
+	require.Contains(t, errOut.String(), "task created context")
+	errOut.Reset()
+
+	task.Status = "completed"
+	app.runTaskCompletedHook(context.Background(), task, "manual")
+	require.Contains(t, errOut.String(), "task completed hook feedback:")
+	require.Contains(t, errOut.String(), "task completed note")
+	require.Contains(t, errOut.String(), "task completed context")
+}
+
 func TestHooksDisabledSkipsRunAndReportsStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

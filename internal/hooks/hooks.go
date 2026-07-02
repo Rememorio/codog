@@ -483,6 +483,18 @@ func (r Runner) CwdChangedReport(ctx context.Context, oldCWD string, newCWD stri
 }
 
 func (r Runner) TaskCreated(ctx context.Context, id string, kind string, status string, input string) error {
+	report, err := r.TaskCreatedReport(ctx, id, kind, status, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// TaskCreatedReport runs TaskCreated hooks and returns parsed hook feedback.
+func (r Runner) TaskCreatedReport(ctx context.Context, id string, kind string, status string, input string) (RunReport, error) {
 	payload := Payload{
 		Event:      "task_created",
 		Tool:       firstNonEmpty(kind, id),
@@ -491,10 +503,22 @@ func (r Runner) TaskCreated(ctx context.Context, id string, kind string, status 
 		TaskKind:   kind,
 		TaskStatus: status,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) TaskCompleted(ctx context.Context, id string, kind string, status string, reason string, input string) error {
+	report, err := r.TaskCompletedReport(ctx, id, kind, status, reason, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// TaskCompletedReport runs TaskCompleted hooks and returns parsed hook feedback.
+func (r Runner) TaskCompletedReport(ctx context.Context, id string, kind string, status string, reason string, input string) (RunReport, error) {
 	payload := Payload{
 		Event:      "task_completed",
 		Tool:       firstNonEmpty(kind, id),
@@ -504,7 +528,7 @@ func (r Runner) TaskCompleted(ctx context.Context, id string, kind string, statu
 		TaskKind:   kind,
 		TaskStatus: status,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) FileChanged(ctx context.Context, filePath string, operation string, input []byte) error {

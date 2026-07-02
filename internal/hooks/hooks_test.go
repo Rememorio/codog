@@ -700,6 +700,31 @@ func TestHooksForPayloadFiltersSubagentMatchersAndConditions(t *testing.T) {
 	require.Empty(t, matched)
 }
 
+func TestTaskReportsParseHookFeedback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	runner := Runner{
+		Workspace: t.TempDir(),
+		Config: config.HookConfig{
+			TaskCreatedCommands: []config.HookCommand{{
+				Matcher: "agent",
+				Command: `printf '%s' '{"systemMessage":"task created note","hookSpecificOutput":{"additionalContext":"task created context"}}'`,
+			}},
+			TaskCompletedCommands: []config.HookCommand{{
+				Matcher: "agent",
+				Command: `printf '%s' '{"systemMessage":"task completed note","hookSpecificOutput":{"additionalContext":"task completed context"}}'`,
+			}},
+		},
+	}
+	created, err := runner.TaskCreatedReport(context.Background(), "task-1", "agent", "running", `{"id":"task-1"}`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"task created note", "task created context"}, MessagesFromReport(created))
+	completed, err := runner.TaskCompletedReport(context.Background(), "task-1", "agent", "completed", "manual", `{"id":"task-1"}`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"task completed note", "task completed context"}, MessagesFromReport(completed))
+}
+
 func TestHooksForPayloadFiltersNotificationMatchersAndConditions(t *testing.T) {
 	cfg := config.HookConfig{NotificationCommands: []config.HookCommand{
 		{Matcher: "background_*", Type: "command", If: "background_task_started(*started*)", Command: "started"},
