@@ -9147,6 +9147,18 @@ func TestConfigValidateReportsDiagnostics(t *testing.T) {
 	require.Equal(t, "permissionMode", report.Results[0].Warnings[1].Field)
 	require.Equal(t, "permission_mode", report.Results[0].Warnings[1].Replacement)
 
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "config", "validate", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.NotContains(t, out, "config_load_failed")
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "config_validation", report.Kind)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "model", report.Results[0].Errors[0].Field)
+
 	textOut, textErr := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"config", "validate", "--path", configPath, "--output-format", "text"}, config.FlagOverrides{})
 	})

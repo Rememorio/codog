@@ -444,6 +444,16 @@ func TestLoadRejectsInvalidAPITimeoutConfig(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_api_timeout")
 }
 
+func TestInspectionPathsDoesNotReadExplicitConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "bad-config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":42}`), 0o644))
+
+	paths, err := InspectionPaths(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{configPath}, paths)
+}
+
 func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	t.Setenv("CODOG_RATE_LIMIT_MAX_RETRIES", "5")
 	t.Setenv("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS", "100")

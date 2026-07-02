@@ -201,6 +201,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
 			return err
 		}
+		if handled, err := renderConfigValidateWithoutLoadedConfig(os.Stdout, rest, overrides); handled {
+			return err
+		}
 		cfg, paths, err := config.LoadForInspection(overrides)
 		if err != nil {
 			if config.IsFileError(err) {
@@ -31324,6 +31327,43 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		return err
 	}
 	return renderConfigInspectionPayload(out, req.Format, payload)
+}
+
+func renderConfigValidateWithoutLoadedConfig(out io.Writer, args []string, overrides config.FlagOverrides) (bool, error) {
+	if !configValidateRequested(args) {
+		return false, nil
+	}
+	req, err := parseConfigInspectionArgs(args)
+	if err != nil {
+		return true, err
+	}
+	if len(req.Args) == 0 || !strings.EqualFold(req.Args[0], "validate") {
+		return false, nil
+	}
+	paths, err := config.InspectionPaths(overrides)
+	if err != nil {
+		return true, err
+	}
+	report, err := buildConfigValidationReport(paths, req.Args[1:])
+	if err != nil {
+		return true, err
+	}
+	return true, renderConfigValidationReport(out, req.Format, report)
+}
+
+func configValidateRequested(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--output-format" || arg == "-o":
+			index++
+		case strings.HasPrefix(arg, "--output-format="), arg == "--json":
+		case strings.HasPrefix(arg, "-"):
+		default:
+			return strings.EqualFold(arg, "validate")
+		}
+	}
+	return false
 }
 
 func configInspectionEnvelope(action string, cfg config.Config, paths []string) map[string]any {

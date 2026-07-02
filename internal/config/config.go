@@ -676,6 +676,16 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 	return cfg, paths, nil
 }
 
+// InspectionPaths returns the config files that inspection commands should use
+// without reading or unmarshalling them.
+func InspectionPaths(overrides FlagOverrides) ([]string, error) {
+	cfg, err := defaultConfig()
+	if err != nil {
+		return nil, err
+	}
+	return configPaths(cfg.ConfigHome, overrides.ConfigPath), nil
+}
+
 func Default(overrides FlagOverrides) (Config, error) {
 	cfg, err := defaultConfig()
 	if err != nil {
