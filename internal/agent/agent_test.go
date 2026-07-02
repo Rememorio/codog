@@ -2546,6 +2546,18 @@ func risky(value any) {
 	require.Equal(t, "path", resumedKeybindings.Action)
 	require.NotEmpty(t, resumedKeybindings.Path)
 
+	out, err = runResumedJSON("/keybindings", "init")
+	require.NoError(t, err)
+	var resumedKeybindingsInit keybindingsFileReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedKeybindingsInit))
+	require.Equal(t, "keybindings", resumedKeybindingsInit.Kind)
+	require.Equal(t, "init", resumedKeybindingsInit.Action)
+	require.Equal(t, "created", resumedKeybindingsInit.Status)
+	require.True(t, resumedKeybindingsInit.Created)
+	require.True(t, resumedKeybindingsInit.Exists)
+	require.NotEmpty(t, resumedKeybindingsInit.Path)
+	require.FileExists(t, resumedKeybindingsInit.Path)
+
 	out, err = runResumedJSON("/project")
 	require.NoError(t, err)
 	var resumedProject projectReport
@@ -3457,7 +3469,6 @@ func risky(value any) {
 		{Command: "/speak", Args: []string{"set-command", "say"}, Report: "/speak set-command"},
 		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
-		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},

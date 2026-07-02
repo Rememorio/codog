@@ -24687,7 +24687,7 @@ func (a *App) runResumedKeybindingsSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "show", "path", "validate", "resolve":
+	case "show", "path", "init", "validate", "resolve":
 		return a.Keybindings(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/keybindings", req.Action), format)
