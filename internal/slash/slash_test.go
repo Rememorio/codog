@@ -333,6 +333,8 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/stickers")
 	require.Contains(t, names, "/passes")
 	require.Contains(t, names, "/pr")
+	require.Contains(t, names, "/pr-comments")
+	require.Contains(t, names, "/pr_comments")
 	require.Contains(t, names, "/think-back")
 	require.Contains(t, names, "/thinkback")
 	require.Contains(t, names, "/thinkback-play")

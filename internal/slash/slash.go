@@ -349,6 +349,8 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/plugin":             true,
 	"/plugins":            true,
 	"/pr":                 true,
+	"/pr-comments":        true,
+	"/pr_comments":        true,
 	"/privacy-settings":   true,
 	"/profile":            true,
 	"/project":            true,

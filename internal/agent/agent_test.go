@@ -1062,6 +1062,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	autofixPRSlash, ok := capabilityReportSlash(report, "/autofix-pr")
 	require.True(t, ok)
 	require.True(t, autofixPRSlash.ResumeSupported)
+	prCommentsSlash, ok := capabilityReportSlash(report, "/pr-comments")
+	require.True(t, ok)
+	require.True(t, prCommentsSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/new"))
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
@@ -10816,6 +10819,33 @@ exit 1
 	require.Equal(t, 42, resumedAutofix.PullRequest)
 	require.Equal(t, 2, resumedAutofix.Actionable)
 	require.Contains(t, resumedAutofix.Prompt, "script.sh:2")
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "latest", "--output-format", "json", "/pr-comments", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var resumedPRComments struct {
+		Kind           string `json:"kind"`
+		Repository     string `json:"repository"`
+		Number         int    `json:"number"`
+		Total          int    `json:"total"`
+		IssueComments  []any  `json:"issue_comments"`
+		ReviewComments []any  `json:"review_comments"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &resumedPRComments))
+	require.Equal(t, "pr_comments", resumedPRComments.Kind)
+	require.Equal(t, "acme/widgets", resumedPRComments.Repository)
+	require.Equal(t, 42, resumedPRComments.Number)
+	require.Equal(t, 2, resumedPRComments.Total)
+	require.Len(t, resumedPRComments.IssueComments, 1)
+	require.Len(t, resumedPRComments.ReviewComments, 1)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "latest", "--output-format", "json", "/pr_comments", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "pr_comments"`)
+	require.Contains(t, cliOut, `"total": 2`)
 
 	require.True(t, app.handleSlash(context.Background(), "/autofix-pr 42 --repo acme/widgets", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Autofix PR")
