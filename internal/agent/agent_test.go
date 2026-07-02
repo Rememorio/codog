@@ -1890,6 +1890,8 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		}
 	}))
 	t.Cleanup(oauthServer.Close)
+	antTraceServer := httptest.NewServer(mockanthropic.Server{Text: "resumed trace ok"}.Handler())
+	t.Cleanup(antTraceServer.Close)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
 	require.NoError(t, err)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", oauthServer.URL, "client-work", []string{"profile"})
@@ -3837,6 +3839,16 @@ func risky(value any) {
 	require.Greater(t, resumedAntTraceWrite.Bytes, 0)
 	require.FileExists(t, resumedAntTraceWrite.File)
 
+	out, err = runResumedJSON("/ant-trace", "--base-url", antTraceServer.URL, "--message", "resumed trace", "--timeout-ms", "1000")
+	require.NoError(t, err)
+	var resumedAntTraceRequest anttrace.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAntTraceRequest))
+	require.Equal(t, "ant_trace", resumedAntTraceRequest.Kind)
+	require.Equal(t, "ok", resumedAntTraceRequest.Status)
+	require.True(t, resumedAntTraceRequest.RequestSent)
+	require.Equal(t, antTraceServer.URL, resumedAntTraceRequest.BaseURL)
+	require.Equal(t, "resumed trace ok", resumedAntTraceRequest.TextPreview)
+
 	out, err = runResumedJSON("/mock-limits")
 	require.NoError(t, err)
 	var resumedMockLimits mocklimits.Report
@@ -4471,7 +4483,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
-		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)

@@ -24218,13 +24218,6 @@ func (a *App) runResumedAddDirSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedAntTraceSlash(ctx context.Context, args []string, format string) error {
-	req, err := parseAntTraceArgs(args)
-	if err != nil {
-		return err
-	}
-	if !req.NoRequest {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ant-trace", "request"), format)
-	}
 	return a.AntTrace(ctx, args)
 }
 
