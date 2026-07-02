@@ -154,6 +154,28 @@ func TestLoadRateLimitConfig(t *testing.T) {
 	require.Equal(t, 2000, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadAPITimeoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"apiTimeout":{"connectTimeout":11,"requestTimeout":222,"maxRetries":7}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, 11, cfg.APITimeout.ConnectTimeoutSeconds)
+	require.Equal(t, 222, cfg.APITimeout.RequestTimeoutSeconds)
+	require.Equal(t, 7, cfg.APITimeout.MaxRetries)
+}
+
+func TestLoadRejectsInvalidAPITimeoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"apiTimeout":{"requestTimeout":-1}}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_api_timeout")
+}
+
 func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	t.Setenv("CODOG_RATE_LIMIT_MAX_RETRIES", "5")
 	t.Setenv("CODOG_RATE_LIMIT_INITIAL_BACKOFF_MS", "100")

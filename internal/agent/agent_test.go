@@ -9399,6 +9399,27 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestAnthropicClientOptionsUseAPITimeoutConfig(t *testing.T) {
+	options := anthropicClientOptionsFromConfig(config.Config{
+		RateLimit: config.RateLimitConfig{
+			MaxRetries:       3,
+			InitialBackoffMS: 100,
+			MaxBackoffMS:     200,
+		},
+		APITimeout: config.APITimeoutConfig{
+			ConnectTimeoutSeconds: 11,
+			RequestTimeoutSeconds: 222,
+			MaxRetries:            7,
+		},
+	})
+
+	require.Equal(t, 7, options.RateLimit.MaxRetries)
+	require.Equal(t, 100*time.Millisecond, options.RateLimit.InitialBackoff)
+	require.Equal(t, 200*time.Millisecond, options.RateLimit.MaxBackoff)
+	require.Equal(t, 11*time.Second, options.ConnectTimeout)
+	require.Equal(t, 222*time.Second, options.RequestTimeout)
+}
+
 func TestAntTraceCommandAndSlash(t *testing.T) {
 	workspace := t.TempDir()
 	var providerRequest json.RawMessage

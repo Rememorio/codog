@@ -239,6 +239,12 @@ type RateLimitConfig struct {
 	MaxBackoffMS     int `json:"max_backoff_ms,omitempty"`
 }
 
+type APITimeoutConfig struct {
+	ConnectTimeoutSeconds int `json:"connectTimeout,omitempty"`
+	RequestTimeoutSeconds int `json:"requestTimeout,omitempty"`
+	MaxRetries            int `json:"maxRetries,omitempty"`
+}
+
 type PrivacyConfig struct {
 	TelemetryEnabled     *bool `json:"telemetry_enabled,omitempty"`
 	CrashReportsEnabled  *bool `json:"crash_reports_enabled,omitempty"`
@@ -434,6 +440,7 @@ type Config struct {
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
+	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
 	RAGBaseURL          string                     `json:"rag_base_url,omitempty"`
 	RAGTimeoutSeconds   int                        `json:"rag_timeout_seconds,omitempty"`
 	RAGTopKMax          int                        `json:"rag_top_k_max,omitempty"`
@@ -581,6 +588,9 @@ func finalizeConfig(cfg *Config) error {
 		return err
 	}
 	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
+		return err
+	}
+	if err := validateAPITimeoutConfig(cfg.APITimeout); err != nil {
 		return err
 	}
 	cfg.RateLimit = NormalizeRateLimitConfig(cfg.RateLimit)
@@ -1115,6 +1125,9 @@ func merge(dst *Config, src Config) {
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
 	}
+	if apiTimeoutConfigSet(src.APITimeout) {
+		mergeAPITimeoutConfig(&dst.APITimeout, src.APITimeout)
+	}
 	if src.RAGBaseURL != "" {
 		dst.RAGBaseURL = src.RAGBaseURL
 	}
@@ -1320,6 +1333,10 @@ func rateLimitConfigSet(cfg RateLimitConfig) bool {
 	return cfg.MaxRetries != 0 || cfg.InitialBackoffMS != 0 || cfg.MaxBackoffMS != 0
 }
 
+func apiTimeoutConfigSet(cfg APITimeoutConfig) bool {
+	return cfg.ConnectTimeoutSeconds != 0 || cfg.RequestTimeoutSeconds != 0 || cfg.MaxRetries != 0
+}
+
 func mergeRateLimitConfig(dst *RateLimitConfig, src RateLimitConfig) {
 	if src.MaxRetries != 0 {
 		dst.MaxRetries = src.MaxRetries
@@ -1329,6 +1346,18 @@ func mergeRateLimitConfig(dst *RateLimitConfig, src RateLimitConfig) {
 	}
 	if src.MaxBackoffMS != 0 {
 		dst.MaxBackoffMS = src.MaxBackoffMS
+	}
+}
+
+func mergeAPITimeoutConfig(dst *APITimeoutConfig, src APITimeoutConfig) {
+	if src.ConnectTimeoutSeconds != 0 {
+		dst.ConnectTimeoutSeconds = src.ConnectTimeoutSeconds
+	}
+	if src.RequestTimeoutSeconds != 0 {
+		dst.RequestTimeoutSeconds = src.RequestTimeoutSeconds
+	}
+	if src.MaxRetries != 0 {
+		dst.MaxRetries = src.MaxRetries
 	}
 }
 
@@ -1862,6 +1891,19 @@ func validateSandboxConfig(cfg SandboxConfig) error {
 	default:
 		return fmt.Errorf("invalid_sandbox_config: unsupported filesystem mode %q", cfg.FilesystemMode)
 	}
+}
+
+func validateAPITimeoutConfig(cfg APITimeoutConfig) error {
+	if cfg.ConnectTimeoutSeconds < 0 {
+		return fmt.Errorf("invalid_api_timeout: connectTimeout must be non-negative")
+	}
+	if cfg.RequestTimeoutSeconds < 0 {
+		return fmt.Errorf("invalid_api_timeout: requestTimeout must be non-negative")
+	}
+	if cfg.MaxRetries < 0 {
+		return fmt.Errorf("invalid_api_timeout: maxRetries must be non-negative")
+	}
+	return nil
 }
 
 func defaultConfigHome() (string, error) {

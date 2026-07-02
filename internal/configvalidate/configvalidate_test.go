@@ -127,6 +127,17 @@ func TestValidateBytesValidatesMCPToolCallTimeoutType(t *testing.T) {
 	require.Equal(t, "a number", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesAPITimeoutTypes(t *testing.T) {
+	source := []byte(`{"apiTimeout":{"connectTimeout":30,"requestTimeout":"slow","maxRetries":8}}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "apiTimeout.requestTimeout", result.Errors[0].Field)
+	require.Equal(t, "a number", result.Errors[0].Expected)
+}
+
 func TestValidateFileRejectsTOMLAndReportSummarizes(t *testing.T) {
 	dir := t.TempDir()
 	goodPath := filepath.Join(dir, "config.json")

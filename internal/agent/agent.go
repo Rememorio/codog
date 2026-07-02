@@ -323,7 +323,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	app := &App{
 		Config:    cfg,
-		Client:    anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Client:    anthropicClientFromConfig(cfg),
 		Tools:     tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
 		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace: workspace,
@@ -913,7 +913,7 @@ func renderStatusWithConfigLoadError(out io.Writer, command string, rest []strin
 	}
 	app := &App{
 		Config:              cfg,
-		Client:              anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Client:              anthropicClientFromConfig(cfg),
 		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
@@ -946,7 +946,7 @@ func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []strin
 	}
 	app := &App{
 		Config:              cfg,
-		Client:              anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Client:              anthropicClientFromConfig(cfg),
 		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
@@ -1190,6 +1190,31 @@ func anthropicRateLimitOptions(cfg config.RateLimitConfig) anthropic.RateLimitOp
 		InitialBackoff: time.Duration(cfg.InitialBackoffMS) * time.Millisecond,
 		MaxBackoff:     time.Duration(cfg.MaxBackoffMS) * time.Millisecond,
 	}
+}
+
+func anthropicRateLimitOptionsFromConfig(cfg config.Config) anthropic.RateLimitOptions {
+	options := anthropicRateLimitOptions(cfg.RateLimit)
+	if cfg.APITimeout.MaxRetries > 0 {
+		options.MaxRetries = cfg.APITimeout.MaxRetries
+	}
+	return options
+}
+
+func anthropicClientOptionsFromConfig(cfg config.Config) anthropic.ClientOptions {
+	options := anthropic.ClientOptions{
+		RateLimit: anthropicRateLimitOptionsFromConfig(cfg),
+	}
+	if cfg.APITimeout.RequestTimeoutSeconds > 0 {
+		options.RequestTimeout = time.Duration(cfg.APITimeout.RequestTimeoutSeconds) * time.Second
+	}
+	if cfg.APITimeout.ConnectTimeoutSeconds > 0 {
+		options.ConnectTimeout = time.Duration(cfg.APITimeout.ConnectTimeoutSeconds) * time.Second
+	}
+	return options
+}
+
+func anthropicClientFromConfig(cfg config.Config) *anthropic.Client {
+	return anthropic.NewWithOptions(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicClientOptionsFromConfig(cfg))
 }
 
 func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, questionIn io.Reader, questionOut io.Writer) tools.RegistryOptions {
@@ -41616,12 +41641,14 @@ func (a *App) AntTrace(ctx context.Context, args []string) error {
 	baseURL := firstNonEmpty(req.BaseURL, a.Config.BaseURL)
 	client := a.Client
 	if client == nil || strings.TrimSpace(req.BaseURL) != "" {
-		client = anthropic.NewWithRateLimit(baseURL, a.Config.APIKey, a.Config.AuthToken, anthropicRateLimitOptions(a.Config.RateLimit))
+		clientConfig := a.Config
+		clientConfig.BaseURL = baseURL
+		client = anthropicClientFromConfig(clientConfig)
 	}
 	if baseURL == "" && client != nil {
 		baseURL = client.BaseURL
 	}
-	rateLimit := anthropicRateLimitOptions(a.Config.RateLimit).Report()
+	rateLimit := anthropicRateLimitOptionsFromConfig(a.Config).Report()
 	if client != nil {
 		rateLimit = client.RateLimit.Report()
 	}

@@ -94,6 +94,7 @@ var topLevelFields = []fieldSpec{
 	{"privacy_settings", FieldObject},
 	{"auto_compact_messages", FieldNumber},
 	{"rate_limit", FieldObject},
+	{"apiTimeout", FieldObject},
 	{"rag_base_url", FieldString},
 	{"rag_timeout_seconds", FieldNumber},
 	{"rag_top_k_max", FieldNumber},
@@ -133,6 +134,12 @@ var rateLimitFields = []fieldSpec{
 	{"max_retries", FieldNumber},
 	{"initial_backoff_ms", FieldNumber},
 	{"max_backoff_ms", FieldNumber},
+}
+
+var apiTimeoutFields = []fieldSpec{
+	{"connectTimeout", FieldNumber},
+	{"requestTimeout", FieldNumber},
+	{"maxRetries", FieldNumber},
 }
 
 var hookFields = []fieldSpec{
@@ -393,6 +400,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "rate_limit"); ok {
 		validateObject(result, nested, rateLimitFields, "rate_limit", source, path)
+	}
+	if nested, ok := objectAt(object, "apiTimeout"); ok {
+		validateObject(result, nested, apiTimeoutFields, "apiTimeout", source, path)
 	}
 	if nested, ok := objectAt(object, "hooks"); ok {
 		validateObject(result, nested, hookFields, "hooks", source, path)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -77,6 +78,12 @@ type Client struct {
 	Sleep     func(context.Context, time.Duration) error
 }
 
+type ClientOptions struct {
+	RateLimit      RateLimitOptions
+	RequestTimeout time.Duration
+	ConnectTimeout time.Duration
+}
+
 type RateLimitOptions struct {
 	MaxRetries     int           `json:"max_retries"`
 	InitialBackoff time.Duration `json:"initial_backoff"`
@@ -95,17 +102,29 @@ func New(baseURL, apiKey, authToken string) *Client {
 }
 
 func NewWithRateLimit(baseURL, apiKey, authToken string, rateLimit RateLimitOptions) *Client {
+	return NewWithOptions(baseURL, apiKey, authToken, ClientOptions{RateLimit: rateLimit})
+}
+
+func NewWithOptions(baseURL, apiKey, authToken string, options ClientOptions) *Client {
 	if baseURL == "" {
 		baseURL = "https://api.anthropic.com"
 	}
+	requestTimeout := options.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = 10 * time.Minute
+	}
+	httpClient := &http.Client{Timeout: requestTimeout}
+	if options.ConnectTimeout > 0 {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = (&net.Dialer{Timeout: options.ConnectTimeout}).DialContext
+		httpClient.Transport = transport
+	}
 	return &Client{
-		HTTP: &http.Client{
-			Timeout: 10 * time.Minute,
-		},
+		HTTP:      httpClient,
 		BaseURL:   strings.TrimRight(baseURL, "/"),
 		APIKey:    apiKey,
 		AuthToken: authToken,
-		RateLimit: normalizeRateLimit(rateLimit),
+		RateLimit: normalizeRateLimit(options.RateLimit),
 	}
 }
 

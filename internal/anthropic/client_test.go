@@ -319,6 +319,24 @@ func TestClientSuppressesSKAntBearerHintForNonUnauthorizedErrors(t *testing.T) {
 	require.NotContains(t, err.Error(), "sk-ant-* keys go in")
 }
 
+func TestClientOptionsConfigureTimeoutAndRateLimit(t *testing.T) {
+	client := NewWithOptions("https://example.test", "key", "", ClientOptions{
+		RequestTimeout: 2 * time.Second,
+		ConnectTimeout: 1 * time.Second,
+		RateLimit: RateLimitOptions{
+			MaxRetries:     6,
+			InitialBackoff: 10 * time.Millisecond,
+			MaxBackoff:     20 * time.Millisecond,
+		},
+	})
+
+	require.Equal(t, 2*time.Second, client.HTTP.Timeout)
+	require.NotNil(t, client.HTTP.Transport)
+	require.Equal(t, 6, client.RateLimit.MaxRetries)
+	require.Equal(t, 10*time.Millisecond, client.RateLimit.InitialBackoff)
+	require.Equal(t, 20*time.Millisecond, client.RateLimit.MaxBackoff)
+}
+
 func TestClientMissingCredentialsHintDetectsForeignProviderEnv(t *testing.T) {
 	tests := []struct {
 		name     string
