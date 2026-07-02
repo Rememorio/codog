@@ -3157,12 +3157,19 @@ func renderBriefReport(out io.Writer, report briefReport) {
 }
 
 func (a *App) Updater(ctx context.Context, args []string) error {
+	var err error
+	args, err = stripUpdaterJSONFlags(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
-		return errors.New("usage: codog updater check|verify|download|install|rollback")
+		args = []string{"status"}
 	}
 	var payload any
 	action := strings.ToLower(strings.TrimSpace(args[0]))
-	switch args[0] {
+	switch action {
+	case "status", "show":
+		payload = a.updaterStatusReport(action)
 	case "check":
 		if len(args) < 2 {
 			return errors.New("usage: codog updater check URL [PUBLIC_KEY]")
@@ -3264,6 +3271,79 @@ type updaterCommandReport struct {
 	Action string `json:"action"`
 	Status string `json:"status"`
 	Result any    `json:"result"`
+}
+
+type updaterStatusReport struct {
+	CurrentVersion string   `json:"current_version"`
+	Platform       string   `json:"platform"`
+	Executable     string   `json:"executable,omitempty"`
+	ConfigHome     string   `json:"config_home,omitempty"`
+	UpdateDir      string   `json:"update_dir,omitempty"`
+	DefaultTarget  string   `json:"default_target,omitempty"`
+	BackupPath     string   `json:"backup_path,omitempty"`
+	BackupPresent  bool     `json:"backup_present"`
+	TargetPresent  bool     `json:"target_present"`
+	Commands       []string `json:"commands"`
+}
+
+func stripUpdaterJSONFlags(args []string) ([]string, error) {
+	out := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json" || arg == "--output-format=json":
+			continue
+		case arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return nil, errors.New("updater output format is required")
+			}
+			if !strings.EqualFold(args[index], "json") {
+				return nil, fmt.Errorf("unknown updater output format %q", args[index])
+			}
+		default:
+			out = append(out, arg)
+		}
+	}
+	return out, nil
+}
+
+func (a *App) updaterStatusReport(action string) updaterStatusReport {
+	executable := strings.TrimSpace(a.Executable)
+	if executable == "" {
+		if path, err := os.Executable(); err == nil {
+			executable = path
+		}
+	}
+	target := executable
+	backupPath := ""
+	backupPresent := false
+	targetPresent := false
+	if target != "" {
+		backupPath = target + ".bak"
+		if _, err := os.Stat(target); err == nil {
+			targetPresent = true
+		}
+		if _, err := os.Stat(backupPath); err == nil {
+			backupPresent = true
+		}
+	}
+	updateDir := ""
+	if strings.TrimSpace(a.Config.ConfigHome) != "" {
+		updateDir = filepath.Join(a.Config.ConfigHome, "updater")
+	}
+	return updaterStatusReport{
+		CurrentVersion: version,
+		Platform:       updater.PlatformKey(),
+		Executable:     executable,
+		ConfigHome:     a.Config.ConfigHome,
+		UpdateDir:      updateDir,
+		DefaultTarget:  target,
+		BackupPath:     backupPath,
+		BackupPresent:  backupPresent,
+		TargetPresent:  targetPresent,
+		Commands:       []string{"status", "show", "check", "verify", "download", "install", "rollback"},
+	}
 }
 
 type enterpriseAuditReport struct {
@@ -3685,11 +3765,16 @@ func toolDetailAliases(canonical string) []string {
 }
 
 func (a *App) Upgrade(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: codog upgrade [check|verify|download|install|rollback] [args]")
+	var err error
+	args, err = stripUpdaterJSONFlags(args)
+	if err != nil {
+		return err
 	}
-	switch args[0] {
-	case "check", "verify", "download", "install", "rollback":
+	if len(args) == 0 {
+		return a.Updater(ctx, []string{"status"})
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "status", "show", "check", "verify", "download", "install", "rollback":
 		return a.Updater(ctx, args)
 	default:
 		return a.Updater(ctx, append([]string{"check"}, args...))
@@ -43795,9 +43880,9 @@ Usage:
   %s code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json|--output-format text|json]
   %s code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control|rc [status|clear|serve] | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
+  %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control|rc [status|clear|serve] | bridge-kick [status|clear] | ide [status|clear] | updater [status|show|check|verify|download|install|rollback]
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
-  %s upgrade [check|verify|download|install|rollback] ARGS...
+  %s upgrade [status|show|check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]

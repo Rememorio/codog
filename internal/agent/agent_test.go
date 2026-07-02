@@ -16577,6 +16577,62 @@ func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	require.Equal(t, "upgrade-new", string(data))
 }
 
+func TestUpdaterStatusDefaults(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "codog")
+	require.NoError(t, os.WriteFile(target, []byte("current"), 0o755))
+	require.NoError(t, os.WriteFile(target+".bak", []byte("previous"), 0o755))
+
+	var out bytes.Buffer
+	app := &App{
+		Config:     config.Config{ConfigHome: dir},
+		Executable: target,
+		Out:        &out,
+	}
+	require.NoError(t, app.Updater(context.Background(), nil))
+	var report struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Status string `json:"status"`
+		Result struct {
+			CurrentVersion string   `json:"current_version"`
+			Platform       string   `json:"platform"`
+			Executable     string   `json:"executable"`
+			ConfigHome     string   `json:"config_home"`
+			UpdateDir      string   `json:"update_dir"`
+			DefaultTarget  string   `json:"default_target"`
+			BackupPath     string   `json:"backup_path"`
+			BackupPresent  bool     `json:"backup_present"`
+			TargetPresent  bool     `json:"target_present"`
+			Commands       []string `json:"commands"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "updater", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, version, report.Result.CurrentVersion)
+	require.Equal(t, updater.PlatformKey(), report.Result.Platform)
+	require.Equal(t, target, report.Result.Executable)
+	require.Equal(t, dir, report.Result.ConfigHome)
+	require.Equal(t, filepath.Join(dir, "updater"), report.Result.UpdateDir)
+	require.Equal(t, target, report.Result.DefaultTarget)
+	require.Equal(t, target+".bak", report.Result.BackupPath)
+	require.True(t, report.Result.BackupPresent)
+	require.True(t, report.Result.TargetPresent)
+	require.Contains(t, report.Result.Commands, "check")
+	require.Contains(t, report.Result.Commands, "rollback")
+
+	out.Reset()
+	require.NoError(t, app.Updater(context.Background(), []string{"--output-format", "json"}))
+	require.Contains(t, out.String(), `"action": "status"`)
+
+	out.Reset()
+	require.NoError(t, app.Upgrade(context.Background(), []string{"--json"}))
+	require.Contains(t, out.String(), `"kind": "updater"`)
+	require.Contains(t, out.String(), `"action": "status"`)
+}
+
 func TestUpdaterVerifyCommand(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
