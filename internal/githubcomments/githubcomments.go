@@ -1,3 +1,4 @@
+// Package githubcomments fetches and renders GitHub pull request comments via gh.
 package githubcomments
 
 import (
@@ -14,12 +15,14 @@ import (
 	"time"
 )
 
+// Options configures a pull request comment fetch.
 type Options struct {
 	PR     string
 	Repo   string
 	GHPath string
 }
 
+// Report summarizes issue and review comments for a pull request.
 type Report struct {
 	Kind           string          `json:"kind"`
 	Status         string          `json:"status"`
@@ -31,6 +34,7 @@ type Report struct {
 	ReviewComments []ReviewComment `json:"review_comments,omitempty"`
 }
 
+// IssueComment describes a top-level pull request issue comment.
 type IssueComment struct {
 	ID        int64  `json:"id"`
 	Author    string `json:"author"`
@@ -39,6 +43,7 @@ type IssueComment struct {
 	URL       string `json:"url,omitempty"`
 }
 
+// ReviewComment describes an inline pull request review comment.
 type ReviewComment struct {
 	ID           int64  `json:"id"`
 	Author       string `json:"author"`
@@ -89,6 +94,7 @@ type apiReviewComment struct {
 	} `json:"user"`
 }
 
+// Fetch retrieves pull request comments using the GitHub CLI.
 func Fetch(ctx context.Context, opts Options) (Report, error) {
 	gh := strings.TrimSpace(opts.GHPath)
 	if gh == "" {
@@ -121,6 +127,7 @@ func Fetch(ctx context.Context, opts Options) (Report, error) {
 	return BuildReport(viewJSON, issueJSON, reviewJSON, opts.Repo)
 }
 
+// BuildReport parses GitHub CLI and REST API JSON into a stable comment report.
 func BuildReport(viewJSON []byte, issueJSON []byte, reviewJSON []byte, repoOverride string) (Report, error) {
 	view, repo, err := parsePRView(viewJSON, repoOverride)
 	if err != nil {
@@ -152,6 +159,7 @@ func BuildReport(viewJSON []byte, issueJSON []byte, reviewJSON []byte, repoOverr
 	}, nil
 }
 
+// RenderText writes a human-readable pull request comment report.
 func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "PR Comments")
 	fmt.Fprintf(w, "  Repository       %s\n", report.Repository)

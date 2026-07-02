@@ -1,3 +1,4 @@
+// Package autofixpr turns GitHub pull request comments into focused fix prompts.
 package autofixpr
 
 import (
@@ -10,6 +11,7 @@ import (
 	"github.com/Rememorio/codog/internal/prompthistory"
 )
 
+// Item describes one actionable pull request feedback item.
 type Item struct {
 	Index        int    `json:"index"`
 	Source       string `json:"source"`
@@ -25,6 +27,7 @@ type Item struct {
 	OriginalLine int    `json:"original_line,omitempty"`
 }
 
+// Report contains the prepared autofix prompt and its source comments.
 type Report struct {
 	Kind        string `json:"kind"`
 	Action      string `json:"action"`
@@ -41,6 +44,7 @@ type Report struct {
 	Prompt      string `json:"prompt"`
 }
 
+// Build creates an autofix report from fetched pull request comments.
 func Build(comments githubcomments.Report, limit int) Report {
 	items := itemsFromComments(comments)
 	if limit <= 0 {
@@ -75,6 +79,7 @@ func Build(comments githubcomments.Report, limit int) Report {
 	return report
 }
 
+// RenderText writes a human-readable autofix report.
 func RenderText(out io.Writer, report Report) {
 	fmt.Fprintln(out, "Autofix PR")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
@@ -109,6 +114,7 @@ func RenderText(out io.Writer, report Report) {
 	fmt.Fprintln(out, indentText(report.Prompt, "  "))
 }
 
+// RenderMarkdown returns a Markdown task document for the autofix report.
 func RenderMarkdown(report Report) string {
 	var builder strings.Builder
 	builder.WriteString("# Autofix PR Task\n\n")
@@ -146,6 +152,7 @@ func RenderMarkdown(report Report) string {
 	return builder.String()
 }
 
+// RenderPrompt returns the prompt that should be given to the coding agent.
 func RenderPrompt(report Report) string {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("Fix the GitHub pull request feedback for %s#%d.\n\n", report.Repository, report.PullRequest))

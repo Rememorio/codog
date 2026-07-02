@@ -15,7 +15,9 @@ import (
 func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	root := repoRoot(t)
 	packages := []string{
+		"internal/autofixpr",
 		"internal/control",
+		"internal/githubcomments",
 		"internal/mcp",
 		"internal/mcpserver",
 		"internal/onboarding",
