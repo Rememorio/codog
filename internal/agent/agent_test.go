@@ -59,6 +59,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/Rememorio/codog/internal/team"
+	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/terminalsetup"
 	"github.com/Rememorio/codog/internal/thinkback"
 	"github.com/Rememorio/codog/internal/todos"
@@ -13981,6 +13982,21 @@ func TestTemplatesCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "review\tuser")
 	out.Reset()
 
+	require.NoError(t, app.Templates([]string{"show", "--json"}))
+	var templateList struct {
+		Kind      string                     `json:"kind"`
+		Action    string                     `json:"action"`
+		Status    string                     `json:"status"`
+		Count     int                        `json:"count"`
+		Templates []prompttemplates.Template `json:"templates"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &templateList))
+	require.Equal(t, "templates", templateList.Kind)
+	require.Equal(t, "list", templateList.Action)
+	require.Equal(t, "ok", templateList.Status)
+	require.Equal(t, 2, templateList.Count)
+	out.Reset()
+
 	require.NoError(t, app.Templates([]string{"show", "review"}))
 	require.Contains(t, out.String(), "Review {{target}} as {{role}}.")
 	out.Reset()
@@ -14045,6 +14061,21 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 
 	require.NoError(t, app.Commands([]string{"show", "fix", "--json"}))
 	require.Contains(t, out.String(), `"source": "workspace"`)
+	out.Reset()
+
+	require.NoError(t, app.Commands([]string{"show", "--json"}))
+	var showListReport struct {
+		Kind     string                   `json:"kind"`
+		Action   string                   `json:"action"`
+		Status   string                   `json:"status"`
+		Count    int                      `json:"count"`
+		Commands []customcommands.Command `json:"commands"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showListReport))
+	require.Equal(t, "commands", showListReport.Kind)
+	require.Equal(t, "list", showListReport.Action)
+	require.Equal(t, "ok", showListReport.Status)
+	require.Equal(t, 3, showListReport.Count)
 	out.Reset()
 
 	require.NoError(t, app.Commands([]string{"sources", "--json"}))

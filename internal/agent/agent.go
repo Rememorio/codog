@@ -36766,51 +36766,7 @@ func (a *App) Commands(args []string) error {
 		if err != nil {
 			return err
 		}
-		all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			summaries := make([]customcommands.Command, len(all))
-			copy(summaries, all)
-			for i := range summaries {
-				summaries[i].Body = ""
-			}
-			activeCount := 0
-			for _, command := range all {
-				if command.Active {
-					activeCount++
-				}
-			}
-			data, _ := json.MarshalIndent(map[string]any{
-				"kind":   "commands",
-				"action": "list",
-				"status": "ok",
-				"count":  len(all),
-				"summary": map[string]any{
-					"total":    len(all),
-					"active":   activeCount,
-					"shadowed": len(all) - activeCount,
-				},
-				"commands": summaries,
-			}, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		if len(all) == 0 {
-			fmt.Fprintln(a.Out, "No custom commands found.")
-			return nil
-		}
-		for _, command := range all {
-			status := "active"
-			if !command.Active {
-				status = "shadowed"
-				if command.ShadowedBy != "" {
-					status += " by " + command.ShadowedBy
-				}
-			}
-			fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\n", command.Name, command.Source, status, command.Preview, command.Path)
-		}
+		return a.renderCommandsList(format)
 	case "sources", "roots":
 		return a.commandSources(rest)
 	case "show":
@@ -36818,8 +36774,15 @@ func (a *App) Commands(args []string) error {
 		if err != nil {
 			return err
 		}
-		if len(remaining) != 1 {
-			return errors.New("usage: codog commands show NAME [--json]")
+		if len(remaining) == 0 {
+			return a.renderCommandsList(format)
+		}
+		if len(remaining) > 1 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "commands show",
+				Args:    append([]string(nil), remaining[1:]...),
+				Usage:   "codog commands show [NAME] [--json|--output-format text|json]",
+			}, format)
 		}
 		command, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
@@ -36858,6 +36821,55 @@ func (a *App) Commands(args []string) error {
 		}
 	default:
 		return fmt.Errorf("unknown commands action %q", action)
+	}
+	return nil
+}
+
+func (a *App) renderCommandsList(format string) error {
+	all, err := customcommands.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		summaries := make([]customcommands.Command, len(all))
+		copy(summaries, all)
+		for i := range summaries {
+			summaries[i].Body = ""
+		}
+		activeCount := 0
+		for _, command := range all {
+			if command.Active {
+				activeCount++
+			}
+		}
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":   "commands",
+			"action": "list",
+			"status": "ok",
+			"count":  len(all),
+			"summary": map[string]any{
+				"total":    len(all),
+				"active":   activeCount,
+				"shadowed": len(all) - activeCount,
+			},
+			"commands": summaries,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if len(all) == 0 {
+		fmt.Fprintln(a.Out, "No custom commands found.")
+		return nil
+	}
+	for _, command := range all {
+		status := "active"
+		if !command.Active {
+			status = "shadowed"
+			if command.ShadowedBy != "" {
+				status += " by " + command.ShadowedBy
+			}
+		}
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\t%s\n", command.Name, command.Source, status, command.Preview, command.Path)
 	}
 	return nil
 }
@@ -36903,34 +36915,21 @@ func (a *App) Templates(args []string) error {
 		if err != nil {
 			return err
 		}
-		all, err := prompttemplates.Load(a.Config.ConfigHome, a.Workspace)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			summaries := make([]prompttemplates.Template, len(all))
-			copy(summaries, all)
-			for i := range summaries {
-				summaries[i].Body = ""
-			}
-			data, _ := json.MarshalIndent(map[string]any{"kind": "templates", "templates": summaries}, "", "  ")
-			fmt.Fprintln(a.Out, string(data))
-			return nil
-		}
-		if len(all) == 0 {
-			fmt.Fprintln(a.Out, "No templates found.")
-			return nil
-		}
-		for _, tmpl := range all {
-			fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", tmpl.Name, tmpl.Source, tmpl.Preview, tmpl.Path)
-		}
+		return a.renderTemplatesList(format)
 	case "show":
 		format, remaining, err := parseTemplateOutputArgs("templates show", rest)
 		if err != nil {
 			return err
 		}
-		if len(remaining) != 1 {
-			return errors.New("usage: codog templates show NAME [--json]")
+		if len(remaining) == 0 {
+			return a.renderTemplatesList(format)
+		}
+		if len(remaining) > 1 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "templates show",
+				Args:    append([]string(nil), remaining[1:]...),
+				Usage:   "codog templates show [NAME] [--json|--output-format text|json]",
+			}, format)
 		}
 		tmpl, err := prompttemplates.Find(a.Config.ConfigHome, a.Workspace, remaining[0])
 		if err != nil {
@@ -36969,6 +36968,37 @@ func (a *App) Templates(args []string) error {
 		}
 	default:
 		return fmt.Errorf("unknown templates action %q", action)
+	}
+	return nil
+}
+
+func (a *App) renderTemplatesList(format string) error {
+	all, err := prompttemplates.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		summaries := make([]prompttemplates.Template, len(all))
+		copy(summaries, all)
+		for i := range summaries {
+			summaries[i].Body = ""
+		}
+		data, _ := json.MarshalIndent(map[string]any{
+			"kind":      "templates",
+			"action":    "list",
+			"status":    "ok",
+			"count":     len(all),
+			"templates": summaries,
+		}, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	if len(all) == 0 {
+		fmt.Fprintln(a.Out, "No templates found.")
+		return nil
+	}
+	for _, tmpl := range all {
+		fmt.Fprintf(a.Out, "%s\t%s\t%s\t%s\n", tmpl.Name, tmpl.Source, tmpl.Preview, tmpl.Path)
 	}
 	return nil
 }
