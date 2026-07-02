@@ -5303,6 +5303,43 @@ type marketplaceSettingsReport struct {
 	Sources          []marketplaceSourceInfo `json:"sources"`
 }
 
+type marketplaceRemoteRequest struct {
+	Action    string
+	URL       string
+	PublicKey string
+	Query     string
+	ID        string
+	Page      int
+	PerPage   int
+}
+
+type marketplaceRemotePlugin struct {
+	MarketplaceURL string `json:"marketplace_url"`
+	ID             string `json:"id"`
+	Name           string `json:"name,omitempty"`
+	Version        string `json:"version,omitempty"`
+	Description    string `json:"description,omitempty"`
+	URL            string `json:"url,omitempty"`
+	ResolvedURL    string `json:"resolved_url,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
+	SignatureValid bool   `json:"signature_valid,omitempty"`
+	InstallCommand string `json:"install_command,omitempty"`
+	UpdateCommand  string `json:"update_command,omitempty"`
+}
+
+type marketplaceRemoteReport struct {
+	Kind       string                         `json:"kind"`
+	Action     string                         `json:"action"`
+	Status     string                         `json:"status"`
+	Query      string                         `json:"query,omitempty"`
+	ID         string                         `json:"id,omitempty"`
+	Sources    []marketplaceSourceInfo        `json:"sources"`
+	Plugins    []marketplaceRemotePlugin      `json:"plugins,omitempty"`
+	Plugin     *marketplaceRemotePlugin       `json:"plugin,omitempty"`
+	Pagination *pluginCompatibilityPagination `json:"pagination,omitempty"`
+	Total      int                            `json:"total"`
+}
+
 type marketplaceSourcesRequest struct {
 	Action    string
 	URL       string
@@ -5412,11 +5449,19 @@ func (a *App) Marketplace(args []string) error {
 	case "settings":
 		return a.marketplaceSettings(format)
 	case "remote", "browse", "discover":
-		indexes, err := a.marketplaceRemote(args[1:])
-		if err != nil {
-			return err
+		if marketplaceRemoteUsesStructuredReport(args[1:]) {
+			report, err := a.marketplaceRemoteReport(args[1:])
+			if err != nil {
+				return err
+			}
+			payload = report
+		} else {
+			indexes, err := a.marketplaceRemote(args[1:])
+			if err != nil {
+				return err
+			}
+			payload = indexes
 		}
-		payload = indexes
 	case "updates":
 		updates, err := a.marketplaceUpdates(args[1:])
 		if err != nil {
@@ -6893,6 +6938,345 @@ func (a *App) marketplaceSettings(format string) error {
 		fmt.Fprintf(a.Out, "  - %s (%s)\n", source.URL, keyStatus)
 	}
 	return nil
+}
+
+func marketplaceRemoteUsesStructuredReport(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	first := strings.ToLower(strings.TrimSpace(args[0]))
+	switch first {
+	case "list", "ls", "search", "find", "show", "info", "describe":
+		return true
+	}
+	for _, arg := range args {
+		switch {
+		case arg == "--query" || arg == "--id" || arg == "--page" || arg == "--per-page" || arg == "--limit" || arg == "--url" || arg == "--marketplace" || arg == "--public-key" || arg == "--key":
+			return true
+		case strings.HasPrefix(arg, "--query=") || strings.HasPrefix(arg, "--id=") || strings.HasPrefix(arg, "--page=") || strings.HasPrefix(arg, "--per-page=") || strings.HasPrefix(arg, "--limit=") || strings.HasPrefix(arg, "--url=") || strings.HasPrefix(arg, "--marketplace=") || strings.HasPrefix(arg, "--public-key=") || strings.HasPrefix(arg, "--key="):
+			return true
+		}
+	}
+	return false
+}
+
+func parseMarketplaceRemoteArgs(args []string) (marketplaceRemoteRequest, error) {
+	req := marketplaceRemoteRequest{Action: "list", Page: 1, PerPage: 20}
+	positionals := []string{}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--url" || arg == "--marketplace":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace remote URL is required")
+			}
+			req.URL = args[index]
+		case strings.HasPrefix(arg, "--url="):
+			req.URL = strings.TrimPrefix(arg, "--url=")
+		case strings.HasPrefix(arg, "--marketplace="):
+			req.URL = strings.TrimPrefix(arg, "--marketplace=")
+		case arg == "--public-key" || arg == "--key":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace public key is required")
+			}
+			req.PublicKey = args[index]
+		case strings.HasPrefix(arg, "--public-key="):
+			req.PublicKey = strings.TrimPrefix(arg, "--public-key=")
+		case strings.HasPrefix(arg, "--key="):
+			req.PublicKey = strings.TrimPrefix(arg, "--key=")
+		case arg == "--query" || arg == "-q":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace remote query is required")
+			}
+			req.Query = args[index]
+		case strings.HasPrefix(arg, "--query="):
+			req.Query = strings.TrimPrefix(arg, "--query=")
+		case arg == "--id":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace remote plugin id is required")
+			}
+			req.ID = args[index]
+		case strings.HasPrefix(arg, "--id="):
+			req.ID = strings.TrimPrefix(arg, "--id=")
+		case arg == "--page":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace remote page is required")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.Page = value
+		case strings.HasPrefix(arg, "--page="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--page="))
+			if err != nil {
+				return req, err
+			}
+			req.Page = value
+		case arg == "--per-page" || arg == "--limit":
+			index++
+			if index >= len(args) {
+				return req, errors.New("marketplace remote page size is required")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.PerPage = value
+		case strings.HasPrefix(arg, "--per-page="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--per-page="))
+			if err != nil {
+				return req, err
+			}
+			req.PerPage = value
+		case strings.HasPrefix(arg, "--limit="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			if err != nil {
+				return req, err
+			}
+			req.PerPage = value
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown marketplace remote flag %q", arg)
+		default:
+			if !actionSet {
+				switch strings.ToLower(strings.TrimSpace(arg)) {
+				case "list", "ls":
+					req.Action = "list"
+					actionSet = true
+					continue
+				case "search", "find":
+					req.Action = "search"
+					actionSet = true
+					continue
+				case "show", "info", "describe":
+					req.Action = "show"
+					actionSet = true
+					continue
+				}
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PerPage < 1 {
+		req.PerPage = 20
+	}
+	switch req.Action {
+	case "list":
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected marketplace remote argument %q", positionals[0])
+		}
+	case "search":
+		if strings.TrimSpace(req.Query) == "" && len(positionals) > 0 {
+			req.Query = positionals[0]
+			positionals = positionals[1:]
+		}
+		if strings.TrimSpace(req.Query) == "" {
+			return req, errors.New("usage: codog marketplace remote search QUERY [--url URL] [--public-key KEY]")
+		}
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected marketplace remote argument %q", positionals[0])
+		}
+	case "show":
+		if strings.TrimSpace(req.ID) == "" && len(positionals) > 0 {
+			req.ID = positionals[0]
+			positionals = positionals[1:]
+		}
+		if strings.TrimSpace(req.ID) == "" {
+			return req, errors.New("usage: codog marketplace remote show ID [--url URL] [--public-key KEY]")
+		}
+		if len(positionals) > 0 {
+			return req, fmt.Errorf("unexpected marketplace remote argument %q", positionals[0])
+		}
+	default:
+		return req, fmt.Errorf("unknown marketplace remote action %q", req.Action)
+	}
+	return req, nil
+}
+
+func (a *App) marketplaceRemoteReport(args []string) (marketplaceRemoteReport, error) {
+	req, err := parseMarketplaceRemoteArgs(args)
+	if err != nil {
+		return marketplaceRemoteReport{}, err
+	}
+	sources := a.marketplaceSources()
+	if strings.TrimSpace(req.URL) != "" {
+		sourceURL, err := normalizeMarketplaceSourceURL(req.URL)
+		if err != nil {
+			return marketplaceRemoteReport{}, err
+		}
+		source := plugins.MarketplaceSource{URL: sourceURL, PublicKey: a.marketplacePublicKey(sourceURL)}
+		if strings.TrimSpace(req.PublicKey) != "" {
+			source.PublicKey = strings.TrimSpace(req.PublicKey)
+		}
+		sources = []plugins.MarketplaceSource{source}
+	}
+	if len(sources) == 0 {
+		return marketplaceRemoteReport{}, errors.New("usage: codog marketplace remote list|search|show [--url URL] [--public-key KEY]")
+	}
+	indexes := make([]plugins.MarketplaceIndex, 0, len(sources))
+	for _, source := range sources {
+		index, err := plugins.FetchMarketplace(context.Background(), source.URL, source.PublicKey)
+		if err != nil {
+			return marketplaceRemoteReport{}, err
+		}
+		indexes = append(indexes, index)
+	}
+	all := marketplaceRemotePlugins(indexes)
+	filtered := filterMarketplaceRemotePlugins(all, req)
+	report := marketplaceRemoteReport{
+		Kind:    "marketplace",
+		Action:  "remote_" + req.Action,
+		Status:  "ok",
+		Query:   strings.TrimSpace(req.Query),
+		ID:      strings.TrimSpace(req.ID),
+		Sources: marketplaceSourceInfosFromSources(sources),
+		Total:   len(filtered),
+	}
+	if req.Action == "show" {
+		if len(filtered) == 0 {
+			report.Status = "not_found"
+			return report, fmt.Errorf("remote plugin %q was not found", req.ID)
+		}
+		report.Plugin = &filtered[0]
+		return report, nil
+	}
+	pageItems, pagination := paginateMarketplaceRemotePlugins(filtered, req.Page, req.PerPage)
+	report.Plugins = pageItems
+	report.Pagination = &pagination
+	if len(filtered) == 0 {
+		report.Status = "empty"
+	}
+	return report, nil
+}
+
+func marketplaceRemotePlugins(indexes []plugins.MarketplaceIndex) []marketplaceRemotePlugin {
+	out := []marketplaceRemotePlugin{}
+	for _, index := range indexes {
+		for _, plugin := range index.Plugins {
+			item := marketplaceRemotePlugin{
+				MarketplaceURL: index.Source,
+				ID:             plugin.ID,
+				Name:           plugin.Name,
+				Version:        plugin.Version,
+				Description:    plugin.Description,
+				URL:            plugin.URL,
+				SHA256:         plugin.SHA256,
+				SignatureValid: index.SignatureValid,
+				InstallCommand: strings.Join(shellQuoteArgs([]string{"codog", "marketplace", "install-remote", plugin.ID}), " "),
+				UpdateCommand:  strings.Join(shellQuoteArgs([]string{"codog", "marketplace", "update", plugin.ID}), " "),
+			}
+			if resolved, err := resolveMarketplaceEntryURL(index.Source, plugin.URL); err == nil {
+				item.ResolvedURL = resolved
+			}
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ID == out[j].ID {
+			return out[i].MarketplaceURL < out[j].MarketplaceURL
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func filterMarketplaceRemotePlugins(items []marketplaceRemotePlugin, req marketplaceRemoteRequest) []marketplaceRemotePlugin {
+	switch req.Action {
+	case "show":
+		id := strings.ToLower(strings.TrimSpace(req.ID))
+		out := []marketplaceRemotePlugin{}
+		for _, item := range items {
+			if strings.EqualFold(item.ID, id) || strings.EqualFold(item.Name, id) {
+				out = append(out, item)
+			}
+		}
+		return out
+	case "search":
+		query := strings.ToLower(strings.TrimSpace(req.Query))
+		out := []marketplaceRemotePlugin{}
+		for _, item := range items {
+			haystack := strings.ToLower(strings.Join([]string{item.ID, item.Name, item.Version, item.Description}, "\n"))
+			if strings.Contains(haystack, query) {
+				out = append(out, item)
+			}
+		}
+		return out
+	default:
+		return append([]marketplaceRemotePlugin(nil), items...)
+	}
+}
+
+func paginateMarketplaceRemotePlugins(items []marketplaceRemotePlugin, page int, perPage int) ([]marketplaceRemotePlugin, pluginCompatibilityPagination) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 20
+	}
+	total := len(items)
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + perPage - 1) / perPage
+	}
+	start := (page - 1) * perPage
+	if start > total {
+		start = total
+	}
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	return append([]marketplaceRemotePlugin(nil), items[start:end]...), pluginCompatibilityPagination{
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: totalPages,
+		Start:      start,
+		End:        end,
+	}
+}
+
+func marketplaceSourceInfosFromSources(sources []plugins.MarketplaceSource) []marketplaceSourceInfo {
+	urls := make([]string, 0, len(sources))
+	keys := map[string]string{}
+	for _, source := range sources {
+		sourceURL := strings.TrimSpace(source.URL)
+		if sourceURL == "" {
+			continue
+		}
+		urls = append(urls, sourceURL)
+		if strings.TrimSpace(source.PublicKey) != "" {
+			keys[sourceURL] = strings.TrimSpace(source.PublicKey)
+		}
+	}
+	return marketplaceSourceInfos(urls, keys)
+}
+
+func resolveMarketplaceEntryURL(indexURL string, entryURL string) (string, error) {
+	if strings.TrimSpace(entryURL) == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(entryURL)
+	if err != nil {
+		return "", err
+	}
+	if parsed.IsAbs() {
+		return parsed.String(), nil
+	}
+	base, err := url.Parse(indexURL)
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(parsed).String(), nil
 }
 
 func (a *App) marketplaceRemote(args []string) ([]plugins.MarketplaceIndex, error) {
@@ -40955,8 +41339,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			command,
 			"marketplace",
-			"codog marketplace [list|show|info|describe ID|validate PATH|sources [list|add|remove|clear]|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
-			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace show|info|describe ID\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, configures trusted marketplace index URLs, browses remote marketplace indexes, installs signed remote plugins, and updates installed plugins. `info` and `describe` are aliases for `show`.\n",
+			"codog marketplace [list|show|info|describe ID|validate PATH|sources [list|add|remove|clear]|remote [list|search|show]|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
+			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace show|info|describe ID\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace remote list|search QUERY|show ID [--url URL] [--public-key KEY] [--page N] [--per-page N]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, configures trusted marketplace index URLs, browses and searches remote marketplace indexes, installs signed remote plugins, and updates installed plugins. `info` and `describe` are aliases for `show`.\n",
 			[]string{"plugins", "sources", "marketplace_url", "signature_valid", "checksum_valid", "path"},
 			[]string{"ok", "error"},
 			true,
@@ -41429,7 +41813,7 @@ Usage:
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
-  %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
+  %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp

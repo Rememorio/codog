@@ -15255,6 +15255,32 @@ func TestMarketplaceSourcesManageConfigAndBrowse(t *testing.T) {
 	require.Equal(t, "demo", indexes[0].Plugins[0].ID)
 	out.Reset()
 
+	require.NoError(t, app.Marketplace([]string{"remote", "search", "demo", "--per-page", "1", "--json"}))
+	var remoteSearch marketplaceRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &remoteSearch))
+	require.Equal(t, "marketplace", remoteSearch.Kind)
+	require.Equal(t, "remote_search", remoteSearch.Action)
+	require.Equal(t, "ok", remoteSearch.Status)
+	require.Equal(t, "demo", remoteSearch.Query)
+	require.Equal(t, 1, remoteSearch.Total)
+	require.Len(t, remoteSearch.Plugins, 1)
+	require.Equal(t, "demo", remoteSearch.Plugins[0].ID)
+	require.Equal(t, indexURL, remoteSearch.Plugins[0].MarketplaceURL)
+	require.Equal(t, server.URL+"/demo.zip", remoteSearch.Plugins[0].ResolvedURL)
+	require.Equal(t, "codog marketplace install-remote demo", remoteSearch.Plugins[0].InstallCommand)
+	require.NotNil(t, remoteSearch.Pagination)
+	require.Equal(t, 1, remoteSearch.Pagination.PerPage)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"remote", "show", "demo", "--json"}))
+	var remoteShow marketplaceRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &remoteShow))
+	require.Equal(t, "remote_show", remoteShow.Action)
+	require.NotNil(t, remoteShow.Plugin)
+	require.Equal(t, "demo", remoteShow.Plugin.ID)
+	require.Empty(t, remoteShow.Plugins)
+	out.Reset()
+
 	require.NoError(t, app.Marketplace([]string{"sources", "remove", indexURL, "--target", "project", "--json"}))
 	var removeReport marketplaceSourcesReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &removeReport))
