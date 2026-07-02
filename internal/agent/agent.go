@@ -8826,7 +8826,7 @@ func (a *App) OAuth(args []string) error {
 	}
 	if args[0] == "discover" {
 		if len(args) < 2 {
-			return errors.New("usage: codog oauth discover ISSUER_URL")
+			return renderMissingActionArgument(a.Out, "oauth", "discover", "issuer_url", "oauth discover requires an issuer URL", "Usage: codog oauth discover ISSUER_URL [--json|--output-format json].", "json")
 		}
 		metadata, err := oauth.DiscoverProvider(context.Background(), args[1])
 		if err != nil {
@@ -8880,7 +8880,7 @@ func (a *App) OAuth(args []string) error {
 	switch args[1] {
 	case "save":
 		if len(args) < 3 {
-			return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT]")
+			return renderMissingActionArgument(a.Out, "oauth", "token_save", "access_token", "oauth token save requires an access token", "Usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT].", "json")
 		}
 		token := oauth.Token{AccessToken: args[2]}
 		if len(args) > 3 {
@@ -9014,7 +9014,7 @@ func (a *App) oauthProvider(args []string) error {
 	switch args[0] {
 	case "save":
 		if len(args) < 4 {
-			return errors.New("usage: codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...]")
+			return renderMissingActionArgument(a.Out, "oauth", "provider_save", "profile", "oauth provider save requires NAME, ISSUER_URL, and CLIENT_ID", "Usage: codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...].", "json")
 		}
 		profile, err := oauth.SaveProviderProfile(context.Background(), a.Config.ConfigHome, args[1], args[2], args[3], args[4:])
 		if err != nil {
@@ -9029,7 +9029,7 @@ func (a *App) oauthProvider(args []string) error {
 		payload = profiles
 	case "show":
 		if len(args) < 2 {
-			return errors.New("usage: codog oauth provider show NAME")
+			return renderMissingActionArgument(a.Out, "oauth", "provider_show", "profile", "oauth provider show requires a profile name", "Usage: codog oauth provider show NAME.", "json")
 		}
 		profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, args[1])
 		if err != nil {
@@ -9038,7 +9038,7 @@ func (a *App) oauthProvider(args []string) error {
 		payload = profile
 	case "delete":
 		if len(args) < 2 {
-			return errors.New("usage: codog oauth provider delete NAME")
+			return renderMissingActionArgument(a.Out, "oauth", "provider_delete", "profile", "oauth provider delete requires a profile name", "Usage: codog oauth provider delete NAME.", "json")
 		}
 		if err := oauth.DeleteProviderProfile(a.Config.ConfigHome, args[1]); err != nil {
 			return err

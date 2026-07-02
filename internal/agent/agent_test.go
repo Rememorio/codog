@@ -15565,6 +15565,20 @@ func TestOAuthTokenCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"issue": "no oauth token saved"`)
 	out.Reset()
 
+	err := app.OAuth([]string{"token", "save", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var saveError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &saveError))
+	require.Equal(t, "oauth", saveError.Kind)
+	require.Equal(t, "token_save", saveError.Action)
+	require.Equal(t, "missing_argument", saveError.ErrorKind)
+	require.Equal(t, "access_token", saveError.Argument)
+	out.Reset()
+
 	expiresAt := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	require.NoError(t, app.OAuth([]string{"token", "save", "access-token-1234", "refresh-token-1234", expiresAt}))
 	require.Contains(t, out.String(), `"access_token": "acce...1234"`)
@@ -15631,6 +15645,20 @@ func TestOAuthDiscoverCommand(t *testing.T) {
 
 	var out bytes.Buffer
 	app := &App{Out: &out}
+	err := app.OAuth([]string{"discover", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var missing actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &missing))
+	require.Equal(t, "oauth", missing.Kind)
+	require.Equal(t, "discover", missing.Action)
+	require.Equal(t, "missing_argument", missing.ErrorKind)
+	require.Equal(t, "issuer_url", missing.Argument)
+	out.Reset()
+
 	require.NoError(t, app.OAuth([]string{"discover", server.URL}))
 	require.Contains(t, out.String(), `"authorization_endpoint": "https://auth.example/authorize"`)
 	require.Contains(t, out.String(), `"token_endpoint": "https://auth.example/token"`)
@@ -15713,6 +15741,30 @@ func TestOAuthProviderCommands(t *testing.T) {
 		Config: config.Config{ConfigHome: t.TempDir()},
 		Out:    &out,
 	}
+	for _, tc := range []struct {
+		args     []string
+		action   string
+		argument string
+	}{
+		{[]string{"provider", "save", "--json"}, "provider_save", "profile"},
+		{[]string{"provider", "show", "--json"}, "provider_show", "profile"},
+		{[]string{"provider", "delete", "--json"}, "provider_delete", "profile"},
+	} {
+		err := app.OAuth(tc.args)
+		require.Error(t, err)
+		var exitErr *ExitError
+		require.ErrorAs(t, err, &exitErr)
+		require.Equal(t, 1, exitErr.Code)
+		require.True(t, exitErr.Silent)
+		var report actionErrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+		require.Equal(t, "oauth", report.Kind)
+		require.Equal(t, tc.action, report.Action)
+		require.Equal(t, "missing_argument", report.ErrorKind)
+		require.Equal(t, tc.argument, report.Argument)
+		out.Reset()
+	}
+
 	require.NoError(t, app.OAuth([]string{"provider", "save", "default", server.URL, "client-1", "profile"}))
 	require.Contains(t, out.String(), `"name": "default"`)
 	require.Contains(t, out.String(), `"client_id": "client-1"`)
