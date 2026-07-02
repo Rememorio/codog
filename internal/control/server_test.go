@@ -59,6 +59,9 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/call"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/mcp/read"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/prompt"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/bridge/faults"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/bridge/faults/record"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/bridge/faults/clear"].Methods)
 	require.True(t, byPath["/background/{id}/watch"].Streaming)
 	require.Contains(t, byPath, "/editor/selection")
 }
@@ -407,6 +410,69 @@ func TestControlEditorBridgeEndpoints(t *testing.T) {
 	require.Contains(t, string(body), `"open_file":{"path":"main.go"`)
 	require.Contains(t, string(body), `"selection":{"path":"main.go"`)
 	require.FileExists(t, filepath.Join(configHome, "bridge", "editor-state.json"))
+}
+
+func TestControlBridgeFaults(t *testing.T) {
+	configHome := t.TempDir()
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		ConfigHome: configHome,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Post(server.URL+"/bridge/faults/record", "application/json", bytes.NewBufferString(`{"action":"latency","args":["250ms"]}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"bridge_faults"`)
+	require.Contains(t, string(body), `"total":1`)
+	require.Contains(t, string(body), `"action":"latency"`)
+	require.Contains(t, string(body), "250ms")
+	require.FileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+
+	resp, err = http.Get(server.URL + "/bridge/faults")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"total":1`)
+	require.Contains(t, string(body), `"latency"`)
+
+	resp, err = http.Post(server.URL+"/bridge/faults/record", "application/json", bytes.NewBufferString(`{"args":["missing"]}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "bridge fault action is required")
+
+	resp, err = http.Post(server.URL+"/bridge/faults/clear", "application/json", bytes.NewBufferString(`{}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"cleared":true`)
+	require.Contains(t, string(body), `"total":0`)
+	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
+}
+
+func TestControlBridgeFaultsRequireConfigHome(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions: &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/bridge/faults")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "config home is required")
 }
 
 func TestControlBackgroundLifecycle(t *testing.T) {

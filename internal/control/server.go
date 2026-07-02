@@ -113,6 +113,9 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/editor/state", Methods: []string{http.MethodGet}, Description: "Read editor bridge state."},
 		{Path: "/editor/open", Methods: []string{http.MethodPost}, Description: "Open a file through the editor bridge."},
 		{Path: "/editor/selection", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update editor selection."},
+		{Path: "/bridge/faults", Methods: []string{http.MethodGet}, Description: "List recorded editor bridge diagnostic fault events."},
+		{Path: "/bridge/faults/record", Methods: []string{http.MethodPost}, Description: "Record an editor bridge diagnostic fault event."},
+		{Path: "/bridge/faults/clear", Methods: []string{http.MethodPost}, Description: "Clear editor bridge diagnostic fault events."},
 	}
 }
 
@@ -244,6 +247,9 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/editor/state", s.editorState)
 	mux.HandleFunc("/editor/open", s.editorOpen)
 	mux.HandleFunc("/editor/selection", s.editorSelection)
+	mux.HandleFunc("/bridge/faults", s.bridgeFaults)
+	mux.HandleFunc("/bridge/faults/record", s.bridgeFaultRecord)
+	mux.HandleFunc("/bridge/faults/clear", s.bridgeFaultClear)
 	return s.withAuth(mux)
 }
 
@@ -2415,6 +2421,57 @@ func (s Server) editorSelection(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (s Server) bridgeFaults(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	events, err := s.editorBridge().BridgeFaults()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "bridge_faults", "total": len(events), "events": events})
+}
+
+func (s Server) bridgeFaultRecord(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Action string   `json:"action"`
+		Args   []string `json:"args"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	event, err := s.editorBridge().RecordBridgeFault(payload.Action, payload.Args)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	events, err := s.editorBridge().BridgeFaults()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "bridge_faults", "total": len(events), "recorded": event, "events": events})
+}
+
+func (s Server) bridgeFaultClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.editorBridge().ClearBridgeFaults(); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "bridge_faults", "cleared": true, "total": 0, "events": []bridge.FaultEvent{}})
 }
 
 func (s Server) editorBridge() bridge.Server {
