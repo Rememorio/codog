@@ -381,7 +381,13 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			if err != nil {
 				return err
 			}
-			input = string(data)
+			input = strings.TrimSpace(string(data))
+		} else if req.UseStdin {
+			data, err := readPromptInput(app.In)
+			if err != nil {
+				return err
+			}
+			input = mergePromptWithStdin(input, string(data))
 		}
 		if strings.TrimSpace(input) == "" {
 			if req.Compact {
@@ -24318,6 +24324,7 @@ type promptCLIRequest struct {
 	Format         string
 	PromptProvided bool
 	Compact        bool
+	UseStdin       bool
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
@@ -24344,6 +24351,8 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--compact":
 			req.Compact = true
+		case arg == "--stdin" || arg == "--prompt-stdin":
+			req.UseStdin = true
 		default:
 			req.PromptProvided = true
 			parts = append(parts, arg)
@@ -24373,6 +24382,18 @@ func readPromptInput(in io.Reader) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func mergePromptWithStdin(prompt string, stdin string) string {
+	prompt = strings.TrimSpace(prompt)
+	stdin = strings.TrimSpace(stdin)
+	if stdin == "" {
+		return prompt
+	}
+	if prompt == "" {
+		return stdin
+	}
+	return prompt + "\n\n" + stdin
 }
 
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
@@ -39107,8 +39128,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return providerCommandHelpSpec(
 			"prompt",
 			"prompt",
-			`codog [flags] prompt "MESSAGE" [--json|--output-format text|json|stream-json]`,
-			"Prompt\n\nUsage:\n  codog [flags] prompt \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session.\n",
+			`codog [flags] prompt [--stdin] "MESSAGE" [--json|--output-format text|json|stream-json]`,
+			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt.\n",
 			[]string{"session_id", "message", "tool_calls", "usage", "cost"},
 			[]string{"ok", "error"},
 		), true
@@ -40076,7 +40097,7 @@ func helpText(exe string) string {
 	help := `%s is a Go-native coding agent CLI.
 
 Usage:
-  %s [flags] prompt "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
+  %s [flags] prompt [--stdin] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]

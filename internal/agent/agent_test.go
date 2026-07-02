@@ -4481,6 +4481,19 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.Equal(t, "hello", req.Prompt)
 	require.True(t, req.Compact)
 	require.True(t, req.PromptProvided)
+
+	req, err = parsePromptArgs([]string{"Review this", "--stdin", "--prompt-stdin"})
+	require.NoError(t, err)
+	require.Equal(t, "Review this", req.Prompt)
+	require.True(t, req.UseStdin)
+	require.True(t, req.PromptProvided)
+	require.False(t, strings.Contains(req.Prompt, "--stdin"))
+}
+
+func TestMergePromptWithStdin(t *testing.T) {
+	require.Equal(t, "Review this", mergePromptWithStdin("Review this", "   \n\t\n  "))
+	require.Equal(t, "standalone body", mergePromptWithStdin("", "standalone body\n"))
+	require.Equal(t, "Review this\n\nfn main() {}", mergePromptWithStdin("Review this", "\nfn main() {}\n"))
 }
 
 func TestPromptMissingPromptOutputContract(t *testing.T) {
@@ -4599,6 +4612,67 @@ func TestCompactFlagReadsPromptFromStdin(t *testing.T) {
 	require.Equal(t, "mock", report.Model)
 	require.Equal(t, 10, report.Usage.InputTokens)
 	require.Equal(t, 5, report.Usage.OutputTokens)
+}
+
+func TestPromptStdinFlagAppendsPipeContext(t *testing.T) {
+	captured := make(chan json.RawMessage, 1)
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "merged stdin done",
+		OnRequest: func(raw json.RawMessage) {
+			select {
+			case captured <- append(json.RawMessage(nil), raw...):
+			default:
+			}
+		},
+	}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	require.NoError(t, os.WriteFile(stdinPath, []byte("\npipe context body\n"), 0o644))
+	stdinFile, err := os.Open(stdinPath)
+	require.NoError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, stdinFile.Close())
+	}()
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"prompt", "Use stdin context",
+			"--stdin",
+			"--output-format", "json",
+			"--compact",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report promptCompactReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "merged stdin done", report.Message)
+
+	var raw json.RawMessage
+	select {
+	case raw = <-captured:
+	default:
+		require.FailNow(t, "expected provider request to be captured")
+	}
+	body := string(raw)
+	require.Contains(t, body, "Use stdin context")
+	require.Contains(t, body, "pipe context body")
 }
 
 func TestCompactFlagShorthandStaysOnPromptPath(t *testing.T) {
