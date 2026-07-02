@@ -5503,14 +5503,17 @@ func (r *Registry) executeTestingPermission(input json.RawMessage, prompter *Pro
 	}
 	targetTool, canonical, found := r.toolByName(target)
 	required := payload.RequiredPermission
+	permissionSource := "request_override"
 	if required != "" {
 		if !validPermission(required) {
 			return "", fmt.Errorf("unsupported required_permission %q", required)
 		}
 	} else if found {
 		required = targetTool.Permission()
+		permissionSource = "tool_definition"
 	} else {
 		required = PermissionDanger
+		permissionSource = "unknown_tool_default"
 	}
 	targetInput := payload.Input
 	if len(targetInput) == 0 || string(targetInput) == "null" {
@@ -5522,15 +5525,29 @@ func (r *Registry) executeTestingPermission(input json.RawMessage, prompter *Pro
 	decision := prompter.Decide(canonicalOrTarget(canonical, target), required, targetInput)
 	return pretty(map[string]any{
 		"kind":                "permission_check",
+		"source":              "registry_permission_policy",
+		"requested_tool":      target,
 		"target_tool":         canonicalOrTarget(canonical, target),
+		"canonical_tool":      canonical,
 		"known_tool":          found,
 		"required_permission": string(required),
+		"permission_source":   permissionSource,
 		"mode":                string(decision.Mode),
 		"input":               string(targetInput),
+		"input_json":          targetInput,
 		"allowed":             decision.Allowed,
 		"would_prompt":        decision.WouldPrompt,
 		"reason":              decision.Reason,
 		"message":             decision.Message,
+		"decision": map[string]any{
+			"tool_name":           decision.ToolName,
+			"required_permission": string(decision.Required),
+			"mode":                string(decision.Mode),
+			"allowed":             decision.Allowed,
+			"would_prompt":        decision.WouldPrompt,
+			"reason":              decision.Reason,
+			"message":             decision.Message,
+		},
 	}), nil
 }
 
