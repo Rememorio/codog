@@ -70,6 +70,7 @@ import (
 	"github.com/Rememorio/codog/internal/undo"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
+	"github.com/Rememorio/codog/internal/verifiers"
 	"github.com/Rememorio/codog/internal/workerstate"
 	"github.com/Rememorio/codog/internal/worktree"
 	"github.com/stretchr/testify/require"
@@ -2832,6 +2833,17 @@ func risky(value any) {
 	require.Equal(t, "init", resumedInit.Kind)
 	require.Equal(t, "init", resumedInit.Action)
 	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+
+	out, err = runResumedJSON("/init-verifiers", "--target", "codog", "--force")
+	require.NoError(t, err)
+	var resumedVerifierInit verifiers.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVerifierInit))
+	require.Equal(t, "init_verifiers", resumedVerifierInit.Kind)
+	require.Equal(t, "init", resumedVerifierInit.Action)
+	require.Equal(t, "codog", resumedVerifierInit.Target)
+	require.False(t, resumedVerifierInit.DryRun)
+	require.NotEmpty(t, resumedVerifierInit.Artifacts)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "skills", "verifier-cli", "SKILL.md"))
 
 	out, err = runResumedJSON("/memory", "list")
 	require.NoError(t, err)

@@ -24776,6 +24776,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedAllowedToolsSlash(resumeSlashArgs("allowed-tools", args, format), format)
 	case "/init":
 		return a.Init(resumeSlashArgs("init", args, format))
+	case "/init-verifiers":
+		return a.InitVerifiers(resumeSlashArgs("init-verifiers", args, format))
 	case "/memory":
 		return a.Memory(resumeSlashArgs("memory", args, format))
 	case "/project":

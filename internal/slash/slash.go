@@ -326,6 +326,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/hover":              true,
 	"/ide":                true,
 	"/init":               true,
+	"/init-verifiers":     true,
 	"/install-slack-app":  true,
 	"/insights":           true,
 	"/ios":                true,
