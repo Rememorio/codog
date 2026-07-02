@@ -1151,6 +1151,10 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "retrieve_context", CanonicalToolName("RetrieveContextTool"))
 	require.Equal(t, "enter_plan_mode", CanonicalToolName("EnterPlanMode"))
 	require.Equal(t, "exit_plan_mode", CanonicalToolName("ExitPlanMode"))
+	require.Equal(t, "mcp", CanonicalToolName("MCP"))
+	require.Equal(t, "read_file", CanonicalToolName("ReadFile"))
+	require.Equal(t, "structured_output", CanonicalToolName("StructuredOutputTool"))
+	require.Equal(t, "tool_search", CanonicalToolName("ToolSearch"))
 	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
 	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
 	require.Equal(t, "git_diff", CanonicalToolName("GitDiffTool"))
@@ -1160,16 +1164,30 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	aliases := ClaudeToolAliases()
 	require.Equal(t, "web_fetch", aliases["WebFetch"])
 	require.Equal(t, "retrieve_context", aliases["RetrieveContextTool"])
+	require.Equal(t, "mcp", aliases["MCP"])
+	require.Equal(t, "brief", aliases["Brief"])
+	require.Equal(t, "config", aliases["Config"])
+	require.Equal(t, "read_file", aliases["ReadFile"])
 	require.Equal(t, "read_file", aliases["FileReadTool"])
+	require.Equal(t, "write_file", aliases["WriteFile"])
+	require.Equal(t, "edit_file", aliases["EditFile"])
+	require.Equal(t, "multi_edit", aliases["MultiEditFile"])
 	require.Equal(t, "apply_patch", aliases["ApplyPatchTool"])
 	require.Equal(t, "enter_plan_mode", aliases["EnterPlanMode"])
 	require.Equal(t, "exit_plan_mode", aliases["ExitPlanMode"])
+	require.Equal(t, "exit_plan_mode", aliases["ExitPlanModeV2"])
+	require.Equal(t, "send_user_message", aliases["SendUserMessageTool"])
+	require.Equal(t, "skill", aliases["Skill"])
+	require.Equal(t, "structured_output", aliases["StructuredOutputTool"])
+	require.Equal(t, "testing_permission", aliases["TestingPermission"])
+	require.Equal(t, "tool_search", aliases["ToolSearch"])
 	require.Equal(t, "sleep", aliases["SleepTool"])
 	require.Equal(t, "repl", aliases["REPLTool"])
 	require.Equal(t, "git_blame", aliases["GitBlameTool"])
 	require.Equal(t, "git_diff", aliases["GitDiffTool"])
 	require.Equal(t, "git_log", aliases["GitLogTool"])
 	require.Equal(t, "git_show", aliases["GitShowTool"])
+	require.Equal(t, "git_status", aliases["GitStatus"])
 	aliases["WebFetch"] = "changed"
 	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
 }
@@ -1794,7 +1812,9 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"ApprovalToken":                "approval_token",
 		"ApprovalTokenTool":            "approval_token",
 		"AskUserQuestionTool":          "ask_user_question",
+		"Brief":                        "brief",
 		"BriefTool":                    "brief",
+		"Config":                       "config",
 		"ConfigTool":                   "config",
 		"CronCreate":                   "cron_create",
 		"CronCreateTool":               "cron_create",
@@ -1808,11 +1828,13 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"EnterWorktreeTool":            "enter_worktree",
 		"ExitPlanMode":                 "exit_plan_mode",
 		"ExitPlanModeTool":             "exit_plan_mode",
+		"ExitPlanModeV2":               "exit_plan_mode",
 		"ExitPlanModeV2Tool":           "exit_plan_mode",
 		"ExitWorktree":                 "exit_worktree",
 		"ExitWorktreeTool":             "exit_worktree",
 		"BashTool":                     "bash",
 		"EditTool":                     "edit_file",
+		"EditFile":                     "edit_file",
 		"FileEdit":                     "edit_file",
 		"FileEditTool":                 "edit_file",
 		"FileRead":                     "read_file",
@@ -1829,6 +1851,7 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"GitLogTool":                   "git_log",
 		"GitShow":                      "git_show",
 		"GitShowTool":                  "git_show",
+		"GitStatus":                    "git_status",
 		"GitStatusTool":                "git_status",
 		"PolicyEvaluate":               "policy_evaluate",
 		"PolicyEvaluateTool":           "policy_evaluate",
@@ -1840,12 +1863,16 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"GrepSearchTool":               "grep",
 		"LSPTool":                      "lsp",
 		"LSTool":                       "ls",
+		"MCP":                          "mcp",
 		"MCPTool":                      "mcp",
+		"MultiEditFile":                "multi_edit",
 		"MultiEditTool":                "multi_edit",
 		"NotebookEditTool":             "notebook_edit",
 		"NotebookReadTool":             "notebook_read",
 		"PowerShellTool":               "powershell",
+		"ReadFile":                     "read_file",
 		"ReadTool":                     "read_file",
+		"WriteFile":                    "write_file",
 		"WriteTool":                    "write_file",
 		"AgentOutputTool":              "task_output",
 		"BashOutputTool":               "bash_output",
@@ -1862,9 +1889,14 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"RunTaskPacketTool":            "run_task_packet",
 		"SendMessage":                  "send_user_message",
 		"SendMessageTool":              "send_user_message",
+		"SendUserMessage":              "send_user_message",
+		"SendUserMessageTool":          "send_user_message",
+		"Skill":                        "skill",
 		"SkillTool":                    "skill",
 		"SleepTool":                    "sleep",
 		"REPLTool":                     "repl",
+		"StructuredOutput":             "structured_output",
+		"StructuredOutputTool":         "structured_output",
 		"SyntheticOutputTool":          "structured_output",
 		"TaskCreate":                   "task_create",
 		"TaskCreateTool":               "task_create",
@@ -1894,8 +1926,11 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"TeamGetTool":                  "team_get",
 		"TeamList":                     "team_list",
 		"TeamListTool":                 "team_list",
+		"TestingPermission":            "testing_permission",
+		"TestingPermissionTool":        "testing_permission",
 		"TodoReadTool":                 "todo_read",
 		"TodoWriteTool":                "todo_write",
+		"ToolSearch":                   "tool_search",
 		"ToolSearchTool":               "tool_search",
 		"WebFetchTool":                 "web_fetch",
 		"WebSearchTool":                "web_search",
