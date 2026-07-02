@@ -1079,10 +1079,12 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "apply_patch", CanonicalToolName("ApplyPatch"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutput"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutputTool"))
+	require.Equal(t, "retrieve_context", CanonicalToolName("RetrieveContextTool"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
 
 	aliases := ClaudeToolAliases()
 	require.Equal(t, "web_fetch", aliases["WebFetch"])
+	require.Equal(t, "retrieve_context", aliases["RetrieveContextTool"])
 	require.Equal(t, "read_file", aliases["FileReadTool"])
 	require.Equal(t, "apply_patch", aliases["ApplyPatchTool"])
 	aliases["WebFetch"] = "changed"
@@ -2327,6 +2329,54 @@ func TestWebToolsFetchAndSearch(t *testing.T) {
 	properties := info.InputSchema["properties"].(map[string]any)
 	querySchema := properties["query"].(map[string]any)
 	require.Equal(t, 2, querySchema["minLength"])
+}
+
+func TestRetrieveContextToolQueriesConfiguredRAGService(t *testing.T) {
+	var received struct {
+		Query string `json:"query"`
+		TopK  int    `json:"top_k"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/query", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		fmt.Fprint(w, `{"phase":"1-sqlite","hits":[{"path":"internal/tools/tools.go","score":0.875,"snippet":"type RetrieveContextTool struct{}\nfunc example() {}"}]}`)
+	}))
+	defer server.Close()
+
+	tool := RetrieveContextTool{BaseURL: server.URL + "/", TopKMax: 5, Timeout: time.Second}
+	out, err := tool.Execute(context.Background(), []byte(`{"query":" where is RAG implemented? ","top_k":99}`))
+	require.NoError(t, err)
+	require.Equal(t, "where is RAG implemented?", received.Query)
+	require.Equal(t, 5, received.TopK)
+	require.Contains(t, out, "phase: 1-sqlite")
+	require.Contains(t, out, "score=0.8750 path=internal/tools/tools.go")
+	require.Contains(t, out, "    type RetrieveContextTool struct{}")
+
+	_, err = tool.Execute(context.Background(), []byte(`{"query":"   "}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "query is required")
+}
+
+func TestRetrieveContextToolRejectsUnknownRAGPhase(t *testing.T) {
+	_, err := formatRAGQueryJSONForModel([]byte(`{"phase":"3-drifted","hits":[]}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown_bootstrap_phase")
+	require.Contains(t, err.Error(), "3-drifted")
+}
+
+func TestRegistryRegistersRetrieveContextWhenRAGConfigured(t *testing.T) {
+	t.Setenv("RAG_BASE_URL", "")
+	registry := NewRegistry(t.TempDir())
+	require.False(t, registry.Has("retrieve_context"))
+
+	registry = NewRegistryWithOptions(t.TempDir(), RegistryOptions{RAGBaseURL: "http://127.0.0.1:1234", RAGTopKMax: 3})
+	info, ok := registry.Info("RetrieveContextTool")
+	require.True(t, ok)
+	require.Equal(t, "retrieve_context", info.Name)
+	require.Equal(t, PermissionReadOnly, info.Permission)
+	require.ElementsMatch(t, []string{"query"}, info.InputSchema["required"])
 }
 
 func TestRemoteTriggerToolCallsWebhook(t *testing.T) {

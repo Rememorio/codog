@@ -74,6 +74,8 @@ const (
 	PermissionAllow    Permission = "allow"
 	maxFileToolBytes   int64      = 2_000_000
 	maxRemoteBodyBytes int64      = 2_000_000
+	maxRAGBodyBytes    int64      = 2_000_000
+	maxRAGQueryChars              = 12_000
 )
 
 // Tool is the runtime contract implemented by every model-callable tool.
@@ -129,6 +131,9 @@ type RegistryOptions struct {
 	OAuthProfile    string
 	MCPServers      map[string]config.MCPServerConfig
 	PowerShell      string
+	RAGBaseURL      string
+	RAGTimeout      time.Duration
+	RAGTopKMax      int
 	QuestionIn      io.Reader
 	QuestionOut     io.Writer
 }
@@ -229,6 +234,8 @@ var claudeToolAliases = map[string]string{
 	"readtool":                     "read_file",
 	"readmcpresource":              "read_mcp_resource",
 	"readmcpresourcetool":          "read_mcp_resource",
+	"retrievecontext":              "retrieve_context",
+	"retrievecontexttool":          "retrieve_context",
 	"recoveryattempt":              "recovery_attempt",
 	"recoveryattempttool":          "recovery_attempt",
 	"recoveryrecipe":               "recovery_recipe",
@@ -398,6 +405,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"ReadMcpResource":              "read_mcp_resource",
 	"ReadMcpResourceTool":          "read_mcp_resource",
 	"ReadTool":                     "read_file",
+	"RetrieveContext":              "retrieve_context",
+	"RetrieveContextTool":          "retrieve_context",
 	"RecoveryAttempt":              "recovery_attempt",
 	"RecoveryAttemptTool":          "recovery_attempt",
 	"RecoveryRecipe":               "recovery_recipe",
@@ -571,6 +580,13 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(LSTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(WebFetchTool{})
 	r.Register(WebSearchTool{})
+	if ragBaseURL := configuredRAGBaseURL(opts.RAGBaseURL); ragBaseURL != "" {
+		r.Register(RetrieveContextTool{
+			BaseURL: ragBaseURL,
+			Timeout: opts.RAGTimeout,
+			TopKMax: opts.RAGTopKMax,
+		})
+	}
 	r.Register(RemoteTriggerTool{})
 	r.Register(TestingPermissionTool{})
 	r.Register(NotebookReadTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -639,6 +655,13 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(GitBlameTool{Workspace: workspace})
 	r.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
 	r.Register(ToolSearchTool{Registry: r})
+}
+
+func configuredRAGBaseURL(explicit string) string {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv("RAG_BASE_URL"))
 }
 
 func (r *Registry) Has(name string) bool {
@@ -4988,6 +5011,185 @@ func (WebSearchTool) Execute(ctx context.Context, input json.RawMessage) (string
 		return "", err
 	}
 	return pretty(result), nil
+}
+
+// RetrieveContextTool queries an external workspace RAG service.
+type RetrieveContextTool struct {
+	BaseURL string
+	Timeout time.Duration
+	TopKMax int
+}
+
+func (RetrieveContextTool) Definition() anthropic.ToolDefinition {
+	return anthropic.ToolDefinition{
+		Name:        "retrieve_context",
+		Description: "Semantic search over the configured workspace RAG index. Returns matching paths, scores, and snippets.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "Natural-language search query.",
+				},
+				"top_k": map[string]any{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Maximum number of hits to return. Defaults to 8 and is capped locally.",
+				},
+			},
+			"required":             []string{"query"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func (RetrieveContextTool) Permission() Permission { return PermissionReadOnly }
+
+func (t RetrieveContextTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var payload struct {
+		Query string `json:"query"`
+		TopK  int    `json:"top_k,omitempty"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return "", err
+	}
+	query := strings.TrimSpace(payload.Query)
+	if query == "" {
+		return "", errors.New("query is required")
+	}
+	if utf8.RuneCountInString(query) > maxRAGQueryChars {
+		return "", fmt.Errorf("query too long: max %d characters", maxRAGQueryChars)
+	}
+	endpoint, err := ragQueryEndpoint(t.BaseURL)
+	if err != nil {
+		return "", err
+	}
+	topKMax := t.TopKMax
+	if topKMax <= 0 {
+		topKMax = 32
+	}
+	topK := payload.TopK
+	if topK <= 0 {
+		topK = 8
+	}
+	topK = min(max(topK, 1), topKMax)
+	requestBody, err := json.Marshal(map[string]any{"query": query, "top_k": topK})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: t.Timeout}
+	if client.Timeout <= 0 {
+		client.Timeout = 30 * time.Second
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("RAG request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRAGBodyBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("RAG response body: %w", err)
+	}
+	if int64(len(body)) > maxRAGBodyBytes {
+		return "", fmt.Errorf("RAG response exceeded %d bytes", maxRAGBodyBytes)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "", fmt.Errorf("RAG HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	formatted, err := formatRAGQueryJSONForModel(body)
+	if err != nil {
+		return "", fmt.Errorf("%w\nraw: %s", err, strings.TrimSpace(string(body)))
+	}
+	return formatted, nil
+}
+
+func ragQueryEndpoint(baseURL string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		return "", errors.New("RAG base URL is not configured")
+	}
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("RAG base URL must use http or https, got %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", errors.New("RAG base URL must include a host")
+	}
+	return base + "/v1/query", nil
+}
+
+func formatRAGQueryJSONForModel(body []byte) (string, error) {
+	var payload struct {
+		Phase any `json:"phase"`
+		Hits  []struct {
+			Path    string   `json:"path"`
+			Snippet string   `json:"snippet"`
+			Score   *float64 `json:"score"`
+		} `json:"hits"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", fmt.Errorf("invalid JSON: %w", err)
+	}
+	phase, ok := payload.Phase.(string)
+	if !ok || phase == "" {
+		return "", unknownRAGPhaseError(payload.Phase, "RAG response is missing a string phase")
+	}
+	if !knownRAGPhase(phase) {
+		return "", unknownRAGPhaseError(phase, "RAG response phase is not recognized")
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "phase: %s\n", phase)
+	if payload.Hits == nil {
+		return "", errors.New("missing hits array")
+	}
+	if len(payload.Hits) == 0 {
+		out.WriteString("(no hits)\n")
+		return out.String(), nil
+	}
+	for index, hit := range payload.Hits {
+		fmt.Fprintf(&out, "%d. ", index+1)
+		if hit.Score != nil {
+			fmt.Fprintf(&out, "score=%.4f ", *hit.Score)
+		}
+		fmt.Fprintf(&out, "path=%s\n", hit.Path)
+		lines := strings.Split(hit.Snippet, "\n")
+		for lineIndex, line := range lines {
+			if lineIndex >= 32 {
+				out.WriteString("    ...\n")
+				break
+			}
+			fmt.Fprintf(&out, "    %s\n", line)
+		}
+		out.WriteString("\n")
+	}
+	return out.String(), nil
+}
+
+func knownRAGPhase(phase string) bool {
+	switch phase {
+	case "1-sqlite-no-db", "1-sqlite-empty", "1-sqlite", "2-qdrant":
+		return true
+	default:
+		return false
+	}
+}
+
+func unknownRAGPhaseError(value any, message string) error {
+	return fmt.Errorf("%s", pretty(map[string]any{
+		"kind":           "unknown_bootstrap_phase",
+		"field":          "phase",
+		"received":       value,
+		"allowed_values": []string{"1-sqlite-no-db", "1-sqlite-empty", "1-sqlite", "2-qdrant"},
+		"message":        message,
+	}))
 }
 
 type RemoteTriggerTool struct{}
