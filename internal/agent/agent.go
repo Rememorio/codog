@@ -24645,13 +24645,6 @@ func (a *App) runResumedEffortSlash(args []string, command string, format string
 }
 
 func (a *App) runResumedFastSlash(args []string, format string) error {
-	req, err := parseFastArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/fast", req.Action), format)
-	}
 	return a.Fast(args)
 }
 

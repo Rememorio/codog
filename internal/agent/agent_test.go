@@ -2425,6 +2425,16 @@ func risky(value any) {
 	require.Equal(t, "status", resumedFast.Action)
 	require.True(t, resumedFast.Enabled)
 
+	out, err = runResumedJSON("/fast", "toggle")
+	require.NoError(t, err)
+	var resumedFastToggle fastReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFastToggle))
+	require.Equal(t, "fast", resumedFastToggle.Kind)
+	require.Equal(t, "set", resumedFastToggle.Action)
+	require.False(t, resumedFastToggle.Enabled)
+	require.True(t, resumedFastToggle.Previous)
+	require.NotEmpty(t, resumedFastToggle.Path)
+
 	out, err = runResumedJSON("/voice")
 	require.NoError(t, err)
 	var resumedVoice voiceReport
@@ -3389,7 +3399,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
 		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
-		{Command: "/fast", Args: []string{"toggle"}, Report: "/fast toggle"},
 		{Command: "/voice", Args: []string{"set-command", "say"}, Report: "/voice set-command"},
 		{Command: "/voice", Args: []string{"on"}, Report: "/voice on"},
 		{Command: "/voice", Args: []string{"off"}, Report: "/voice off"},
