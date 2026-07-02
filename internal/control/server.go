@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hooks"
+	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
@@ -29,6 +31,7 @@ type Server struct {
 	Workspace   string
 	AuthToken   string
 	Hooks       config.HookConfig
+	MCPServers  map[string]config.MCPServerConfig
 	LeaseTTL    time.Duration
 	Executable  string
 	EditorToken string
@@ -89,6 +92,16 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/code/format", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Format a Go file."},
 		{Path: "/notebook/read", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read a Jupyter notebook through code intelligence."},
 		{Path: "/notebook/edit", Methods: []string{http.MethodPost}, Description: "Replace, insert, or delete a Jupyter notebook cell."},
+		{Path: "/mcp/list", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List configured MCP servers."},
+		{Path: "/mcp/show", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Describe and preflight one MCP server."},
+		{Path: "/mcp/auth", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Inspect MCP authentication and capability readiness."},
+		{Path: "/mcp/tools", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List MCP tools."},
+		{Path: "/mcp/call", Methods: []string{http.MethodPost}, Description: "Call one MCP tool."},
+		{Path: "/mcp/resources", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List MCP resources."},
+		{Path: "/mcp/resource-templates", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List MCP resource templates."},
+		{Path: "/mcp/read", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read one MCP resource."},
+		{Path: "/mcp/prompts", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List MCP prompts."},
+		{Path: "/mcp/prompt", Methods: []string{http.MethodPost}, Description: "Render one MCP prompt."},
 		{Path: "/editor/identify", Methods: []string{http.MethodPost}, Description: "Register or identify an editor bridge client."},
 		{Path: "/editor/state", Methods: []string{http.MethodGet}, Description: "Read editor bridge state."},
 		{Path: "/editor/open", Methods: []string{http.MethodPost}, Description: "Open a file through the editor bridge."},
@@ -203,6 +216,16 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/code/format", s.codeFormat)
 	mux.HandleFunc("/notebook/read", s.notebookRead)
 	mux.HandleFunc("/notebook/edit", s.notebookEdit)
+	mux.HandleFunc("/mcp/list", s.mcpList)
+	mux.HandleFunc("/mcp/show", s.mcpShow)
+	mux.HandleFunc("/mcp/auth", s.mcpAuth)
+	mux.HandleFunc("/mcp/tools", s.mcpTools)
+	mux.HandleFunc("/mcp/call", s.mcpCall)
+	mux.HandleFunc("/mcp/resources", s.mcpResources)
+	mux.HandleFunc("/mcp/resource-templates", s.mcpResourceTemplates)
+	mux.HandleFunc("/mcp/read", s.mcpRead)
+	mux.HandleFunc("/mcp/prompts", s.mcpPrompts)
+	mux.HandleFunc("/mcp/prompt", s.mcpPrompt)
 	mux.HandleFunc("/editor/identify", s.editorIdentify)
 	mux.HandleFunc("/editor/state", s.editorState)
 	mux.HandleFunc("/editor/open", s.editorOpen)
@@ -1798,6 +1821,323 @@ func (s Server) notebookEdit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+func (s Server) mcpList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Inspect *bool `json:"inspect"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		if raw := strings.TrimSpace(r.URL.Query().Get("inspect")); raw != "" {
+			parsed, err := strconv.ParseBool(raw)
+			if err != nil {
+				writeError(w, errors.New("inspect must be a boolean"), http.StatusBadRequest)
+				return
+			}
+			payload.Inspect = &parsed
+		}
+	}
+	names := s.mcpServerNames()
+	descriptors := make([]mcp.ServerDescriptor, 0, len(names))
+	for _, name := range names {
+		descriptors = append(descriptors, mcp.DescribeServer(name, s.MCPServers[name]))
+	}
+	inspect := true
+	if payload.Inspect != nil {
+		inspect = *payload.Inspect
+	}
+	result := map[string]any{
+		"kind":        "mcp_list",
+		"count":       len(names),
+		"servers":     names,
+		"descriptors": descriptors,
+	}
+	if inspect {
+		result["statuses"] = mcp.InspectAll(context.Background(), s.MCPServers)
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) mcpShow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+		Name   string `json:"name"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+		payload.Name = r.URL.Query().Get("name")
+	}
+	name := firstNonEmpty(payload.Server, payload.Name)
+	server, err := s.mcpServer(name)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"kind":       "mcp_show",
+		"server":     name,
+		"descriptor": mcp.DescribeServer(name, server),
+		"status":     mcp.Inspect(context.Background(), name, server),
+	})
+}
+
+func (s Server) mcpAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"kind": "mcp_auth", "server": payload.Server, "result": mcp.InspectAuth(context.Background(), payload.Server, server)})
+		return
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.AuthStatusResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.InspectAuth(context.Background(), name, s.MCPServers[name]))
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_auth", "count": len(results), "servers": results})
+}
+
+func (s Server) mcpTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"kind": "mcp_tools", "server": payload.Server, "result": mcp.ListTools(context.Background(), payload.Server, server)})
+		return
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.ToolListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListTools(context.Background(), name, s.MCPServers[name]))
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_tools", "count": len(results), "servers": results})
+}
+
+func (s Server) mcpCall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server    string          `json:"server"`
+		Tool      string          `json:"tool"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(payload.Tool) == "" {
+		writeError(w, errors.New("tool is required"), http.StatusBadRequest)
+		return
+	}
+	server, err := s.mcpServer(payload.Server)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_call", "server": payload.Server, "tool": payload.Tool, "result": mcp.CallTool(context.Background(), payload.Server, server, payload.Tool, payload.Arguments)})
+}
+
+func (s Server) mcpResources(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"kind": "mcp_resources", "server": payload.Server, "result": mcp.ListResources(context.Background(), payload.Server, server)})
+		return
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.ResourceListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListResources(context.Background(), name, s.MCPServers[name]))
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_resources", "count": len(results), "servers": results})
+}
+
+func (s Server) mcpResourceTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"kind": "mcp_resource_templates", "server": payload.Server, "result": mcp.ListResourceTemplates(context.Background(), payload.Server, server)})
+		return
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.ResourceTemplateListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListResourceTemplates(context.Background(), name, s.MCPServers[name]))
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_resource_templates", "count": len(results), "servers": results})
+}
+
+func (s Server) mcpRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+		URI    string `json:"uri"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+		payload.URI = r.URL.Query().Get("uri")
+	}
+	if strings.TrimSpace(payload.URI) == "" {
+		writeError(w, errors.New("uri is required"), http.StatusBadRequest)
+		return
+	}
+	server, err := s.mcpServer(payload.Server)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_read", "server": payload.Server, "uri": payload.URI, "result": mcp.ReadResource(context.Background(), payload.Server, server, payload.URI)})
+}
+
+func (s Server) mcpPrompts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Server = r.URL.Query().Get("server")
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"kind": "mcp_prompts", "server": payload.Server, "result": mcp.ListPrompts(context.Background(), payload.Server, server)})
+		return
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.PromptListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListPrompts(context.Background(), name, s.MCPServers[name]))
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_prompts", "count": len(results), "servers": results})
+}
+
+func (s Server) mcpPrompt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Server    string          `json:"server"`
+		Prompt    string          `json:"prompt"`
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	promptName := firstNonEmpty(payload.Prompt, payload.Name)
+	if promptName == "" {
+		writeError(w, errors.New("prompt is required"), http.StatusBadRequest)
+		return
+	}
+	server, err := s.mcpServer(payload.Server)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "mcp_prompt", "server": payload.Server, "prompt": promptName, "result": mcp.GetPrompt(context.Background(), payload.Server, server, promptName, payload.Arguments)})
+}
+
 func (s Server) editorIdentify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -2008,6 +2348,30 @@ func (s Server) resolveNotebookPath(requested string) (string, string, error) {
 		return "", "", errors.New("notebook path must point to a .ipynb file")
 	}
 	return absPath, relPath, nil
+}
+
+func (s Server) mcpServer(name string) (config.MCPServerConfig, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return config.MCPServerConfig{}, errors.New("server is required")
+	}
+	if len(s.MCPServers) == 0 {
+		return config.MCPServerConfig{}, errors.New("no mcp servers configured")
+	}
+	server, ok := s.MCPServers[name]
+	if !ok {
+		return config.MCPServerConfig{}, fmt.Errorf("mcp server %q not found", name)
+	}
+	return server, nil
+}
+
+func (s Server) mcpServerNames() []string {
+	names := make([]string, 0, len(s.MCPServers))
+	for name := range s.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (s Server) workspaceOps() workspaceops.Service {

@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,10 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 	require.Equal(t, []string{http.MethodPost}, byPath["/file/write"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/notebook/read"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/notebook/edit"].Methods)
+	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/mcp/list"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/call"].Methods)
+	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/mcp/read"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/prompt"].Methods)
 	require.True(t, byPath["/background/{id}/watch"].Streaming)
 	require.Contains(t, byPath, "/editor/selection")
 }
@@ -871,6 +876,207 @@ func TestControlNotebookReadEdit(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "new_source is required for insert and replace edits")
+}
+
+func TestControlMCPEndpoints(t *testing.T) {
+	mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
+		var req map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "session-1")
+			writeControlMCP(t, w, id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities": map[string]any{
+					"tools":     map[string]any{},
+					"resources": map[string]any{},
+					"prompts":   map[string]any{},
+				},
+				"serverInfo": map[string]any{"name": "remote", "version": "1.0.0"},
+			})
+		case "notifications/initialized":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text over HTTP.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}})
+		case "tools/call":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi remote"}}})
+		case "resources/list":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
+		case "resources/templates/list":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"resourceTemplates": []map[string]any{{
+				"uriTemplate": "codog://notes/{name}",
+				"name":        "note by name",
+			}}})
+		case "resources/read":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
+		case "prompts/list":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"prompts": []map[string]any{{
+				"name":        "review",
+				"description": "Review a topic.",
+			}}})
+		case "prompts/get":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeControlMCP(t, w, id, map[string]any{"messages": []map[string]any{{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": "Review hooks",
+				},
+			}}})
+		default:
+			writeControlMCPError(t, w, id, "unsupported method")
+		}
+	}))
+	defer mcpServer.Close()
+
+	controlServer := httptest.NewServer(Server{
+		Sessions: &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		MCPServers: map[string]config.MCPServerConfig{
+			"remote": {
+				URL:     mcpServer.URL + "/mcp?token=secret",
+				Headers: map[string]string{"Authorization": "Bearer token"},
+			},
+		},
+	}.Handler())
+	defer controlServer.Close()
+
+	resp, err := http.Get(controlServer.URL + "/mcp/list?inspect=false")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_list"`)
+	require.Contains(t, string(body), `"remote"`)
+	require.Contains(t, string(body), `"transport":{"id":"http"`)
+	require.Contains(t, string(body), "token=%5Bredacted%5D")
+	require.NotContains(t, string(body), "secret")
+	require.NotContains(t, string(body), `"statuses"`)
+
+	resp, err = http.Get(controlServer.URL + "/mcp/show?server=remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_show"`)
+	require.Contains(t, string(body), `"status":"ok"`)
+	require.Contains(t, string(body), `"protocol_version":"2024-11-05"`)
+	require.NotContains(t, string(body), "secret")
+
+	resp, err = http.Get(controlServer.URL + "/mcp/tools?server=remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_tools"`)
+	require.Contains(t, string(body), `"name":"echo"`)
+
+	resp, err = http.Post(controlServer.URL+"/mcp/call", "application/json", bytes.NewBufferString(`{"server":"remote","tool":"echo","arguments":{"text":"hi"}}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_call"`)
+	require.Contains(t, string(body), "hi remote")
+
+	resp, err = http.Get(controlServer.URL + "/mcp/resources?server=remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_resources"`)
+	require.Contains(t, string(body), "codog://note")
+
+	resp, err = http.Get(controlServer.URL + "/mcp/resource-templates?server=remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_resource_templates"`)
+	require.Contains(t, string(body), "codog://notes/{name}")
+
+	resp, err = http.Get(controlServer.URL + "/mcp/read?server=remote&uri=codog%3A%2F%2Fnote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_read"`)
+	require.Contains(t, string(body), "note body")
+
+	resp, err = http.Get(controlServer.URL + "/mcp/prompts?server=remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_prompts"`)
+	require.Contains(t, string(body), `"name":"review"`)
+
+	resp, err = http.Post(controlServer.URL+"/mcp/prompt", "application/json", bytes.NewBufferString(`{"server":"remote","prompt":"review","arguments":{"topic":"hooks"}}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"mcp_prompt"`)
+	require.Contains(t, string(body), "Review hooks")
+
+	resp, err = http.Post(controlServer.URL+"/mcp/call", "application/json", bytes.NewBufferString(`{"server":"remote"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "tool is required")
+
+	resp, err = http.Get(controlServer.URL + "/mcp/tools?server=missing")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "missing")
+}
+
+func writeControlMCP(t *testing.T, w http.ResponseWriter, id any, result map[string]any) {
+	t.Helper()
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	w.Header().Set("Content-Type", "application/json")
+	_, err = fmt.Fprintln(w, string(data))
+	require.NoError(t, err)
+}
+
+func writeControlMCPError(t *testing.T, w http.ResponseWriter, id any, message string) {
+	t.Helper()
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32601, "message": message}}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	w.Header().Set("Content-Type", "application/json")
+	_, err = fmt.Fprintln(w, string(data))
+	require.NoError(t, err)
 }
 
 func TestControlWorkspaceAndFileOperations(t *testing.T) {
