@@ -912,6 +912,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	statusSlash, ok := capabilityReportSlash(report, "/status")
 	require.True(t, ok)
 	require.True(t, statusSlash.ResumeSupported)
+	conversationSlash, ok := capabilityReportSlash(report, "/conversation")
+	require.True(t, ok)
+	require.True(t, conversationSlash.ResumeSupported)
 	advisorSlash, ok := capabilityReportSlash(report, "/advisor")
 	require.True(t, ok)
 	require.True(t, advisorSlash.ResumeSupported)
@@ -1946,6 +1949,15 @@ func risky(value any) {
 	require.Equal(t, "saved_only", statusReport.Session.Lifecycle.Kind)
 	require.Equal(t, "saved only", statusReport.Session.Lifecycle.Signal)
 	require.True(t, statusReport.Session.Lifecycle.Saved)
+
+	out, err = runResumedJSON("/conversation")
+	require.NoError(t, err)
+	var convReport conversationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &convReport))
+	require.Equal(t, "conversation", convReport.Kind)
+	require.Equal(t, "status", convReport.Action)
+	require.Equal(t, "resume-slash", convReport.SessionID)
+	require.Equal(t, 4, convReport.MessageCount)
 
 	exportPath := filepath.Join(workspace, "resume-export.json")
 	out, err = captureStdout(t, func() error {
@@ -5521,10 +5533,31 @@ func TestRunCLIClearCommand(t *testing.T) {
 		return RunCLI(context.Background(), []string{"--config", configPath, "conversation", "--json"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
+	var conversation conversationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &conversation))
+	require.Equal(t, "conversation", conversation.Kind)
+	require.Equal(t, "status", conversation.Action)
+	require.Equal(t, report.SessionID, conversation.SessionID)
+	require.Equal(t, 0, conversation.MessageCount)
+
+	exportPath := filepath.Join(workspace, "conversation.md")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "conversation", "export", exportPath, "--session", report.SessionID}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"format": "markdown"`)
+	exported, err := os.ReadFile(exportPath)
+	require.NoError(t, err)
+	require.Contains(t, string(exported), "# Conversation Export")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "conversation", "--confirm", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "clear", report.Kind)
 	require.Equal(t, "create_session", report.Action)
-	require.NotEmpty(t, report.SessionID)
+	require.NotEqual(t, conversation.SessionID, report.SessionID)
 }
 
 func TestBackfillSessionsCommandAndSlash(t *testing.T) {

@@ -424,8 +424,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return nil
 	case "resume":
 		return app.ResumeCommand(rest)
-	case "clear", "conversation":
+	case "clear":
 		return app.ClearCommand(rest)
+	case "conversation":
+		return app.Conversation(rest, overrides)
 	case "backfill-sessions":
 		return app.BackfillSessions(rest)
 	case "generateSessionName", "generatesessionname", "generate-session-name":
@@ -23349,6 +23351,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
 		return a.Compact(resumeSlashArgs("compact", args, format), resumed)
+	case "/conversation":
+		return a.Conversation(resumeSlashArgs("conversation", args, format), resumed)
 	case "/session":
 		return a.runResumedSessionSlash(resumeSlashArgs("sessions", args, format), resumed)
 	case "/summary":
@@ -24480,7 +24484,7 @@ func bareApprovalSlashName(command string) string {
 
 func directSlashResumeSafe(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/clear", "/compact", "/resume":
+	case "/clear", "/compact", "/conversation", "/resume":
 		return true
 	default:
 		return false
@@ -28183,6 +28187,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/clear", "/new":
 		a.handleClearSlash(ctx, fields[1:], sess)
+	case "/conversation":
+		if err := a.Conversation(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/resume":
 		a.handleResumeSlash(ctx, fields[1:], sess)
 	case "/rewind", "/checkpoint":
@@ -36108,6 +36116,266 @@ type clearResumedReport struct {
 	OriginalMessages  int    `json:"original_messages"`
 	RemainingMessages int    `json:"remaining_messages"`
 	RemovedMessages   int    `json:"removed_messages"`
+}
+
+type conversationRequest struct {
+	Action       string
+	SessionID    string
+	Format       string
+	ExportFormat string
+	Output       string
+	Confirm      bool
+}
+
+type conversationReport struct {
+	Kind             string                  `json:"kind"`
+	Action           string                  `json:"action"`
+	Status           string                  `json:"status"`
+	RequestedSession string                  `json:"requested_session"`
+	SessionID        string                  `json:"session_id"`
+	MessageCount     int                     `json:"message_count"`
+	Path             string                  `json:"path"`
+	PinnedMessages   []int                   `json:"pinned_messages,omitempty"`
+	Lifecycle        sessionLifecycleReport  `json:"lifecycle"`
+	Identity         session.SessionIdentity `json:"identity,omitempty"`
+	Messages         []anthropic.Message     `json:"messages,omitempty"`
+	ContinueCommands []string                `json:"continue_commands,omitempty"`
+}
+
+func (a *App) Conversation(args []string, overrides config.FlagOverrides) error {
+	req, err := parseConversationArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	switch req.Action {
+	case "clear":
+		clearArgs := []string{}
+		if req.Confirm {
+			clearArgs = append(clearArgs, "--confirm")
+		}
+		if req.Format == "json" {
+			clearArgs = append(clearArgs, "--json")
+		}
+		return a.ClearCommand(clearArgs)
+	case "export":
+		return a.writeExport(exportRequest{SessionID: req.SessionID, Output: req.Output, Format: req.ExportFormat})
+	case "status", "show":
+		report, err := a.buildConversationReport(req)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderConversationReport(a.Out, report)
+		return nil
+	default:
+		return fmt.Errorf("unknown conversation action %q", req.Action)
+	}
+}
+
+func parseConversationArgs(args []string, overrides config.FlagOverrides) (conversationRequest, error) {
+	req := conversationRequest{Action: "status", SessionID: "latest", Format: "text", ExportFormat: session.ExportMarkdown}
+	if strings.TrimSpace(overrides.Resume) != "" {
+		req.SessionID = overrides.Resume
+	}
+	if strings.TrimSpace(overrides.SessionID) != "" {
+		req.SessionID = overrides.SessionID
+	}
+	positionals := []string{}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--confirm":
+			req.Confirm = true
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("conversation output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session" || arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("conversation session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--format":
+			index++
+			if index >= len(args) {
+				return req, errors.New("conversation export format is required")
+			}
+			req.ExportFormat = args[index]
+		case strings.HasPrefix(arg, "--format="):
+			req.ExportFormat = strings.TrimPrefix(arg, "--format=")
+		case arg == "--output":
+			index++
+			if index >= len(args) {
+				return req, errors.New("conversation export output path is required")
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Command: "conversation",
+				Option:  arg,
+				Usage:   "codog conversation [status|show|export|clear] [session-id] [--session ID] [--json|--output-format text|json]",
+			}
+		default:
+			if !actionSet {
+				switch strings.ToLower(strings.TrimSpace(arg)) {
+				case "status", "show", "export", "clear":
+					req.Action = strings.ToLower(strings.TrimSpace(arg))
+					actionSet = true
+					continue
+				}
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	if req.Confirm && !actionSet {
+		req.Action = "clear"
+	}
+	if err := validateTextOrJSON(req.Format, "conversation"); err != nil {
+		return req, err
+	}
+	if _, err := session.NormalizeExportFormat(req.ExportFormat); err != nil {
+		return req, err
+	}
+	switch req.Action {
+	case "status", "show":
+		if len(positionals) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: "conversation",
+				Args:    positionals[1:],
+				Usage:   "codog conversation [status|show] [session-id] [--json|--output-format text|json]",
+			}
+		}
+		if len(positionals) == 1 {
+			req.SessionID = positionals[0]
+		}
+	case "export":
+		if len(positionals) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: "conversation",
+				Args:    positionals[1:],
+				Usage:   "codog conversation export [PATH] [--session ID] [--format markdown|json|jsonl|html]",
+			}
+		}
+		if len(positionals) == 1 {
+			req.Output = positionals[0]
+		}
+	case "clear":
+		if len(positionals) != 0 {
+			return req, unexpectedExtraArgsError{
+				Command: "conversation",
+				Args:    positionals,
+				Usage:   "codog conversation clear [--confirm] [--json|--output-format text|json]",
+			}
+		}
+	default:
+		return req, fmt.Errorf("unknown conversation action %q", req.Action)
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func (a *App) buildConversationReport(req conversationRequest) (conversationReport, error) {
+	sess, err := a.Sessions.OpenExisting(req.SessionID)
+	if err != nil {
+		return conversationReport{}, err
+	}
+	exe := strings.TrimSpace(a.Executable)
+	if exe == "" {
+		exe = "codog"
+	}
+	report := conversationReport{
+		Kind:             "conversation",
+		Action:           req.Action,
+		Status:           "ok",
+		RequestedSession: req.SessionID,
+		SessionID:        sess.ID,
+		MessageCount:     len(sess.Messages),
+		Path:             sess.Path,
+		PinnedMessages:   append([]int(nil), sess.Metadata.PinnedMessages...),
+		Lifecycle:        lifecycleForStoredSession(sess),
+		Identity:         sess.Identity,
+		ContinueCommands: []string{
+			strings.Join([]string{shellQuote(exe), "--resume", shellQuote(sess.ID), "repl"}, " "),
+			strings.Join([]string{shellQuote(exe), "--resume", shellQuote(sess.ID), "prompt", shellQuote("...")}, " "),
+			strings.Join([]string{shellQuote(exe), "conversation", "export", "--session", shellQuote(sess.ID)}, " "),
+		},
+	}
+	if req.Action == "show" {
+		report.Messages = append([]anthropic.Message(nil), sess.Messages...)
+	}
+	return report, nil
+}
+
+func renderConversationReport(out io.Writer, report conversationReport) {
+	fmt.Fprintln(out, "Conversation")
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Requested        %s\n", report.RequestedSession)
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Lifecycle        %s\n", report.Lifecycle.Signal)
+	if len(report.PinnedMessages) > 0 {
+		fmt.Fprintf(out, "  Pinned           %s\n", formatIntList(report.PinnedMessages))
+	}
+	fmt.Fprintf(out, "  File             %s\n", report.Path)
+	if strings.TrimSpace(report.Identity.Title) != "" {
+		fmt.Fprintf(out, "  Title            %s\n", report.Identity.Title)
+	}
+	if len(report.Messages) > 0 {
+		fmt.Fprintln(out, "  Transcript")
+		for index, msg := range report.Messages {
+			fmt.Fprintf(out, "    %d. %s", index+1, msg.Role)
+			text := firstMessageText(msg)
+			if text != "" {
+				fmt.Fprintf(out, ": %s", trimSingleLine(text, 96))
+			}
+			fmt.Fprintln(out)
+		}
+	}
+	if len(report.ContinueCommands) > 0 {
+		fmt.Fprintln(out, "  Continue")
+		for _, command := range report.ContinueCommands {
+			fmt.Fprintf(out, "    %s\n", command)
+		}
+	}
+}
+
+func firstMessageText(msg anthropic.Message) string {
+	for _, block := range msg.Content {
+		if strings.TrimSpace(block.Text) != "" {
+			return strings.TrimSpace(block.Text)
+		}
+	}
+	return ""
+}
+
+func trimSingleLine(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
 }
 
 func (a *App) ClearCommand(args []string) error {
@@ -44465,12 +44733,19 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			StatusValues:            []string{"ok", "error"},
 		}, true
 	case "conversation":
-		spec, _ := commandHelpSpecFor("clear")
-		spec.Topic = "conversation"
-		spec.Command = "conversation"
-		spec.Usage = "codog conversation [--confirm] [--output-format text|json]"
-		spec.Text = "Conversation\n\nUsage:\n  codog conversation [--confirm] [--output-format text|json]\n\nAlias for `codog clear`; creates and reports a fresh empty local session id without deleting existing session JSONL files.\n"
-		return spec, true
+		return commandHelpSpec{
+			Topic:                   "conversation",
+			Command:                 "conversation",
+			Usage:                   "codog conversation [status|show|export|clear] [session-id] [--session ID] [--output-format text|json]",
+			Text:                    "Conversation\n\nUsage:\n  codog conversation [status|show] [session-id] [--output-format text|json]\n  codog conversation export [PATH] [--session ID] [--format markdown|json|jsonl|html]\n  codog conversation clear [--confirm] [--output-format text|json]\n\nInspects, previews, exports, or starts a fresh local conversation. Without a subcommand, it reports the latest saved session instead of mutating session state. `conversation --confirm` remains compatible with the old clear alias behavior.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"session_id", "message_count", "path", "pinned_messages", "continue_commands"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
 	case "resume":
 		return commandHelpSpec{
 			Topic:                   "resume",
