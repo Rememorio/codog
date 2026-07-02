@@ -24630,16 +24630,7 @@ func (a *App) runResumedOutputStyleSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedThemeSlash(args []string, format string) error {
-	req, err := parseThemeArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "status", "list":
-		return a.Theme(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/theme", req.Action), format)
-	}
+	return a.Theme(args)
 }
 
 func (a *App) runResumedLanguageSlash(args []string, format string) error {

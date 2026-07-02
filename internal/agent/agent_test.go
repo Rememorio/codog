@@ -2356,6 +2356,16 @@ func risky(value any) {
 	require.Equal(t, "status", resumedTheme.Action)
 	require.Equal(t, "dark", resumedTheme.Theme)
 
+	out, err = runResumedJSON("/theme", "light")
+	require.NoError(t, err)
+	var resumedThemeSet themeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedThemeSet))
+	require.Equal(t, "theme", resumedThemeSet.Kind)
+	require.Equal(t, "set", resumedThemeSet.Action)
+	require.Equal(t, "light", resumedThemeSet.Theme)
+	require.Equal(t, "dark", resumedThemeSet.Previous)
+	require.NotEmpty(t, resumedThemeSet.Path)
+
 	out, err = runResumedJSON("/color", "list")
 	require.NoError(t, err)
 	var resumedColor themeReport
@@ -3358,7 +3368,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
 		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
-		{Command: "/theme", Args: []string{"light"}, Report: "/theme set"},
 		{Command: "/language", Args: []string{"French"}, Report: "/language set"},
 		{Command: "/effort", Args: []string{"low"}, Report: "/effort set"},
 		{Command: "/fast", Args: []string{"toggle"}, Report: "/fast toggle"},
