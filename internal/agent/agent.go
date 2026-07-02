@@ -23940,7 +23940,11 @@ func (a *App) runResumedSkillsSlash(command string, args []string, format string
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "list", "show", "help", "sources", "roots":
+	case "list", "show", "info", "describe", "help", "sources", "roots",
+		"invoke", "run",
+		"install", "add",
+		"uninstall", "remove", "delete",
+		"enable", "on", "disable", "off", "status", "enabled":
 		return a.Skills(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, action), format)
@@ -24399,6 +24403,8 @@ func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 	}
 	switch action {
 	case "", "list", "show", "info", "describe", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "settings", "remote", "browse", "discover", "updates":
+		return a.Marketplace(args)
+	case "install":
 		return a.Marketplace(args)
 	default:
 		command := "/plugins"

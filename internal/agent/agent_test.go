@@ -1992,6 +1992,12 @@ func risky(value any) {
 	pluginDir := filepath.Join(workspace, ".codog", "plugins", "resume-demo")
 	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(`{"id":"resume-demo","tools":[{"name":"resume_demo_tool","command":"cat","permission":"read-only"}]}`), 0o644))
+	pluginInstallSource := filepath.Join(t.TempDir(), "plugin-source")
+	require.NoError(t, os.MkdirAll(pluginInstallSource, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginInstallSource, "plugin.json"), []byte(`{"id":"resume-install","name":"Resume Install","version":"0.1.0","tools":[{"name":"resume_install_tool","command":"cat","permission":"read-only"}]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginInstallSource, "tool.sh"), []byte("echo ok\n"), 0o755))
+	skillSourcePath := filepath.Join(t.TempDir(), "review.md")
+	require.NoError(t, os.WriteFile(skillSourcePath, []byte("Review resumed skill body."), 0o644))
 
 	oldWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -3193,6 +3199,49 @@ func risky(value any) {
 	require.Equal(t, "ok", resumedSkillSources.Status)
 	require.NotEmpty(t, resumedSkillSources.Roots)
 
+	out, err = runResumedJSON("/skills", "install", skillSourcePath)
+	require.NoError(t, err)
+	var resumedSkillInstall skills.InstallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkillInstall))
+	require.Equal(t, "skills", resumedSkillInstall.Kind)
+	require.Equal(t, "install", resumedSkillInstall.Action)
+	require.Equal(t, "review", resumedSkillInstall.Name)
+	require.Equal(t, "user", resumedSkillInstall.Target)
+	require.FileExists(t, filepath.Join(configHome, "skills", "review.md"))
+
+	out, err = runResumedJSON("/skills", "add", "--project", "--name", "review-copy", skillSourcePath)
+	require.NoError(t, err)
+	var resumedSkillAdd skills.InstallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkillAdd))
+	require.Equal(t, "skills", resumedSkillAdd.Kind)
+	require.Equal(t, "install", resumedSkillAdd.Action)
+	require.Equal(t, "review-copy", resumedSkillAdd.Name)
+	require.Equal(t, "workspace", resumedSkillAdd.Target)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "skills", "review-copy.md"))
+
+	out, err = runResumedJSON("/skills", "invoke", "debug", "failing test")
+	require.NoError(t, err)
+	var resumedSkillInvoke struct {
+		Kind     string `json:"kind"`
+		Name     string `json:"name"`
+		Source   string `json:"source"`
+		Rendered string `json:"rendered"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkillInvoke))
+	require.Equal(t, "skill_invocation", resumedSkillInvoke.Kind)
+	require.Equal(t, "debug", resumedSkillInvoke.Name)
+	require.Contains(t, resumedSkillInvoke.Rendered, "User request: failing test")
+
+	out, err = runResumedJSON("/skill", "uninstall", "review")
+	require.NoError(t, err)
+	var resumedSkillUninstall skills.UninstallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSkillUninstall))
+	require.Equal(t, "skills", resumedSkillUninstall.Kind)
+	require.Equal(t, "uninstall", resumedSkillUninstall.Action)
+	require.Equal(t, "review", resumedSkillUninstall.Name)
+	require.True(t, resumedSkillUninstall.Removed)
+	require.NoFileExists(t, filepath.Join(configHome, "skills", "review.md"))
+
 	out, err = runResumedJSON("/commands", "list")
 	require.NoError(t, err)
 	var resumedCommands struct {
@@ -3274,16 +3323,28 @@ func risky(value any) {
 	require.Equal(t, "plugin", resumedPlugins.Kind)
 	require.Equal(t, "list", resumedPlugins.Action)
 
+	out, err = runResumedJSON("/plugins", "install", pluginInstallSource)
+	require.NoError(t, err)
+	var resumedPluginInstall plugins.Manifest
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginInstall))
+	require.Equal(t, "resume-install", resumedPluginInstall.ID)
+	require.Equal(t, "Resume Install", resumedPluginInstall.Name)
+	require.True(t, resumedPluginInstall.Enabled)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "plugin.json"))
+	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "tool.sh"))
+
 	out, err = runResumedJSON("/reload-plugins")
 	require.NoError(t, err)
 	var resumedReloadPlugins reloadPluginsReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedReloadPlugins))
 	require.Equal(t, "reload_plugins", resumedReloadPlugins.Kind)
 	require.True(t, resumedReloadPlugins.Reloaded)
-	require.Equal(t, 1, resumedReloadPlugins.Plugins)
-	require.Equal(t, 1, resumedReloadPlugins.PluginTools)
+	require.Equal(t, 2, resumedReloadPlugins.Plugins)
+	require.Equal(t, 2, resumedReloadPlugins.PluginTools)
 	require.Contains(t, resumedReloadPlugins.PluginIDs, "resume-demo")
+	require.Contains(t, resumedReloadPlugins.PluginIDs, "resume-install")
 	require.Contains(t, resumedReloadPlugins.EnabledPluginIDs, "resume-demo")
+	require.Contains(t, resumedReloadPlugins.EnabledPluginIDs, "resume-install")
 	require.GreaterOrEqual(t, resumedReloadPlugins.ToolCountAfter, resumedReloadPlugins.ToolCountBefore)
 
 	out, err = runResumedJSON("/tasks")
@@ -4285,11 +4346,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
-		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
-		{Command: "/skills", Args: []string{"install", "main.go"}, Report: "/skills install"},
-		{Command: "/skills", Args: []string{"add", "main.go"}, Report: "/skills add"},
-		{Command: "/skills", Args: []string{"invoke", "debug"}, Report: "/skills invoke"},
-		{Command: "/skill", Args: []string{"uninstall", "debug"}, Report: "/skill uninstall"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
 		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
