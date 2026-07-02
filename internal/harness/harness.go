@@ -19,6 +19,7 @@ import (
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/runloop"
+	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/usage"
 )
@@ -66,6 +67,7 @@ type scenario struct {
 	configHome          bool
 	plugins             bool
 	setup               func(string) error
+	loadPrevious        func(string) ([]anthropic.Message, error)
 	prepare             func(string) ([]mockanthropic.Turn, func(), error)
 	verify              func(string, runloop.TurnResult, string) error
 	verifyRequests      func([]anthropic.Request) error
@@ -514,6 +516,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		configPrecedenceScenario(),
+		sessionResumeJSONLRoundtripScenario(),
 		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
 		{
@@ -614,6 +617,14 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
 		}
 	}
+	previous := item.previous
+	if item.loadPrevious != nil {
+		loaded, err := item.loadPrevious(workspace)
+		if err != nil {
+			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+		}
+		previous = loaded
+	}
 	turns := item.turns
 	if item.prepare != nil {
 		preparedTurns, cleanup, err := item.prepare(workspace)
@@ -672,7 +683,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		Prompter:  &tools.Prompter{Mode: permission, In: strings.NewReader(item.promptIn), Err: io.Discard},
 		Workspace: workspace,
 		Out:       &out,
-	}.Run(ctx, item.previous, item.prompt)
+	}.Run(ctx, previous, item.prompt)
 	scenarioReport := ScenarioReport{
 		Name:                 item.name,
 		Workspace:            workspace,
@@ -827,6 +838,96 @@ func configPrecedenceScenario() scenario {
 			}
 			if strings.Join(loadedSessionStart, ",") != "echo user,echo project,echo local" {
 				return fmt.Errorf("unexpected loaded hook order: %v", loadedSessionStart)
+			}
+			return nil
+		},
+	}
+}
+
+func sessionResumeJSONLRoundtripScenario() scenario {
+	const sessionID = "resume-jsonl"
+	const prompt = "continue from stored session"
+	configHome := func(workspace string) string {
+		return filepath.Join(workspace, "config-home")
+	}
+	return scenario{
+		name:   "session_resume_jsonl_roundtrip",
+		turns:  []mockanthropic.Turn{{Text: "resume harness ok"}},
+		prompt: prompt,
+		setup: func(workspace string) error {
+			store := session.NewWorkspaceStore(configHome(workspace), workspace)
+			if _, err := store.CreateWithIdentity(sessionID, session.SessionIdentity{
+				Title:   "Stored resume context",
+				Purpose: "prompt",
+			}); err != nil {
+				return err
+			}
+			if err := store.AppendInput(sessionID, "stored prompt"); err != nil {
+				return err
+			}
+			if err := store.Append(sessionID, anthropic.TextMessage("user", "stored prompt")); err != nil {
+				return err
+			}
+			return store.Append(sessionID, anthropic.TextMessage("assistant", "stored answer"))
+		},
+		loadPrevious: func(workspace string) ([]anthropic.Message, error) {
+			store := session.NewWorkspaceStore(configHome(workspace), workspace)
+			sess, err := store.OpenExisting(sessionID)
+			if err != nil {
+				return nil, err
+			}
+			if len(sess.Messages) != 2 {
+				return nil, fmt.Errorf("expected 2 stored messages before resume, got %d", len(sess.Messages))
+			}
+			return sess.Messages, nil
+		},
+		verify: func(workspace string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "resume harness ok") {
+				return fmt.Errorf("missing resume final response")
+			}
+			if len(result.Messages) != 4 {
+				return fmt.Errorf("expected 4 messages after resumed turn, got %d", len(result.Messages))
+			}
+			store := session.NewWorkspaceStore(configHome(workspace), workspace)
+			if err := store.AppendInput(sessionID, prompt); err != nil {
+				return err
+			}
+			for _, msg := range result.Messages[2:] {
+				if err := store.Append(sessionID, msg); err != nil {
+					return err
+				}
+			}
+			reopened, err := store.OpenExisting(sessionID)
+			if err != nil {
+				return err
+			}
+			if len(reopened.Messages) != 4 {
+				return fmt.Errorf("expected 4 persisted messages after resume, got %d", len(reopened.Messages))
+			}
+			if strings.TrimSpace(reopened.Messages[0].Content[0].Text) != "stored prompt" ||
+				strings.TrimSpace(reopened.Messages[1].Content[0].Text) != "stored answer" ||
+				strings.TrimSpace(reopened.Messages[2].Content[0].Text) != prompt ||
+				strings.TrimSpace(reopened.Messages[3].Content[0].Text) != "resume harness ok" {
+				return fmt.Errorf("unexpected persisted resume messages: %#v", reopened.Messages)
+			}
+			if strings.TrimSpace(reopened.Identity.Workspace) == "" ||
+				strings.TrimSpace(reopened.Identity.Worktree) == "" ||
+				len(reopened.Identity.Placeholders) != 0 {
+				return fmt.Errorf("unexpected reopened identity after resume: %#v", reopened.Identity)
+			}
+			return nil
+		},
+		verifyRequests: func(requests []anthropic.Request) error {
+			if len(requests) != 1 {
+				return fmt.Errorf("expected 1 resume request, got %d", len(requests))
+			}
+			if len(requests[0].Messages) != 3 {
+				return fmt.Errorf("expected resumed request with 3 messages, got %d", len(requests[0].Messages))
+			}
+			if requests[0].Messages[0].Content[0].Text != "stored prompt" ||
+				requests[0].Messages[1].Content[0].Text != "stored answer" ||
+				requests[0].Messages[2].Content[0].Text != prompt {
+				return fmt.Errorf("unexpected resumed request messages: %#v", requests[0].Messages)
 			}
 			return nil
 		},

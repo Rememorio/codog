@@ -86,6 +86,13 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 0, configPrecedence.ToolCalls)
 	require.Contains(t, configPrecedence.Output, "config precedence harness ok")
 
+	sessionResume := findScenario(t, report, "session_resume_jsonl_roundtrip")
+	require.True(t, sessionResume.OK)
+	require.Equal(t, 0, sessionResume.ToolCalls)
+	require.Equal(t, []int{3}, sessionResume.RequestMessageCounts)
+	require.Equal(t, 4, sessionResume.MessageCount)
+	require.Contains(t, sessionResume.Output, "resume harness ok")
+
 	pluginLifecycle := findScenario(t, report, "plugin_lifecycle_roundtrip")
 	require.True(t, pluginLifecycle.OK)
 	require.Equal(t, 0, pluginLifecycle.ToolCalls)
