@@ -13760,6 +13760,84 @@ func TestBackgroundWatchCommandOutputsJSONLEvents(t *testing.T) {
 	require.Contains(t, out.String(), "cli-watch")
 }
 
+func TestBackgroundGlobalOutputFormatListUsesReport(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "background", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "background", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Zero(t, report.Count)
+	require.Empty(t, report.SessionID)
+}
+
+func TestBackgroundJSONReportsAndWatchMaxEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := background.NewStore(configHome)
+	task, err := store.RunWithOptions("echo bg-json", workspace, background.RunOptions{SessionID: "session-1"})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(task.ID, 1024)
+		return err == nil && strings.Contains(logs, "bg-json")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewStore(configHome),
+		Workspace: workspace,
+		Out:       &out,
+	}
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"list", "--json"}, config.FlagOverrides{SessionID: "session-1"}))
+	var report backgroundCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "background", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "session-1", report.SessionID)
+	require.Len(t, report.Tasks, 1)
+	require.Equal(t, task.ID, report.Tasks[0].ID)
+	out.Reset()
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"status", task.ID, "--output-format", "json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, task.ID, report.TaskID)
+	require.NotNil(t, report.Task)
+	require.Equal(t, task.ID, report.Task.ID)
+	out.Reset()
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"logs", task.ID, "--bytes", "1024", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "logs", report.Action)
+	require.Equal(t, task.ID, report.TaskID)
+	require.Contains(t, report.Log, "bg-json")
+	require.Positive(t, report.Bytes)
+	out.Reset()
+
+	require.NoError(t, app.BackgroundWithOverrides([]string{"watch", task.ID, "--max-events", "1", "--json"}, config.FlagOverrides{}))
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 1)
+	var event background.WatchEvent
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &event))
+	require.Equal(t, "status", event.Type)
+	require.Equal(t, task.ID, event.ID)
+}
+
 func TestBackgroundRunAttachesSessionFromOverrides(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")

@@ -3120,6 +3120,23 @@ func (a *App) Background(args []string) error {
 	return a.BackgroundWithOverrides(args, config.FlagOverrides{})
 }
 
+type backgroundCommandReport struct {
+	Kind      string                      `json:"kind"`
+	Action    string                      `json:"action"`
+	Status    string                      `json:"status"`
+	Count     int                         `json:"count,omitempty"`
+	SessionID string                      `json:"session_id,omitempty"`
+	TaskID    string                      `json:"task_id,omitempty"`
+	Tasks     []background.Task           `json:"tasks,omitempty"`
+	Task      *background.Task            `json:"task,omitempty"`
+	Board     *background.LaneBoard       `json:"board,omitempty"`
+	Prune     *background.PruneResult     `json:"prune,omitempty"`
+	Supervise *background.SuperviseResult `json:"supervise,omitempty"`
+	Log       string                      `json:"log,omitempty"`
+	Bytes     int                         `json:"bytes,omitempty"`
+	Message   string                      `json:"message,omitempty"`
+}
+
 type cronRequest struct {
 	Action      string
 	Format      string
@@ -3971,6 +3988,11 @@ func renderTeamReport(out io.Writer, report teamCommandReport) {
 }
 
 func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverrides) error {
+	cleanArgs, format, err := parseBackgroundOutputFormat(args)
+	if err != nil {
+		return err
+	}
+	args = cleanArgs
 	store := background.NewStore(a.Config.ConfigHome)
 	if len(args) == 0 || args[0] == "list" {
 		tasks, err := store.List()
@@ -3985,6 +4007,16 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 			sessionID = args[1]
 		}
 		tasks = background.FilterBySession(tasks, sessionID)
+		if format == "json" {
+			return renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:      "background",
+				Action:    "list",
+				Status:    "ok",
+				Count:     len(tasks),
+				SessionID: sessionID,
+				Tasks:     tasks,
+			})
+		}
 		data, _ := json.MarshalIndent(tasks, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -4003,6 +4035,23 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		if err != nil {
 			return err
 		}
+		if format == "json" {
+			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:      "background",
+				Action:    "run",
+				Status:    "ok",
+				Count:     1,
+				SessionID: task.SessionID,
+				TaskID:    task.ID,
+				Task:      &task,
+				Message:   "Background task started",
+			}); err != nil {
+				return err
+			}
+			a.runTaskCreatedHook(context.Background(), task)
+			a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
+			return nil
+		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		a.runTaskCreatedHook(context.Background(), task)
@@ -4010,7 +4059,7 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		return nil
 	}
 	if len(args) < 2 && args[0] != "board" && args[0] != "lane-board" && args[0] != "lanes" && args[0] != "prune" && args[0] != "supervise" {
-		return errors.New("usage: codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | board [stalled-after-seconds] | heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] | status ID | stop ID | restart ID | logs ID [bytes] | watch ID [offset] | prune [days] [keep] | supervise")
+		return errors.New("usage: codog background list [session-id] | run [--restart[=on-failure|always]] [--restart-limit N] [--restart-delay SECONDS] COMMAND | board [stalled-after-seconds] | heartbeat ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339] | status ID | stop ID | restart ID | logs ID [bytes|--bytes N] | watch ID [offset|--offset N] [--max-events N] | prune [days] [keep] | supervise [--json|--output-format text|json]")
 	}
 	switch args[0] {
 	case "board", "lane-board", "lanes":
@@ -4021,6 +4070,14 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		board, err := store.LaneBoard(stalledAfter)
 		if err != nil {
 			return err
+		}
+		if format == "json" {
+			return renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:   "background",
+				Action: "board",
+				Status: "ok",
+				Board:  &board,
+			})
 		}
 		data, _ := json.MarshalIndent(board, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -4034,6 +4091,16 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		if err != nil {
 			return err
 		}
+		if format == "json" {
+			return renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:   "background",
+				Action: "heartbeat",
+				Status: "ok",
+				Count:  1,
+				TaskID: task.ID,
+				Task:   &task,
+			})
+		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -4042,6 +4109,16 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		if err != nil {
 			return err
 		}
+		if format == "json" {
+			return renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:   "background",
+				Action: "status",
+				Status: "ok",
+				Count:  1,
+				TaskID: task.ID,
+				Task:   &task,
+			})
+		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -4049,6 +4126,25 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		task, err := store.Stop(args[1])
 		if err != nil {
 			return err
+		}
+		if format == "json" {
+			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:    "background",
+				Action:  "stop",
+				Status:  "ok",
+				Count:   1,
+				TaskID:  task.ID,
+				Task:    &task,
+				Message: "Background task stopped",
+			}); err != nil {
+				return err
+			}
+			a.runTaskCompletedHook(context.Background(), task, "manual")
+			a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
+			if task.Kind == "agent" {
+				a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
+			}
+			return nil
 		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -4063,37 +4159,55 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		if err != nil {
 			return err
 		}
+		if format == "json" {
+			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:    "background",
+				Action:  "restart",
+				Status:  "ok",
+				Count:   1,
+				TaskID:  task.ID,
+				Task:    &task,
+				Message: "Background task restarted",
+			}); err != nil {
+				return err
+			}
+			a.runTaskCreatedHook(context.Background(), task)
+			a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+			return nil
+		}
 		data, _ := json.MarshalIndent(task, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		a.runTaskCreatedHook(context.Background(), task)
 		a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
 		return nil
 	case "logs":
-		limit := int64(64 * 1024)
-		if len(args) > 2 {
-			parsed, err := strconv.ParseInt(args[2], 10, 64)
-			if err != nil {
-				return err
-			}
-			limit = parsed
-		}
-		logs, err := store.Logs(args[1], limit)
+		id, limit, err := parseBackgroundLogsArgs(args[1:])
 		if err != nil {
 			return err
+		}
+		logs, err := store.Logs(id, limit)
+		if err != nil {
+			return err
+		}
+		if format == "json" {
+			return renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:   "background",
+				Action: "logs",
+				Status: "ok",
+				TaskID: id,
+				Log:    logs,
+				Bytes:  len([]byte(logs)),
+			})
 		}
 		fmt.Fprint(a.Out, logs)
 		return nil
 	case "watch":
-		offset := int64(0)
-		if len(args) > 2 {
-			parsed, err := strconv.ParseInt(args[2], 10, 64)
-			if err != nil {
-				return err
-			}
-			offset = parsed
+		id, offset, maxEvents, err := parseBackgroundWatchArgs(args[1:])
+		if err != nil {
+			return err
 		}
 		encoder := json.NewEncoder(a.Out)
-		return store.Watch(context.Background(), args[1], background.WatchOptions{Offset: offset}, func(event background.WatchEvent) error {
+		return store.Watch(context.Background(), id, background.WatchOptions{Offset: offset, MaxEvents: maxEvents}, func(event background.WatchEvent) error {
 			return encoder.Encode(event)
 		})
 	case "prune":
@@ -4105,6 +4219,16 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		if err != nil {
 			return err
 		}
+		if format == "json" {
+			return renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:    "background",
+				Action:  "prune",
+				Status:  "ok",
+				Count:   result.RemovedCount,
+				Prune:   &result,
+				Message: "Background task metadata pruned",
+			})
+		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -4112,6 +4236,22 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 		result, err := store.SuperviseOnce(time.Now().UTC())
 		if err != nil {
 			return err
+		}
+		if format == "json" {
+			if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+				Kind:      "background",
+				Action:    "supervise",
+				Status:    "ok",
+				Count:     len(result.Restarted),
+				Supervise: &result,
+			}); err != nil {
+				return err
+			}
+			for _, task := range result.Restarted {
+				a.runTaskCreatedHook(context.Background(), task)
+				a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+			}
+			return nil
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -4123,6 +4263,46 @@ func (a *App) BackgroundWithOverrides(args []string, overrides config.FlagOverri
 	default:
 		return fmt.Errorf("unknown background command %q", args[0])
 	}
+}
+
+func renderBackgroundReport(out io.Writer, report backgroundCommandReport) error {
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, string(data))
+	return nil
+}
+
+func parseBackgroundOutputFormat(args []string) ([]string, string, error) {
+	format := "text"
+	remaining := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			remaining = append(remaining, args[index:]...)
+			break
+		}
+		switch {
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return nil, "", errors.New("background output format is required")
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
+	normalized, err := normalizeTextOrJSON(format, "background")
+	if err != nil {
+		return nil, "", err
+	}
+	return remaining, normalized, nil
 }
 
 func parseBackgroundRunArgs(args []string) (string, background.RunOptions, error) {
@@ -4278,6 +4458,133 @@ func parseBackgroundHeartbeatArgs(args []string) (string, background.LaneHeartbe
 		}
 	}
 	return id, heartbeat, nil
+}
+
+func parseBackgroundLogsArgs(args []string) (string, int64, error) {
+	if len(args) == 0 {
+		return "", 0, errors.New("usage: codog background logs ID [bytes|--bytes N|--limit N]")
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" {
+		return "", 0, errors.New("task id is required")
+	}
+	limit := int64(64 * 1024)
+	positionals := []string{}
+	for index := 1; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--bytes" || arg == "--limit":
+			index++
+			if index >= len(args) {
+				return "", 0, errors.New("background log byte limit is required")
+			}
+			parsed, err := parseNonNegativeInt64(args[index], "background log byte limit")
+			if err != nil {
+				return "", 0, err
+			}
+			limit = parsed
+		case strings.HasPrefix(arg, "--bytes="):
+			parsed, err := parseNonNegativeInt64(strings.TrimPrefix(arg, "--bytes="), "background log byte limit")
+			if err != nil {
+				return "", 0, err
+			}
+			limit = parsed
+		case strings.HasPrefix(arg, "--limit="):
+			parsed, err := parseNonNegativeInt64(strings.TrimPrefix(arg, "--limit="), "background log byte limit")
+			if err != nil {
+				return "", 0, err
+			}
+			limit = parsed
+		case strings.HasPrefix(arg, "-"):
+			return "", 0, fmt.Errorf("unknown background logs argument %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) > 1 {
+		return "", 0, errors.New("usage: codog background logs ID [bytes|--bytes N|--limit N]")
+	}
+	if len(positionals) == 1 {
+		parsed, err := parseNonNegativeInt64(positionals[0], "background log byte limit")
+		if err != nil {
+			return "", 0, err
+		}
+		limit = parsed
+	}
+	return id, limit, nil
+}
+
+func parseBackgroundWatchArgs(args []string) (string, int64, int, error) {
+	if len(args) == 0 {
+		return "", 0, 0, errors.New("usage: codog background watch ID [offset|--offset N] [--max-events N]")
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" {
+		return "", 0, 0, errors.New("task id is required")
+	}
+	offset := int64(0)
+	maxEvents := 0
+	positionals := []string{}
+	for index := 1; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--offset":
+			index++
+			if index >= len(args) {
+				return "", 0, 0, errors.New("background watch offset is required")
+			}
+			parsed, err := parseNonNegativeInt64(args[index], "background watch offset")
+			if err != nil {
+				return "", 0, 0, err
+			}
+			offset = parsed
+		case strings.HasPrefix(arg, "--offset="):
+			parsed, err := parseNonNegativeInt64(strings.TrimPrefix(arg, "--offset="), "background watch offset")
+			if err != nil {
+				return "", 0, 0, err
+			}
+			offset = parsed
+		case arg == "--max-events":
+			index++
+			if index >= len(args) {
+				return "", 0, 0, errors.New("background watch max events is required")
+			}
+			parsed, err := parseNonNegativeInt(args[index], "background watch max events")
+			if err != nil {
+				return "", 0, 0, err
+			}
+			maxEvents = parsed
+		case strings.HasPrefix(arg, "--max-events="):
+			parsed, err := parseNonNegativeInt(strings.TrimPrefix(arg, "--max-events="), "background watch max events")
+			if err != nil {
+				return "", 0, 0, err
+			}
+			maxEvents = parsed
+		case strings.HasPrefix(arg, "-"):
+			return "", 0, 0, fmt.Errorf("unknown background watch argument %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) > 1 {
+		return "", 0, 0, errors.New("usage: codog background watch ID [offset|--offset N] [--max-events N]")
+	}
+	if len(positionals) == 1 {
+		parsed, err := parseNonNegativeInt64(positionals[0], "background watch offset")
+		if err != nil {
+			return "", 0, 0, err
+		}
+		offset = parsed
+	}
+	return id, offset, maxEvents, nil
+}
+
+func parseNonNegativeInt64(value string, name string) (int64, error) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", name)
+	}
+	return parsed, nil
 }
 
 func parseBackgroundPruneArgs(args []string) (background.PruneOptions, error) {
@@ -38826,7 +39133,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
-		"stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
+		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
@@ -40249,8 +40556,8 @@ Usage:
   %s dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]
   %s system-prompt [--json|--output-format text|json]
   %s debug-tool-call TOOL JSON [--json|--output-format text|json]
-  %s background run "command" | background list [session-id] | background board [stalled-after-seconds] | background heartbeat ID [--status STATUS] [--transport-alive true|false] | background status|stop|restart|logs|watch ID | background prune [days] [keep]
-  %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID
+  %s background run "command" | background list [session-id] | background board [stalled-after-seconds] | background heartbeat ID [--status STATUS] [--transport-alive true|false] | background status|stop|restart ID | background logs ID [bytes|--bytes N] | background watch ID [offset|--offset N] [--max-events N] | background prune [days] [keep]
+  %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID [--json|--output-format text|json]
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
