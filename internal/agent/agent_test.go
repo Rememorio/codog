@@ -3148,6 +3148,36 @@ func risky(value any) {
 	require.Equal(t, 1, resumedCronDue.Count)
 	require.Equal(t, cronEntry.ID, resumedCronDue.Entries[0].ID)
 
+	out, err = runResumedJSON("/cron", "create", "@hourly", "resume created cron")
+	require.NoError(t, err)
+	var resumedCronCreate cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCronCreate))
+	require.Equal(t, "cron", resumedCronCreate.Kind)
+	require.Equal(t, "create", resumedCronCreate.Action)
+	require.NotNil(t, resumedCronCreate.Entry)
+	require.Equal(t, "@hourly", resumedCronCreate.Entry.Schedule)
+	require.Equal(t, "resume created cron", resumedCronCreate.Entry.Prompt)
+
+	out, err = runResumedJSON("/cron", "mark-run", resumedCronCreate.Entry.ID, "--now", "2026-07-01T01:00:00Z")
+	require.NoError(t, err)
+	var resumedCronMarkRun cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCronMarkRun))
+	require.Equal(t, "cron", resumedCronMarkRun.Kind)
+	require.Equal(t, "mark-run", resumedCronMarkRun.Action)
+	require.NotNil(t, resumedCronMarkRun.Entry)
+	require.Equal(t, resumedCronCreate.Entry.ID, resumedCronMarkRun.Entry.ID)
+	require.Equal(t, 1, resumedCronMarkRun.Entry.RunCount)
+	require.NotNil(t, resumedCronMarkRun.Entry.LastRunAt)
+
+	out, err = runResumedJSON("/cron", "delete", cronEntry.ID)
+	require.NoError(t, err)
+	var resumedCronDelete cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCronDelete))
+	require.Equal(t, "cron", resumedCronDelete.Kind)
+	require.Equal(t, "delete", resumedCronDelete.Action)
+	require.NotNil(t, resumedCronDelete.Entry)
+	require.Equal(t, cronEntry.ID, resumedCronDelete.Entry.ID)
+
 	out, err = runResumedJSON("/team", "list")
 	require.NoError(t, err)
 	var resumedTeamList teamCommandReport
@@ -3702,6 +3732,36 @@ func risky(value any) {
 	require.True(t, resumedReset.ConfirmRequired)
 	require.Contains(t, resumedReset.AvailableSections, "model")
 
+	resetConfigPath := filepath.Join(workspace, ".codog", "resume-reset.json")
+	require.NoError(t, os.WriteFile(resetConfigPath, []byte(`{"model":"reset-model","max_tokens":1234,"theme":"dark"}`), 0o644))
+
+	out, err = runResumedJSON("/reset", "model", "--path", resetConfigPath)
+	require.NoError(t, err)
+	var resumedResetModel resetReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedResetModel))
+	require.Equal(t, "reset", resumedResetModel.Kind)
+	require.Equal(t, "reset", resumedResetModel.Action)
+	require.Equal(t, "model", resumedResetModel.Section)
+	require.NotEmpty(t, resumedResetModel.Changes)
+	require.Equal(t, resetConfigPath, resumedResetModel.Path)
+	resetData, err := os.ReadFile(resetConfigPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(resetData), `"model"`)
+	require.NotContains(t, string(resetData), `"max_tokens"`)
+	require.Contains(t, string(resetData), `"theme"`)
+
+	require.NoError(t, os.WriteFile(resetConfigPath, []byte(`{"model":"reset-model","theme":"dark"}`), 0o644))
+	out, err = runResumedJSON("/reset", "all", "--confirm", "--path", resetConfigPath)
+	require.NoError(t, err)
+	var resumedResetAll resetReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedResetAll))
+	require.Equal(t, "reset", resumedResetAll.Kind)
+	require.Equal(t, "reset", resumedResetAll.Action)
+	require.Equal(t, "all", resumedResetAll.Section)
+	require.Equal(t, []string{"*"}, resumedResetAll.ResetKeys)
+	require.NotEmpty(t, resumedResetAll.Changes)
+	require.NoFileExists(t, resetConfigPath)
+
 	out, err = runResumedJSON("/plan")
 	require.NoError(t, err)
 	var resumedPlan planmode.Report
@@ -3884,15 +3944,10 @@ func risky(value any) {
 		{Command: "/skill", Args: []string{"uninstall", "debug"}, Report: "/skill uninstall"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
 		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
-		{Command: "/cron", Args: []string{"create", "@daily", "check"}, Report: "/cron create"},
-		{Command: "/cron", Args: []string{"delete", cronEntry.ID}, Report: "/cron delete"},
-		{Command: "/cron", Args: []string{"mark-run", cronEntry.ID}, Report: "/cron mark-run"},
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
-		{Command: "/reset", Args: []string{"model"}, Report: "/reset model"},
-		{Command: "/reset", Args: []string{"all", "--confirm"}, Report: "/reset all"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/think-back", Args: []string{"--year", "2026"}, Report: "/think-back default-output"},
 		{Command: "/thinkback", Args: nil, Report: "/thinkback default-output"},

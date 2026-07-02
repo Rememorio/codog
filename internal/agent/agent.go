@@ -23997,7 +23997,7 @@ func (a *App) runResumedCronSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "list", "due":
+	case "list", "create", "delete", "due", "mark-run":
 		return a.Cron(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/cron", req.Action), format)
@@ -24099,21 +24099,7 @@ func (a *App) runResumedSandboxToggleSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedResetSlash(args []string, format string) error {
-	req, err := parseResetArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedResetSlashLabel(req), format)
-	}
 	return a.Reset(args)
-}
-
-func resumedResetSlashLabel(req resetRequest) string {
-	if req.Action == "reset" && strings.TrimSpace(req.Section) != "" {
-		return resumedSlashCommandLabel("/reset", req.Section)
-	}
-	return resumedSlashCommandLabel("/reset", req.Action)
 }
 
 func (a *App) runResumedPlanSlash(args []string, format string) error {
