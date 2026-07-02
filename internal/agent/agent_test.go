@@ -69,6 +69,7 @@ import (
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
 	"github.com/Rememorio/codog/internal/workerstate"
+	"github.com/Rememorio/codog/internal/worktree"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16255,6 +16256,42 @@ func TestSubagentHookFeedbackIsVisible(t *testing.T) {
 	require.Contains(t, errOut.String(), "subagent stop hook feedback:")
 	require.Contains(t, errOut.String(), "subagent stop note")
 	require.Contains(t, errOut.String(), "subagent stop context")
+}
+
+func TestWorktreeHookFeedbackIsVisible(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			Hooks: config.HookConfig{
+				WorktreeCreateCommands: []config.HookCommand{{
+					Matcher: "agent-*",
+					Command: `printf '%s' '{"systemMessage":"worktree create note","hookSpecificOutput":{"additionalContext":"worktree create context"}}'`,
+				}},
+				WorktreeRemoveCommands: []config.HookCommand{{
+					Matcher: "agent-*",
+					Command: `printf '%s' '{"systemMessage":"worktree remove note","hookSpecificOutput":{"additionalContext":"worktree remove context"}}'`,
+				}},
+			},
+		},
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+	allocation := worktree.Allocation{ID: "agent-1", Path: filepath.Join(workspace, ".codog", "worktrees", "agent-1"), Ref: "main"}
+
+	require.NoError(t, app.runWorktreeCreateHook(context.Background(), allocation, "agent"))
+	require.Contains(t, errOut.String(), "worktree create hook feedback:")
+	require.Contains(t, errOut.String(), "worktree create note")
+	require.Contains(t, errOut.String(), "worktree create context")
+	errOut.Reset()
+
+	require.NoError(t, app.runWorktreeRemoveHook(context.Background(), allocation, "manual"))
+	require.Contains(t, errOut.String(), "worktree remove hook feedback:")
+	require.Contains(t, errOut.String(), "worktree remove note")
+	require.Contains(t, errOut.String(), "worktree remove context")
 }
 
 func TestHooksDisabledSkipsRunAndReportsStatus(t *testing.T) {

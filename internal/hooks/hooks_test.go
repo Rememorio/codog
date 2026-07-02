@@ -725,6 +725,31 @@ func TestSubagentReportsParseHookFeedback(t *testing.T) {
 	require.Equal(t, []string{"subagent stop note", "subagent stop context"}, MessagesFromReport(stopped))
 }
 
+func TestWorktreeReportsParseHookFeedback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	runner := Runner{
+		Workspace: t.TempDir(),
+		Config: config.HookConfig{
+			WorktreeCreateCommands: []config.HookCommand{{
+				Matcher: "agent-*",
+				Command: `printf '%s' '{"systemMessage":"worktree create note","hookSpecificOutput":{"additionalContext":"worktree create context"}}'`,
+			}},
+			WorktreeRemoveCommands: []config.HookCommand{{
+				Matcher: "agent-*",
+				Command: `printf '%s' '{"systemMessage":"worktree remove note","hookSpecificOutput":{"additionalContext":"worktree remove context"}}'`,
+			}},
+		},
+	}
+	created, err := runner.WorktreeCreateReport(context.Background(), "agent-1", "/tmp/agent-1", "main", `{"worktree_id":"agent-1"}`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"worktree create note", "worktree create context"}, MessagesFromReport(created))
+	removed, err := runner.WorktreeRemoveReport(context.Background(), "agent-1", "/tmp/agent-1", "main", "manual", `{"worktree_id":"agent-1"}`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"worktree remove note", "worktree remove context"}, MessagesFromReport(removed))
+}
+
 func TestTaskReportsParseHookFeedback(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

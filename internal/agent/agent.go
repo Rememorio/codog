@@ -44327,7 +44327,15 @@ func (a *App) runWorktreeCreateHook(ctx context.Context, allocation worktree.All
 	if err != nil {
 		return err
 	}
-	return a.lifecycleHookRunner().WorktreeCreate(ctx, allocation.ID, allocation.Path, allocation.Ref, input)
+	report, err := a.lifecycleHookRunner().WorktreeCreateReport(ctx, allocation.ID, allocation.Path, allocation.Ref, input)
+	if err != nil {
+		return err
+	}
+	a.renderLifecycleHookFeedback("worktree create", report)
+	if report.Denied {
+		return fmt.Errorf("worktree create hook denied: %s", hookReportDeniedMessage(report))
+	}
+	return nil
 }
 
 func (a *App) runWorktreeRemoveHook(ctx context.Context, allocation worktree.Allocation, reason string) error {
@@ -44335,7 +44343,15 @@ func (a *App) runWorktreeRemoveHook(ctx context.Context, allocation worktree.All
 	if err != nil {
 		return err
 	}
-	return a.lifecycleHookRunner().WorktreeRemove(ctx, allocation.ID, allocation.Path, allocation.Ref, reason, input)
+	report, err := a.lifecycleHookRunner().WorktreeRemoveReport(ctx, allocation.ID, allocation.Path, allocation.Ref, reason, input)
+	if err != nil {
+		return err
+	}
+	a.renderLifecycleHookFeedback("worktree remove", report)
+	if report.Denied {
+		return fmt.Errorf("worktree remove hook denied: %s", hookReportDeniedMessage(report))
+	}
+	return nil
 }
 
 func (a *App) removeAllocatedWorktree(ctx context.Context, allocation worktree.Allocation, reason string) error {

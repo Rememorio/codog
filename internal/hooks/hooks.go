@@ -460,6 +460,18 @@ func (r Runner) SubagentStopReport(ctx context.Context, agentID string, agentTyp
 }
 
 func (r Runner) WorktreeCreate(ctx context.Context, id string, worktreePath string, ref string, input string) error {
+	report, err := r.WorktreeCreateReport(ctx, id, worktreePath, ref, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// WorktreeCreateReport runs WorktreeCreate hooks and returns parsed hook feedback.
+func (r Runner) WorktreeCreateReport(ctx context.Context, id string, worktreePath string, ref string, input string) (RunReport, error) {
 	payload := Payload{
 		Event:        "worktree_create",
 		Tool:         id,
@@ -468,10 +480,22 @@ func (r Runner) WorktreeCreate(ctx context.Context, id string, worktreePath stri
 		WorktreePath: worktreePath,
 		Ref:          ref,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) WorktreeRemove(ctx context.Context, id string, worktreePath string, ref string, reason string, input string) error {
+	report, err := r.WorktreeRemoveReport(ctx, id, worktreePath, ref, reason, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// WorktreeRemoveReport runs WorktreeRemove hooks and returns parsed hook feedback.
+func (r Runner) WorktreeRemoveReport(ctx context.Context, id string, worktreePath string, ref string, reason string, input string) (RunReport, error) {
 	payload := Payload{
 		Event:        "worktree_remove",
 		Tool:         id,
@@ -481,7 +505,7 @@ func (r Runner) WorktreeRemove(ctx context.Context, id string, worktreePath stri
 		WorktreePath: worktreePath,
 		Ref:          ref,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) CwdChanged(ctx context.Context, oldCWD string, newCWD string, input string) error {
