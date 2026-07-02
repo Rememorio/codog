@@ -8808,6 +8808,7 @@ func parseOAuthRefreshArgs(args []string) (string, error) {
 	return profile, nil
 }
 
+// OAuth runs local OAuth helper commands for provider profiles and tokens.
 func (a *App) OAuth(args []string) error {
 	var err error
 	args, err = normalizeOAuthJSONArgs(args)
@@ -8871,7 +8872,10 @@ func (a *App) OAuth(args []string) error {
 		return errors.New("usage: codog oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete")
 	}
 	if len(args) < 2 {
-		return errors.New("usage: codog oauth token save ACCESS_TOKEN [REFRESH_TOKEN] [EXPIRES_AT] | show | refresh [PROFILE] | delete")
+		status := oauth.InspectStatus(a.Config.ConfigHome, "", time.Now().UTC())
+		data, _ := json.MarshalIndent(status, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
 	switch args[1] {
 	case "save":
@@ -8902,6 +8906,15 @@ func (a *App) OAuth(args []string) error {
 			return err
 		}
 		data, _ := json.MarshalIndent(token.View(time.Now().UTC()), "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	case "status":
+		profile := ""
+		if len(args) > 2 {
+			profile = args[2]
+		}
+		status := oauth.InspectStatus(a.Config.ConfigHome, profile, time.Now().UTC())
+		data, _ := json.MarshalIndent(status, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "refresh":
@@ -8995,7 +9008,7 @@ func (a *App) oauthTokenRevoke(args []string) (map[string]any, error) {
 
 func (a *App) oauthProvider(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog oauth provider save NAME ISSUER_URL CLIENT_ID [SCOPE...] | list | show NAME | delete NAME")
+		args = []string{"list"}
 	}
 	var payload any
 	switch args[0] {

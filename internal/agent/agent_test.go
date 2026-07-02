@@ -15406,6 +15406,11 @@ func TestOAuthTokenCommands(t *testing.T) {
 		Config: config.Config{ConfigHome: configHome},
 		Out:    &out,
 	}
+	require.NoError(t, app.OAuth([]string{"token"}))
+	require.Contains(t, out.String(), `"token_present": false`)
+	require.Contains(t, out.String(), `"issue": "no oauth token saved"`)
+	out.Reset()
+
 	expiresAt := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
 	require.NoError(t, app.OAuth([]string{"token", "save", "access-token-1234", "refresh-token-1234", expiresAt}))
 	require.Contains(t, out.String(), `"access_token": "acce...1234"`)
@@ -15414,6 +15419,12 @@ func TestOAuthTokenCommands(t *testing.T) {
 	out.Reset()
 	require.NoError(t, app.OAuth([]string{"token", "show"}))
 	require.Contains(t, out.String(), `"expired": false`)
+
+	out.Reset()
+	require.NoError(t, app.OAuth([]string{"token", "status"}))
+	require.Contains(t, out.String(), `"token_present": true`)
+	require.Contains(t, out.String(), `"access_token": "acce...1234"`)
+	require.NotContains(t, out.String(), "access-token-1234")
 
 	out.Reset()
 	require.NoError(t, app.OAuth([]string{"token", "delete"}))
@@ -15540,6 +15551,10 @@ func TestOAuthProviderCommands(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.OAuth([]string{"provider", "list"}))
+	require.Contains(t, out.String(), `"name": "default"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"provider"}))
 	require.Contains(t, out.String(), `"name": "default"`)
 	out.Reset()
 
