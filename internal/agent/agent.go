@@ -35968,7 +35968,7 @@ func (a *App) Skills(args []string) error {
 			return err
 		}
 		if len(remaining) < 1 {
-			return errors.New("usage: codog skills show NAME [--json]")
+			return a.listSkills([]string{"--output-format", format})
 		}
 		if len(remaining) > 1 {
 			return renderCLIError(a.Out, unexpectedExtraArgsError{

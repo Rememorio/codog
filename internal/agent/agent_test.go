@@ -13506,6 +13506,19 @@ func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	require.Equal(t, "Deploy command body\n", out.String())
 	out.Reset()
 
+	require.NoError(t, app.Skills([]string{"show", "--json"}))
+	var showListReport struct {
+		Kind   string         `json:"kind"`
+		Action string         `json:"action"`
+		Skills []skills.Skill `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &showListReport))
+	require.Equal(t, "skills", showListReport.Kind)
+	require.Equal(t, "list", showListReport.Action)
+	require.NotEmpty(t, showListReport.Skills)
+	require.NotEmpty(t, skillReportEntry(showListReport.Skills, "review", "user").Path)
+	out.Reset()
+
 	require.NoError(t, app.Skills([]string{"invoke", "debug", "failing test"}))
 	require.Contains(t, out.String(), `<skill name="debug" source="bundled"`)
 	require.Contains(t, out.String(), "User request: failing test")
