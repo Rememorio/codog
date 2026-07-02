@@ -1562,7 +1562,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/oh-my-claudecode:hud", slashReport.Command)
 	require.Contains(t, slashReport.CompatibilityNote, "loads compatible Markdown commands")
-	require.Contains(t, slashReport.CompatibilityNote, "OMC session hooks")
+	require.Contains(t, slashReport.CompatibilityNote, ".omc/settings.json")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/approve"}, config.FlagOverrides{})
@@ -10791,15 +10791,25 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"input":"hello"`)
 	out.Reset()
 
-	require.NoError(t, app.Hooks(context.Background(), []string{"run", "session-start", "--input", `{"source":"startup","session_id":"session"}`}))
+	require.NoError(t, app.Hooks(context.Background(), []string{"run", "session-start", "--input", `{"hook_event_name":"SessionStart","source":"startup","session_id":"session","transcript_path":"/tmp/session.jsonl","cwd":"` + filepath.ToSlash(workspace) + `","permission_mode":"workspace-write"}`}))
 	data, err = os.ReadFile(sessionPath)
 	require.NoError(t, err)
 	var sessionHook struct {
-		Event string `json:"event"`
-		Input string `json:"input"`
+		HookEventName string `json:"hook_event_name"`
+		Event         string `json:"event"`
+		Input         string `json:"input"`
+		SessionID     string `json:"session_id"`
+		Transcript    string `json:"transcript_path"`
+		CWD           string `json:"cwd"`
+		Permission    string `json:"permission_mode"`
 	}
 	require.NoError(t, json.Unmarshal(data, &sessionHook))
+	require.Equal(t, "SessionStart", sessionHook.HookEventName)
 	require.Equal(t, "session_start", sessionHook.Event)
+	require.Equal(t, "session", sessionHook.SessionID)
+	require.Equal(t, "/tmp/session.jsonl", sessionHook.Transcript)
+	require.Equal(t, filepath.ToSlash(workspace), sessionHook.CWD)
+	require.Equal(t, "workspace-write", sessionHook.Permission)
 	require.Contains(t, sessionHook.Input, `"session_id"`)
 	out.Reset()
 
@@ -10840,16 +10850,24 @@ func TestHooksCommandAndSlash(t *testing.T) {
 	require.Contains(t, string(data), `"reason":"deny_rule"`)
 	out.Reset()
 
-	require.True(t, app.handleSlash(context.Background(), "/hooks run session-end --input={\"session_id\":\"session\"} --reason=exit", sess))
+	require.True(t, app.handleSlash(context.Background(), "/hooks run session-end --input={\"hook_event_name\":\"SessionEnd\",\"session_id\":\"session\",\"transcript_path\":\"/tmp/session.jsonl\",\"cwd\":\""+filepath.ToSlash(workspace)+"\"} --reason=exit", sess))
 	data, err = os.ReadFile(sessionEndPath)
 	require.NoError(t, err)
 	var sessionEndHook struct {
-		Event  string `json:"event"`
-		Input  string `json:"input"`
-		Reason string `json:"reason"`
+		HookEventName string `json:"hook_event_name"`
+		Event         string `json:"event"`
+		Input         string `json:"input"`
+		SessionID     string `json:"session_id"`
+		Transcript    string `json:"transcript_path"`
+		CWD           string `json:"cwd"`
+		Reason        string `json:"reason"`
 	}
 	require.NoError(t, json.Unmarshal(data, &sessionEndHook))
+	require.Equal(t, "SessionEnd", sessionEndHook.HookEventName)
 	require.Equal(t, "session_end", sessionEndHook.Event)
+	require.Equal(t, "session", sessionEndHook.SessionID)
+	require.Equal(t, "/tmp/session.jsonl", sessionEndHook.Transcript)
+	require.Equal(t, filepath.ToSlash(workspace), sessionEndHook.CWD)
 	require.Equal(t, "exit", sessionEndHook.Reason)
 	require.Contains(t, sessionEndHook.Input, `"session_id"`)
 	out.Reset()

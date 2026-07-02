@@ -549,6 +549,14 @@ func configPaths(home, explicit string) []string {
 	}
 	return []string{
 		filepath.Join(home, "config.json"),
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".claude", "settings.local.json"),
+		filepath.Join(".omc", "settings.json"),
+		filepath.Join(".omc", "settings.local.json"),
+		filepath.Join(".omc", "config.json"),
+		filepath.Join(".claw", "settings.json"),
+		filepath.Join(".claw", "settings.local.json"),
+		filepath.Join(".claw", "config.json"),
 		".codog.json",
 		".codog.local.json",
 	}

@@ -74,6 +74,67 @@ func TestRunPayloadProvidesClaudeEnvFile(t *testing.T) {
 	require.Contains(t, env, "CODOG_HOOK_ENV_READY=yes")
 }
 
+func TestSessionHooksUseClaudeCompatibleStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	transcript := filepath.Join(workspace, "session.jsonl")
+	report, err := Runner{Workspace: workspace, SessionID: "session-1"}.RunPayload(context.Background(), []string{"cat && printf '\\n%s\\n%s\\n%s\\n' \"$CLAUDE_SESSION_ID\" \"$CLAUDE_HOOK_EVENT_NAME\" \"$CLAUDE_TRANSCRIPT_PATH\""}, Payload{
+		Event: "session_start",
+		Input: `{"hook_event_name":"SessionStart","source":"startup","session_id":"session-1","transcript_path":"` + filepath.ToSlash(transcript) + `","cwd":"` + filepath.ToSlash(workspace) + `","permission_mode":"workspace-write","model":"claude-test"}`,
+	})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	stdout := report.Results[0].Stdout
+	require.Contains(t, stdout, `"hook_event_name":"SessionStart"`)
+	require.Contains(t, stdout, `"event":"session_start"`)
+	require.Contains(t, stdout, `"session_id":"session-1"`)
+	require.Contains(t, stdout, `"transcript_path":"`+filepath.ToSlash(transcript)+`"`)
+	require.Contains(t, stdout, `"cwd":"`+filepath.ToSlash(workspace)+`"`)
+	require.Contains(t, stdout, `"permission_mode":"workspace-write"`)
+	require.Contains(t, stdout, "\nsession-1\nSessionStart\n"+filepath.ToSlash(transcript)+"\n")
+
+	report, err = Runner{Workspace: workspace, SessionID: "session-1"}.RunPayload(context.Background(), []string{"cat"}, Payload{
+		Event:  "session_end",
+		Input:  `{"hook_event_name":"SessionEnd","session_id":"session-1","transcript_path":"` + filepath.ToSlash(transcript) + `","cwd":"` + filepath.ToSlash(workspace) + `"}`,
+		Reason: "resume",
+	})
+	require.NoError(t, err)
+	require.Contains(t, report.Results[0].Stdout, `"hook_event_name":"SessionEnd"`)
+	require.Contains(t, report.Results[0].Stdout, `"event":"session_end"`)
+	require.Contains(t, report.Results[0].Stdout, `"reason":"resume"`)
+}
+
+func TestSessionHooksMatchClaudeSourceAndReason(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	startPath := filepath.Join(workspace, "start.json")
+	endPath := filepath.Join(workspace, "end.json")
+	runner := Runner{
+		Workspace:  workspace,
+		SessionID:  "session-1",
+		ConfigHome: t.TempDir(),
+		Config: config.HookConfig{
+			SessionStartCommands: []config.HookCommand{{Matcher: "startup", Command: "cat > start.json"}},
+			SessionEndCommands:   []config.HookCommand{{Matcher: "resume", Command: "cat > end.json"}},
+		},
+	}
+	require.NoError(t, runner.SessionStart(context.Background(), `{"hook_event_name":"SessionStart","source":"startup","session_id":"session-1","cwd":"`+filepath.ToSlash(workspace)+`"}`))
+	data, err := os.ReadFile(startPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"hook_event_name":"SessionStart"`)
+	require.Contains(t, string(data), `"source":"startup"`)
+
+	require.NoError(t, runner.SessionEnd(context.Background(), `{"hook_event_name":"SessionEnd","session_id":"session-1","cwd":"`+filepath.ToSlash(workspace)+`"}`, "resume"))
+	data, err = os.ReadFile(endPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"hook_event_name":"SessionEnd"`)
+	require.Contains(t, string(data), `"reason":"resume"`)
+}
+
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	t.Setenv("HOOK_TOKEN", "secret-token")
 	t.Setenv("HOOK_IGNORED", "ignored")

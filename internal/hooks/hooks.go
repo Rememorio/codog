@@ -159,6 +159,7 @@ func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {
 func (r Runner) SessionStart(ctx context.Context, input string) error {
 	payload := Payload{
 		Event: "session_start",
+		Tool:  sessionHookMatcherValue(input, "source"),
 		Input: input,
 	}
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
@@ -167,6 +168,7 @@ func (r Runner) SessionStart(ctx context.Context, input string) error {
 func (r Runner) SessionEnd(ctx context.Context, input string, reason string) error {
 	payload := Payload{
 		Event:  "session_end",
+		Tool:   firstNonEmpty(reason, sessionHookMatcherValue(input, "reason")),
 		Input:  input,
 		Reason: reason,
 	}
@@ -454,7 +456,7 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	data, err := json.Marshal(payload)
+	data, err := r.hookInputData(payload)
 	if err != nil {
 		return report, err
 	}
@@ -466,6 +468,45 @@ func (r Runner) RunHooks(ctx context.Context, hookList []config.HookCommand, pay
 		}
 	}
 	return report, nil
+}
+
+func (r Runner) hookInputData(payload Payload) ([]byte, error) {
+	if payload.Event != "session_start" && payload.Event != "session_end" {
+		return json.Marshal(payload)
+	}
+	expanded := map[string]any{}
+	if strings.TrimSpace(payload.Input) != "" {
+		var input map[string]any
+		if err := json.Unmarshal([]byte(payload.Input), &input); err == nil {
+			for key, value := range input {
+				expanded[key] = value
+			}
+		} else {
+			expanded["input"] = payload.Input
+		}
+	}
+	expanded["event"] = payload.Event
+	if payload.Input != "" {
+		expanded["input"] = payload.Input
+	}
+	if payload.Reason != "" {
+		expanded["reason"] = payload.Reason
+	}
+	if _, ok := expanded["hook_event_name"]; !ok {
+		switch payload.Event {
+		case "session_start":
+			expanded["hook_event_name"] = "SessionStart"
+		case "session_end":
+			expanded["hook_event_name"] = "SessionEnd"
+		}
+	}
+	if _, ok := expanded["session_id"]; !ok && strings.TrimSpace(r.SessionID) != "" {
+		expanded["session_id"] = strings.TrimSpace(r.SessionID)
+	}
+	if _, ok := expanded["cwd"]; !ok && strings.TrimSpace(r.Workspace) != "" {
+		expanded["cwd"] = strings.TrimSpace(r.Workspace)
+	}
+	return json.Marshal(expanded)
 }
 
 func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, hookIndex int, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
@@ -575,6 +616,9 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		"CODOG_HOOK_PARENT_FILE_PATH="+payload.ParentFilePath,
 		"CODOG_HOOK_ENV_FILE="+envFile,
 		"CLAUDE_ENV_FILE="+envFile,
+		"CLAUDE_SESSION_ID="+firstNonEmpty(r.SessionID, payloadSessionID(payload)),
+		"CLAUDE_HOOK_EVENT_NAME="+claudeHookEventName(payload.Event),
+		"CLAUDE_TRANSCRIPT_PATH="+payloadTranscriptPath(payload),
 	)
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout bytes.Buffer
@@ -727,6 +771,10 @@ func matcherTarget(payload Payload) string {
 		return payload.AgentType
 	}
 	return payload.Tool
+}
+
+func sessionHookMatcherValue(input string, key string) string {
+	return stringFieldFromJSON(input, key)
 }
 
 func isSubagentEvent(event string) bool {
@@ -1002,6 +1050,69 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func claudeHookEventName(event string) string {
+	switch normalizeEvent(event) {
+	case "session_start":
+		return "SessionStart"
+	case "session_end":
+		return "SessionEnd"
+	case "pre_tool_use":
+		return "PreToolUse"
+	case "post_tool_use":
+		return "PostToolUse"
+	case "post_tool_use_failure":
+		return "PostToolUseFailure"
+	case "permission_request":
+		return "PermissionRequest"
+	case "permission_denied":
+		return "PermissionDenied"
+	case "user_prompt_submit":
+		return "UserPromptSubmit"
+	case "setup":
+		return "Setup"
+	case "stop":
+		return "Stop"
+	case "stop_failure":
+		return "StopFailure"
+	case "pre_compact":
+		return "PreCompact"
+	case "post_compact":
+		return "PostCompact"
+	case "notification":
+		return "Notification"
+	case "subagent_start":
+		return "SubagentStart"
+	case "subagent_stop":
+		return "SubagentStop"
+	case "cwd_changed":
+		return "CwdChanged"
+	case "file_changed":
+		return "FileChanged"
+	default:
+		return ""
+	}
+}
+
+func payloadSessionID(payload Payload) string {
+	return stringFieldFromJSON(payload.Input, "session_id")
+}
+
+func payloadTranscriptPath(payload Payload) string {
+	return firstNonEmpty(payload.TranscriptPath, stringFieldFromJSON(payload.Input, "transcript_path"))
+}
+
+func stringFieldFromJSON(input string, key string) string {
+	if strings.TrimSpace(input) == "" {
+		return ""
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(input), &raw); err != nil {
+		return ""
+	}
+	value, _ := raw[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func compactStrings(values []string) []string {

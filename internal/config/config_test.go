@@ -606,6 +606,37 @@ func TestLoadHooksSupportsSimpleAndDocumentedFormats(t *testing.T) {
 	require.Equal(t, []HookCommand{{Matcher: "Write", Type: "command", Command: "echo file-changed"}}, cfg.Hooks.FileChangedCommands)
 }
 
+func TestLoadProjectCompatibleHookSettings(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	require.NoError(t, os.Chdir(workspace))
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".omc"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".omc", "settings.json"), []byte(`{
+		"hooks": {
+			"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "echo omc-start"}]}],
+			"SessionEnd": [{"matcher": "resume", "hooks": [{"type": "command", "command": "echo omc-end"}]}]
+		}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
+		"hooks": {
+			"SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "echo codog-start"}]}]
+		}
+	}`), 0o644))
+
+	cfg, paths, err := LoadForInspection(FlagOverrides{})
+	require.NoError(t, err)
+	require.Contains(t, paths, filepath.Join(".omc", "settings.json"))
+	require.Equal(t, []HookCommand{
+		{Matcher: "startup", Type: "command", Command: "echo omc-start"},
+		{Matcher: "startup", Type: "command", Command: "echo codog-start"},
+	}, cfg.Hooks.SessionStartCommands)
+	require.Equal(t, []HookCommand{{Matcher: "resume", Type: "command", Command: "echo omc-end"}}, cfg.Hooks.SessionEndCommands)
+}
+
 func TestLoadMergesHooksAcrossConfigLayers(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

@@ -22391,7 +22391,7 @@ func unknownSlashCommandReport(command string, extraSuggestions []string) slashE
 func unknownSlashCompatibilityNote(command string) string {
 	name := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(command), "/"))
 	if strings.HasPrefix(name, "oh-my-claudecode:") {
-		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog loads compatible Markdown commands from project `.omc/commands` and explicit compatible config roots; OMC session hooks remain a separate integration."
+		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog loads compatible Markdown commands from project `.omc/commands` and compatible project hook settings such as `.omc/settings.json`."
 	}
 	return ""
 }
@@ -38327,9 +38327,14 @@ func (a *App) runSessionStartHook(ctx context.Context, sess *session.Session, so
 		return nil
 	}
 	data, err := json.Marshal(map[string]any{
-		"source":     source,
-		"session_id": sess.ID,
-		"identity":   sess.Identity,
+		"hook_event_name": "SessionStart",
+		"source":          source,
+		"session_id":      sess.ID,
+		"transcript_path": sess.Path,
+		"cwd":             a.Workspace,
+		"permission_mode": a.Config.PermissionMode,
+		"model":           a.Config.Model,
+		"identity":        sess.Identity,
 	})
 	if err != nil {
 		return err
@@ -38381,9 +38386,14 @@ func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reas
 	if reason == "" {
 		reason = "exit"
 	}
-	data, err := json.Marshal(map[string]string{
-		"reason":     reason,
-		"session_id": sess.ID,
+	data, err := json.Marshal(map[string]any{
+		"hook_event_name": "SessionEnd",
+		"reason":          reason,
+		"session_id":      sess.ID,
+		"transcript_path": sess.Path,
+		"cwd":             a.Workspace,
+		"permission_mode": a.Config.PermissionMode,
+		"model":           a.Config.Model,
 	})
 	if err != nil {
 		return err
