@@ -10602,6 +10602,10 @@ func TestMemoryCommandJSONErrors(t *testing.T) {
 
 	err = app.Memory([]string{"--json", "reset"})
 	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "unsupported_memory_action", "")
+	out.Reset()
+
+	err = app.Memory([]string{"reset", "--output-format", "json"})
+	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "unsupported_memory_action", "")
 }
 
 func requireStructuredMemoryError(t *testing.T, err error, data []byte, action string, errorKind string, argument string) {

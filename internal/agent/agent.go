@@ -20442,6 +20442,9 @@ func buildMemoryErrorReport(action string, err error) actionErrorReport {
 
 func parseMemoryArgs(args []string) (memoryRequest, error) {
 	req := memoryRequest{Action: "list", Format: "text", Limit: 20}
+	if format, ok := scanMemoryOutputFormat(args); ok {
+		req.Format = format
+	}
 	actionSet := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -20504,6 +20507,30 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 		return req, fmt.Errorf("unknown memory output format %q", req.Format)
 	}
 	return req, nil
+}
+
+func scanMemoryOutputFormat(args []string) (string, bool) {
+	format := ""
+	ok := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--json":
+			format = "json"
+			ok = true
+		case arg == "--output-format":
+			if i+1 >= len(args) {
+				continue
+			}
+			i++
+			format = args[i]
+			ok = true
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+			ok = true
+		}
+	}
+	return format, ok
 }
 
 func renderWorkerState(out io.Writer, workspace string, args []string) error {
