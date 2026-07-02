@@ -5897,6 +5897,63 @@ func TestSettingsAliasRunsConfigInspection(t *testing.T) {
 	require.NotEmpty(t, report["paths"])
 }
 
+func TestConfigValidateReportsDiagnostics(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "bad-config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{\n  \"model\": 42,\n  \"modle\": \"opus\",\n  \"permissionMode\": \"plan\"\n}\n"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"config", "validate", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+
+	var report struct {
+		Kind         string `json:"kind"`
+		Status       string `json:"status"`
+		ErrorCount   int    `json:"error_count"`
+		WarningCount int    `json:"warning_count"`
+		Results      []struct {
+			Status string `json:"status"`
+			Errors []struct {
+				Field    string `json:"field"`
+				Kind     string `json:"kind"`
+				Expected string `json:"expected"`
+				Got      string `json:"got"`
+			} `json:"errors"`
+			Warnings []struct {
+				Field       string `json:"field"`
+				Kind        string `json:"kind"`
+				Suggestion  string `json:"suggestion"`
+				Replacement string `json:"replacement"`
+			} `json:"warnings"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "config_validation", report.Kind)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, 1, report.ErrorCount)
+	require.Equal(t, 2, report.WarningCount)
+	require.Equal(t, "error", report.Results[0].Status)
+	require.Equal(t, "model", report.Results[0].Errors[0].Field)
+	require.Equal(t, "wrong_type", report.Results[0].Errors[0].Kind)
+	require.Equal(t, "a string", report.Results[0].Errors[0].Expected)
+	require.Equal(t, "a number", report.Results[0].Errors[0].Got)
+	require.Equal(t, "modle", report.Results[0].Warnings[0].Field)
+	require.Equal(t, "model", report.Results[0].Warnings[0].Suggestion)
+	require.Equal(t, "permissionMode", report.Results[0].Warnings[1].Field)
+	require.Equal(t, "permission_mode", report.Results[0].Warnings[1].Replacement)
+
+	textOut, textErr := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"config", "validate", "--path", configPath, "--output-format", "text"}, config.FlagOverrides{})
+	})
+	require.Error(t, textErr)
+	require.Contains(t, textOut, "Config Validation")
+	require.Contains(t, textOut, "warning:")
+	require.Contains(t, textOut, "error:")
+}
+
 func TestRenderConfigInspectionMutatesConfigFile(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	var out bytes.Buffer

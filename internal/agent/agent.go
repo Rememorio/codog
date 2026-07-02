@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/commandrun"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/configvalidate"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/cron"
@@ -27174,6 +27175,13 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	if strings.EqualFold(args[0], "paths") {
 		return renderConfigInspectionPayload(out, req.Format, map[string]any{"paths": paths})
 	}
+	if strings.EqualFold(args[0], "validate") {
+		report, err := buildConfigValidationReport(paths, args[1:])
+		if err != nil {
+			return err
+		}
+		return renderConfigValidationReport(out, req.Format, report)
+	}
 	if strings.EqualFold(args[0], "show") {
 		if len(args) > 1 {
 			return renderCLIError(out, unexpectedExtraArgsError{
@@ -27195,6 +27203,119 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		return err
 	}
 	return renderConfigInspectionPayload(out, req.Format, payload)
+}
+
+type configValidationRequest struct {
+	Paths  []string
+	Target string
+}
+
+func buildConfigValidationReport(defaultPaths []string, args []string) (configvalidate.Report, error) {
+	req, err := parseConfigValidationArgs(args)
+	if err != nil {
+		return configvalidate.Report{}, err
+	}
+	paths, err := configValidationPaths(defaultPaths, req)
+	if err != nil {
+		return configvalidate.Report{}, err
+	}
+	return configvalidate.ValidateFiles(paths), nil
+}
+
+func parseConfigValidationArgs(args []string) (configValidationRequest, error) {
+	req := configValidationRequest{Target: "all"}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("config validate target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("config validate path is required")
+			}
+			req.Paths = append(req.Paths, args[index])
+		case strings.HasPrefix(arg, "--path="):
+			req.Paths = append(req.Paths, strings.TrimPrefix(arg, "--path="))
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, fmt.Errorf("unknown config validate flag %q", arg)
+			}
+			req.Paths = append(req.Paths, arg)
+		}
+	}
+	return req, nil
+}
+
+func configValidationPaths(defaultPaths []string, req configValidationRequest) ([]string, error) {
+	if len(req.Paths) > 0 {
+		out := make([]string, 0, len(req.Paths))
+		for _, path := range req.Paths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				return nil, errors.New("config validate path is required")
+			}
+			out = append(out, path)
+		}
+		return out, nil
+	}
+	target := strings.ToLower(strings.TrimSpace(req.Target))
+	if target == "" {
+		target = "all"
+	}
+	switch target {
+	case "all":
+		return append([]string(nil), defaultPaths...), nil
+	case "user":
+		if len(defaultPaths) == 0 || strings.TrimSpace(defaultPaths[0]) == "" {
+			return nil, errors.New("user config path is unavailable")
+		}
+		return []string{defaultPaths[0]}, nil
+	case "project":
+		return []string{".codog.json"}, nil
+	case "local":
+		return []string{".codog.local.json"}, nil
+	default:
+		return nil, fmt.Errorf("unknown config validate target %q", req.Target)
+	}
+}
+
+func renderConfigValidationReport(out io.Writer, format string, report configvalidate.Report) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		if report.ErrorCount > 0 {
+			return &ExitError{Code: 1, Err: fmt.Errorf("config validation failed with %d error(s)", report.ErrorCount), Silent: true}
+		}
+		return nil
+	}
+	fmt.Fprintln(out, "Config Validation")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Files            %d checked, %d present\n", report.FileCount, report.PresentCount)
+	fmt.Fprintf(out, "  Diagnostics      %d error(s), %d warning(s)\n", report.ErrorCount, report.WarningCount)
+	for _, result := range report.Results {
+		fmt.Fprintf(out, "  Path             %s [%s]\n", result.Path, result.Status)
+		if !result.Present {
+			continue
+		}
+		diagnostics := configvalidate.FormatDiagnostics(result)
+		if diagnostics == "" {
+			continue
+		}
+		for _, line := range strings.Split(diagnostics, "\n") {
+			fmt.Fprintf(out, "    %s\n", line)
+		}
+	}
+	if report.ErrorCount > 0 {
+		return &ExitError{Code: 1, Err: fmt.Errorf("config validation failed with %d error(s)", report.ErrorCount)}
+	}
+	return nil
 }
 
 type configInspectionRequest struct {
@@ -37535,9 +37656,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			helpTopic,
 			"config",
-			"codog config|settings [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]",
-			"Config\n\nUsage:\n  codog config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n  codog settings [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION]\n\nInspects merged configuration and updates user, project, or local config files.\n",
-			[]string{"paths", "config", "key", "value", "target"},
+			"codog config|settings [show|get SECTION|paths|validate|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]",
+			"Config\n\nUsage:\n  codog config [show|get SECTION|paths|validate|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n  codog config validate [--target user|project|local|all|--path PATH]\n  codog settings [same flags]\n\nInspects merged configuration, validates config JSON files, and updates user, project, or local config files.\n",
+			[]string{"paths", "config", "key", "value", "target", "errors", "warnings"},
 			[]string{"ok", "error"},
 			true,
 		), true
