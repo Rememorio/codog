@@ -1203,7 +1203,7 @@ func anthropicRateLimitOptions(cfg config.RateLimitConfig) anthropic.RateLimitOp
 
 func (a *App) Remote(args []string) error {
 	if len(args) == 0 || args[0] != "serve" {
-		return errors.New("usage: codog remote serve [addr]")
+		return a.RemoteSetup(args, config.FlagOverrides{})
 	}
 	addr := "127.0.0.1:8791"
 	if len(args) > 1 {
@@ -22886,6 +22886,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Mobile(resumeSlashArgs("mobile", append([]string{"android"}, args...), format), resumed)
 	case "/remote-env":
 		return a.runResumedRemoteEnvSlash(resumeSlashArgs("remote-env", args, format), format)
+	case "/remote":
+		return a.runResumedRemoteSlash(resumeSlashArgs("remote", args, format), resumed, format)
 	case "/remote-setup", "/web-setup":
 		return a.runResumedRemoteSetupSlash(resumeSlashArgs("remote-setup", args, format), resumed, format)
 	case "/ide":
@@ -23198,6 +23200,13 @@ func (a *App) runResumedRemoteEnvSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/remote-env", req.Action), format)
 	}
 	return a.RemoteEnv(args)
+}
+
+func (a *App) runResumedRemoteSlash(args []string, overrides config.FlagOverrides, format string) error {
+	if len(routeMeaningfulArgs(args)) > 0 && strings.EqualFold(strings.TrimSpace(routeMeaningfulArgs(args)[0]), "serve") {
+		return renderUnsupportedResumedSlashCommand(a.Out, "/remote serve", format)
+	}
+	return a.runResumedRemoteSetupSlash(args, overrides, format)
 }
 
 func (a *App) runResumedRemoteSetupSlash(args []string, overrides config.FlagOverrides, format string) error {
@@ -27100,6 +27109,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/api":
 		if err := a.API(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/remote":
+		if len(fields) > 1 && strings.EqualFold(fields[1], "serve") {
+			if err := a.Remote(fields[1:]); err != nil {
+				fmt.Fprintln(a.Err, "error:", err)
+			}
+		} else if err := a.RemoteSetup(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/remote-setup", "/web-setup":
@@ -43718,7 +43735,7 @@ Usage:
   %s code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json|--output-format text|json]
   %s code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote serve [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
+  %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]

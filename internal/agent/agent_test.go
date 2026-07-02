@@ -9610,6 +9610,69 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestRemoteCommandReportsAndPersistsSetup(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Remote([]string{"status", "--addr", ":8798", "--json"}))
+	var status remoteSetupReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "remote_setup", status.Kind)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "disabled", status.Status)
+	require.Equal(t, "http://127.0.0.1:8798", status.RemoteURL)
+	out.Reset()
+
+	require.NoError(t, app.Remote([]string{"enable", "--auth-token", "secret-token", "--lease-seconds", "33", "--json"}))
+	var enabled remoteSetupReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &enabled))
+	require.Equal(t, "enable", enabled.Action)
+	require.Equal(t, "ready", enabled.Status)
+	require.True(t, enabled.Enabled)
+	require.True(t, enabled.AuthTokenConfigured)
+	require.Equal(t, 33, enabled.LeaseSeconds)
+	require.NotContains(t, out.String(), "secret-token")
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"remote_enabled": true`)
+	require.Contains(t, string(data), `"remote_auth_token": "secret-token"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/remote status --addr 127.0.0.1:8801 --json", &session.Session{ID: "active-session"}))
+	var slashStatus remoteSetupReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &slashStatus))
+	require.Equal(t, "status", slashStatus.Action)
+	require.Equal(t, "active-session", slashStatus.SessionID)
+	require.Equal(t, "http://127.0.0.1:8801", slashStatus.RemoteURL)
+	out.Reset()
+
+	require.NoError(t, app.runResumedRemoteSlash([]string{"status", "--addr", "127.0.0.1:8802", "--json"}, config.FlagOverrides{Resume: "resumed-session"}, "json"))
+	var resumedStatus remoteSetupReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &resumedStatus))
+	require.Equal(t, "status", resumedStatus.Action)
+	require.Equal(t, "resumed-session", resumedStatus.SessionID)
+	require.Equal(t, "http://127.0.0.1:8802", resumedStatus.RemoteURL)
+	out.Reset()
+
+	err = app.runResumedRemoteSlash([]string{"serve", "--json"}, config.FlagOverrides{Resume: "resumed-session"}, "json")
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var slashReport slashErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &slashReport))
+	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
+	require.Equal(t, "/remote serve", slashReport.Command)
+}
+
 func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
