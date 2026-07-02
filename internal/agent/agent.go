@@ -38789,19 +38789,20 @@ func isMCPShowAction(action string) bool {
 }
 
 type mcpListReport struct {
-	Kind                string                        `json:"kind"`
-	Action              string                        `json:"action"`
-	Status              string                        `json:"status"`
-	WorkingDirectory    string                        `json:"working_directory"`
-	ServerCount         int                           `json:"server_count"`
-	ConfiguredServers   int                           `json:"configured_servers"`
-	TotalConfigured     int                           `json:"total_configured"`
-	ValidCount          int                           `json:"valid_count"`
-	InvalidCount        int                           `json:"invalid_count"`
-	ConfigLoadError     *string                       `json:"config_load_error"`
-	ConfigLoadErrorKind string                        `json:"config_load_error_kind,omitempty"`
-	Servers             []mcp.ServerStatus            `json:"servers"`
-	InvalidServers      []localstatus.ValidationIssue `json:"invalid_servers,omitempty"`
+	Kind                string                          `json:"kind"`
+	Action              string                          `json:"action"`
+	Status              string                          `json:"status"`
+	WorkingDirectory    string                          `json:"working_directory"`
+	ServerCount         int                             `json:"server_count"`
+	ConfiguredServers   int                             `json:"configured_servers"`
+	TotalConfigured     int                             `json:"total_configured"`
+	ValidCount          int                             `json:"valid_count"`
+	InvalidCount        int                             `json:"invalid_count"`
+	MCPValidation       localstatus.MCPValidationStatus `json:"mcp_validation"`
+	ConfigLoadError     *string                         `json:"config_load_error"`
+	ConfigLoadErrorKind string                          `json:"config_load_error_kind,omitempty"`
+	Servers             []mcp.ServerStatus              `json:"servers"`
+	InvalidServers      []localstatus.ValidationIssue   `json:"invalid_servers,omitempty"`
 }
 
 type mcpShowReport struct {
@@ -38895,6 +38896,7 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		TotalConfigured:     validation.TotalConfigured,
 		ValidCount:          validation.ValidCount,
 		InvalidCount:        validation.InvalidCount,
+		MCPValidation:       validation,
 		ConfigLoadError:     loadError,
 		ConfigLoadErrorKind: strings.TrimSpace(configLoadErrorKind),
 		Servers:             statuses,

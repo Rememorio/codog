@@ -12773,9 +12773,14 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"--output-format", "json"}))
-	require.Contains(t, out.String(), `"kind": "mcp"`)
-	require.Contains(t, out.String(), `"server_count": 0`)
-	require.Contains(t, out.String(), `"working_directory":`)
+	var report mcpListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "mcp", report.Kind)
+	require.Equal(t, "list", report.Action)
+	require.Equal(t, 0, report.ServerCount)
+	require.Equal(t, 0, report.MCPValidation.TotalConfigured)
+	require.Equal(t, 0, report.MCPValidation.InvalidCount)
+	require.NotEmpty(t, report.WorkingDirectory)
 }
 
 func TestMCPListTextReportsInvalidServers(t *testing.T) {
@@ -12796,6 +12801,19 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	require.Contains(t, out.String(), "missing_command")
 	require.Contains(t, out.String(), "Invalid MCP servers")
 	require.Contains(t, out.String(), "- missing: missing command")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"list", "--json"}))
+	var report mcpListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "degraded", report.Status)
+	require.Equal(t, 1, report.TotalConfigured)
+	require.Equal(t, 1, report.InvalidCount)
+	require.Equal(t, 1, report.MCPValidation.TotalConfigured)
+	require.Equal(t, 1, report.MCPValidation.InvalidCount)
+	require.Equal(t, "missing", report.MCPValidation.InvalidServers[0].Name)
+	require.Equal(t, "missing_command", report.MCPValidation.InvalidServers[0].Kind)
+	require.Equal(t, report.MCPValidation.InvalidServers, report.InvalidServers)
 }
 
 func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {
