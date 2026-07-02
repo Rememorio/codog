@@ -336,10 +336,3 @@ func severityRank(severity string) int {
 		return 2
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

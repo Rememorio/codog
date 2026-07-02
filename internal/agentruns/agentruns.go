@@ -12,6 +12,8 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 )
 
+// Run records the relationship between a named agent invocation and the
+// background task that executes it.
 type Run struct {
 	ID           string    `json:"id"`
 	Agent        string    `json:"agent"`
@@ -26,10 +28,13 @@ type Run struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// Store persists agent run records under the Codog config home.
 type Store struct {
 	Dir string
 }
 
+// Status combines an agent run record with the current state of its background
+// task, when that task can still be found.
 type Status struct {
 	Run           Run              `json:"run"`
 	Task          *background.Task `json:"task,omitempty"`
@@ -37,6 +42,7 @@ type Status struct {
 	Error         string           `json:"error,omitempty"`
 }
 
+// BoardEntry is the lane-board view for a single agent run.
 type BoardEntry struct {
 	Run       Run                       `json:"run"`
 	Task      *background.Task          `json:"task,omitempty"`
@@ -46,6 +52,7 @@ type BoardEntry struct {
 	Error     string                    `json:"error,omitempty"`
 }
 
+// Board groups agent runs by current execution state for operator views.
 type Board struct {
 	GeneratedAt time.Time    `json:"generated_at"`
 	Active      []BoardEntry `json:"active"`
@@ -54,10 +61,13 @@ type Board struct {
 	Orphaned    []BoardEntry `json:"orphaned,omitempty"`
 }
 
+// NewStore returns the agent run store rooted at configHome.
 func NewStore(configHome string) Store {
 	return Store{Dir: filepath.Join(configHome, "agent-runs")}
 }
 
+// Save writes a complete agent run record, filling timestamps when they are
+// missing.
 func (s Store) Save(run Run) (Run, error) {
 	if strings.TrimSpace(run.ID) == "" {
 		return Run{}, errors.New("agent run id is required")
@@ -88,6 +98,7 @@ func (s Store) Save(run Run) (Run, error) {
 	return run, nil
 }
 
+// List returns all saved agent runs, newest first.
 func (s Store) List() ([]Run, error) {
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
@@ -113,6 +124,7 @@ func (s Store) List() ([]Run, error) {
 	return runs, nil
 }
 
+// Get loads a single agent run by id.
 func (s Store) Get(id string) (Run, error) {
 	if err := validateID(id); err != nil {
 		return Run{}, err
@@ -128,6 +140,7 @@ func (s Store) Get(id string) (Run, error) {
 	return run, nil
 }
 
+// Touch refreshes a run's UpdatedAt timestamp and saves it.
 func (s Store) Touch(id string) (Run, error) {
 	run, err := s.Get(id)
 	if err != nil {
@@ -137,6 +150,7 @@ func (s Store) Touch(id string) (Run, error) {
 	return s.Save(run)
 }
 
+// Remove deletes a saved agent run record.
 func (s Store) Remove(id string) error {
 	if err := validateID(id); err != nil {
 		return err
@@ -147,6 +161,7 @@ func (s Store) Remove(id string) error {
 	return nil
 }
 
+// StatusForTask resolves an agent run against the background task store.
 func StatusForTask(store background.Store, run Run) Status {
 	status := Status{Run: run, CurrentStatus: "unknown"}
 	task, err := store.Status(run.TaskID)
@@ -159,6 +174,8 @@ func StatusForTask(store background.Store, run Run) Status {
 	return status
 }
 
+// BuildBoard groups agent runs into active, blocked, finished, and orphaned
+// lanes using their background task state.
 func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter time.Duration) Board {
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -197,6 +214,8 @@ func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter 
 	return board
 }
 
+// Prune removes stale completed or orphaned agent run records while preserving
+// running tasks and the newest retained completed runs.
 func Prune(runStore Store, taskStore background.Store, options background.PruneOptions) (background.PruneResult, error) {
 	runs, err := runStore.List()
 	if err != nil {

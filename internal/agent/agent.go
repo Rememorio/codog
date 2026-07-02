@@ -5443,12 +5443,7 @@ type agentRunReport struct {
 	Worktree *worktree.Allocation `json:"worktree,omitempty"`
 }
 
-type agentRunStatus struct {
-	Run           agentruns.Run    `json:"run"`
-	Task          *background.Task `json:"task,omitempty"`
-	CurrentStatus string           `json:"current_status"`
-	Error         string           `json:"error,omitempty"`
-}
+type agentRunStatus = agentruns.Status
 
 type agentRunsReport struct {
 	Kind   string           `json:"kind"`
@@ -5459,14 +5454,7 @@ type agentRunsReport struct {
 	Run    *agentRunStatus  `json:"run,omitempty"`
 }
 
-type agentRunBoardEntry struct {
-	Run       agentruns.Run             `json:"run"`
-	Task      *background.Task          `json:"task,omitempty"`
-	Status    string                    `json:"status"`
-	Freshness background.LaneFreshness  `json:"freshness"`
-	Heartbeat *background.LaneHeartbeat `json:"heartbeat,omitempty"`
-	Error     string                    `json:"error,omitempty"`
-}
+type agentRunBoardEntry = agentruns.BoardEntry
 
 type agentRunBoardReport struct {
 	Kind        string               `json:"kind"`
@@ -5678,7 +5666,7 @@ func (a *App) listAgentRuns(format string, filter string) error {
 	statuses := make([]agentRunStatus, 0, len(runs))
 	taskStore := background.NewStore(a.Config.ConfigHome)
 	for _, run := range runs {
-		statuses = append(statuses, agentRunStatusForTask(taskStore, run))
+		statuses = append(statuses, agentruns.StatusForTask(taskStore, run))
 	}
 	report := agentRunsReport{
 		Kind:   "agents",
@@ -5695,7 +5683,17 @@ func (a *App) boardAgentRuns(stalledAfter time.Duration, format string) error {
 	if err != nil {
 		return err
 	}
-	report := buildAgentRunBoardReport(background.NewStore(a.Config.ConfigHome), runs, time.Now().UTC(), stalledAfter)
+	board := agentruns.BuildBoard(background.NewStore(a.Config.ConfigHome), runs, time.Now().UTC(), stalledAfter)
+	report := agentRunBoardReport{
+		Kind:        "agents",
+		Action:      "board",
+		Status:      "ok",
+		GeneratedAt: board.GeneratedAt,
+		Active:      board.Active,
+		Blocked:     board.Blocked,
+		Finished:    board.Finished,
+		Orphaned:    board.Orphaned,
+	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -5717,7 +5715,7 @@ func (a *App) showAgentRun(id string, format string) error {
 			Hint:      "Run `codog agents runs` to list agent runs.",
 		}, format)
 	}
-	status := agentRunStatusForTask(background.NewStore(a.Config.ConfigHome), run)
+	status := agentruns.StatusForTask(background.NewStore(a.Config.ConfigHome), run)
 	report := agentRunsReport{
 		Kind:   "agents",
 		Action: "status",
@@ -5791,42 +5789,18 @@ func (a *App) removeAgentRun(id string, format string) error {
 func (a *App) pruneAgentRuns(options background.PruneOptions, format string) error {
 	runStore := agentruns.NewStore(a.Config.ConfigHome)
 	taskStore := background.NewStore(a.Config.ConfigHome)
-	runs, err := runStore.List()
+	result, err := agentruns.Prune(runStore, taskStore, options)
 	if err != nil {
 		return err
 	}
-	sort.SliceStable(runs, func(i, j int) bool {
-		return agentRunRetentionTime(runs[i]).After(agentRunRetentionTime(runs[j]))
-	})
-	cutoff := time.Time{}
-	if options.OlderThan > 0 {
-		cutoff = time.Now().UTC().Add(-options.OlderThan)
+	report := agentRunPruneReport{
+		Kind:         "agents",
+		Action:       "prune",
+		Status:       "ok",
+		Removed:      result.Removed,
+		RemovedCount: result.RemovedCount,
+		Kept:         result.Kept,
 	}
-	seenNonRunning := 0
-	report := agentRunPruneReport{Kind: "agents", Action: "prune", Status: "ok"}
-	for _, run := range runs {
-		task, taskErr := taskStore.Status(run.TaskID)
-		if taskErr == nil && strings.EqualFold(task.Status, "running") {
-			report.Kept++
-			continue
-		}
-		if taskErr == nil {
-			seenNonRunning++
-			if options.Keep > 0 && seenNonRunning <= options.Keep {
-				report.Kept++
-				continue
-			}
-			if !cutoff.IsZero() && agentRunRetentionTime(run).After(cutoff) {
-				report.Kept++
-				continue
-			}
-		}
-		if err := runStore.Remove(run.ID); err != nil {
-			return err
-		}
-		report.Removed = append(report.Removed, run.ID)
-	}
-	report.RemovedCount = len(report.Removed)
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -5954,47 +5928,6 @@ func renderAgentRunActionReport(out io.Writer, report agentRunActionReport, form
 	return nil
 }
 
-func buildAgentRunBoardReport(store background.Store, runs []agentruns.Run, now time.Time, stalledAfter time.Duration) agentRunBoardReport {
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	if stalledAfter <= 0 {
-		stalledAfter = 30 * time.Second
-	}
-	report := agentRunBoardReport{
-		Kind:        "agents",
-		Action:      "board",
-		Status:      "ok",
-		GeneratedAt: now.UTC(),
-		Active:      []agentRunBoardEntry{},
-		Blocked:     []agentRunBoardEntry{},
-		Finished:    []agentRunBoardEntry{},
-		Orphaned:    []agentRunBoardEntry{},
-	}
-	for _, run := range runs {
-		entry := agentRunBoardEntry{Run: run, Status: "unknown", Freshness: background.LaneFreshnessUnknown}
-		task, err := store.Status(run.TaskID)
-		if err != nil {
-			entry.Error = err.Error()
-			report.Orphaned = append(report.Orphaned, entry)
-			continue
-		}
-		entry.Task = &task
-		entry.Status = firstNonEmpty(task.Status, "unknown")
-		entry.Heartbeat = task.Heartbeat
-		entry.Freshness = agentRunFreshness(task.Heartbeat, report.GeneratedAt, stalledAfter)
-		switch agentRunLaneBucket(task.Status) {
-		case "active":
-			report.Active = append(report.Active, entry)
-		case "blocked":
-			report.Blocked = append(report.Blocked, entry)
-		default:
-			report.Finished = append(report.Finished, entry)
-		}
-	}
-	return report
-}
-
 func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
 	fmt.Fprintln(out, "Agent Run Board")
 	fmt.Fprintf(out, "  Active           %d\n", len(report.Active))
@@ -6024,40 +5957,6 @@ func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
 	}
 }
 
-func agentRunFreshness(heartbeat *background.LaneHeartbeat, now time.Time, stalledAfter time.Duration) background.LaneFreshness {
-	if heartbeat == nil || heartbeat.ObservedAt.IsZero() {
-		return background.LaneFreshnessUnknown
-	}
-	if !heartbeat.TransportAlive {
-		return background.LaneFreshnessTransportDead
-	}
-	if stalledAfter <= 0 {
-		stalledAfter = 30 * time.Second
-	}
-	if now.Sub(heartbeat.ObservedAt) > stalledAfter {
-		return background.LaneFreshnessStalled
-	}
-	return background.LaneFreshnessHealthy
-}
-
-func agentRunLaneBucket(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "created", "starting", "pending":
-		return "active"
-	case "blocked", "waiting":
-		return "blocked"
-	default:
-		return "finished"
-	}
-}
-
-func agentRunRetentionTime(run agentruns.Run) time.Time {
-	if !run.UpdatedAt.IsZero() {
-		return run.UpdatedAt
-	}
-	return run.CreatedAt
-}
-
 func filterAgentRuns(runs []agentruns.Run, filter string) []agentruns.Run {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	if filter == "" {
@@ -6072,18 +5971,6 @@ func filterAgentRuns(runs []agentruns.Run, filter string) []agentruns.Run {
 		}
 	}
 	return out
-}
-
-func agentRunStatusForTask(store background.Store, run agentruns.Run) agentRunStatus {
-	status := agentRunStatus{Run: run, CurrentStatus: "unknown"}
-	task, err := store.Status(run.TaskID)
-	if err != nil {
-		status.Error = err.Error()
-		return status
-	}
-	status.Task = &task
-	status.CurrentStatus = firstNonEmpty(task.Status, "unknown")
-	return status
 }
 
 func renderAgentRunsReport(out io.Writer, report agentRunsReport, format string) error {

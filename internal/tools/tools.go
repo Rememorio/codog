@@ -2770,7 +2770,7 @@ func readBackgroundLogOnce(store background.Store, id string, task background.Ta
 			return backgroundLogReadResult{}, err
 		}
 		nextOffset = logSize
-		appliedOffset = maxInt64(nextOffset-int64(len([]byte(output))), 0)
+		appliedOffset = max(nextOffset-int64(len([]byte(output))), int64(0))
 	}
 	return backgroundLogReadResult{
 		Output:     output,
@@ -9083,25 +9083,4 @@ func pretty(v any) string {
 		return fmt.Sprint(v)
 	}
 	return string(data)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }
