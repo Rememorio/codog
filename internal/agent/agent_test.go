@@ -4078,6 +4078,24 @@ func risky(value any) {
 	require.Equal(t, resumedAgentRun.Task.ID, resumedAgentRun.Run.TaskID)
 	require.Equal(t, "resume-slash", resumedAgentRun.Task.SessionID)
 
+	out, err = runResumedJSON("/agents", "run-remove", resumedAgentRun.Run.ID)
+	require.NoError(t, err)
+	var resumedAgentRunRemove struct {
+		Kind    string `json:"kind"`
+		Action  string `json:"action"`
+		Status  string `json:"status"`
+		Removed bool   `json:"removed"`
+		ID      string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgentRunRemove))
+	require.Equal(t, "agents", resumedAgentRunRemove.Kind)
+	require.Equal(t, "run-remove", resumedAgentRunRemove.Action)
+	require.Equal(t, "ok", resumedAgentRunRemove.Status)
+	require.True(t, resumedAgentRunRemove.Removed)
+	require.Equal(t, resumedAgentRun.Run.ID, resumedAgentRunRemove.ID)
+	_, err = agentruns.NewStore(configHome).Get(resumedAgentRun.Run.ID)
+	require.Error(t, err)
+
 	out, err = runResumedJSON("/cron", "list")
 	require.NoError(t, err)
 	var resumedCronList cronCommandReport

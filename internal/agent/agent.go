@@ -25732,7 +25732,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "create", "run", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune":
+	case "", "list", "show", "info", "describe", "create", "run", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune", "run-remove", "run-rm":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"
