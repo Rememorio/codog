@@ -5459,6 +5459,16 @@ type agentRunsReport struct {
 	Run    *agentRunStatus  `json:"run,omitempty"`
 }
 
+type agentRunActionReport struct {
+	Kind    string          `json:"kind"`
+	Action  string          `json:"action"`
+	Status  string          `json:"status"`
+	Run     agentruns.Run   `json:"run"`
+	Task    background.Task `json:"task"`
+	Message string          `json:"message,omitempty"`
+	Output  string          `json:"output,omitempty"`
+}
+
 func (a *App) listAgents(format string, filter string) error {
 	defs, err := agentdefs.Load(a.Workspace)
 	if err != nil {
@@ -5711,6 +5721,119 @@ func (a *App) removeAgentRun(id string, format string) error {
 	return nil
 }
 
+func (a *App) stopAgentRun(id string, format string) error {
+	runStore := agentruns.NewStore(a.Config.ConfigHome)
+	run, err := runStore.Get(id)
+	if err != nil {
+		return renderAgentRunNotFound(a.Out, "stop", id, format)
+	}
+	task, err := background.NewStore(a.Config.ConfigHome).Stop(run.TaskID)
+	if err != nil {
+		return err
+	}
+	run, err = runStore.Touch(run.ID)
+	if err != nil {
+		return err
+	}
+	return renderAgentRunActionReport(a.Out, agentRunActionReport{
+		Kind:   "agents",
+		Action: "stop",
+		Status: "ok",
+		Run:    run,
+		Task:   task,
+	}, format)
+}
+
+func (a *App) updateAgentRun(id string, message string, format string) error {
+	runStore := agentruns.NewStore(a.Config.ConfigHome)
+	run, err := runStore.Get(id)
+	if err != nil {
+		return renderAgentRunNotFound(a.Out, "update", id, format)
+	}
+	task, err := background.NewStore(a.Config.ConfigHome).Update(run.TaskID, message)
+	if err != nil {
+		return err
+	}
+	run, err = runStore.Touch(run.ID)
+	if err != nil {
+		return err
+	}
+	return renderAgentRunActionReport(a.Out, agentRunActionReport{
+		Kind:    "agents",
+		Action:  "update",
+		Status:  "ok",
+		Run:     run,
+		Task:    task,
+		Message: message,
+	}, format)
+}
+
+func (a *App) outputAgentRun(id string, limitBytes int64, format string) error {
+	runStore := agentruns.NewStore(a.Config.ConfigHome)
+	run, err := runStore.Get(id)
+	if err != nil {
+		return renderAgentRunNotFound(a.Out, "output", id, format)
+	}
+	taskStore := background.NewStore(a.Config.ConfigHome)
+	task, err := taskStore.Status(run.TaskID)
+	if err != nil {
+		return err
+	}
+	output, err := taskStore.Logs(run.TaskID, limitBytes)
+	if err != nil {
+		return err
+	}
+	run, err = runStore.Touch(run.ID)
+	if err != nil {
+		return err
+	}
+	report := agentRunActionReport{
+		Kind:   "agents",
+		Action: "output",
+		Status: "ok",
+		Run:    run,
+		Task:   task,
+		Output: output,
+	}
+	if format == "json" {
+		return renderAgentRunActionReport(a.Out, report, format)
+	}
+	fmt.Fprint(a.Out, output)
+	return nil
+}
+
+func renderAgentRunNotFound(out io.Writer, action string, id string, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      "agents",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "agent_run_not_found",
+		Message:   fmt.Sprintf("agent run %q was not found", id),
+		Hint:      "Run `codog agents runs` to list agent runs.",
+	}, format)
+}
+
+func renderAgentRunActionReport(out io.Writer, report agentRunActionReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Agent Run")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Run              %s\n", report.Run.ID)
+	fmt.Fprintf(out, "  Agent            %s\n", report.Run.Agent)
+	fmt.Fprintf(out, "  Task             %s\n", report.Task.ID)
+	fmt.Fprintf(out, "  Status           %s\n", report.Task.Status)
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	if report.Output != "" {
+		fmt.Fprintf(out, "  Output bytes     %d\n", len(report.Output))
+	}
+	return nil
+}
+
 func filterAgentRuns(runs []agentruns.Run, filter string) []agentruns.Run {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	if filter == "" {
@@ -5869,6 +5992,63 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		return a.showAgentRun(args[1], format)
 	}
+	if args[0] == "stop" {
+		if len(args) < 2 {
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "agents",
+				Action:    "stop",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "agents stop requires a run id",
+				Hint:      "Usage: codog agents stop RUN_ID.",
+			}, format)
+		}
+		if len(args) > 2 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "agents stop",
+				Args:    append([]string(nil), args[2:]...),
+				Usage:   "codog agents stop RUN_ID [--json|--output-format text|json]",
+			}, format)
+		}
+		return a.stopAgentRun(args[1], format)
+	}
+	if args[0] == "update" || args[0] == "message" {
+		if len(args) < 3 {
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "agents",
+				Action:    "update",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "agents update requires a run id and message",
+				Hint:      "Usage: codog agents update RUN_ID MESSAGE.",
+			}, format)
+		}
+		return a.updateAgentRun(args[1], strings.Join(args[2:], " "), format)
+	}
+	if args[0] == "output" || args[0] == "logs" {
+		if len(args) < 2 {
+			return renderActionError(a.Out, actionErrorReport{
+				Kind:      "agents",
+				Action:    "output",
+				Status:    "error",
+				ErrorKind: "missing_argument",
+				Message:   "agents output requires a run id",
+				Hint:      "Usage: codog agents output RUN_ID [bytes|--bytes N|--limit N].",
+			}, format)
+		}
+		if len(args) > 4 {
+			return renderCLIError(a.Out, unexpectedExtraArgsError{
+				Command: "agents output",
+				Args:    append([]string(nil), args[4:]...),
+				Usage:   "codog agents output RUN_ID [bytes|--bytes N|--limit N] [--json|--output-format text|json]",
+			}, format)
+		}
+		id, limit, err := parseAgentRunOutputArgs(args[1:])
+		if err != nil {
+			return renderCLIError(a.Out, err, format)
+		}
+		return a.outputAgentRun(id, limit, format)
+	}
 	if args[0] == "run-remove" || args[0] == "run-rm" {
 		if len(args) < 2 {
 			return renderActionError(a.Out, actionErrorReport{
@@ -5923,7 +6103,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			Status:    "error",
 			ErrorKind: "unknown_agents_subcommand",
 			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
-			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, `codog agents runs`, or `codog agents worktrees`.",
+			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, `codog agents runs`, `codog agents status RUN_ID`, or `codog agents worktrees`.",
 		}, format)
 	}
 	req, err := parseAgentRunArgs(args[1:])
@@ -6044,6 +6224,18 @@ func parseAgentRunArgs(args []string) (agentRunRequest, error) {
 	req.Name = args[0]
 	req.Prompt = strings.Join(args[1:], " ")
 	return req, nil
+}
+
+func parseAgentRunOutputArgs(args []string) (string, int64, error) {
+	if len(args) == 0 {
+		return "", 0, errors.New("usage: codog agents output RUN_ID [bytes|--bytes N|--limit N]")
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" {
+		return "", 0, errors.New("agent run id is required")
+	}
+	_, limit, err := parseBackgroundLogsArgs(append([]string{id}, args[1:]...))
+	return id, limit, err
 }
 
 func buildAgentCommand(exe string, def agentdefs.Definition, prompt string) string {
@@ -23234,7 +23426,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "worktrees", "runs", "tasks", "status", "run-status":
+	case "", "list", "show", "info", "describe", "worktrees", "runs", "tasks", "status", "run-status", "stop", "update", "message", "output", "logs":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"
@@ -42617,7 +42809,7 @@ Usage:
   %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID [--json|--output-format text|json]
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
-  %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents status RUN_ID | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
+  %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents status RUN_ID | agents stop RUN_ID | agents update RUN_ID MESSAGE | agents output RUN_ID [bytes] | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]

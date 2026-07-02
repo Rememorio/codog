@@ -102,6 +102,15 @@ func (s Store) Get(id string) (Run, error) {
 	return run, nil
 }
 
+func (s Store) Touch(id string) (Run, error) {
+	run, err := s.Get(id)
+	if err != nil {
+		return Run{}, err
+	}
+	run.UpdatedAt = time.Now().UTC()
+	return s.Save(run)
+}
+
 func (s Store) Remove(id string) error {
 	if err := validateID(id); err != nil {
 		return err

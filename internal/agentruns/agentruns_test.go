@@ -29,6 +29,10 @@ func TestStoreSavesListsGetsAndRemovesRuns(t *testing.T) {
 	require.Equal(t, "reviewer", got.Agent)
 	require.Equal(t, "check auth", got.Prompt)
 
+	touched, err := store.Touch("run-1")
+	require.NoError(t, err)
+	require.False(t, touched.UpdatedAt.IsZero())
+
 	runs, err := store.List()
 	require.NoError(t, err)
 	require.Len(t, runs, 1)

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/agentdefs"
+	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/anttrace"
 	"github.com/Rememorio/codog/internal/audit"
@@ -14056,8 +14057,64 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.Equal(t, runReport.Task.ID, statusReport.Run.Run.TaskID)
 	out.Reset()
 
+	require.NoError(t, app.AgentsWithOverrides([]string{"update", runReport.RunID, "more", "context", "--json"}, config.FlagOverrides{}))
+	var updateReport agentRunActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &updateReport))
+	require.Equal(t, "update", updateReport.Action)
+	require.Equal(t, "more context", updateReport.Message)
+	require.Len(t, updateReport.Task.Messages, 1)
+	require.Equal(t, "more context", updateReport.Task.Messages[0].Message)
+	out.Reset()
+
+	outputTask, err := background.NewStore(configHome).RunWithOptions("printf agent-output", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-1"})
+	require.NoError(t, err)
+	outputRun, err := agentruns.NewStore(configHome).Save(agentruns.Run{
+		ID:        "run-" + outputTask.ID,
+		Agent:     "reviewer",
+		Workspace: workspace,
+		SessionID: "session-1",
+		TaskID:    outputTask.ID,
+		CreatedAt: outputTask.StartedAt,
+		UpdatedAt: outputTask.StartedAt,
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(outputTask.ID, 4096)
+		return err == nil && strings.Contains(logs, "agent-output")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"output", outputRun.ID, "--bytes", "4096", "--json"}, config.FlagOverrides{}))
+	var outputReport agentRunActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &outputReport))
+	require.Equal(t, "output", outputReport.Action)
+	require.Contains(t, outputReport.Output, "agent-output")
+	out.Reset()
+
+	longTask, err := background.NewStore(configHome).RunWithOptions("sleep 5", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-1"})
+	require.NoError(t, err)
+	longRun, err := agentruns.NewStore(configHome).Save(agentruns.Run{
+		ID:        "run-" + longTask.ID,
+		Agent:     "reviewer",
+		Workspace: workspace,
+		SessionID: "session-1",
+		TaskID:    longTask.ID,
+		CreatedAt: longTask.StartedAt,
+		UpdatedAt: longTask.StartedAt,
+	})
+	require.NoError(t, err)
+	require.NoError(t, app.AgentsWithOverrides([]string{"stop", longRun.ID, "--json"}, config.FlagOverrides{}))
+	var stopReport agentRunActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stopReport))
+	require.Equal(t, "stop", stopReport.Action)
+	require.Equal(t, "stopped", stopReport.Task.Status)
+	out.Reset()
+
 	require.NoError(t, app.AgentsWithOverrides([]string{"run-remove", runReport.RunID, "--json"}, config.FlagOverrides{}))
 	require.Contains(t, out.String(), `"removed": true`)
+	out.Reset()
+	require.NoError(t, app.AgentsWithOverrides([]string{"run-remove", outputRun.ID, "--json"}, config.FlagOverrides{}))
+	out.Reset()
+	require.NoError(t, app.AgentsWithOverrides([]string{"run-remove", longRun.ID, "--json"}, config.FlagOverrides{}))
 	out.Reset()
 
 	require.NoError(t, app.AgentsWithOverrides([]string{"runs", "--json"}, config.FlagOverrides{}))
