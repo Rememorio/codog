@@ -236,11 +236,11 @@ func (s *Store) Open(id string) (*Session, error) {
 		id = newID()
 	}
 	if id == "latest" {
-		latest, err := s.LatestID()
+		latest, err := s.LatestSessionExcluding("")
 		if err != nil {
 			return nil, err
 		}
-		id = latest
+		return latest, nil
 	}
 	path := s.pathFor(id)
 	if _, err := os.Stat(path); err != nil {
@@ -268,11 +268,11 @@ func (s *Store) OpenExisting(id string) (*Session, error) {
 		return nil, errors.New("session id is required")
 	}
 	if id == "latest" {
-		latest, err := s.LatestID()
+		latest, err := s.LatestSessionExcluding("")
 		if err != nil {
 			return nil, err
 		}
-		id = latest
+		return latest, nil
 	}
 	if looksLikeSessionPath(id) {
 		return s.openExistingPath(id)
@@ -791,6 +791,32 @@ func (s *Store) LatestIDExcluding(excludeID string) (string, error) {
 		return "", ErrNoSessions
 	}
 	return "", ErrAllSessionsEmpty
+}
+
+// LatestSessionExcluding returns the newest non-empty session, falling back to
+// sibling workspace namespaces when the current namespace has no usable match.
+func (s *Store) LatestSessionExcluding(excludeID string) (*Session, error) {
+	sessions, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	excludeID = strings.TrimSpace(excludeID)
+	if latest, ok := latestSessionFrom(sessions, excludeID); ok {
+		return &latest, nil
+	}
+	visible := visibleSessionCount(sessions, excludeID)
+	global, err := s.globalWorkspaceSessions()
+	if err != nil {
+		return nil, err
+	}
+	if latest, ok := latestSessionFrom(global, excludeID); ok {
+		return &latest, nil
+	}
+	visible += visibleSessionCount(global, excludeID)
+	if visible == 0 {
+		return nil, ErrNoSessions
+	}
+	return nil, ErrAllSessionsEmpty
 }
 
 // LatestAnyID returns the newest visible session, including empty transcripts.
@@ -1646,6 +1672,82 @@ func (s *Store) sessionDirs() []string {
 		dirs = append(dirs, s.LegacyDir)
 	}
 	return dirs
+}
+
+func (s *Store) globalWorkspaceSessions() ([]Session, error) {
+	if strings.TrimSpace(s.LegacyDir) == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(s.LegacyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var sessions []Session
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(s.LegacyDir, entry.Name())
+		items, err := s.sessionsInDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, items...)
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].ID > sessions[j].ID
+	})
+	return sessions, nil
+}
+
+func (s *Store) sessionsInDir(dir string) ([]Session, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	sessions := make([]Session, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".jsonl")
+		path := filepath.Join(dir, entry.Name())
+		messages, identity, metadata, err := s.readSession(path, id)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity, Metadata: metadata})
+	}
+	return sessions, nil
+}
+
+func latestSessionFrom(sessions []Session, excludeID string) (Session, bool) {
+	for _, sess := range sessions {
+		if excludeID != "" && sess.ID == excludeID {
+			continue
+		}
+		if len(sess.Messages) > 0 {
+			return sess, true
+		}
+	}
+	return Session{}, false
+}
+
+func visibleSessionCount(sessions []Session, excludeID string) int {
+	count := 0
+	for _, sess := range sessions {
+		if excludeID != "" && sess.ID == excludeID {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {

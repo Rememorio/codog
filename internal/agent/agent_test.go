@@ -6232,6 +6232,33 @@ func TestResumeLatestSlashSkipsCurrentSession(t *testing.T) {
 	require.Contains(t, errOut.String(), "session resumed: older-session")
 }
 
+func TestResumeLatestSlashFallsBackToSiblingWorkspace(t *testing.T) {
+	configHome := t.TempDir()
+	workspaceA := filepath.Join(t.TempDir(), "repo-a")
+	workspaceB := filepath.Join(t.TempDir(), "repo-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+	storeA := session.NewWorkspaceStore(configHome, workspaceA)
+	storeB := session.NewWorkspaceStore(configHome, workspaceB)
+	require.NoError(t, storeA.Append("current-session", anthropic.TextMessage("user", "current")))
+	require.NoError(t, storeB.Append("remote-session", anthropic.TextMessage("user", "remote")))
+	sess, err := storeA.Open("current-session")
+	require.NoError(t, err)
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{Model: "mock", PermissionMode: "workspace-write"},
+		Sessions:  storeA,
+		Workspace: workspaceA,
+		Out:       io.Discard,
+		Err:       &errOut,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/resume latest", sess))
+	require.Equal(t, "remote-session", sess.ID)
+	require.Equal(t, filepath.Join(storeB.Dir, "remote-session.jsonl"), sess.Path)
+	require.Contains(t, errOut.String(), "session resumed: remote-session")
+}
+
 func TestResumeRestoresTodosFromTranscript(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)

@@ -95,6 +95,28 @@ func TestLatestIDExcludingSkipsExcludedSession(t *testing.T) {
 	require.Equal(t, "older-session", latest)
 }
 
+func TestLatestSessionFallsBackToSiblingWorkspace(t *testing.T) {
+	configHome := t.TempDir()
+	workspaceA := filepath.Join(t.TempDir(), "repo-a")
+	workspaceB := filepath.Join(t.TempDir(), "repo-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+	storeA := NewWorkspaceStore(configHome, workspaceA)
+	storeB := NewWorkspaceStore(configHome, workspaceB)
+	require.NoError(t, storeB.Append("remote-session", anthropic.TextMessage("user", "from another workspace")))
+
+	latest, err := storeA.LatestSessionExcluding("")
+	require.NoError(t, err)
+	require.Equal(t, "remote-session", latest.ID)
+	require.Equal(t, filepath.Join(storeB.Dir, "remote-session.jsonl"), latest.Path)
+
+	opened, err := storeA.OpenExisting("latest")
+	require.NoError(t, err)
+	require.Equal(t, "remote-session", opened.ID)
+	require.Equal(t, latest.Path, opened.Path)
+	require.Len(t, opened.Messages, 1)
+}
+
 func TestLatestAnyIDIncludesEmptySessions(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("real-session", anthropic.TextMessage("user", "hello")))
