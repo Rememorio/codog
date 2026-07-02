@@ -9411,6 +9411,10 @@ func TestAnthropicClientOptionsUseAPITimeoutConfig(t *testing.T) {
 			RequestTimeoutSeconds: 222,
 			MaxRetries:            7,
 		},
+		ProviderFallbacks: config.ProviderFallbackConfig{
+			Primary:   "claude-primary",
+			Fallbacks: []string{"claude-backup"},
+		},
 	})
 
 	require.Equal(t, 7, options.RateLimit.MaxRetries)
@@ -9418,6 +9422,7 @@ func TestAnthropicClientOptionsUseAPITimeoutConfig(t *testing.T) {
 	require.Equal(t, 200*time.Millisecond, options.RateLimit.MaxBackoff)
 	require.Equal(t, 11*time.Second, options.ConnectTimeout)
 	require.Equal(t, 222*time.Second, options.RequestTimeout)
+	require.Equal(t, anthropic.ProviderFallbackOptions{Primary: "claude-primary", Models: []string{"claude-backup"}}, options.Fallbacks)
 }
 
 func TestAntTraceCommandAndSlash(t *testing.T) {

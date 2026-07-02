@@ -323,6 +323,10 @@ func TestClientOptionsConfigureTimeoutAndRateLimit(t *testing.T) {
 	client := NewWithOptions("https://example.test", "key", "", ClientOptions{
 		RequestTimeout: 2 * time.Second,
 		ConnectTimeout: 1 * time.Second,
+		Fallbacks: ProviderFallbackOptions{
+			Primary: "claude-primary",
+			Models:  []string{"claude-backup", "claude-backup"},
+		},
 		RateLimit: RateLimitOptions{
 			MaxRetries:     6,
 			InitialBackoff: 10 * time.Millisecond,
@@ -335,6 +339,7 @@ func TestClientOptionsConfigureTimeoutAndRateLimit(t *testing.T) {
 	require.Equal(t, 6, client.RateLimit.MaxRetries)
 	require.Equal(t, 10*time.Millisecond, client.RateLimit.InitialBackoff)
 	require.Equal(t, 20*time.Millisecond, client.RateLimit.MaxBackoff)
+	require.Equal(t, ProviderFallbackOptions{Primary: "claude-primary", Models: []string{"claude-backup"}}, client.Fallbacks)
 }
 
 func TestClientMissingCredentialsHintDetectsForeignProviderEnv(t *testing.T) {
@@ -846,6 +851,78 @@ func TestClientRetriesTransientGatewayBadRequest(t *testing.T) {
 	require.Equal(t, 2, attempts)
 	require.Len(t, delays, 1)
 	require.Contains(t, msg.Blocks[0].Text, "gateway retry success")
+}
+
+func TestClientFallsBackToConfiguredModelAfterRetryableStatus(t *testing.T) {
+	var models []string
+	success := mockanthropic.Server{Text: "fallback success"}.Handler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		models = append(models, body["model"].(string))
+		if body["model"] != "claude-backup" {
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		success.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	client := NewWithOptions(server.URL, "test", "", ClientOptions{
+		RateLimit: RateLimitOptions{
+			MaxRetries:     1,
+			InitialBackoff: time.Millisecond,
+			MaxBackoff:     time.Millisecond,
+		},
+		Fallbacks: ProviderFallbackOptions{
+			Primary: "claude-primary",
+			Models:  []string{"claude-backup"},
+		},
+	})
+	client.Sleep = func(context.Context, time.Duration) error { return nil }
+
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "claude-primary",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"claude-primary", "claude-primary", "claude-backup"}, models)
+	require.Contains(t, msg.Blocks[0].Text, "fallback success")
+}
+
+func TestClientSkipsProviderFallbackWhenPrimaryDoesNotMatch(t *testing.T) {
+	var models []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		models = append(models, body["model"].(string))
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewWithOptions(server.URL, "test", "", ClientOptions{
+		RateLimit: RateLimitOptions{
+			MaxRetries:     1,
+			InitialBackoff: time.Millisecond,
+			MaxBackoff:     time.Millisecond,
+		},
+		Fallbacks: ProviderFallbackOptions{
+			Primary: "claude-primary",
+			Models:  []string{"claude-backup"},
+		},
+	})
+	client.Sleep = func(context.Context, time.Duration) error { return nil }
+
+	_, err := client.Stream(context.Background(), Request{
+		Model:     "claude-other",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.Error(t, err)
+	require.Equal(t, []string{"claude-other", "claude-other"}, models)
 }
 
 func TestClientDoesNotRetryOrdinaryBadRequest(t *testing.T) {

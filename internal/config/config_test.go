@@ -166,6 +166,17 @@ func TestLoadAPITimeoutConfig(t *testing.T) {
 	require.Equal(t, 7, cfg.APITimeout.MaxRetries)
 }
 
+func TestLoadProviderFallbacksConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"providerFallbacks":{"primary":"claude-primary","fallbacks":["claude-backup","grok-mini"]}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "claude-primary", cfg.ProviderFallbacks.Primary)
+	require.Equal(t, []string{"claude-backup", "grok-mini"}, cfg.ProviderFallbacks.Fallbacks)
+}
+
 func TestLoadMergesTopLevelEnvByConfigPrecedence(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

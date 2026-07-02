@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -76,12 +77,19 @@ type Client struct {
 	AuthToken string
 	RateLimit RateLimitOptions
 	Sleep     func(context.Context, time.Duration) error
+	Fallbacks ProviderFallbackOptions
 }
 
 type ClientOptions struct {
 	RateLimit      RateLimitOptions
 	RequestTimeout time.Duration
 	ConnectTimeout time.Duration
+	Fallbacks      ProviderFallbackOptions
+}
+
+type ProviderFallbackOptions struct {
+	Primary string   `json:"primary,omitempty"`
+	Models  []string `json:"models,omitempty"`
 }
 
 type RateLimitOptions struct {
@@ -125,6 +133,7 @@ func NewWithOptions(baseURL, apiKey, authToken string, options ClientOptions) *C
 		APIKey:    apiKey,
 		AuthToken: authToken,
 		RateLimit: normalizeRateLimit(options.RateLimit),
+		Fallbacks: normalizeProviderFallbacks(options.Fallbacks),
 	}
 }
 
@@ -147,6 +156,27 @@ func (o RateLimitOptions) Report() RateLimitReport {
 }
 
 func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
+	models := c.fallbackModelChain(req.Model)
+	if len(models) == 0 {
+		models = []string{req.Model}
+	}
+	var lastErr error
+	for index, model := range models {
+		nextReq := req
+		nextReq.Model = model
+		msg, err := c.streamSingle(ctx, nextReq, onText)
+		if err == nil {
+			return msg, nil
+		}
+		lastErr = err
+		if index == len(models)-1 || !fallbackableStreamError(err) {
+			return AssistantMessage{}, err
+		}
+	}
+	return AssistantMessage{}, lastErr
+}
+
+func (c *Client) streamSingle(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
 	resolvedReq := req
 	resolvedReq.Model = modelrouting.ResolveAlias(req.Model)
 	if modelrouting.IsOpenAICompatibleModel(resolvedReq.Model) {
@@ -205,7 +235,14 @@ func (c *Client) anthropicStatusError(status string, statusCode int, body string
 	if c.shouldHintSKAntBearer(statusCode) {
 		message += "\n" + skAntBearerHint
 	}
-	return errors.New(message)
+	return providerStatusError{
+		Provider:   "anthropic",
+		Status:     status,
+		StatusCode: statusCode,
+		Body:       body,
+		Message:    message,
+		Retryable:  retryableResponse(statusCode, body),
+	}
 }
 
 func (c *Client) shouldHintSKAntBearer(statusCode int) bool {
@@ -335,10 +372,18 @@ func (c *Client) streamOpenAICompatible(ctx context.Context, req Request, onText
 		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		retryAfter := retryAfterDelay(resp.Header.Get("retry-after"), time.Now())
-		statusErr := errors.New(providerStatusErrorMessage("openai-compatible", resp.Status, string(data), resp.Header))
+		bodyText := string(data)
+		statusErr := providerStatusError{
+			Provider:   "openai-compatible",
+			Status:     resp.Status,
+			StatusCode: resp.StatusCode,
+			Body:       bodyText,
+			Message:    providerStatusErrorMessage("openai-compatible", resp.Status, bodyText, resp.Header),
+			Retryable:  retryableResponse(resp.StatusCode, bodyText),
+		}
 		_ = resp.Body.Close()
 		lastErr = statusErr
-		if attempt < options.MaxRetries && retryableResponse(resp.StatusCode, string(data)) {
+		if attempt < options.MaxRetries && statusErr.Retryable {
 			if sleepErr := c.sleep(ctx, backoffDelay(options, attempt, retryAfter)); sleepErr != nil {
 				return AssistantMessage{}, sleepErr
 			}
@@ -626,6 +671,85 @@ func normalizeRateLimit(options RateLimitOptions) RateLimitOptions {
 		options.MaxBackoff = options.InitialBackoff
 	}
 	return options
+}
+
+func normalizeProviderFallbacks(options ProviderFallbackOptions) ProviderFallbackOptions {
+	primary := strings.TrimSpace(options.Primary)
+	models := make([]string, 0, len(options.Models))
+	seen := map[string]bool{}
+	for _, model := range options.Models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		resolved := modelrouting.ResolveAlias(model)
+		key := strings.ToLower(resolved)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		models = append(models, resolved)
+	}
+	return ProviderFallbackOptions{Primary: primary, Models: models}
+}
+
+func (c *Client) fallbackModelChain(model string) []string {
+	resolvedPrimary := modelrouting.ResolveAlias(model)
+	out := []string{resolvedPrimary}
+	fallbacks := normalizeProviderFallbacks(c.Fallbacks)
+	if strings.TrimSpace(fallbacks.Primary) != "" && !sameModel(fallbacks.Primary, resolvedPrimary) {
+		return out
+	}
+	seen := map[string]bool{strings.ToLower(resolvedPrimary): true}
+	for _, fallback := range fallbacks.Models {
+		if sameModel(fallback, resolvedPrimary) {
+			continue
+		}
+		key := strings.ToLower(modelrouting.ResolveAlias(fallback))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, modelrouting.ResolveAlias(fallback))
+	}
+	return out
+}
+
+func sameModel(a, b string) bool {
+	return strings.EqualFold(modelrouting.ResolveAlias(a), modelrouting.ResolveAlias(b))
+}
+
+type providerStatusError struct {
+	Provider   string
+	Status     string
+	StatusCode int
+	Body       string
+	Message    string
+	Retryable  bool
+}
+
+func (e providerStatusError) Error() string {
+	return e.Message
+}
+
+func fallbackableStreamError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var missing MissingCredentialsError
+	if errors.As(err, &missing) {
+		return false
+	}
+	var status providerStatusError
+	if errors.As(err, &status) {
+		return status.Retryable
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
 }
 
 func retryableStatus(status int) bool {

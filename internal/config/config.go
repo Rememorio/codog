@@ -245,6 +245,11 @@ type APITimeoutConfig struct {
 	MaxRetries            int `json:"maxRetries,omitempty"`
 }
 
+type ProviderFallbackConfig struct {
+	Primary   string   `json:"primary,omitempty"`
+	Fallbacks []string `json:"fallbacks,omitempty"`
+}
+
 type PrivacyConfig struct {
 	TelemetryEnabled     *bool `json:"telemetry_enabled,omitempty"`
 	CrashReportsEnabled  *bool `json:"crash_reports_enabled,omitempty"`
@@ -441,6 +446,7 @@ type Config struct {
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
 	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
+	ProviderFallbacks   ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
 	Env                 map[string]string          `json:"env,omitempty"`
 	RAGBaseURL          string                     `json:"rag_base_url,omitempty"`
 	RAGTimeoutSeconds   int                        `json:"rag_timeout_seconds,omitempty"`
@@ -1129,6 +1135,9 @@ func merge(dst *Config, src Config) {
 	if apiTimeoutConfigSet(src.APITimeout) {
 		mergeAPITimeoutConfig(&dst.APITimeout, src.APITimeout)
 	}
+	if providerFallbackConfigSet(src.ProviderFallbacks) {
+		mergeProviderFallbackConfig(&dst.ProviderFallbacks, src.ProviderFallbacks)
+	}
 	if len(src.Env) != 0 {
 		if dst.Env == nil {
 			dst.Env = map[string]string{}
@@ -1349,6 +1358,10 @@ func apiTimeoutConfigSet(cfg APITimeoutConfig) bool {
 	return cfg.ConnectTimeoutSeconds != 0 || cfg.RequestTimeoutSeconds != 0 || cfg.MaxRetries != 0
 }
 
+func providerFallbackConfigSet(cfg ProviderFallbackConfig) bool {
+	return cfg.Primary != "" || cfg.Fallbacks != nil
+}
+
 func mergeRateLimitConfig(dst *RateLimitConfig, src RateLimitConfig) {
 	if src.MaxRetries != 0 {
 		dst.MaxRetries = src.MaxRetries
@@ -1370,6 +1383,15 @@ func mergeAPITimeoutConfig(dst *APITimeoutConfig, src APITimeoutConfig) {
 	}
 	if src.MaxRetries != 0 {
 		dst.MaxRetries = src.MaxRetries
+	}
+}
+
+func mergeProviderFallbackConfig(dst *ProviderFallbackConfig, src ProviderFallbackConfig) {
+	if src.Primary != "" {
+		dst.Primary = src.Primary
+	}
+	if src.Fallbacks != nil {
+		dst.Fallbacks = append([]string(nil), src.Fallbacks...)
 	}
 }
 

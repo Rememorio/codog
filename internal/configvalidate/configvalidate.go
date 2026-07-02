@@ -96,6 +96,7 @@ var topLevelFields = []fieldSpec{
 	{"auto_compact_messages", FieldNumber},
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
+	{"providerFallbacks", FieldObject},
 	{"env", FieldStringMap},
 	{"rag_base_url", FieldString},
 	{"rag_timeout_seconds", FieldNumber},
@@ -142,6 +143,11 @@ var apiTimeoutFields = []fieldSpec{
 	{"connectTimeout", FieldNumber},
 	{"requestTimeout", FieldNumber},
 	{"maxRetries", FieldNumber},
+}
+
+var providerFallbackFields = []fieldSpec{
+	{"primary", FieldString},
+	{"fallbacks", FieldStringArray},
 }
 
 var hookFields = []fieldSpec{
@@ -405,6 +411,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "apiTimeout"); ok {
 		validateObject(result, nested, apiTimeoutFields, "apiTimeout", source, path)
+	}
+	if nested, ok := objectAt(object, "providerFallbacks"); ok {
+		validateObject(result, nested, providerFallbackFields, "providerFallbacks", source, path)
 	}
 	if nested, ok := objectAt(object, "hooks"); ok {
 		validateObject(result, nested, hookFields, "hooks", source, path)

@@ -1203,6 +1203,10 @@ func anthropicRateLimitOptionsFromConfig(cfg config.Config) anthropic.RateLimitO
 func anthropicClientOptionsFromConfig(cfg config.Config) anthropic.ClientOptions {
 	options := anthropic.ClientOptions{
 		RateLimit: anthropicRateLimitOptionsFromConfig(cfg),
+		Fallbacks: anthropic.ProviderFallbackOptions{
+			Primary: cfg.ProviderFallbacks.Primary,
+			Models:  append([]string(nil), cfg.ProviderFallbacks.Fallbacks...),
+		},
 	}
 	if cfg.APITimeout.RequestTimeoutSeconds > 0 {
 		options.RequestTimeout = time.Duration(cfg.APITimeout.RequestTimeoutSeconds) * time.Second
