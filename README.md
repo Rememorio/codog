@@ -1,18 +1,31 @@
 # Codog
 
-Codog is an experimental Go implementation of a Claude Code-style terminal
-coding agent.
+Codog is an experimental, Go-native terminal coding agent inspired by Claude
+Code. It is built as a single local binary with streaming model responses,
+permission-gated workspace tools, JSONL sessions, and an agent runtime whose
+moving parts are visible in the repository.
 
-It runs as a single local binary, streams model responses, asks before sensitive
-local actions, and records sessions as JSONL that can be inspected, resumed, or
-compacted. The project is for developers who want a coding-agent workflow whose
-moving parts are visible in the repository instead of hidden behind a hosted
-service.
+The goal is not to present a black-box assistant. Codog is for developers who
+want to inspect, extend, and reason about the loop that reads code, asks a
+model, checks permissions, runs tools, and records what happened.
 
-Codog is not an official Anthropic product, and it is not yet a hardened sandbox
-for untrusted code.
+Codog is not an official Anthropic product. It is also not a hardened sandbox
+for hostile repositories or untrusted commands.
 
-## Install
+## Why Codog
+
+- **Local-first agent state**: sessions, summaries, approvals, tool calls, and
+  usage records are stored locally instead of hidden behind a hosted UI.
+- **Single Go binary**: the runtime is easy to build, ship, debug, and inspect
+  without a large language-specific wrapper stack.
+- **Permission-aware tools**: model requests pass through explicit permission
+  checks before shell commands, edits, or broader system access run.
+- **Extensible by design**: slash commands, skills, hooks, MCP, plugins, and
+  provider routing are first-class parts of the runtime.
+- **Compatibility-oriented**: the project is growing toward the workflows people
+  expect from Claude Code while keeping implementation details open.
+
+## Quick Start
 
 Codog requires Go 1.24 or newer.
 
@@ -22,58 +35,67 @@ export ANTHROPIC_API_KEY=<key>
 codog -p "summarize this repository"
 ```
 
-For longer work, use the REPL or the Bubble Tea interface:
+For interactive work:
 
 ```sh
 codog repl
 codog tui
 ```
 
-## What Codog Is
+To continue a previous session:
 
-Codog keeps the agent loop close to the machine it is operating on:
+```sh
+codog --resume latest -p "continue from the last task"
+```
 
-- model streaming for Anthropic and OpenAI-compatible providers
-- workspace tools for shell commands, file reads, writes, edits, grep, glob,
-  patches, notebooks, git, and code-intelligence queries
-- permission modes, allow and deny rules, audit records, and trust checks
-- local JSONL sessions with resume, export, summaries, rewind, cost, usage, and
-  compaction helpers
-- slash commands, prompt templates, skills, hooks, MCP, plugins, and background
-  tasks
+Run `codog help` for the full command reference. The README intentionally stays
+focused on orientation instead of duplicating every subcommand.
 
-The intent is not just to copy a product surface. The intent is to make a local,
-Go-native agent runtime that is straightforward to debug, extend, and reason
-about.
+## What It Can Do
 
-## Typical Workflow
-
-In a repository, Codog usually does four things:
-
-1. Load project instructions, configuration, memory, focused paths, and optional
-   session history.
-2. Stream a response from the selected model.
-3. Check requested tool calls against the active permission mode.
-4. Persist messages, approvals, tool calls, usage, summaries, and metadata to
-   local session state.
-
-Common entry points are intentionally small:
-
-| Need | Start here |
+| Area | Current surface |
 | --- | --- |
-| Ask one question | `codog -p "review this diff"` |
-| Continue previous work | `codog --resume latest -p "finish the next step"` |
-| Work interactively | `codog repl` or `codog tui` |
-| Inspect local setup | `codog doctor` |
-| See the compiled feature surface | `codog capabilities` |
+| Agent loop | one-shot prompts, REPL, Bubble Tea TUI, streaming responses, session resume |
+| Providers | Anthropic by default, OpenAI-compatible routing, provider status checks |
+| Workspace tools | bash, read, write, edit, grep, glob, patch, git, notebooks, code intelligence |
+| Safety controls | permission modes, allow/deny rules, audit records, trust checks |
+| Session state | JSONL transcripts, summaries, rewind, export, cost and token usage, compaction |
+| Customization | slash commands, prompt templates, skills, hooks, memory, output styles |
+| Integrations | MCP client/server surfaces, IDE bridge, remote control, plugins, background work |
+| Validation | doctor checks, mock Anthropic server, parity harnesses, contract reports |
 
-Use `codog help` for the full command reference. The README stays focused on
-orientation instead of duplicating the CLI manual.
+The advanced areas are still evolving. Treat Codog as an active implementation
+project, not as a guaranteed drop-in replacement for Claude Code.
+
+## How It Works
+
+At a high level, each run follows the same shape:
+
+```text
+project instructions + config + optional session history
+        |
+        v
+model request and streaming response
+        |
+        v
+tool proposal from the model
+        |
+        v
+permission and trust checks
+        |
+        v
+local execution and JSONL session recording
+```
+
+That loop is deliberately kept in ordinary Go code. The core CLI lives in
+`cmd/codog`, while the runtime modules under `internal/` cover the agent loop,
+tools, sessions, providers, configuration, permissions, hooks, skills, MCP,
+TUI, background tasks, and compatibility harnesses.
 
 ## Configuration
 
-Configuration is layered so repository defaults and personal choices can stay
-separate.
+Configuration is layered so shared project behavior and personal preferences can
+stay separate.
 
 | Location | Purpose |
 | --- | --- |
@@ -84,13 +106,13 @@ separate.
 | `.codog/skills` | Project skills |
 | `.codog/hooks` | Project automation hooks |
 
-Secrets should live in environment variables or local-only config, not in files
-committed to a repository.
+Keep secrets in environment variables or local-only config. Do not commit API
+keys, local machine paths, or generated session state.
 
 ## Providers
 
-Anthropic is the default provider. OpenAI-compatible providers can be selected
-through model names, aliases, and configuration.
+Anthropic is the default provider. Other providers can be selected through model
+names, aliases, and configuration.
 
 | Provider | Typical selection | Credential |
 | --- | --- | --- |
@@ -100,49 +122,56 @@ through model names, aliases, and configuration.
 | DashScope | `qwen...` or `qwen/...` | `DASHSCOPE_API_KEY` |
 | Custom Anthropic-compatible | configured base URL | `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` |
 
-Run `codog providers status` to inspect the active provider configuration.
+Use `codog providers status` to inspect the active provider setup.
 
 ## Safety Model
 
-Codog separates model intent from local execution. Tools declare the permission
-they need, and the runtime checks the request before running commands, editing
-files, or touching the wider system.
+Codog separates model intent from local execution. Tools declare the access they
+need, and the runtime checks each request against the active mode before it runs.
 
-| Mode | Best for |
+| Mode | Intended use |
 | --- | --- |
-| `read-only` | Codebase inspection and planning |
-| `workspace-write` | Normal edits inside the current workspace |
-| `prompt` | Interactive confirmation before sensitive actions |
+| `read-only` | Inspect code and plan changes |
+| `workspace-write` | Edit files inside the current workspace |
+| `prompt` | Ask before sensitive actions |
 | `danger-full-access` or `allow` | Explicitly unrestricted local use |
 
-These controls are development guardrails. Do not treat them as a security
-boundary for hostile repositories or untrusted commands.
-
-## Project Status
-
-Codog is under active development. The core CLI, provider streaming, local tools,
-sessions, permissions, REPL, TUI, slash commands, MCP, hooks, skills, usage
-tracking, and plugin surfaces exist, but many advanced areas are still
-compatibility-oriented and should be validated before serious use.
-
-Codog is probably not the right tool today if you need vendor support, guaranteed
-Claude Code parity, enterprise administration, or hardened cross-platform
-isolation.
+These controls are development guardrails, not a security boundary. Review what
+the model asks to run, especially in unfamiliar repositories.
 
 ## Development
 
-The CLI entry point is `cmd/codog`. Most implementation code lives under
-`internal/`, split by responsibility: agent loop, tools, providers, sessions,
-configuration, hooks, skills, plugins, MCP, background work, code intelligence,
-and TUI.
+Build and test from the repository root:
 
 ```sh
 go test ./...
 go build ./cmd/codog
 ```
 
+Useful entry points:
+
+| Path | Description |
+| --- | --- |
+| `cmd/codog` | CLI entry point |
+| `internal/agent` | command dispatch and agent orchestration |
+| `internal/tools` | local tool implementations |
+| `internal/session` | JSONL session storage and resume support |
+| `internal/config` | layered configuration loading and mutation |
+| `internal/tui` | Bubble Tea interface |
+| `internal/mcp` | MCP integration |
+| `internal/skills` | skill discovery and rendering |
+
 Keep generated state, secrets, local paths, and tool-attribution signatures out
 of commits.
+
+## Project Status
+
+Codog is under active development. The core surfaces exist, but compatibility
+work, cross-platform hardening, and advanced workflows still need careful
+validation before serious use.
+
+Codog is probably not the right tool today if you need vendor support, guaranteed
+Claude Code parity, enterprise administration, or hardened isolation.
 
 ## License
 
