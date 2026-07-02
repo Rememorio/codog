@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -18,6 +19,8 @@ import (
 )
 
 const claudeAIServerPrefix = "claude.ai "
+
+var ccrProxyPathMarkers = []string{"/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"}
 
 type ServerStatus struct {
 	Name            string          `json:"name"`
@@ -169,6 +172,19 @@ func ToolName(serverName, toolName string) string {
 	return ToolPrefix(serverName) + NormalizeNameForTooling(toolName)
 }
 
+func UnwrapCCRProxyURL(rawURL string) string {
+	for _, marker := range ccrProxyPathMarkers {
+		if strings.Contains(rawURL, marker) {
+			return unwrapCCRProxyURLWithMarker(rawURL)
+		}
+	}
+	return rawURL
+}
+
+func URLServerSignature(rawURL string) string {
+	return "url:" + UnwrapCCRProxyURL(rawURL)
+}
+
 func ServerSignature(server config.MCPServerConfig) string {
 	parts := []string{server.Command}
 	parts = append(parts, server.Args...)
@@ -207,6 +223,26 @@ func stdioServerSummary(server config.MCPServerConfig) string {
 		return server.Command
 	}
 	return fmt.Sprintf("%s (%d args)", server.Command, len(server.Args))
+}
+
+func unwrapCCRProxyURLWithMarker(rawURL string) string {
+	queryStart := strings.Index(rawURL, "?")
+	if queryStart < 0 {
+		return rawURL
+	}
+	query := rawURL[queryStart+1:]
+	for _, pair := range strings.Split(query, "&") {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok || key != "mcp_url" {
+			continue
+		}
+		decoded, err := url.QueryUnescape(value)
+		if err != nil {
+			return value
+		}
+		return decoded
+	}
+	return rawURL
 }
 
 func renderCommandSignature(parts []string) string {

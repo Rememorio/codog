@@ -103,6 +103,17 @@ func TestToolNameNormalizationMatchesMCPCompatibility(t *testing.T) {
 	require.Equal(t, "mcp__claude_ai_Example_Server__weather_tool", ToolName("claude.ai Example Server", "weather tool"))
 }
 
+func TestUnwrapCCRProxyURLMatchesCompatibility(t *testing.T) {
+	wrapped := "https://api.anthropic.com/v2/session_ingress/shttp/mcp/123?mcp_url=https%3A%2F%2Fvendor.example%2Fmcp&other=1"
+	require.Equal(t, "https://vendor.example/mcp", UnwrapCCRProxyURL(wrapped))
+	require.Equal(t, "url:https://vendor.example/mcp", URLServerSignature(wrapped))
+
+	wrappedWS := "https://api.anthropic.com/v2/ccr-sessions/1?mcp_url=wss%3A%2F%2Fvendor.example%2Fmcp"
+	require.Equal(t, "wss://vendor.example/mcp", UnwrapCCRProxyURL(wrappedWS))
+	require.Equal(t, "https://vendor.example/mcp", UnwrapCCRProxyURL("https://vendor.example/mcp"))
+	require.Equal(t, "https://api.anthropic.com/v2/ccr-sessions/1", UnwrapCCRProxyURL("https://api.anthropic.com/v2/ccr-sessions/1"))
+}
+
 func TestServerSignatureMatchesStdioCompatibility(t *testing.T) {
 	server := config.MCPServerConfig{
 		Command: `uv\x`,

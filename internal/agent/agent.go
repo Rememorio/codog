@@ -962,7 +962,7 @@ func renderMCPWithConfigLoadError(out io.Writer, command string, rest []string, 
 		renderMCPListReport(out, format, buildMCPListReport(nil, buildMCPValidation(nil), strings.TrimSpace(loadErr.Error()), buildCLIErrorReport(loadErr).ErrorKind))
 		return nil
 	}
-	if cleanArgs[0] == "show" {
+	if isMCPShowAction(cleanArgs[0]) {
 		if len(cleanArgs) < 2 {
 			return renderActionError(out, actionErrorReport{
 				Kind:      "mcp",
@@ -32574,15 +32574,12 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		return a.mcpServe(ctx, args[1:])
 	case "self", "self-test":
 		return a.mcpSelf(ctx, args[1:], format)
-	case "show":
+	case "show", "info", "describe":
 		return a.mcpShow(args[1:], format)
 	case "add":
 		return a.mcpAdd(args[1:])
 	case "remove", "delete", "rm":
 		return a.mcpRemove(args[1:])
-	}
-	if args[0] == "info" || args[0] == "describe" {
-		return renderMCPUnsupportedAction(a.Out, format, strings.Join(args, " "), "use `codog mcp show <server>` to inspect a server")
 	}
 	if !mcpRemoteAction(args[0]) {
 		verb := strings.TrimSpace(args[0])
@@ -32666,6 +32663,15 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 func mcpRemoteAction(action string) bool {
 	switch action {
 	case "tools", "list-tools", "auth", "call", "resources", "resource-templates", "resources-templates", "read", "read-resource", "prompts", "prompt", "get-prompt":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMCPShowAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "show", "info", "describe":
 		return true
 	default:
 		return false
@@ -32880,8 +32886,8 @@ func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUns
 		RequestedAction: strings.TrimSpace(requestedAction),
 		Hint:            strings.TrimSpace(hint),
 		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|show <server>|help]",
-			DirectCLI:    "codog mcp [list|show <server>|help]",
+			SlashCommand: "/mcp [list|show|info|describe <server>|help]",
+			DirectCLI:    "codog mcp [list|show|info|describe <server>|help]",
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 	}
@@ -32926,8 +32932,8 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ErrorKind: errorKind,
 		Hint:      hint,
 		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|show <server>|help]",
-			DirectCLI:    "codog mcp [list|show <server>|help]",
+			SlashCommand: "/mcp [list|show|info|describe <server>|help]",
+			DirectCLI:    "codog mcp [list|show|info|describe <server>|help]",
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 		Unexpected: unexpectedValue,
@@ -33131,7 +33137,7 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools SERVER | auth SERVER | call SERVER TOOL JSON | resources SERVER | resource-templates SERVER | read SERVER URI | prompts SERVER | prompt SERVER NAME [JSON]"
 
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
@@ -38037,8 +38043,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"mcp",
 			"mcp",
-			"codog mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]",
-			"MCP\n\nUsage:\n  codog mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]\n\nServes Codog tools over stdio MCP and manages configured stdio MCP clients, tools, resources, and prompts.\n",
+			"codog mcp [list|serve|self|show|info|describe|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]",
+			"MCP\n\nUsage:\n  codog mcp [list|serve|self|show|info|describe|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]\n\nServes Codog tools over stdio MCP and manages configured stdio MCP clients, tools, resources, and prompts. `info` and `describe` are aliases for `show`.\n",
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,

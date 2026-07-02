@@ -10544,8 +10544,8 @@ func TestMCPHelpCommand(t *testing.T) {
 	require.Equal(t, "ok", report.Status)
 	require.True(t, report.OK)
 	require.Nil(t, report.ErrorKind)
-	require.Equal(t, "/mcp [list|show <server>|help]", report.Usage.SlashCommand)
-	require.Equal(t, "codog mcp [list|show <server>|help]", report.Usage.DirectCLI)
+	require.Equal(t, "/mcp [list|show|info|describe <server>|help]", report.Usage.SlashCommand)
+	require.Equal(t, "codog mcp [list|show|info|describe <server>|help]", report.Usage.DirectCLI)
 	require.Contains(t, report.Usage.Sources, ".codog.json")
 	out.Reset()
 
@@ -10561,24 +10561,25 @@ func TestMCPHelpCommand(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/mcp help", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Usage")
-	require.Contains(t, out.String(), "/mcp [list|show <server>|help]")
+	require.Contains(t, out.String(), "/mcp [list|show|info|describe <server>|help]")
 	out.Reset()
 
-	require.ErrorContains(t, app.MCP(context.Background(), []string{"info", "missing", "--json"}), "unsupported_action")
-	var unsupported mcpUnsupportedActionReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &unsupported))
-	require.Equal(t, "mcp", unsupported.Kind)
-	require.Equal(t, "error", unsupported.Action)
-	require.False(t, unsupported.OK)
-	require.Equal(t, "unsupported_action", unsupported.ErrorKind)
-	require.Equal(t, "info missing", unsupported.RequestedAction)
-	require.Contains(t, unsupported.Hint, "mcp show")
+	require.NoError(t, app.MCP(context.Background(), []string{"info", "missing", "--json"}))
+	var showReport mcpShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "mcp", showReport.Kind)
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "error", showReport.Status)
+	require.Equal(t, "server_not_found", showReport.ErrorKind)
+	require.False(t, showReport.Found)
+	require.Equal(t, "missing", showReport.ServerName)
 	out.Reset()
 
-	require.ErrorContains(t, app.MCP(context.Background(), []string{"describe", "missing", "--json"}), "unsupported_action")
-	require.NoError(t, json.Unmarshal(out.Bytes(), &unsupported))
-	require.Equal(t, "describe missing", unsupported.RequestedAction)
-	require.Contains(t, unsupported.Hint, "mcp show")
+	require.NoError(t, app.MCP(context.Background(), []string{"describe", "missing", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &showReport))
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "server_not_found", showReport.ErrorKind)
+	require.Equal(t, "missing", showReport.ServerName)
 }
 
 func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
@@ -10634,6 +10635,17 @@ func TestMCPDegradesOnMalformedConfigFile(t *testing.T) {
 	require.NotNil(t, showReport.ConfigLoadError)
 	require.Contains(t, *showReport.ConfigLoadError, "broken.json")
 	require.Equal(t, "config_load_failed", showReport.ConfigLoadErrorKind)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "describe", "demo"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &showReport))
+	require.Equal(t, "show", showReport.Action)
+	require.Equal(t, "degraded", showReport.Status)
+	require.Equal(t, "demo", showReport.ServerName)
+	require.False(t, showReport.Found)
+	require.NotNil(t, showReport.ConfigLoadError)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "mcp", "help"}, config.FlagOverrides{})
@@ -10787,6 +10799,25 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"env_keys": [`)
 	require.NotContains(t, out.String(), `"A=B"`)
 	require.NotContains(t, out.String(), `"C=D"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"info", "demo", "--json"}))
+	var aliasShow mcpShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aliasShow))
+	require.Equal(t, "mcp", aliasShow.Kind)
+	require.Equal(t, "show", aliasShow.Action)
+	require.Equal(t, "ok", aliasShow.Status)
+	require.True(t, aliasShow.Found)
+	require.NotNil(t, aliasShow.Server)
+	require.Equal(t, "demo", aliasShow.Server.Name)
+	require.Equal(t, "stdio:[demo-server|arg1|arg2]", aliasShow.Signature)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"describe", "demo", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aliasShow))
+	require.Equal(t, "show", aliasShow.Action)
+	require.True(t, aliasShow.Found)
+	require.Equal(t, "demo", aliasShow.Server.Name)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"show", "missing", "--json"}))

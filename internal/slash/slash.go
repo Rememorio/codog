@@ -195,7 +195,7 @@ func Specs() []Spec {
 		{Name: "/skills", Usage: "/skills [list|sources|show|invoke|add|install|uninstall]", Description: "List, audit sources, install, remove, or render Markdown skills."},
 		{Name: "/commands", Usage: "/commands [list|sources|show|run]", Description: "List, audit sources, show, or render custom Markdown slash commands."},
 		{Name: "/hooks", Usage: "/hooks [list|health EVENT|run EVENT]", Description: "Inspect, diagnose, or test configured hooks."},
-		{Name: "/mcp", Usage: "/mcp [list|serve|show|add|remove|tools]", Description: "Serve, manage, or inspect stdio MCP servers."},
+		{Name: "/mcp", Usage: "/mcp [list|serve|show|info|describe|add|remove|tools]", Description: "Serve, manage, or inspect stdio MCP servers."},
 		{Name: "/capabilities", Usage: "/capabilities", Description: "Show machine-readable command, tool, protocol, and feature capabilities."},
 		{Name: "/acp", Usage: "/acp [serve]", Description: "Show or serve the ACP/Zed stdio bridge."},
 		{Name: "/ide", Usage: "/ide [status|clear]", Description: "Inspect or clear trusted editor bridge state."},
