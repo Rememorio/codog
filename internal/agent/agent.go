@@ -23375,6 +23375,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Summary(resumeSlashArgs("summary", args, format), resumed)
 	case "/history", "/prompt-history":
 		return a.History(resumeSlashArgs("history", args, format), resumed)
+	case "/generatesessionname", "/generate-session-name":
+		return a.GenerateSessionName(resumeSlashArgs("generateSessionName", args, format), resumed)
 	case "/rewind", "/checkpoint":
 		return a.Rewind(resumeSlashArgs("rewind", args, format), resumed)
 	case "/context":

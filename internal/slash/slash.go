@@ -423,6 +423,11 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/workspace":          true,
 }
 
+func init() {
+	resumeSupportedSlashCommands["/generate-session-name"] = true
+	resumeSupportedSlashCommands["/generatesessionname"] = true
+}
+
 func SupportsResume(name string) bool {
 	return resumeSupportedSlashCommands[strings.ToLower(strings.TrimSpace(name))]
 }
