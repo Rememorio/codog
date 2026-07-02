@@ -3158,7 +3158,7 @@ func renderBriefReport(out io.Writer, report briefReport) {
 
 func (a *App) Updater(ctx context.Context, args []string) error {
 	var err error
-	args, err = stripUpdaterJSONFlags(args)
+	args, err = stripJSONStatusFlags("updater", args)
 	if err != nil {
 		return err
 	}
@@ -3286,7 +3286,14 @@ type updaterStatusReport struct {
 	Commands       []string `json:"commands"`
 }
 
-func stripUpdaterJSONFlags(args []string) ([]string, error) {
+type installerStatusReport struct {
+	Usage            string              `json:"usage"`
+	RequiresArtifact bool                `json:"requires_artifact"`
+	NextCommand      string              `json:"next_command"`
+	Updater          updaterStatusReport `json:"updater"`
+}
+
+func stripJSONStatusFlags(command string, args []string) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -3296,10 +3303,10 @@ func stripUpdaterJSONFlags(args []string) ([]string, error) {
 		case arg == "--output-format":
 			index++
 			if index >= len(args) {
-				return nil, errors.New("updater output format is required")
+				return nil, fmt.Errorf("%s output format is required", command)
 			}
 			if !strings.EqualFold(args[index], "json") {
-				return nil, fmt.Errorf("unknown updater output format %q", args[index])
+				return nil, fmt.Errorf("unknown %s output format %q", command, args[index])
 			}
 		default:
 			out = append(out, arg)
@@ -3766,7 +3773,7 @@ func toolDetailAliases(canonical string) []string {
 
 func (a *App) Upgrade(ctx context.Context, args []string) error {
 	var err error
-	args, err = stripUpdaterJSONFlags(args)
+	args, err = stripJSONStatusFlags("upgrade", args)
 	if err != nil {
 		return err
 	}
@@ -3782,8 +3789,26 @@ func (a *App) Upgrade(ctx context.Context, args []string) error {
 }
 
 func (a *App) Install(ctx context.Context, args []string) error {
+	var err error
+	args, err = stripJSONStatusFlags("install", args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
-		return errors.New("usage: codog install ARTIFACT [TARGET]")
+		report := updaterCommandReport{
+			Kind:   "install",
+			Action: "status",
+			Status: "ok",
+			Result: installerStatusReport{
+				Usage:            "codog install ARTIFACT [TARGET]",
+				RequiresArtifact: true,
+				NextCommand:      "codog install ARTIFACT [TARGET]",
+				Updater:          a.updaterStatusReport("status"),
+			},
+		}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
 	return a.Updater(ctx, append([]string{"install"}, args...))
 }
@@ -43883,7 +43908,7 @@ Usage:
   %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control|rc [status|clear|serve] | bridge-kick [status|clear] | ide [status|clear] | updater [status|show|check|verify|download|install|rollback]
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [status|show|check|verify|download|install|rollback] ARGS...
-  %s install ARTIFACT [TARGET]
+  %s install [ARTIFACT [TARGET]] [--json|--output-format json]
   %s remote-env [show|set|clear] [--enabled on|off] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s remote-setup|web-setup [status|enable|disable|clear] [--addr HOST:PORT] [--auth-token TOKEN|--clear-auth-token] [--lease-seconds N] [--target user|project|local] [--json|--output-format text|json]
   %s desktop|app [status] [--session ID|--resume latest] [--json|--output-format text|json]

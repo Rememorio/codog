@@ -16559,7 +16559,7 @@ func TestUpdaterInstallAndRollbackCommands(t *testing.T) {
 	require.NoError(t, os.WriteFile(aliasArtifact, []byte("alias-new"), 0o755))
 	require.NoError(t, os.WriteFile(aliasTarget, []byte("alias-old"), 0o755))
 	out.Reset()
-	require.NoError(t, app.Install(context.Background(), []string{aliasArtifact, aliasTarget}))
+	require.NoError(t, app.Install(context.Background(), []string{"--json", aliasArtifact, aliasTarget}))
 	require.Contains(t, out.String(), `"installed": true`)
 	data, err = os.ReadFile(aliasTarget)
 	require.NoError(t, err)
@@ -16631,6 +16631,51 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 	require.NoError(t, app.Upgrade(context.Background(), []string{"--json"}))
 	require.Contains(t, out.String(), `"kind": "updater"`)
 	require.Contains(t, out.String(), `"action": "status"`)
+}
+
+func TestInstallStatusDefaults(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "codog")
+	require.NoError(t, os.WriteFile(target, []byte("current"), 0o755))
+
+	var out bytes.Buffer
+	app := &App{
+		Config:     config.Config{ConfigHome: dir},
+		Executable: target,
+		Out:        &out,
+	}
+	require.NoError(t, app.Install(context.Background(), []string{"--json"}))
+	var report struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Status string `json:"status"`
+		Result struct {
+			Usage            string `json:"usage"`
+			RequiresArtifact bool   `json:"requires_artifact"`
+			NextCommand      string `json:"next_command"`
+			Updater          struct {
+				CurrentVersion string   `json:"current_version"`
+				Platform       string   `json:"platform"`
+				Executable     string   `json:"executable"`
+				DefaultTarget  string   `json:"default_target"`
+				TargetPresent  bool     `json:"target_present"`
+				Commands       []string `json:"commands"`
+			} `json:"updater"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "install", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "codog install ARTIFACT [TARGET]", report.Result.Usage)
+	require.True(t, report.Result.RequiresArtifact)
+	require.Equal(t, "codog install ARTIFACT [TARGET]", report.Result.NextCommand)
+	require.Equal(t, version, report.Result.Updater.CurrentVersion)
+	require.Equal(t, updater.PlatformKey(), report.Result.Updater.Platform)
+	require.Equal(t, target, report.Result.Updater.Executable)
+	require.Equal(t, target, report.Result.Updater.DefaultTarget)
+	require.True(t, report.Result.Updater.TargetPresent)
+	require.Contains(t, report.Result.Updater.Commands, "install")
 }
 
 func TestUpdaterVerifyCommand(t *testing.T) {
