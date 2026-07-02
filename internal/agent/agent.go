@@ -30987,7 +30987,7 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	}
 	args = req.Args
 	if len(args) == 0 {
-		return renderConfigInspectionPayload(out, req.Format, map[string]any{"config": cfg, "paths": paths})
+		return renderConfigInspectionPayload(out, req.Format, configInspectionEnvelope("show", cfg, paths))
 	}
 	if strings.EqualFold(args[0], "help") {
 		if len(args) > 1 {
@@ -31031,7 +31031,7 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 				Usage:   "codog config show [--json|--output-format text|json]",
 			}, req.Format)
 		}
-		return renderConfigInspectionPayload(out, req.Format, map[string]any{"config": cfg, "paths": paths})
+		return renderConfigInspectionPayload(out, req.Format, configInspectionEnvelope("show", cfg, paths))
 	}
 	if strings.EqualFold(args[0], "get") {
 		if len(args) < 2 {
@@ -31044,6 +31044,24 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		return err
 	}
 	return renderConfigInspectionPayload(out, req.Format, payload)
+}
+
+func configInspectionEnvelope(action string, cfg config.Config, paths []string) map[string]any {
+	mcpValidation := buildMCPValidation(cfg.MCPServers)
+	hookValidation := buildHookValidation(cfg.Hooks)
+	status := "ok"
+	if mcpValidation.InvalidCount > 0 || hookValidation.InvalidCount > 0 {
+		status = "degraded"
+	}
+	return map[string]any{
+		"kind":            "config",
+		"action":          strings.TrimSpace(action),
+		"status":          status,
+		"config":          cfg,
+		"paths":           append([]string(nil), paths...),
+		"mcp_validation":  mcpValidation,
+		"hook_validation": hookValidation,
+	}
 }
 
 type configHelpReport struct {

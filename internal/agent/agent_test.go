@@ -7610,6 +7610,39 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), "model-a")
 }
 
+func TestRenderConfigInspectionSurfacesValidationMetadata(t *testing.T) {
+	cfg := redactedConfig(config.Config{
+		Model:          "model-a",
+		PermissionMode: "workspace-write",
+		MCPServers: map[string]config.MCPServerConfig{
+			"broken": {},
+		},
+		Hooks: config.HookConfig{
+			PreToolUseCommands: []config.HookCommand{{Type: "command"}},
+		},
+	})
+	var out bytes.Buffer
+
+	require.NoError(t, renderConfigInspection(&out, cfg, []string{"user.json"}, []string{"--output-format", "json", "show"}))
+
+	var payload struct {
+		Kind           string                           `json:"kind"`
+		Action         string                           `json:"action"`
+		Status         string                           `json:"status"`
+		MCPValidation  localstatus.MCPValidationStatus  `json:"mcp_validation"`
+		HookValidation localstatus.HookValidationStatus `json:"hook_validation"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &payload))
+	require.Equal(t, "config", payload.Kind)
+	require.Equal(t, "show", payload.Action)
+	require.Equal(t, "degraded", payload.Status)
+	require.Equal(t, 1, payload.MCPValidation.TotalConfigured)
+	require.Equal(t, 1, payload.MCPValidation.InvalidCount)
+	require.Equal(t, "broken", payload.MCPValidation.InvalidServers[0].Name)
+	require.Equal(t, 1, payload.HookValidation.InvalidCount)
+	require.Equal(t, "pre_tool_use", payload.HookValidation.InvalidHooks[0].Event)
+}
+
 func TestSettingsAliasRunsConfigInspection(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
