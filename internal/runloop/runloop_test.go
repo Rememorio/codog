@@ -441,7 +441,7 @@ func TestRunnerExecutesFileChangedHookAfterWrite(t *testing.T) {
 			MaxTokens: 128,
 			MaxTurns:  2,
 			Hooks: config.HookConfig{
-				FileChangedCommands: []config.HookCommand{{Matcher: "write_file", Command: "cat > file-changed.json"}},
+				FileChangedCommands: []config.HookCommand{{Matcher: "write_file", Command: "cat > file-changed.json; printf '%s' '{\"systemMessage\":\"file changed note\"}'"}},
 			},
 		},
 		Client:    client,
@@ -451,6 +451,7 @@ func TestRunnerExecutesFileChangedHookAfterWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.ToolCalls, 1)
 	require.False(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "Hook feedback:\nfile changed note")
 	require.FileExists(t, workspace+"/notes.txt")
 
 	payload, err := os.ReadFile(workspace + "/file-changed.json")
@@ -568,7 +569,7 @@ func TestRunnerExecutesCwdChangedHookAfterBashCWDChange(t *testing.T) {
 			MaxTokens:  128,
 			MaxTurns:   2,
 			Hooks: config.HookConfig{
-				CwdChangedCommands: []config.HookCommand{{Matcher: physicalSubdir, Command: "cat > cwd-changed.json"}},
+				CwdChangedCommands: []config.HookCommand{{Matcher: physicalSubdir, Command: "cat > cwd-changed.json; printf '%s' '{\"systemMessage\":\"cwd changed note\"}'"}},
 			},
 		},
 		Client:    client,
@@ -580,6 +581,7 @@ func TestRunnerExecutesCwdChangedHookAfterBashCWDChange(t *testing.T) {
 	require.Len(t, result.ToolCalls, 2)
 	require.False(t, result.ToolCalls[0].IsError)
 	require.False(t, result.ToolCalls[1].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "Hook feedback:\ncwd changed note")
 	require.Contains(t, result.ToolCalls[1].Output, subdir)
 
 	payload, err := os.ReadFile(workspace + "/cwd-changed.json")

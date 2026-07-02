@@ -228,9 +228,16 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			call.Output = mergeHookFeedback(preToolOutput.Messages, call.Output, call.IsError)
 			if oldCWD != "" {
 				if newCWD, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil && newCWD != oldCWD {
-					if hookErr := hookRunner.CwdChanged(ctx, oldCWD, newCWD, string(effectiveInput)); hookErr != nil && !call.IsError {
-						call.Output = hookErr.Error()
-						call.IsError = true
+					if cwdReport, hookErr := hookRunner.CwdChangedReport(ctx, oldCWD, newCWD, string(effectiveInput)); hookErr != nil {
+						if !call.IsError {
+							call.Output = hookErr.Error()
+							call.IsError = true
+						}
+					} else {
+						if cwdReport.Denied {
+							call.IsError = true
+						}
+						call.Output = mergeHookFeedback(hooks.MessagesFromReport(cwdReport), call.Output, call.IsError)
 					}
 				}
 			}
@@ -254,10 +261,19 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			fileChangedFailed := false
 			if !call.IsError {
 				for _, change := range fileChangesForTool(block.Name, effectiveInput) {
-					if hookErr := hookRunner.FileChanged(ctx, change.Path, change.Operation, effectiveInput); hookErr != nil {
+					fileReport, hookErr := hookRunner.FileChangedReport(ctx, change.Path, change.Operation, effectiveInput)
+					if hookErr != nil {
 						call.Output = hookErr.Error()
 						call.IsError = true
 						fileChangedFailed = true
+						break
+					}
+					if fileReport.Denied {
+						call.IsError = true
+						fileChangedFailed = true
+					}
+					call.Output = mergeHookFeedback(hooks.MessagesFromReport(fileReport), call.Output, call.IsError)
+					if call.IsError {
 						break
 					}
 				}

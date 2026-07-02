@@ -352,6 +352,17 @@ func (r Runner) WorktreeRemove(ctx context.Context, id string, worktreePath stri
 }
 
 func (r Runner) CwdChanged(ctx context.Context, oldCWD string, newCWD string, input string) error {
+	report, err := r.CwdChangedReport(ctx, oldCWD, newCWD, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+func (r Runner) CwdChangedReport(ctx context.Context, oldCWD string, newCWD string, input string) (RunReport, error) {
 	payload := Payload{
 		Event:  "cwd_changed",
 		Tool:   newCWD,
@@ -359,7 +370,7 @@ func (r Runner) CwdChanged(ctx context.Context, oldCWD string, newCWD string, in
 		OldCWD: oldCWD,
 		NewCWD: newCWD,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) TaskCreated(ctx context.Context, id string, kind string, status string, input string) error {
@@ -388,6 +399,17 @@ func (r Runner) TaskCompleted(ctx context.Context, id string, kind string, statu
 }
 
 func (r Runner) FileChanged(ctx context.Context, filePath string, operation string, input []byte) error {
+	report, err := r.FileChangedReport(ctx, filePath, operation, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+func (r Runner) FileChangedReport(ctx context.Context, filePath string, operation string, input []byte) (RunReport, error) {
 	payload := Payload{
 		Event:     "file_changed",
 		Tool:      operation,
@@ -397,7 +419,7 @@ func (r Runner) FileChanged(ctx context.Context, filePath string, operation stri
 		FilePath:  filePath,
 		Operation: operation,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) InstructionsLoaded(ctx context.Context, filePath string, memoryType string, loadReason string, globs []string, triggerFilePath string, parentFilePath string) error {

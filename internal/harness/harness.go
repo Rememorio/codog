@@ -272,6 +272,44 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		{
+			name:       "file_changed_hook_adds_feedback",
+			permission: tools.PermissionWorkspace,
+			hooks: config.HookConfig{
+				FileChangedCommands: []config.HookCommand{{
+					Matcher: "write_file",
+					Command: `printf '%s' '{"systemMessage":"file changed feedback"}'`,
+				}},
+			},
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "write_file",
+					Input: json.RawMessage(`{"path":"file-hook.txt","content":"file hook\n"}`),
+				}}},
+				{Text: "file changed feedback harness ok"},
+			},
+			prompt: "write with file changed hook",
+			verify: func(workspace string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "file changed feedback harness ok") {
+					return fmt.Errorf("missing file changed hook final response")
+				}
+				if err := expectToolCalls(result, 1, false); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\nfile changed feedback") {
+					return fmt.Errorf("file-changed hook feedback was not surfaced: %s", result.ToolCalls[0].Output)
+				}
+				data, err := os.ReadFile(filepath.Join(workspace, "file-hook.txt"))
+				if err != nil {
+					return err
+				}
+				if string(data) != "file hook\n" {
+					return fmt.Errorf("unexpected file hook content %q", string(data))
+				}
+				return nil
+			},
+		},
+		{
 			name: "multi_tool_turn_roundtrip",
 			turns: []mockanthropic.Turn{
 				{ToolUses: []mockanthropic.ToolUse{
