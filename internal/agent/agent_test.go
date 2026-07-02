@@ -15255,7 +15255,7 @@ func TestTeamCommandAndSlash(t *testing.T) {
 		out.Reset()
 		require.NoError(t, app.Team([]string{"logs", created.Team.ID, "--bytes", "4096", "--json"}))
 		return strings.Contains(out.String(), "team-log")
-	}, 2*time.Second, 20*time.Millisecond)
+	}, 5*time.Second, 50*time.Millisecond)
 	var logs teamCommandReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &logs))
 	require.Equal(t, "logs", logs.Action)

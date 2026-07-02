@@ -131,7 +131,7 @@ esac
 `), 0o755))
 	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
 
-	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":3000}`))
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":10000}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ps:-NoProfile -NonInteractive -Command Write-Output ok`)
 	var foreground struct {

@@ -1,3 +1,4 @@
+// Package team stores named groups of Codog background tasks.
 package team
 
 import (
@@ -13,12 +14,14 @@ import (
 	"time"
 )
 
+// TaskSpec describes one prompt assigned to a team member task.
 type TaskSpec struct {
 	Prompt      string `json:"prompt"`
 	Description string `json:"description,omitempty"`
 	TaskID      string `json:"task_id,omitempty"`
 }
 
+// Team records a named group of task prompts and their background task IDs.
 type Team struct {
 	ID        string     `json:"team_id"`
 	Name      string     `json:"name"`
@@ -29,14 +32,17 @@ type Team struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+// Store persists team definitions under a Codog config home.
 type Store struct {
 	ConfigHome string
 }
 
+// NewStore returns a team store rooted at configHome.
 func NewStore(configHome string) Store {
 	return Store{ConfigHome: configHome}
 }
 
+// Create validates and saves a new team.
 func (s Store) Create(name string, tasks []TaskSpec, taskIDs []string) (Team, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -74,6 +80,7 @@ func (s Store) Create(name string, tasks []TaskSpec, taskIDs []string) (Team, er
 	return team, nil
 }
 
+// List returns all saved teams, newest first.
 func (s Store) List() ([]Team, error) {
 	if err := os.MkdirAll(s.dir(), 0o755); err != nil {
 		return nil, err
@@ -102,6 +109,7 @@ func (s Store) List() ([]Team, error) {
 	return out, nil
 }
 
+// Get loads one team by ID.
 func (s Store) Get(id string) (Team, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -113,6 +121,7 @@ func (s Store) Get(id string) (Team, error) {
 	return s.read(s.path(id))
 }
 
+// MarkDeleted marks a team as deleted without removing its record.
 func (s Store) MarkDeleted(id string) (Team, error) {
 	team, err := s.Get(id)
 	if err != nil {
@@ -129,6 +138,7 @@ func (s Store) MarkDeleted(id string) (Team, error) {
 	return team, nil
 }
 
+// Save writes a complete team record.
 func (s Store) Save(team Team) error {
 	if err := os.MkdirAll(s.dir(), 0o755); err != nil {
 		return err
