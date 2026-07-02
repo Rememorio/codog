@@ -4675,6 +4675,62 @@ func TestPromptStdinFlagAppendsPipeContext(t *testing.T) {
 	require.Contains(t, body, "pipe context body")
 }
 
+func TestTopLevelPipedStdinRunsOneShotPrompt(t *testing.T) {
+	captured := make(chan json.RawMessage, 1)
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "top stdin done",
+		OnRequest: func(raw json.RawMessage) {
+			select {
+			case captured <- append(json.RawMessage(nil), raw...):
+			default:
+			}
+		},
+	}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	require.NoError(t, os.WriteFile(stdinPath, []byte("top-level stdin prompt\n"), 0o644))
+	stdinFile, err := os.Open(stdinPath)
+	require.NoError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, stdinFile.Close())
+	}()
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report promptReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "prompt", report.Kind)
+	require.Equal(t, "run", report.Action)
+	require.Equal(t, "completed", report.Status)
+	require.Equal(t, "top stdin done", report.Response)
+
+	var raw json.RawMessage
+	select {
+	case raw = <-captured:
+	default:
+		require.FailNow(t, "expected provider request to be captured")
+	}
+	require.Contains(t, string(raw), "top-level stdin prompt")
+}
+
 func TestCompactFlagShorthandStaysOnPromptPath(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")

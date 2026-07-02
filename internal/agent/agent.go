@@ -359,7 +359,16 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return renderHelpCommand(app.Out, rest)
 	case "version":
 		return renderVersion(app.Out, app.Workspace, rest)
-	case "", "repl":
+	case "":
+		input, err := readPromptInput(app.In)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(input) != "" {
+			return app.promptWithOutput(ctx, strings.TrimSpace(input), overrides, requestedOutputFormat(originalArgs), false)
+		}
+		return app.REPL(ctx, overrides)
+	case "repl":
 		return app.REPL(ctx, overrides)
 	case "tui":
 		result, err := tui.PromptWithCandidates(app.slashCompletionCandidates(""))
