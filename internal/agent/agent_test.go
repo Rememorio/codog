@@ -1042,6 +1042,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasTool(report, "read_file"))
 	require.True(t, capabilityReportHasSlash(report, "/ant-trace"))
 	require.True(t, capabilityReportHasSlash(report, "/bug"))
+	backfillSlash, ok := capabilityReportSlash(report, "/backfill-sessions")
+	require.True(t, ok)
+	require.True(t, backfillSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/generateSessionName"))
 	generateSessionNameSlash, ok := capabilityReportSlash(report, "/generateSessionName")
 	require.True(t, ok)
@@ -5699,6 +5702,16 @@ func TestBackfillSessionsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Backfill Sessions")
 	require.Contains(t, out.String(), "Sessions scanned 1")
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.NoError(t, store.Append("resumed-legacy", anthropic.TextMessage("user", "resume backfill prompt")))
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/backfill-sessions", nil, config.FlagOverrides{Resume: "resumed-legacy"}, "json"))
+	var report session.BackfillReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "backfill_sessions", report.Kind)
+	require.Equal(t, 2, report.SessionsScanned)
+	require.Equal(t, 1, report.SessionsUpdated)
+	require.Equal(t, 1, report.InputsAdded)
 }
 
 func TestRewindCommandAndSlash(t *testing.T) {

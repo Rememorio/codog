@@ -23090,6 +23090,7 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 	return mapped, injectGlobalOutputFormat(mapped, args, format), nil
 }
 
+// RunResumedSlash executes a supported slash command against a resumed session.
 func (a *App) RunResumedSlash(ctx context.Context, command string, args []string, overrides config.FlagOverrides, format string) error {
 	name := strings.ToLower(strings.TrimSpace(command))
 	if !strings.HasPrefix(name, "/") {
@@ -23375,6 +23376,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Summary(resumeSlashArgs("summary", args, format), resumed)
 	case "/history", "/prompt-history":
 		return a.History(resumeSlashArgs("history", args, format), resumed)
+	case "/backfill-sessions":
+		return a.BackfillSessions(resumeSlashArgs("backfill-sessions", args, format))
 	case "/generatesessionname", "/generate-session-name":
 		return a.GenerateSessionName(resumeSlashArgs("generateSessionName", args, format), resumed)
 	case "/rewind", "/checkpoint":

@@ -301,6 +301,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/acp")
 	require.Contains(t, names, "/advisor")
 	require.Contains(t, names, "/autofix-pr")
+	require.Contains(t, names, "/backfill-sessions")
 	require.Contains(t, names, "/bookmarks")
 	require.Contains(t, names, "/bug")
 	require.Contains(t, names, "/capabilities")

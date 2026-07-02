@@ -257,6 +257,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/app":                true,
 	"/advisor":            true,
 	"/autofix-pr":         true,
+	"/backfill-sessions":  true,
 	"/background":         true,
 	"/bashes":             true,
 	"/base-check":         true,
