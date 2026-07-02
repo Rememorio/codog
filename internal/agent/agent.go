@@ -24499,6 +24499,29 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 			return a.OAuth(normalized)
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
+	case "device":
+		if len(normalized) >= 2 {
+			deviceAction := strings.ToLower(strings.TrimSpace(normalized[1]))
+			switch deviceAction {
+			case "status":
+				if len(normalized) <= 3 {
+					return a.OAuth(normalized)
+				}
+			case "start":
+				if len(normalized) >= 3 {
+					return a.OAuth(normalized)
+				}
+			case "poll":
+				if len(normalized) >= 4 {
+					return a.OAuth(normalized)
+				}
+			case "login":
+				if len(normalized) >= 3 {
+					return a.OAuth(normalized)
+				}
+			}
+			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth device", deviceAction), format)
+		}
 	}
 	return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
 }

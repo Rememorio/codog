@@ -1879,12 +1879,24 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
 			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token","device_authorization_endpoint":"` + oauthServer.URL + `/device"}`))
+		case "/device":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "client-resume", r.Form.Get("client_id"))
+			require.Equal(t, "profile", r.Form.Get("scope"))
+			_, _ = w.Write([]byte(`{"device_code":"resume-device-1","user_code":"ABCD-EFGH","verification_uri":"` + oauthServer.URL + `/verify","verification_uri_complete":"` + oauthServer.URL + `/verify?user_code=ABCD-EFGH","expires_in":600,"interval":1}`))
 		case "/token":
 			require.NoError(t, r.ParseForm())
-			require.Equal(t, "refresh_token", r.Form.Get("grant_type"))
-			require.Equal(t, "resume-oauth-refresh-1234", r.Form.Get("refresh_token"))
 			require.Equal(t, "client-resume", r.Form.Get("client_id"))
-			_, _ = w.Write([]byte(`{"access_token":"refreshed-access-1234","refresh_token":"refreshed-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+			switch r.Form.Get("grant_type") {
+			case "refresh_token":
+				require.Equal(t, "resume-oauth-refresh-1234", r.Form.Get("refresh_token"))
+				_, _ = w.Write([]byte(`{"access_token":"refreshed-access-1234","refresh_token":"refreshed-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+			case oauth.DeviceCodeGrantType:
+				require.Equal(t, "resume-device-1", r.Form.Get("device_code"))
+				_, _ = w.Write([]byte(`{"access_token":"device-access-1234","refresh_token":"device-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+			default:
+				http.Error(w, "unsupported grant", http.StatusBadRequest)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -4475,13 +4487,24 @@ func risky(value any) {
 	require.Equal(t, "Bearer", resumedOAuthTokenRefresh.TokenType)
 	require.False(t, resumedOAuthTokenRefresh.ExpiresAt.IsZero())
 
+	out, err = runResumedJSON("/oauth", "device", "login", "default")
+	require.NoError(t, err)
+	var resumedOAuthDeviceLogin struct {
+		Device oauth.DeviceAuthorization `json:"device"`
+		Token  oauth.TokenView           `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthDeviceLogin))
+	require.Equal(t, "resume-device-1", resumedOAuthDeviceLogin.Device.DeviceCode)
+	require.Equal(t, "ABCD-EFGH", resumedOAuthDeviceLogin.Device.UserCode)
+	require.Equal(t, "devi...1234", resumedOAuthDeviceLogin.Token.AccessToken)
+	require.Equal(t, "devi...1234", resumedOAuthDeviceLogin.Token.RefreshToken)
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
 		Report  string
 	}{
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
-		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
 	} {
