@@ -1171,7 +1171,7 @@ func TestPrompterBashValidation(t *testing.T) {
 	p = &Prompter{Mode: PermissionReadOnly}
 	err := p.Authorize("bash", PermissionDanger, []byte(`{"command":"touch file.txt"}`))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "bash validation")
+	require.Contains(t, err.Error(), "tool validation")
 
 	var prompt strings.Builder
 	p = &Prompter{
@@ -1181,10 +1181,54 @@ func TestPrompterBashValidation(t *testing.T) {
 	}
 	err = p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`))
 	require.Error(t, err)
-	require.Contains(t, prompt.String(), "Bash validation warning")
+	require.Contains(t, prompt.String(), "Tool validation warning")
 
 	p = &Prompter{Mode: PermissionAllow}
 	require.NoError(t, p.Authorize("bash", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`)))
+}
+
+func TestPrompterPowerShellValidation(t *testing.T) {
+	workspace := t.TempDir()
+	insideFile := filepath.Join(workspace, "README.md")
+	require.NoError(t, os.WriteFile(insideFile, []byte("readme"), 0o644))
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "secret.txt")
+	require.NoError(t, os.WriteFile(outsideFile, []byte("secret"), 0o644))
+
+	var decision PermissionDecision
+	p := &Prompter{
+		Mode:      PermissionReadOnly,
+		Workspace: workspace,
+		OnDecision: func(next PermissionDecision) {
+			decision = next
+		},
+	}
+	require.NoError(t, p.Authorize("powershell", PermissionDanger, []byte(`{"command":"Get-Content `+insideFile+`"}`)))
+	require.True(t, decision.Allowed)
+	require.Equal(t, "powershell_validation_read_only", decision.Reason)
+
+	p = &Prompter{Mode: PermissionReadOnly, Workspace: workspace}
+	err := p.Authorize("powershell", PermissionDanger, []byte(`{"command":"Set-Content notes.txt ok"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool validation")
+
+	p = &Prompter{Mode: PermissionReadOnly, Workspace: workspace}
+	err = p.Authorize("powershell", PermissionDanger, []byte(`{"command":"Get-Content `+outsideFile+`"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "outside workspace")
+
+	p = &Prompter{Mode: PermissionReadOnly, Workspace: workspace, AdditionalDirs: []string{outside}}
+	require.NoError(t, p.Authorize("powershell", PermissionDanger, []byte(`{"command":"Get-Content `+outsideFile+`"}`)))
+
+	var prompt strings.Builder
+	p = &Prompter{
+		Mode: PermissionDanger,
+		In:   strings.NewReader("n\n"),
+		Err:  &prompt,
+	}
+	err = p.Authorize("powershell", PermissionDanger, []byte(`{"command":"Remove-Item -Recurse -Force tmp"}`))
+	require.Error(t, err)
+	require.Contains(t, prompt.String(), "Tool validation warning")
 }
 
 func TestPrompterAlwaysAllowAddsSessionRule(t *testing.T) {

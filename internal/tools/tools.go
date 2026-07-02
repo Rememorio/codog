@@ -44,6 +44,7 @@ import (
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/policyengine"
+	"github.com/Rememorio/codog/internal/powershellvalidation"
 	"github.com/Rememorio/codog/internal/recovery"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/shellstate"
@@ -774,7 +775,7 @@ func (p *Prompter) Authorize(name string, required Permission, input json.RawMes
 		p.Err = os.Stderr
 	}
 	if decision.Message != "" {
-		fmt.Fprintf(p.Err, "\nBash validation warning: %s\n", decision.Message)
+		fmt.Fprintf(p.Err, "\nTool validation warning: %s\n", decision.Message)
 	}
 	p.emitRequest(decision)
 	fmt.Fprintf(p.Err, "\nTool %s requires %s permission.\nInput: %s\nAllow? [y/N/a=always for session] ", name, required, string(input))
@@ -834,6 +835,23 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 			}
 		}
 	}
+	if strings.EqualFold(name, "powershell") {
+		result := powershellvalidation.Validate(powershellvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
+		switch result.Severity {
+		case powershellvalidation.SeverityBlock:
+			decision.Reason = "powershell_validation"
+			decision.Message = result.Reason
+			return decision
+		case powershellvalidation.SeverityConfirm:
+			validationWarning = result.Reason
+		case powershellvalidation.SeverityAllow:
+			if mode == PermissionReadOnly && result.Intent == powershellvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
+				decision.Allowed = true
+				decision.Reason = "powershell_validation_read_only"
+				return decision
+			}
+		}
+	}
 	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
 	if validationWarning != "" && mode != PermissionAllow {
 		ask = true
@@ -855,11 +873,11 @@ func permissionDecisionError(decision PermissionDecision) error {
 		return fmt.Errorf("permission denied for tool %s by denied_tools", decision.ToolName)
 	case "deny_rule":
 		return fmt.Errorf("permission denied for tool %s by deny rule", decision.ToolName)
-	case "bash_validation":
+	case "bash_validation", "powershell_validation":
 		if decision.Message != "" {
-			return fmt.Errorf("permission denied for tool %s by bash validation: %s", decision.ToolName, decision.Message)
+			return fmt.Errorf("permission denied for tool %s by tool validation: %s", decision.ToolName, decision.Message)
 		}
-		return fmt.Errorf("permission denied for tool %s by bash validation", decision.ToolName)
+		return fmt.Errorf("permission denied for tool %s by tool validation", decision.ToolName)
 	default:
 		return fmt.Errorf("permission denied for tool %s", decision.ToolName)
 	}
