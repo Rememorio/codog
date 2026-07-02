@@ -859,7 +859,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "install":
 		return app.Install(ctx, rest)
 	case "enterprise":
-		return app.Enterprise(rest)
+		if err := app.Enterprise(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "dump-manifests":
 		return app.DumpManifests(rest)
 	case "system-prompt":
@@ -3598,7 +3601,12 @@ func (a *App) Enterprise(args []string) error {
 		if len(args) > 1 {
 			parsed, err := strconv.Atoi(args[1])
 			if err != nil {
-				return err
+				return invalidFlagValueError{
+					Flag:    "limit",
+					Value:   args[1],
+					Message: "enterprise audit limit must be an integer",
+					Usage:   "codog enterprise [audit|status|show] [limit] [--json|--output-format json]",
+				}
 			}
 			limit = parsed
 		}
@@ -3610,7 +3618,11 @@ func (a *App) Enterprise(args []string) error {
 	case "verify":
 		return enterpriseVerify(a.Out, args)
 	default:
-		return fmt.Errorf("unknown enterprise command %q", args[0])
+		return unexpectedExtraArgsError{
+			Command: "enterprise",
+			Args:    []string{args[0]},
+			Usage:   "codog enterprise [audit|status|show] [limit] | enterprise verify POLICY PUBLIC_KEY",
+		}
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))

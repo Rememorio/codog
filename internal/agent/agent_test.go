@@ -168,6 +168,55 @@ func TestEnterpriseVerifyErrorsHonorGlobalJSONFormat(t *testing.T) {
 	require.Contains(t, out, `"argument": "POLICY PUBLIC_KEY"`)
 }
 
+func TestEnterpriseErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "unknown action",
+			args:      []string{"enterprise", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "enterprise"`, `"bogus"`},
+		},
+		{
+			name:      "audit invalid limit",
+			args:      []string{"enterprise", "audit", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "limit"`, `"value": "bogus"`},
+		},
+		{
+			name:      "status invalid limit",
+			args:      []string{"enterprise", "status", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "limit"`, `"value": "bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestEnterpriseAuditReportsManagedPolicyStatus(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
