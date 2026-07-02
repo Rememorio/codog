@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
@@ -81,6 +82,13 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/background/{id}/stop", Methods: []string{http.MethodPost}, Description: "Stop a background task."},
 		{Path: "/background/{id}/logs", Methods: []string{http.MethodGet}, Description: "Read background task logs."},
 		{Path: "/background/{id}/watch", Methods: []string{http.MethodGet}, Description: "Stream background task events.", Streaming: true},
+		{Path: "/agents/runs", Methods: []string{http.MethodGet}, Description: "List agent runs with their current task status."},
+		{Path: "/agents/board", Methods: []string{http.MethodGet}, Description: "Read the agent run board grouped by lane health."},
+		{Path: "/agents/prune", Methods: []string{http.MethodPost}, Description: "Prune stale or orphaned agent run records."},
+		{Path: "/agents/{id}", Methods: []string{http.MethodGet}, Description: "Read one agent run with current task status."},
+		{Path: "/agents/{id}/logs", Methods: []string{http.MethodGet}, Description: "Read one agent run task log."},
+		{Path: "/agents/{id}/heartbeat", Methods: []string{http.MethodPost}, Description: "Update one agent run heartbeat."},
+		{Path: "/agents/{id}/stop", Methods: []string{http.MethodPost}, Description: "Stop one agent run task."},
 		{Path: "/hooks/health", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Inspect hook matching without executing hooks."},
 		{Path: "/hooks/status", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Alias for hook health inspection."},
 		{Path: "/diagnostics/go", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Run Go diagnostics."},
@@ -215,6 +223,10 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/background/prune", s.backgroundPrune)
 	mux.HandleFunc("/background/supervise", s.backgroundSupervise)
 	mux.HandleFunc("/background/", s.backgroundByID)
+	mux.HandleFunc("/agents/runs", s.agentRuns)
+	mux.HandleFunc("/agents/board", s.agentRunBoard)
+	mux.HandleFunc("/agents/prune", s.agentRunPrune)
+	mux.HandleFunc("/agents/", s.agentRunByID)
 	mux.HandleFunc("/hooks/health", s.hooksHealth)
 	mux.HandleFunc("/hooks/status", s.hooksHealth)
 	mux.HandleFunc("/diagnostics/go", s.goDiagnostics)
@@ -1071,6 +1083,149 @@ func (s Server) backgroundByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s Server) agentRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runs, err := agentruns.NewStore(s.ConfigHome).List()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	runs = filterAgentRuns(runs, r.URL.Query().Get("agent"), r.URL.Query().Get("session_id"))
+	statuses := make([]agentruns.Status, 0, len(runs))
+	taskStore := background.NewStore(s.ConfigHome)
+	for _, run := range runs {
+		statuses = append(statuses, agentruns.StatusForTask(taskStore, run))
+	}
+	writeJSON(w, statuses)
+}
+
+func (s Server) agentRunBoard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runs, err := agentruns.NewStore(s.ConfigHome).List()
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	runs = filterAgentRuns(runs, r.URL.Query().Get("agent"), r.URL.Query().Get("session_id"))
+	stalledAfter, err := parseLaneBoardDuration(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, agentruns.BuildBoard(background.NewStore(s.ConfigHome), runs, s.now(), stalledAfter))
+}
+
+func (s Server) agentRunPrune(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	options := background.DefaultPruneOptions()
+	var payload struct {
+		OlderThanDays *int `json:"older_than_days"`
+		Keep          *int `json:"keep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if payload.OlderThanDays != nil {
+		if *payload.OlderThanDays < 0 {
+			writeError(w, errors.New("older_than_days must be non-negative"), http.StatusBadRequest)
+			return
+		}
+		options.OlderThan = time.Duration(*payload.OlderThanDays) * 24 * time.Hour
+	}
+	if payload.Keep != nil {
+		if *payload.Keep < 0 {
+			writeError(w, errors.New("keep must be non-negative"), http.StatusBadRequest)
+			return
+		}
+		options.Keep = *payload.Keep
+	}
+	result, err := agentruns.Prune(agentruns.NewStore(s.ConfigHome), background.NewStore(s.ConfigHome), options)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s Server) agentRunByID(w http.ResponseWriter, r *http.Request) {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/agents/"), "/")
+	if rest == "" {
+		writeError(w, http.ErrMissingFile, http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(rest, "/")
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+	runStore := agentruns.NewStore(s.ConfigHome)
+	run, err := runStore.Get(id)
+	if err != nil {
+		writeError(w, err, http.StatusNotFound)
+		return
+	}
+	taskStore := background.NewStore(s.ConfigHome)
+	switch {
+	case r.Method == http.MethodGet && action == "":
+		writeJSON(w, agentruns.StatusForTask(taskStore, run))
+	case r.Method == http.MethodGet && (action == "logs" || action == "output"):
+		limit, err := parseLogLimit(r)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		logs, err := taskStore.Logs(run.TaskID, limit)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		_, _ = runStore.Touch(run.ID)
+		writeText(w, logs)
+	case r.Method == http.MethodPost && action == "stop":
+		task, err := taskStore.Stop(run.TaskID)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		run, err = runStore.Touch(run.ID)
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"run": run, "task": task})
+	case r.Method == http.MethodPost && action == "heartbeat":
+		heartbeat, err := decodeLaneHeartbeat(r.Body)
+		if err != nil {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		task, err := taskStore.UpdateHeartbeat(run.TaskID, heartbeat)
+		if err != nil {
+			writeError(w, err, http.StatusNotFound)
+			return
+		}
+		run, err = runStore.Touch(run.ID)
+		if err != nil {
+			writeError(w, err, http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"run": run, "task": task})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
 func (s Server) streamBackgroundWatch(w http.ResponseWriter, r *http.Request, store background.Store, id string) {
 	options, err := parseWatchOptions(r)
 	if err != nil {
@@ -1125,6 +1280,84 @@ func parseWatchOptions(r *http.Request) (background.WatchOptions, error) {
 		options.MaxEvents = parsed
 	}
 	return options, nil
+}
+
+func filterAgentRuns(runs []agentruns.Run, agent string, sessionID string) []agentruns.Run {
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	sessionID = strings.TrimSpace(sessionID)
+	if agent == "" && sessionID == "" {
+		return runs
+	}
+	filtered := make([]agentruns.Run, 0, len(runs))
+	for _, run := range runs {
+		if agent != "" && !strings.EqualFold(run.Agent, agent) {
+			continue
+		}
+		if sessionID != "" && run.SessionID != sessionID {
+			continue
+		}
+		filtered = append(filtered, run)
+	}
+	return filtered
+}
+
+func parseLaneBoardDuration(r *http.Request) (time.Duration, error) {
+	if value := firstNonEmpty(r.URL.Query().Get("stalled_after_seconds"), r.URL.Query().Get("stalled_after_secs")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, err
+		}
+		if parsed <= 0 {
+			return 0, errors.New("stalled_after_seconds must be positive")
+		}
+		return time.Duration(parsed) * time.Second, nil
+	}
+	if value := r.URL.Query().Get("stalled_after_ms"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, err
+		}
+		if parsed <= 0 {
+			return 0, errors.New("stalled_after_ms must be positive")
+		}
+		return time.Duration(parsed) * time.Millisecond, nil
+	}
+	return 30 * time.Second, nil
+}
+
+func parseLogLimit(r *http.Request) (int64, error) {
+	limit := int64(64 * 1024)
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		limit = parsed
+	}
+	return limit, nil
+}
+
+func decodeLaneHeartbeat(reader io.Reader) (background.LaneHeartbeat, error) {
+	var payload struct {
+		Status         string `json:"status"`
+		TransportAlive *bool  `json:"transport_alive"`
+		ObservedAt     string `json:"observed_at"`
+	}
+	if err := json.NewDecoder(reader).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		return background.LaneHeartbeat{}, err
+	}
+	heartbeat := background.LaneHeartbeat{Status: payload.Status, TransportAlive: true}
+	if payload.TransportAlive != nil {
+		heartbeat.TransportAlive = *payload.TransportAlive
+	}
+	if strings.TrimSpace(payload.ObservedAt) != "" {
+		observedAt, err := time.Parse(time.RFC3339, payload.ObservedAt)
+		if err != nil {
+			return background.LaneHeartbeat{}, err
+		}
+		heartbeat.ObservedAt = observedAt
+	}
+	return heartbeat, nil
 }
 
 func (s Server) hooksHealth(w http.ResponseWriter, r *http.Request) {

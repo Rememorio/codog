@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
@@ -149,6 +150,13 @@ func (s Server) handle(req Request) (any, *Error) {
 				"background/watch",
 				"background/prune",
 				"background/supervise",
+				"agent-runs/list",
+				"agent-runs/get",
+				"agent-runs/logs",
+				"agent-runs/board",
+				"agent-runs/heartbeat",
+				"agent-runs/stop",
+				"agent-runs/prune",
 			},
 		}, nil
 	case "workspace/info":
@@ -501,6 +509,48 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "background/supervise":
 		result, err := s.backgroundSupervise(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/list":
+		result, err := s.agentRunsList(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/get":
+		result, err := s.agentRunsGet(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/logs":
+		result, err := s.agentRunsLogs(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/board":
+		result, err := s.agentRunsBoard(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/heartbeat":
+		result, err := s.agentRunsHeartbeat(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/stop":
+		result, err := s.agentRunsStop(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "agent-runs/prune":
+		result, err := s.agentRunsPrune(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -1383,6 +1433,218 @@ func (s Server) backgroundSupervise(params json.RawMessage) (any, error) {
 	return store.SuperviseOnce(now)
 }
 
+func (s Server) agentRunsList(params json.RawMessage) (any, error) {
+	var payload struct {
+		Agent     string `json:"agent"`
+		SessionID string `json:"session_id"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	runs, err := runStore.List()
+	if err != nil {
+		return nil, err
+	}
+	runs = filterBridgeAgentRuns(runs, payload.Agent, payload.SessionID)
+	statuses := make([]agentruns.Status, 0, len(runs))
+	for _, run := range runs {
+		statuses = append(statuses, agentruns.StatusForTask(taskStore, run))
+	}
+	return statuses, nil
+}
+
+func (s Server) agentRunsGet(params json.RawMessage) (any, error) {
+	id, err := parseBridgeAgentRunID(params)
+	if err != nil {
+		return nil, err
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	run, err := runStore.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	return agentruns.StatusForTask(taskStore, run), nil
+}
+
+func (s Server) agentRunsLogs(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID    string `json:"id"`
+		Limit int64  `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	limit := payload.Limit
+	if limit <= 0 {
+		limit = 64 * 1024
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	run, err := runStore.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	logs, err := taskStore.Logs(run.TaskID, limit)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = runStore.Touch(run.ID)
+	return map[string]any{"id": id, "task_id": run.TaskID, "logs": logs}, nil
+}
+
+func (s Server) agentRunsBoard(params json.RawMessage) (any, error) {
+	var payload struct {
+		Agent               string `json:"agent"`
+		SessionID           string `json:"session_id"`
+		StalledAfterSeconds int    `json:"stalled_after_seconds"`
+		StalledAfterMS      int    `json:"stalled_after_ms"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	stalledAfter := 30 * time.Second
+	switch {
+	case payload.StalledAfterMS < 0:
+		return nil, errors.New("stalled_after_ms must be non-negative")
+	case payload.StalledAfterSeconds < 0:
+		return nil, errors.New("stalled_after_seconds must be non-negative")
+	case payload.StalledAfterMS > 0:
+		stalledAfter = time.Duration(payload.StalledAfterMS) * time.Millisecond
+	case payload.StalledAfterSeconds > 0:
+		stalledAfter = time.Duration(payload.StalledAfterSeconds) * time.Second
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	runs, err := runStore.List()
+	if err != nil {
+		return nil, err
+	}
+	runs = filterBridgeAgentRuns(runs, payload.Agent, payload.SessionID)
+	return agentruns.BuildBoard(taskStore, runs, time.Now().UTC(), stalledAfter), nil
+}
+
+func (s Server) agentRunsHeartbeat(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID             string     `json:"id"`
+		Status         string     `json:"status"`
+		TransportAlive *bool      `json:"transport_alive"`
+		ObservedAt     *time.Time `json:"observed_at"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	transportAlive := true
+	if payload.TransportAlive != nil {
+		transportAlive = *payload.TransportAlive
+	}
+	heartbeat := background.LaneHeartbeat{
+		TransportAlive: transportAlive,
+		Status:         payload.Status,
+	}
+	if payload.ObservedAt != nil {
+		heartbeat.ObservedAt = *payload.ObservedAt
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	run, err := runStore.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	task, err := taskStore.UpdateHeartbeat(run.TaskID, heartbeat)
+	if err != nil {
+		return nil, err
+	}
+	run, err = runStore.Touch(run.ID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"run": run, "task": task}, nil
+}
+
+func (s Server) agentRunsStop(params json.RawMessage) (any, error) {
+	id, err := parseBridgeAgentRunID(params)
+	if err != nil {
+		return nil, err
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	run, err := runStore.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	task, err := taskStore.Stop(run.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	run, err = runStore.Touch(run.ID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"run": run, "task": task}, nil
+}
+
+func (s Server) agentRunsPrune(params json.RawMessage) (any, error) {
+	options := background.DefaultPruneOptions()
+	if len(params) != 0 {
+		var payload struct {
+			OlderThanSeconds int  `json:"older_than_seconds"`
+			OlderThanDays    int  `json:"older_than_days"`
+			Keep             *int `json:"keep"`
+		}
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+		switch {
+		case payload.OlderThanSeconds < 0:
+			return nil, errors.New("older_than_seconds must be non-negative")
+		case payload.OlderThanDays < 0:
+			return nil, errors.New("older_than_days must be non-negative")
+		case payload.OlderThanSeconds > 0:
+			options.OlderThan = time.Duration(payload.OlderThanSeconds) * time.Second
+		case payload.OlderThanDays > 0:
+			options.OlderThan = time.Duration(payload.OlderThanDays) * 24 * time.Hour
+		}
+		if payload.Keep != nil {
+			if *payload.Keep < 0 {
+				return nil, errors.New("keep must be non-negative")
+			}
+			options.Keep = *payload.Keep
+		}
+	}
+	runStore, taskStore, err := s.agentRunStores()
+	if err != nil {
+		return nil, err
+	}
+	return agentruns.Prune(runStore, taskStore, options)
+}
+
 func (s Server) sessionOpen(params json.RawMessage) (any, error) {
 	var payload struct {
 		ID string `json:"id"`
@@ -1734,6 +1996,13 @@ func (s Server) backgroundStore() (background.Store, error) {
 	return background.NewStore(s.ConfigHome), nil
 }
 
+func (s Server) agentRunStores() (agentruns.Store, background.Store, error) {
+	if strings.TrimSpace(s.ConfigHome) == "" {
+		return agentruns.Store{}, background.Store{}, errors.New("config home is required")
+	}
+	return agentruns.NewStore(s.ConfigHome), background.NewStore(s.ConfigHome), nil
+}
+
 func (s Server) lspStore() (codeintel.LSPStore, error) {
 	if strings.TrimSpace(s.ConfigHome) == "" {
 		return codeintel.LSPStore{}, errors.New("config home is required")
@@ -1781,6 +2050,39 @@ func parseBridgeBackgroundID(params json.RawMessage) (string, error) {
 		return "", errors.New("id is required")
 	}
 	return id, nil
+}
+
+func parseBridgeAgentRunID(params json.RawMessage) (string, error) {
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return "", errors.New("id is required")
+	}
+	return id, nil
+}
+
+func filterBridgeAgentRuns(runs []agentruns.Run, agent string, sessionID string) []agentruns.Run {
+	agent = strings.ToLower(strings.TrimSpace(agent))
+	sessionID = strings.TrimSpace(sessionID)
+	if agent == "" && sessionID == "" {
+		return runs
+	}
+	filtered := make([]agentruns.Run, 0, len(runs))
+	for _, run := range runs {
+		if agent != "" && !strings.EqualFold(run.Agent, agent) {
+			continue
+		}
+		if sessionID != "" && run.SessionID != sessionID {
+			continue
+		}
+		filtered = append(filtered, run)
+	}
+	return filtered
 }
 
 func bridgeLSPCommandArgs(command json.RawMessage, commandArgs []string, args []string) ([]string, error) {

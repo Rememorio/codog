@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/session"
@@ -63,6 +64,11 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 	require.Equal(t, []string{http.MethodPost}, byPath["/bridge/faults/record"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/bridge/faults/clear"].Methods)
 	require.True(t, byPath["/background/{id}/watch"].Streaming)
+	require.Equal(t, []string{http.MethodGet}, byPath["/agents/runs"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/agents/board"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/agents/prune"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/agents/{id}"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/agents/{id}/stop"].Methods)
 	require.Contains(t, byPath, "/editor/selection")
 }
 
@@ -613,6 +619,113 @@ func TestControlBackgroundSupervise(t *testing.T) {
 	source, err := store.Get("failed")
 	require.NoError(t, err)
 	require.Equal(t, result.Restarted[0].ID, source.RestartedBy)
+}
+
+func TestControlAgentRunsLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	root := t.TempDir()
+	configHome := filepath.Join(root, "home")
+	taskStore := background.NewStore(configHome)
+	runStore := agentruns.NewStore(configHome)
+	task, err := taskStore.RunWithOptions("printf agent-http", root, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-remote"})
+	require.NoError(t, err)
+	run, err := runStore.Save(agentruns.Run{
+		ID:        "run-" + task.ID,
+		Agent:     "reviewer",
+		Workspace: root,
+		SessionID: "session-remote",
+		TaskID:    task.ID,
+		CreatedAt: task.StartedAt,
+		UpdatedAt: task.StartedAt,
+	})
+	require.NoError(t, err)
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: configHome,
+		Workspace:  root,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/agents/runs?agent=reviewer&session_id=session-remote")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var statuses []agentruns.Status
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&statuses))
+	require.Len(t, statuses, 1)
+	require.Equal(t, run.ID, statuses[0].Run.ID)
+
+	resp, err = http.Get(server.URL + "/agents/" + run.ID)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var status agentruns.Status
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&status))
+	require.Equal(t, task.ID, status.Run.TaskID)
+
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(server.URL + "/agents/" + run.ID + "/logs?limit=100")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode == http.StatusOK && strings.Contains(string(body), "agent-http")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	heartbeatBody := bytes.NewBufferString(`{"status":"working","transport_alive":true}`)
+	resp, err = http.Post(server.URL+"/agents/"+run.ID+"/heartbeat", "application/json", heartbeatBody)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var action struct {
+		Run  agentruns.Run   `json:"run"`
+		Task background.Task `json:"task"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&action))
+	require.Equal(t, "working", action.Task.Heartbeat.Status)
+
+	resp, err = http.Get(server.URL + "/agents/board?stalled_after_seconds=60")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var board agentruns.Board
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&board))
+	require.True(t, controlAgentBoardContains(board, run.ID))
+
+	orphan, err := runStore.Save(agentruns.Run{ID: "run-orphan", Agent: "reviewer", TaskID: "missing-task", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()})
+	require.NoError(t, err)
+	resp, err = http.Post(server.URL+"/agents/prune", "application/json", bytes.NewBufferString(`{"older_than_days":0,"keep":0}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var pruned background.PruneResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&pruned))
+	require.Contains(t, pruned.Removed, orphan.ID)
+
+	longTask, err := taskStore.RunWithOptions("sleep 5", root, background.RunOptions{Kind: "agent", AgentType: "reviewer"})
+	require.NoError(t, err)
+	longRun, err := runStore.Save(agentruns.Run{ID: "run-" + longTask.ID, Agent: "reviewer", TaskID: longTask.ID, CreatedAt: longTask.StartedAt, UpdatedAt: longTask.StartedAt})
+	require.NoError(t, err)
+	resp, err = http.Post(server.URL+"/agents/"+longRun.ID+"/stop", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&action))
+	require.Equal(t, "stopped", action.Task.Status)
+}
+
+func controlAgentBoardContains(board agentruns.Board, id string) bool {
+	for _, entries := range [][]agentruns.BoardEntry{board.Active, board.Blocked, board.Finished, board.Orphaned} {
+		for _, entry := range entries {
+			if entry.Run.ID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestControlBackgroundWatchStreamsEvents(t *testing.T) {

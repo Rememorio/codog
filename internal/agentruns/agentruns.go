@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Rememorio/codog/internal/background"
 )
 
 type Run struct {
@@ -26,6 +28,30 @@ type Run struct {
 
 type Store struct {
 	Dir string
+}
+
+type Status struct {
+	Run           Run              `json:"run"`
+	Task          *background.Task `json:"task,omitempty"`
+	CurrentStatus string           `json:"current_status"`
+	Error         string           `json:"error,omitempty"`
+}
+
+type BoardEntry struct {
+	Run       Run                       `json:"run"`
+	Task      *background.Task          `json:"task,omitempty"`
+	Status    string                    `json:"status"`
+	Freshness background.LaneFreshness  `json:"freshness"`
+	Heartbeat *background.LaneHeartbeat `json:"heartbeat,omitempty"`
+	Error     string                    `json:"error,omitempty"`
+}
+
+type Board struct {
+	GeneratedAt time.Time    `json:"generated_at"`
+	Active      []BoardEntry `json:"active"`
+	Blocked     []BoardEntry `json:"blocked"`
+	Finished    []BoardEntry `json:"finished"`
+	Orphaned    []BoardEntry `json:"orphaned,omitempty"`
 }
 
 func NewStore(configHome string) Store {
@@ -121,6 +147,96 @@ func (s Store) Remove(id string) error {
 	return nil
 }
 
+func StatusForTask(store background.Store, run Run) Status {
+	status := Status{Run: run, CurrentStatus: "unknown"}
+	task, err := store.Status(run.TaskID)
+	if err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	status.Task = &task
+	status.CurrentStatus = firstNonEmpty(task.Status, "unknown")
+	return status
+}
+
+func BuildBoard(store background.Store, runs []Run, now time.Time, stalledAfter time.Duration) Board {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if stalledAfter <= 0 {
+		stalledAfter = 30 * time.Second
+	}
+	board := Board{
+		GeneratedAt: now.UTC(),
+		Active:      []BoardEntry{},
+		Blocked:     []BoardEntry{},
+		Finished:    []BoardEntry{},
+		Orphaned:    []BoardEntry{},
+	}
+	for _, run := range runs {
+		entry := BoardEntry{Run: run, Status: "unknown", Freshness: background.LaneFreshnessUnknown}
+		task, err := store.Status(run.TaskID)
+		if err != nil {
+			entry.Error = err.Error()
+			board.Orphaned = append(board.Orphaned, entry)
+			continue
+		}
+		entry.Task = &task
+		entry.Status = firstNonEmpty(task.Status, "unknown")
+		entry.Heartbeat = task.Heartbeat
+		entry.Freshness = freshness(task.Heartbeat, board.GeneratedAt, stalledAfter)
+		switch laneBucket(task.Status) {
+		case "active":
+			board.Active = append(board.Active, entry)
+		case "blocked":
+			board.Blocked = append(board.Blocked, entry)
+		default:
+			board.Finished = append(board.Finished, entry)
+		}
+	}
+	return board
+}
+
+func Prune(runStore Store, taskStore background.Store, options background.PruneOptions) (background.PruneResult, error) {
+	runs, err := runStore.List()
+	if err != nil {
+		return background.PruneResult{}, err
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		return retentionTime(runs[i]).After(retentionTime(runs[j]))
+	})
+	cutoff := time.Time{}
+	if options.OlderThan > 0 {
+		cutoff = time.Now().UTC().Add(-options.OlderThan)
+	}
+	seenNonRunning := 0
+	result := background.PruneResult{}
+	for _, run := range runs {
+		task, taskErr := taskStore.Status(run.TaskID)
+		if taskErr == nil && strings.EqualFold(task.Status, "running") {
+			result.Kept++
+			continue
+		}
+		if taskErr == nil {
+			seenNonRunning++
+			if options.Keep > 0 && seenNonRunning <= options.Keep {
+				result.Kept++
+				continue
+			}
+			if !cutoff.IsZero() && retentionTime(run).After(cutoff) {
+				result.Kept++
+				continue
+			}
+		}
+		if err := runStore.Remove(run.ID); err != nil {
+			return result, err
+		}
+		result.Removed = append(result.Removed, run.ID)
+	}
+	result.RemovedCount = len(result.Removed)
+	return result, nil
+}
+
 func validateID(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("agent run id is required")
@@ -129,4 +245,47 @@ func validateID(id string) error {
 		return errors.New("agent run id must be a single path component")
 	}
 	return nil
+}
+
+func freshness(heartbeat *background.LaneHeartbeat, now time.Time, stalledAfter time.Duration) background.LaneFreshness {
+	if heartbeat == nil || heartbeat.ObservedAt.IsZero() {
+		return background.LaneFreshnessUnknown
+	}
+	if !heartbeat.TransportAlive {
+		return background.LaneFreshnessTransportDead
+	}
+	if stalledAfter <= 0 {
+		stalledAfter = 30 * time.Second
+	}
+	if now.Sub(heartbeat.ObservedAt) > stalledAfter {
+		return background.LaneFreshnessStalled
+	}
+	return background.LaneFreshnessHealthy
+}
+
+func laneBucket(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "created", "starting", "pending":
+		return "active"
+	case "blocked", "waiting":
+		return "blocked"
+	default:
+		return "finished"
+	}
+}
+
+func retentionTime(run Run) time.Time {
+	if !run.UpdatedAt.IsZero() {
+		return run.UpdatedAt
+	}
+	return run.CreatedAt
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

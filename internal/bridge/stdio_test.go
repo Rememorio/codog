@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
@@ -79,6 +81,13 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"background/watch"`)
 	require.Contains(t, out.String(), `"background/prune"`)
 	require.Contains(t, out.String(), `"background/supervise"`)
+	require.Contains(t, out.String(), `"agent-runs/list"`)
+	require.Contains(t, out.String(), `"agent-runs/get"`)
+	require.Contains(t, out.String(), `"agent-runs/logs"`)
+	require.Contains(t, out.String(), `"agent-runs/board"`)
+	require.Contains(t, out.String(), `"agent-runs/heartbeat"`)
+	require.Contains(t, out.String(), `"agent-runs/stop"`)
+	require.Contains(t, out.String(), `"agent-runs/prune"`)
 }
 
 func TestBridgeSessionMutations(t *testing.T) {
@@ -848,6 +857,77 @@ func TestBridgeBackgroundLifecycleControls(t *testing.T) {
 	require.Contains(t, out.String(), `"removed":["old"]`)
 	require.NoFileExists(t, filepath.Join(bgDir, "old.json"))
 	require.NoFileExists(t, oldLog)
+}
+
+func TestBridgeAgentRunsLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	bg := background.NewStore(configHome)
+	runs := agentruns.NewStore(configHome)
+	task, err := bg.RunWithOptions("printf agent-bridge", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-bridge"})
+	require.NoError(t, err)
+	run, err := runs.Save(agentruns.Run{
+		ID:        "run-" + task.ID,
+		Agent:     "reviewer",
+		Workspace: workspace,
+		SessionID: "session-bridge",
+		TaskID:    task.ID,
+		CreatedAt: task.StartedAt,
+		UpdatedAt: task.StartedAt,
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := bg.Logs(task.ID, 4096)
+		return err == nil && strings.Contains(logs, "agent-bridge")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	orphan, err := runs.Save(agentruns.Run{
+		ID:        "run-orphan",
+		Agent:     "reviewer",
+		SessionID: "session-bridge",
+		TaskID:    "missing-task",
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-2 * time.Hour),
+	})
+	require.NoError(t, err)
+	longTask, err := bg.RunWithOptions("sleep 5", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer"})
+	require.NoError(t, err)
+	longRun, err := runs.Save(agentruns.Run{
+		ID:        "run-" + longTask.ID,
+		Agent:     "reviewer",
+		Workspace: workspace,
+		TaskID:    longTask.ID,
+		CreatedAt: longTask.StartedAt,
+		UpdatedAt: longTask.StartedAt,
+	})
+	require.NoError(t, err)
+
+	observedAt := now.Format(time.RFC3339)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"agent-runs/list","params":{"agent":"reviewer","session_id":"session-bridge"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"agent-runs/get","params":{"id":"` + run.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"agent-runs/logs","params":{"id":"` + run.ID + `","limit":4096}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"agent-runs/heartbeat","params":{"id":"` + run.ID + `","status":"working","transport_alive":true,"observed_at":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"agent-runs/board","params":{"stalled_after_seconds":60}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"agent-runs/prune","params":{"older_than_days":0,"keep":0}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"agent-runs/stop","params":{"id":"` + longRun.ID + `"}}`,
+	}, "\n") + "\n"
+
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	var out bytes.Buffer
+	err = Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"id":"`+run.ID+`"`)
+	require.Contains(t, out.String(), `"current_status":"completed"`)
+	require.Contains(t, out.String(), `"logs":"agent-bridge"`)
+	require.Contains(t, out.String(), `"heartbeat":{"observed_at":"`+observedAt+`","transport_alive":true,"status":"working"}`)
+	require.Contains(t, out.String(), `"active":[{"run":`)
+	require.Contains(t, out.String(), `"removed":["`+orphan.ID+`"]`)
+	require.Contains(t, out.String(), `"status":"stopped"`)
 }
 
 func TestBridgeRejectsWorkspaceEscape(t *testing.T) {
