@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -9099,6 +9100,8 @@ func isSensitiveEnvName(name string) bool {
 type hooksRequest struct {
 	Format           string
 	Action           string
+	WatchAction      string
+	SessionID        string
 	Event            string
 	Tool             string
 	Input            string
@@ -9195,6 +9198,27 @@ type hooksHealthReport struct {
 	Events          []hookEventHealth    `json:"events"`
 }
 
+type hooksWatchPathsReport struct {
+	Kind        string              `json:"kind"`
+	Action      string              `json:"action"`
+	Status      string              `json:"status"`
+	SessionID   string              `json:"session_id,omitempty"`
+	Paths       []string            `json:"paths,omitempty"`
+	Changes     []watchPathChange   `json:"changes,omitempty"`
+	HookReports []hooks.RunReport   `json:"hook_reports,omitempty"`
+	Sessions    []sessionWatchPaths `json:"sessions,omitempty"`
+}
+
+type sessionWatchPaths struct {
+	SessionID string   `json:"session_id"`
+	Paths     []string `json:"paths"`
+}
+
+type watchPathChange struct {
+	Path      string `json:"path"`
+	Operation string `json:"operation"`
+}
+
 type hookEventHealth struct {
 	Event      string `json:"event"`
 	Configured int    `json:"configured"`
@@ -9272,6 +9296,15 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		}
 		renderHooksList(a.Out, report)
 		return nil
+	case "watch-paths":
+		report, err := a.runHooksWatchPaths(ctx, req)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+		} else {
+			renderHooksWatchPaths(a.Out, report)
+		}
+		return err
 	case "health":
 		payload := hooksPayloadForHealth(req)
 		matched := hooks.HooksForPayload(a.Config.Hooks, payload)
@@ -9760,6 +9793,14 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			i++
+			if i >= len(args) {
+				return req, errors.New("hooks session is required")
+			}
+			req.SessionID = args[i]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--tool":
 			i++
 			if i >= len(args) {
@@ -10018,6 +10059,22 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			}
 			req.Event = event
 		}
+	case "watch-paths", "watchpaths", "watch":
+		req.Action = "watch-paths"
+		req.WatchAction = "list"
+		if len(positionals) > 1 {
+			switch strings.ToLower(strings.TrimSpace(positionals[1])) {
+			case "", "list", "show":
+				req.WatchAction = "list"
+			case "check", "scan":
+				req.WatchAction = "check"
+			default:
+				return req, fmt.Errorf("unknown hooks watch-paths action %q", positionals[1])
+			}
+		}
+		if len(positionals) > 2 {
+			req.SessionID = positionals[2]
+		}
 	default:
 		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
 	}
@@ -10257,6 +10314,30 @@ func renderHooksRun(out io.Writer, report hooks.RunReport) {
 		if result.Error != "" {
 			fmt.Fprintf(out, "    error: %s\n", result.Error)
 		}
+	}
+}
+
+func renderHooksWatchPaths(out io.Writer, report hooksWatchPathsReport) {
+	fmt.Fprintln(out, "Hook Watch Paths")
+	fmt.Fprintf(out, "  Action           %s\n", report.Action)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	if report.SessionID != "" {
+		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	}
+	for _, sess := range report.Sessions {
+		fmt.Fprintf(out, "  %s\n", sess.SessionID)
+		for _, path := range sess.Paths {
+			fmt.Fprintf(out, "    %s\n", path)
+		}
+	}
+	for _, path := range report.Paths {
+		fmt.Fprintf(out, "  Path             %s\n", path)
+	}
+	for _, change := range report.Changes {
+		fmt.Fprintf(out, "  %s %s\n", change.Operation, change.Path)
+	}
+	if len(report.HookReports) > 0 {
+		fmt.Fprintf(out, "  Hook runs        %d\n", len(report.HookReports))
 	}
 }
 
@@ -38385,6 +38466,19 @@ type sessionStartWatchPathReport struct {
 	Paths     []string `json:"paths"`
 }
 
+type watchPathStateReport struct {
+	Kind      string                       `json:"kind"`
+	SessionID string                       `json:"session_id"`
+	Files     map[string]watchPathSnapshot `json:"files"`
+}
+
+type watchPathSnapshot struct {
+	Exists      bool   `json:"exists"`
+	Size        int64  `json:"size"`
+	ModUnixNano int64  `json:"mod_unix_nano"`
+	SHA256      string `json:"sha256"`
+}
+
 func (a *App) persistSessionStartWatchPaths(sessionID string, paths []string) error {
 	configHome := strings.TrimSpace(a.Config.ConfigHome)
 	if configHome == "" || strings.TrimSpace(sessionID) == "" {
@@ -38407,6 +38501,363 @@ func (a *App) persistSessionStartWatchPaths(sessionID string, paths []string) er
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, safeHookStateName(sessionID)+".json"), append(data, '\n'), 0o644)
+}
+
+func (a *App) runHooksWatchPaths(ctx context.Context, req hooksRequest) (hooksWatchPathsReport, error) {
+	action := strings.TrimSpace(req.WatchAction)
+	if action == "" {
+		action = "list"
+	}
+	report := hooksWatchPathsReport{
+		Kind:   "hooks_watch_paths",
+		Action: action,
+		Status: "ok",
+	}
+	sessions, err := a.loadSessionWatchPaths(req.SessionID)
+	if err != nil {
+		report.Status = "error"
+		return report, err
+	}
+	if action == "list" {
+		report.Sessions = sessions
+		if strings.TrimSpace(req.SessionID) != "" {
+			report.SessionID = req.SessionID
+			if len(sessions) > 0 {
+				report.Paths = sessions[0].Paths
+			}
+		}
+		if len(sessions) == 0 {
+			report.Status = "empty"
+		}
+		return report, nil
+	}
+	if action != "check" {
+		report.Status = "error"
+		return report, fmt.Errorf("unknown hooks watch-paths action %q", action)
+	}
+	if len(sessions) == 0 {
+		report.Status = "empty"
+		return report, nil
+	}
+	var firstErr error
+	initialized := false
+	for _, sess := range sessions {
+		sessionReport, checkErr := a.checkSessionWatchPaths(ctx, req, sess)
+		if report.SessionID == "" && len(sessions) == 1 {
+			report.SessionID = sessionReport.SessionID
+			report.Paths = sessionReport.Paths
+		}
+		report.Changes = append(report.Changes, sessionReport.Changes...)
+		report.HookReports = append(report.HookReports, sessionReport.HookReports...)
+		if sessionReport.Status == "initialized" {
+			initialized = true
+		}
+		if checkErr != nil && firstErr == nil {
+			firstErr = checkErr
+		}
+	}
+	switch {
+	case firstErr != nil:
+		report.Status = "error"
+	case len(report.Changes) > 0:
+		report.Status = "changed"
+	case initialized:
+		report.Status = "initialized"
+	default:
+		report.Status = "unchanged"
+	}
+	return report, firstErr
+}
+
+func (a *App) loadSessionWatchPaths(sessionID string) ([]sessionWatchPaths, error) {
+	configHome := strings.TrimSpace(a.Config.ConfigHome)
+	if configHome == "" {
+		return nil, nil
+	}
+	dir := filepath.Join(configHome, "hooks", "watch-paths")
+	if strings.TrimSpace(sessionID) != "" {
+		entry, err := a.readSessionWatchPathFile(filepath.Join(dir, safeHookStateName(sessionID)+".json"))
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return []sessionWatchPaths{entry}, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sessionWatchPaths, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		item, readErr := a.readSessionWatchPathFile(filepath.Join(dir, entry.Name()))
+		if readErr != nil {
+			return nil, readErr
+		}
+		if len(item.Paths) > 0 {
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SessionID < out[j].SessionID
+	})
+	return out, nil
+}
+
+func (a *App) readSessionWatchPathFile(path string) (sessionWatchPaths, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return sessionWatchPaths{}, err
+	}
+	var report sessionStartWatchPathReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return sessionWatchPaths{}, err
+	}
+	return sessionWatchPaths{
+		SessionID: strings.TrimSpace(report.SessionID),
+		Paths:     cleanedStrings(report.Paths),
+	}, nil
+}
+
+func (a *App) checkSessionWatchPaths(ctx context.Context, req hooksRequest, watched sessionWatchPaths) (hooksWatchPathsReport, error) {
+	report := hooksWatchPathsReport{
+		Kind:      "hooks_watch_paths",
+		Action:    "check",
+		Status:    "ok",
+		SessionID: watched.SessionID,
+		Paths:     append([]string(nil), watched.Paths...),
+	}
+	current, err := snapshotWatchPaths(a.Workspace, watched.Paths)
+	if err != nil {
+		report.Status = "error"
+		return report, err
+	}
+	statePath := a.watchPathStatePath(watched.SessionID)
+	previous, existed, err := readWatchPathState(statePath)
+	if err != nil {
+		report.Status = "error"
+		return report, err
+	}
+	if err := writeWatchPathState(statePath, watched.SessionID, current); err != nil {
+		report.Status = "error"
+		return report, err
+	}
+	if !existed {
+		report.Status = "initialized"
+		return report, nil
+	}
+	report.Changes = diffWatchPathSnapshots(previous.Files, current)
+	if len(report.Changes) == 0 {
+		report.Status = "unchanged"
+		return report, nil
+	}
+	report.Status = "changed"
+	runner := hooks.Runner{
+		Config:       a.Config.Hooks,
+		Workspace:    a.Workspace,
+		ConfigHome:   a.Config.ConfigHome,
+		SessionID:    watched.SessionID,
+		Timeout:      time.Duration(req.TimeoutMS) * time.Millisecond,
+		PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
+	}
+	var firstErr error
+	for _, change := range report.Changes {
+		inputData, err := json.Marshal(map[string]string{
+			"path":       change.Path,
+			"operation":  change.Operation,
+			"session_id": watched.SessionID,
+			"source":     "watch_paths",
+		})
+		if err != nil {
+			report.Status = "error"
+			return report, err
+		}
+		payload := hooks.Payload{
+			Event:     "file_changed",
+			Tool:      change.Operation,
+			ToolName:  change.Operation,
+			ToolInput: json.RawMessage(inputData),
+			Input:     string(inputData),
+			FilePath:  change.Path,
+			Operation: change.Operation,
+		}
+		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
+		hookReport, runErr := runner.RunHooks(ctx, hookList, payload)
+		report.HookReports = append(report.HookReports, hookReport)
+		if runErr != nil && firstErr == nil {
+			firstErr = runErr
+		}
+	}
+	if firstErr != nil {
+		report.Status = "error"
+	}
+	return report, firstErr
+}
+
+func (a *App) watchPathStatePath(sessionID string) string {
+	configHome := strings.TrimSpace(a.Config.ConfigHome)
+	if configHome == "" {
+		return ""
+	}
+	return filepath.Join(configHome, "hooks", "watch-state", safeHookStateName(sessionID)+".json")
+}
+
+func snapshotWatchPaths(workspace string, paths []string) (map[string]watchPathSnapshot, error) {
+	out := map[string]watchPathSnapshot{}
+	for _, path := range cleanedStrings(paths) {
+		resolved := resolveWatchPath(workspace, path)
+		info, err := os.Stat(resolved)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() {
+			err = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				info, err := entry.Info()
+				if err != nil {
+					return err
+				}
+				if !info.Mode().IsRegular() {
+					return nil
+				}
+				snapshot, err := snapshotFile(path, info)
+				if err != nil {
+					return err
+				}
+				out[displayWatchPath(workspace, path)] = snapshot
+				return nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		snapshot, err := snapshotFile(resolved, info)
+		if err != nil {
+			return nil, err
+		}
+		out[displayWatchPath(workspace, resolved)] = snapshot
+	}
+	return out, nil
+}
+
+func resolveWatchPath(workspace string, path string) string {
+	path = strings.TrimSpace(path)
+	if filepath.IsAbs(path) || strings.TrimSpace(workspace) == "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(workspace, path)
+}
+
+func displayWatchPath(workspace string, path string) string {
+	path = filepath.Clean(path)
+	if strings.TrimSpace(workspace) != "" {
+		if rel, err := filepath.Rel(workspace, path); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(path)
+}
+
+func snapshotFile(path string, info os.FileInfo) (watchPathSnapshot, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return watchPathSnapshot{}, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return watchPathSnapshot{}, err
+	}
+	return watchPathSnapshot{
+		Exists:      true,
+		Size:        info.Size(),
+		ModUnixNano: info.ModTime().UnixNano(),
+		SHA256:      hex.EncodeToString(hash.Sum(nil)),
+	}, nil
+}
+
+func readWatchPathState(path string) (watchPathStateReport, bool, error) {
+	if strings.TrimSpace(path) == "" {
+		return watchPathStateReport{}, false, nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return watchPathStateReport{}, false, nil
+	}
+	if err != nil {
+		return watchPathStateReport{}, false, err
+	}
+	var report watchPathStateReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return watchPathStateReport{}, false, err
+	}
+	if report.Files == nil {
+		report.Files = map[string]watchPathSnapshot{}
+	}
+	return report, true, nil
+}
+
+func writeWatchPathState(path string, sessionID string, files map[string]watchPathSnapshot) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	report := watchPathStateReport{
+		Kind:      "hooks_watch_state",
+		SessionID: sessionID,
+		Files:     files,
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func diffWatchPathSnapshots(previous map[string]watchPathSnapshot, current map[string]watchPathSnapshot) []watchPathChange {
+	changes := []watchPathChange{}
+	for path, snapshot := range current {
+		old, ok := previous[path]
+		switch {
+		case !ok:
+			changes = append(changes, watchPathChange{Path: path, Operation: "created"})
+		case old.SHA256 != snapshot.SHA256 || old.Size != snapshot.Size:
+			changes = append(changes, watchPathChange{Path: path, Operation: "changed"})
+		}
+	}
+	for path := range previous {
+		if _, ok := current[path]; !ok {
+			changes = append(changes, watchPathChange{Path: path, Operation: "deleted"})
+		}
+	}
+	sort.Slice(changes, func(i, j int) bool {
+		if changes[i].Path == changes[j].Path {
+			return changes[i].Operation < changes[j].Operation
+		}
+		return changes[i].Path < changes[j].Path
+	})
+	return changes
 }
 
 func safeHookStateName(value string) string {
@@ -40490,9 +40941,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"hooks",
 			"hooks",
-			"codog hooks [list|health EVENT|run EVENT] [--output-format text|json]",
-			"Hooks\n\nUsage:\n  codog hooks [list|health EVENT|run EVENT] [--output-format text|json]\n\nLists configured hooks, reports hook health, or runs a hook event with supplied local metadata.\n",
-			[]string{"event", "hooks", "health", "results"},
+			"codog hooks [list|health EVENT|run EVENT|watch-paths list|check] [--output-format text|json]",
+			"Hooks\n\nUsage:\n  codog hooks [list|health EVENT|run EVENT] [--output-format text|json]\n  codog hooks watch-paths [list|check] [SESSION] [--output-format text|json]\n\nLists configured hooks, reports hook health, runs a hook event with supplied local metadata, or checks SessionStart watch paths for file changes.\n",
+			[]string{"event", "hooks", "health", "results", "changes"},
 			[]string{"ok", "warn", "error"},
 			true,
 		), true
@@ -40863,7 +41314,7 @@ Usage:
   %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
-  %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
+  %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
   %s [flags] model [NAME] | models [list|aliases|routes|show [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]

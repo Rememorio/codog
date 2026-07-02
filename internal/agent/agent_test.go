@@ -11157,6 +11157,62 @@ func TestSessionStartHookOutputUpdatesSessionContext(t *testing.T) {
 	require.Contains(t, string(watchData), filepath.ToSlash(watchPath))
 }
 
+func TestHooksWatchPathsCheckTriggersFileChangedHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	watched := filepath.Join(workspace, "watched.md")
+	require.NoError(t, os.WriteFile(watched, []byte("first\n"), 0o644))
+	hookPayloadPath := filepath.Join(t.TempDir(), "file-changed.json")
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Hooks: config.HookConfig{
+				FileChangedCommands: []config.HookCommand{{Matcher: "changed", Command: "cat > " + shellQuote(hookPayloadPath)}},
+			},
+		},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, app.persistSessionStartWatchPaths("watch-session", []string{watched}))
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"watch-paths", "list", "watch-session", "--json"}))
+	require.Contains(t, out.String(), `"session_id": "watch-session"`)
+	require.Contains(t, out.String(), filepath.ToSlash(watched))
+	out.Reset()
+
+	require.NoError(t, app.Hooks(context.Background(), []string{"watch-paths", "check", "watch-session", "--json"}))
+	require.Contains(t, out.String(), `"status": "initialized"`)
+	require.NoFileExists(t, hookPayloadPath)
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(watched, []byte("second\n"), 0o644))
+	require.NoError(t, app.Hooks(context.Background(), []string{"watch-paths", "check", "watch-session", "--json"}))
+	require.Contains(t, out.String(), `"status": "changed"`)
+	require.Contains(t, out.String(), `"operation": "changed"`)
+	data, err := os.ReadFile(hookPayloadPath)
+	require.NoError(t, err)
+	var payload struct {
+		Event     string `json:"event"`
+		Tool      string `json:"tool"`
+		ToolName  string `json:"tool_name"`
+		Input     string `json:"input"`
+		FilePath  string `json:"file_path"`
+		Operation string `json:"operation"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Equal(t, "file_changed", payload.Event)
+	require.Equal(t, "changed", payload.Tool)
+	require.Equal(t, "changed", payload.ToolName)
+	require.Equal(t, "watched.md", payload.FilePath)
+	require.Equal(t, "changed", payload.Operation)
+	require.Contains(t, payload.Input, `"source":"watch_paths"`)
+}
+
 func TestPluginHooksLoadedByRunCLI(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
