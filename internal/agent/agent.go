@@ -19413,12 +19413,7 @@ func (a *App) serveACP(ctx context.Context) error {
 			}
 			summaries := make([]acpserver.SessionSummary, 0, len(sessions))
 			for _, sess := range sessions {
-				summaries = append(summaries, acpserver.SessionSummary{
-					SessionID:    sess.ID,
-					Workspace:    a.Workspace,
-					Path:         sess.Path,
-					MessageCount: len(sess.Messages),
-				})
+				summaries = append(summaries, acpSessionSummary(a.Workspace, &sess))
 			}
 			return acpserver.SessionList{
 				Kind:      "session_list",
@@ -19435,13 +19430,7 @@ func (a *App) serveACP(ctx context.Context) error {
 			if err != nil {
 				return acpserver.SessionDetail{}, err
 			}
-			return acpserver.SessionDetail{
-				SessionID:    sess.ID,
-				Workspace:    a.Workspace,
-				Path:         sess.Path,
-				MessageCount: len(sess.Messages),
-				Messages:     sess.Messages,
-			}, nil
+			return acpSessionDetail(a.Workspace, sess), nil
 		},
 		History: func(_ context.Context, req acpserver.SessionHistoryRequest) (acpserver.SessionHistory, error) {
 			if a.Sessions == nil {
@@ -19549,6 +19538,55 @@ func (a *App) serveACP(ctx context.Context) error {
 			return buildACPStatusReport(), nil
 		},
 	}, acpserver.Options{Version: version, Workspace: a.Workspace})
+}
+
+func acpSessionSummary(workspace string, sess *session.Session) acpserver.SessionSummary {
+	if sess == nil {
+		return acpserver.SessionSummary{Workspace: workspace}
+	}
+	return acpserver.SessionSummary{
+		SessionID:           sess.ID,
+		Workspace:           workspace,
+		Path:                sess.Path,
+		MessageCount:        len(sess.Messages),
+		CreatedAtMS:         timeMillis(sess.Metadata.CreatedAt),
+		UpdatedAtMS:         timeMillis(sess.Metadata.UpdatedAt),
+		ModifiedEpochMillis: timeMillis(sess.Metadata.ModifiedAt),
+		ParentSessionID:     sess.Metadata.ParentSessionID,
+		BranchName:          sess.Metadata.BranchName,
+		Lifecycle:           acpSessionLifecycle(sess),
+	}
+}
+
+func acpSessionDetail(workspace string, sess *session.Session) acpserver.SessionDetail {
+	summary := acpSessionSummary(workspace, sess)
+	var messages any
+	if sess != nil {
+		messages = sess.Messages
+	}
+	return acpserver.SessionDetail{
+		SessionID:           summary.SessionID,
+		Workspace:           summary.Workspace,
+		Path:                summary.Path,
+		MessageCount:        summary.MessageCount,
+		CreatedAtMS:         summary.CreatedAtMS,
+		UpdatedAtMS:         summary.UpdatedAtMS,
+		ModifiedEpochMillis: summary.ModifiedEpochMillis,
+		ParentSessionID:     summary.ParentSessionID,
+		BranchName:          summary.BranchName,
+		Lifecycle:           summary.Lifecycle,
+		Messages:            messages,
+	}
+}
+
+func acpSessionLifecycle(sess *session.Session) acpserver.SessionLifecycle {
+	lifecycle := lifecycleForStoredSession(sess)
+	return acpserver.SessionLifecycle{
+		Kind:      lifecycle.Kind,
+		Signal:    lifecycle.Signal,
+		Saved:     lifecycle.Saved,
+		Abandoned: lifecycle.Abandoned,
+	}
 }
 
 func acpLastAssistantText(messages []anthropic.Message) string {

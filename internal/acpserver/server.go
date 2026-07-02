@@ -31,10 +31,23 @@ type SessionInfo struct {
 }
 
 type SessionSummary struct {
-	SessionID    string `json:"session_id"`
-	Workspace    string `json:"workspace,omitempty"`
-	Path         string `json:"path,omitempty"`
-	MessageCount int    `json:"message_count"`
+	SessionID           string           `json:"session_id"`
+	Workspace           string           `json:"workspace,omitempty"`
+	Path                string           `json:"path,omitempty"`
+	MessageCount        int              `json:"message_count"`
+	CreatedAtMS         int64            `json:"created_at_ms,omitempty"`
+	UpdatedAtMS         int64            `json:"updated_at_ms,omitempty"`
+	ModifiedEpochMillis int64            `json:"modified_epoch_millis,omitempty"`
+	ParentSessionID     string           `json:"parent_session_id,omitempty"`
+	BranchName          string           `json:"branch_name,omitempty"`
+	Lifecycle           SessionLifecycle `json:"lifecycle"`
+}
+
+type SessionLifecycle struct {
+	Kind      string `json:"kind"`
+	Signal    string `json:"signal"`
+	Saved     bool   `json:"saved"`
+	Abandoned bool   `json:"abandoned"`
 }
 
 type SessionList struct {
@@ -49,11 +62,17 @@ type SessionLookupRequest struct {
 }
 
 type SessionDetail struct {
-	SessionID    string `json:"session_id"`
-	Workspace    string `json:"workspace,omitempty"`
-	Path         string `json:"path,omitempty"`
-	MessageCount int    `json:"message_count"`
-	Messages     any    `json:"messages,omitempty"`
+	SessionID           string           `json:"session_id"`
+	Workspace           string           `json:"workspace,omitempty"`
+	Path                string           `json:"path,omitempty"`
+	MessageCount        int              `json:"message_count"`
+	CreatedAtMS         int64            `json:"created_at_ms,omitempty"`
+	UpdatedAtMS         int64            `json:"updated_at_ms,omitempty"`
+	ModifiedEpochMillis int64            `json:"modified_epoch_millis,omitempty"`
+	ParentSessionID     string           `json:"parent_session_id,omitempty"`
+	BranchName          string           `json:"branch_name,omitempty"`
+	Lifecycle           SessionLifecycle `json:"lifecycle"`
+	Messages            any              `json:"messages,omitempty"`
 }
 
 type SessionHistoryRequest struct {

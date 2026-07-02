@@ -3515,10 +3515,12 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 		Role:    "assistant",
 		Content: []anthropic.ContentBlock{{Type: "text", Text: "answer"}},
 	}))
+	forked, err := store.Fork(sess.ID, "acp-branch")
+	require.NoError(t, err)
 
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"session/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"session/get","params":{"session_id":"` + sess.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/get","params":{"session_id":"` + forked.ID + `"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"session/history","params":{"session_id":"` + sess.ID + `","limit":1}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"session/rename","params":{"session_id":"` + sess.ID + `","new_session_id":"renamed-acp-session"}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"session/delete","params":{"session_id":"renamed-acp-session"}}`,
@@ -3539,15 +3541,32 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.Len(t, responses, 6)
 	listResult := responses[0]["result"].(map[string]any)
 	require.Equal(t, "session_list", listResult["kind"])
-	require.EqualValues(t, 1, listResult["count"])
+	require.EqualValues(t, 2, listResult["count"])
 	sessions := listResult["sessions"].([]any)
-	require.Equal(t, sess.ID, sessions[0].(map[string]any)["session_id"])
-	require.EqualValues(t, 1, sessions[0].(map[string]any)["message_count"])
+	sessionSummaries := map[string]map[string]any{}
+	for _, raw := range sessions {
+		summary := raw.(map[string]any)
+		sessionSummaries[summary["session_id"].(string)] = summary
+		require.NotZero(t, summary["created_at_ms"])
+		require.NotZero(t, summary["updated_at_ms"])
+		require.NotZero(t, summary["modified_epoch_millis"])
+		require.Equal(t, "saved_only", summary["lifecycle"].(map[string]any)["kind"])
+	}
+	require.EqualValues(t, 1, sessionSummaries[sess.ID]["message_count"])
+	require.EqualValues(t, 1, sessionSummaries[forked.ID]["message_count"])
+	require.Equal(t, sess.ID, sessionSummaries[forked.ID]["parent_session_id"])
+	require.Equal(t, "acp-branch", sessionSummaries[forked.ID]["branch_name"])
 
 	getResult := responses[1]["result"].(map[string]any)
-	require.Equal(t, sess.ID, getResult["session_id"])
+	require.Equal(t, forked.ID, getResult["session_id"])
 	require.EqualValues(t, 1, getResult["message_count"])
 	require.Len(t, getResult["messages"].([]any), 1)
+	require.NotZero(t, getResult["created_at_ms"])
+	require.NotZero(t, getResult["updated_at_ms"])
+	require.NotZero(t, getResult["modified_epoch_millis"])
+	require.Equal(t, sess.ID, getResult["parent_session_id"])
+	require.Equal(t, "acp-branch", getResult["branch_name"])
+	require.Equal(t, "saved_only", getResult["lifecycle"].(map[string]any)["kind"])
 
 	historyResult := responses[2]["result"].(map[string]any)
 	require.Equal(t, "session_history", historyResult["kind"])
