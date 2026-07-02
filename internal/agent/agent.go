@@ -22952,6 +22952,8 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		MaxTokens:                   a.Config.MaxTokens,
 		MaxTurns:                    a.Config.MaxTurns,
 		AutoCompactMessages:         a.Config.AutoCompactMessages,
+		APIKey:                      a.Config.APIKey,
+		AuthToken:                   a.Config.AuthToken,
 		AuthConfigured:              a.Config.APIKey != "" || a.Config.AuthToken != "",
 		MCPServerCount:              len(a.Config.MCPServers),
 		UserPromptSubmitHookCount:   len(runtimeHooks.UserPromptSubmit),

@@ -14,6 +14,7 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/modelrouting"
+	"github.com/Rememorio/codog/internal/providerdiag"
 )
 
 // Options contains the runtime inputs needed to build a status snapshot.
@@ -40,6 +41,8 @@ type Options struct {
 	MaxTokens                   int
 	MaxTurns                    int
 	AutoCompactMessages         int
+	APIKey                      string
+	AuthToken                   string
 	AuthConfigured              bool
 	MCPServerCount              int
 	UserPromptSubmitHookCount   int
@@ -164,6 +167,7 @@ type ConfigStatus struct {
 	MaxTokens                   int                            `json:"max_tokens"`
 	MaxTurns                    int                            `json:"max_turns"`
 	AutoCompactMessages         int                            `json:"auto_compact_messages"`
+	Auth                        providerdiag.AuthDiagnostic    `json:"auth"`
 	AuthConfigured              bool                           `json:"auth_configured"`
 	MCPServerCount              int                            `json:"mcp_server_count"`
 	UserPromptSubmitHookCount   int                            `json:"user_prompt_submit_hook_count"`
@@ -336,6 +340,7 @@ func Build(opts Options) Snapshot {
 	git := parseGitStatus(opts.GitStatus, opts.GitError)
 	laneBoard := buildLaneBoardStatus(opts.LaneBoard, opts.LaneBoardError)
 	endpoint := buildProviderEndpointStatus(opts)
+	auth := buildProviderAuthStatus(opts)
 	if opts.GitFreshness != nil {
 		freshness := *opts.GitFreshness
 		git.Freshness = &freshness
@@ -349,6 +354,8 @@ func Build(opts Options) Snapshot {
 		status = "degraded"
 	} else if opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
 		status = "degraded"
+	} else if strings.TrimSpace(auth.Warning) != "" {
+		status = "warn"
 	} else if git.Freshness != nil {
 		if !git.Freshness.Fresh {
 			status = "warn"
@@ -387,6 +394,7 @@ func Build(opts Options) Snapshot {
 			MaxTokens:                   opts.MaxTokens,
 			MaxTurns:                    opts.MaxTurns,
 			AutoCompactMessages:         opts.AutoCompactMessages,
+			Auth:                        auth,
 			AuthConfigured:              opts.AuthConfigured,
 			MCPServerCount:              opts.MCPServerCount,
 			UserPromptSubmitHookCount:   opts.UserPromptSubmitHookCount,
@@ -479,6 +487,17 @@ func buildProviderEndpointStatus(opts Options) modelrouting.BaseURLDiagnostic {
 		source = "default"
 	}
 	return modelrouting.DiagnoseBaseURL(provider, envName, source, baseURL)
+}
+
+func buildProviderAuthStatus(opts Options) providerdiag.AuthDiagnostic {
+	return providerdiag.AnalyzeAuth(providerdiag.AuthOptions{
+		Model:                 opts.Model,
+		RuntimeProvider:       opts.RuntimeProvider,
+		RuntimeProviderSource: opts.RuntimeProviderSource,
+		BaseURL:               opts.BaseURL,
+		APIKey:                opts.APIKey,
+		AuthToken:             opts.AuthToken,
+	})
 }
 
 func activeBaseURLEnv(provider string, runtimeProviderSource string) string {

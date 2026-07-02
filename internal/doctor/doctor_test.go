@@ -131,6 +131,36 @@ func TestRunReportsProviderSpecificAuthConfigured(t *testing.T) {
 	}
 }
 
+func TestRunWarnsWhenAnthropicAPIKeyAndBearerAreBothConfigured(t *testing.T) {
+	clearProviderAuthEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-real")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "stale-bearer")
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "sk-ant-api03-real",
+		AuthToken:      "stale-bearer",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusWarn, auth.Status)
+	require.Contains(t, auth.Summary, "both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN")
+	require.Contains(t, auth.Hint, "sk-ant-* API keys")
+	require.Equal(t, "api_key_and_bearer", auth.Data["effective_auth_source"])
+	require.Equal(t, []string{"x-api-key", "authorization_bearer"}, auth.Data["headers_sent"])
+	require.Equal(t, true, auth.Data["both_anthropic_auth_env_vars_present"])
+	require.Equal(t, true, auth.Data["selected_provider_both_auth_present"])
+	require.Contains(t, strings.Join(auth.Details, "\n"), "Headers sent: x-api-key, authorization_bearer")
+}
+
 func TestRunTreatsOllamaRouteAsCredentialOptional(t *testing.T) {
 	clearProviderAuthEnv(t)
 	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")

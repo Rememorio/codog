@@ -17,6 +17,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/modelrouting"
+	"github.com/Rememorio/codog/internal/providerdiag"
 	"github.com/Rememorio/codog/internal/sandbox"
 	localstatus "github.com/Rememorio/codog/internal/status"
 )
@@ -284,107 +285,50 @@ func checkConfigLoad(opts Options) Check {
 }
 
 func checkAuth(opts Options) Check {
-	provider := selectedProvider(opts)
-	requiredKeyEnv, requiredAuthEnvs, authOptional := providerAuthRequirements(provider, opts.RuntimeProviderSource, opts.BaseURL)
-	apiKeyConfigured := strings.TrimSpace(opts.APIKey) != ""
-	authTokenConfigured := strings.TrimSpace(opts.AuthToken) != ""
-	authOK := apiKeyConfigured || authTokenConfigured || authOptional
-	authSource := "none"
-	switch {
-	case authOptional:
-		authSource = optionalAuthSource(opts.RuntimeProviderSource, opts.BaseURL)
-		if authSource == "" {
-			authSource = "provider_does_not_require_auth"
-		}
-	case apiKeyConfigured:
-		authSource = "api_key"
-	case authTokenConfigured:
-		authSource = "auth_token"
-	}
+	auth := providerdiag.AnalyzeAuth(providerdiag.AuthOptions{
+		Model:                 opts.Model,
+		RuntimeProvider:       opts.RuntimeProvider,
+		RuntimeProviderSource: opts.RuntimeProviderSource,
+		BaseURL:               opts.BaseURL,
+		APIKey:                opts.APIKey,
+		AuthToken:             opts.AuthToken,
+	})
 	details := []string{
-		"Selected provider: " + provider,
-		fmt.Sprintf("API key configured: %t", apiKeyConfigured),
-		fmt.Sprintf("Auth token configured: %t", authTokenConfigured),
+		"Selected provider: " + auth.SelectedProvider,
+		fmt.Sprintf("API key configured: %t", auth.SelectedProviderAPIKeyPresent),
+		fmt.Sprintf("Auth token configured: %t", auth.SelectedProviderAuthTokenPresent),
+		"Effective auth source: " + auth.EffectiveAuthSource,
 	}
-	if requiredKeyEnv != "" {
-		details = append(details, "Required API key env: "+requiredKeyEnv)
+	if auth.RequiredAPIKeyEnv != "" {
+		details = append(details, "Required API key env: "+auth.RequiredAPIKeyEnv)
 	}
-	if len(requiredAuthEnvs) != 0 {
-		details = append(details, "Accepted auth envs: "+strings.Join(requiredAuthEnvs, ", "))
+	if len(auth.RequiredAuthEnvs) != 0 {
+		details = append(details, "Accepted auth envs: "+strings.Join(auth.RequiredAuthEnvs, ", "))
 	}
-	if strings.TrimSpace(opts.RuntimeProviderSource) != "" {
-		details = append(details, "Provider source: "+strings.TrimSpace(opts.RuntimeProviderSource))
+	if auth.RuntimeProviderSource != "" {
+		details = append(details, "Provider source: "+auth.RuntimeProviderSource)
 	}
-	data := providerAuthData(provider, opts.RuntimeProviderSource, opts.BaseURL, requiredKeyEnv, requiredAuthEnvs, apiKeyConfigured, authTokenConfigured, authOptional, authSource)
-	if authOK {
-		summary := providerDisplayName(provider) + " credentials are configured."
-		if authOptional {
-			summary = providerDisplayName(provider) + " does not require credentials for the selected local route."
+	if len(auth.HeadersSent) != 0 {
+		details = append(details, "Headers sent: "+strings.Join(auth.HeadersSent, ", "))
+	}
+	data := auth.Data()
+	if auth.SelectedProviderAuthPresent {
+		if auth.Warning != "" {
+			return Check{Name: "Auth", Status: StatusWarn, Summary: auth.Warning + ".", Details: details, Hint: auth.Hint, Data: data}
+		}
+		summary := providerDisplayName(auth.SelectedProvider) + " credentials are configured."
+		if auth.AuthOptional {
+			summary = providerDisplayName(auth.SelectedProvider) + " does not require credentials for the selected local route."
 		}
 		return Check{Name: "Auth", Status: StatusOK, Summary: summary, Details: details, Data: data}
 	}
 	return Check{
 		Name:    "Auth",
 		Status:  StatusWarn,
-		Summary: "No " + providerDisplayName(provider) + " credentials are configured.",
+		Summary: "No " + providerDisplayName(auth.SelectedProvider) + " credentials are configured.",
 		Details: details,
-		Hint:    providerAuthHint(provider, requiredKeyEnv, requiredAuthEnvs),
+		Hint:    providerAuthHint(auth.SelectedProvider, auth.RequiredAPIKeyEnv, auth.RequiredAuthEnvs),
 		Data:    data,
-	}
-}
-
-func selectedProvider(opts Options) string {
-	if provider := strings.TrimSpace(opts.RuntimeProvider); provider != "" {
-		return provider
-	}
-	return modelrouting.ProviderForModel(opts.Model)
-}
-
-func providerAuthRequirements(provider string, source string, baseURL string) (string, []string, bool) {
-	if provider == modelrouting.ProviderOpenAI {
-		if strings.EqualFold(strings.TrimSpace(source), "OLLAMA_HOST") || modelrouting.IsLocalBaseURL(baseURL) {
-			return "", nil, true
-		}
-	}
-	switch provider {
-	case modelrouting.ProviderOpenAI:
-		return "OPENAI_API_KEY", []string{"OPENAI_API_KEY"}, false
-	case modelrouting.ProviderXAI:
-		return "XAI_API_KEY", []string{"XAI_API_KEY"}, false
-	case modelrouting.ProviderDashScope:
-		return "DASHSCOPE_API_KEY", []string{"DASHSCOPE_API_KEY"}, false
-	default:
-		return "ANTHROPIC_API_KEY", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}, false
-	}
-}
-
-func optionalAuthSource(source string, baseURL string) string {
-	source = strings.TrimSpace(source)
-	if source != "" {
-		return source
-	}
-	if modelrouting.IsLocalBaseURL(baseURL) {
-		return "local_base_url"
-	}
-	return ""
-}
-
-func providerAuthData(provider string, source string, baseURL string, requiredKeyEnv string, requiredAuthEnvs []string, apiKeyConfigured bool, authTokenConfigured bool, authOptional bool, authSource string) map[string]any {
-	return map[string]any{
-		"selected_provider":                 provider,
-		"runtime_provider_source":           strings.TrimSpace(source),
-		"required_api_key_env":              requiredKeyEnv,
-		"required_auth_envs":                append([]string(nil), requiredAuthEnvs...),
-		"selected_provider_api_key_present": apiKeyConfigured,
-		"selected_provider_auth_present":    apiKeyConfigured || authTokenConfigured || authOptional,
-		"local_base_url":                    modelrouting.IsLocalBaseURL(baseURL),
-		"anthropic_api_key_present":         strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "",
-		"anthropic_auth_token_present":      strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "",
-		"openai_api_key_present":            strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "",
-		"xai_api_key_present":               strings.TrimSpace(os.Getenv("XAI_API_KEY")) != "",
-		"dashscope_api_key_present":         strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")) != "",
-		"ollama_host_present":               strings.TrimSpace(os.Getenv("OLLAMA_HOST")) != "",
-		"effective_auth_source":             authSource,
 	}
 }
 

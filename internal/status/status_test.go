@@ -15,11 +15,18 @@ import (
 
 func TestMain(m *testing.M) {
 	for _, name := range []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
 		"ANTHROPIC_BASE_URL",
+		"OPENAI_API_KEY",
 		"OPENAI_BASE_URL",
 		"OLLAMA_HOST",
+		"XAI_API_KEY",
 		"XAI_BASE_URL",
+		"DASHSCOPE_API_KEY",
 		"DASHSCOPE_BASE_URL",
+		"CODOG_API_KEY",
+		"CODOG_AUTH_TOKEN",
 		"CODOG_BASE_URL",
 	} {
 		_ = os.Unsetenv(name)
@@ -278,6 +285,29 @@ func TestBuildMarksInvalidProviderEndpointDegraded(t *testing.T) {
 	require.Equal(t, "unsupported_scheme", snapshot.Config.ProviderEndpoint.ErrorKind)
 	require.Equal(t, "ftp", snapshot.Config.ProviderEndpoint.Scheme)
 	require.Equal(t, "example.com", snapshot.Config.ProviderEndpoint.Host)
+}
+
+func TestBuildMirrorsProviderAuthWarning(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-api03-real")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "stale-bearer")
+	snapshot := Build(Options{
+		Version:        "test-version",
+		GitStatus:      "## main",
+		Model:          "claude-test",
+		BaseURL:        modelrouting.DefaultAnthropicBaseURL,
+		APIKey:         "sk-ant-api03-real",
+		AuthToken:      "stale-bearer",
+		AuthConfigured: true,
+	})
+
+	require.Equal(t, "warn", snapshot.Status)
+	require.True(t, snapshot.Config.AuthConfigured)
+	require.Equal(t, modelrouting.ProviderAnthropic, snapshot.Config.Auth.SelectedProvider)
+	require.Equal(t, "api_key_and_bearer", snapshot.Config.Auth.EffectiveAuthSource)
+	require.Equal(t, []string{"x-api-key", "authorization_bearer"}, snapshot.Config.Auth.HeadersSent)
+	require.True(t, snapshot.Config.Auth.BothAnthropicAuthEnvVarsPresent)
+	require.True(t, snapshot.Config.Auth.SelectedProviderBothAuthPresent)
+	require.Contains(t, snapshot.Config.Auth.Warning, "both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN")
 }
 
 func TestBuildParsesInitialBranch(t *testing.T) {
