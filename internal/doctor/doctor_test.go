@@ -86,10 +86,15 @@ func TestRunReportsPermissionModeProvenance(t *testing.T) {
 		PermissionMode:       "workspace-write",
 		PermissionModeRaw:    "acceptEdits",
 		PermissionModeSource: "config",
-		ToolCount:            6,
-		SessionCount:         0,
-		SandboxDefault:       "test-sandbox",
-		SandboxOK:            true,
+		ToolPermissions: []ToolPermission{
+			{Name: "read_file", RequiredPermission: "read-only"},
+			{Name: "write_file", RequiredPermission: "workspace-write"},
+			{Name: "bash", RequiredPermission: "danger-full-access"},
+		},
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
 	})
 
 	require.NotEqual(t, StatusFail, report.Status)
@@ -102,7 +107,40 @@ func TestRunReportsPermissionModeProvenance(t *testing.T) {
 	require.Equal(t, "workspace-write", permissions.Data["mode"])
 	require.Equal(t, "acceptEdits", permissions.Data["raw"])
 	require.Equal(t, "config", permissions.Data["source"])
+	require.Equal(t, true, permissions.Data["source_explicit"])
+	require.Equal(t, []string{"read_file", "write_file"}, permissions.Data["allowed_tools"])
+	require.Equal(t, []string{"bash"}, permissions.Data["gated_tools"])
+	require.Equal(t, 2, permissions.Data["allowed_count"])
+	require.Equal(t, 1, permissions.Data["gated_count"])
+	require.Contains(t, permissions.Data["message"], "resolved from config")
 	require.Contains(t, strings.Join(permissions.Details, "\n"), "source: config")
+}
+
+func TestRunReportsPromptPermissionModeGatesTools(t *testing.T) {
+	report := Run(Options{
+		Workspace:            t.TempDir(),
+		ConfigHome:           t.TempDir(),
+		Model:                "claude-test",
+		BaseURL:              "https://api.example.test",
+		APIKey:               "secret",
+		PermissionMode:       "prompt",
+		PermissionModeRaw:    "default",
+		PermissionModeSource: "default",
+		ToolPermissions: []ToolPermission{
+			{Name: "read_file", RequiredPermission: "read-only"},
+			{Name: "write_file", RequiredPermission: "workspace-write"},
+		},
+		ToolCount:      2,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	permissions := findCheck(t, report, "Permissions")
+	require.Equal(t, StatusOK, permissions.Status)
+	require.Equal(t, false, permissions.Data["source_explicit"])
+	require.Empty(t, permissions.Data["allowed_tools"])
+	require.Equal(t, []string{"read_file", "write_file"}, permissions.Data["gated_tools"])
 }
 
 func TestRunWarnsUnknownPermissionRules(t *testing.T) {

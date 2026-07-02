@@ -25738,11 +25738,16 @@ func (a *App) Doctor(args []string) error {
 	}
 	toolCount := 0
 	toolNames := []string{}
+	toolPermissions := []doctor.ToolPermission{}
 	if a.Tools != nil {
-		definitions := a.Tools.Definitions()
-		toolCount = len(definitions)
-		for _, definition := range definitions {
-			toolNames = append(toolNames, definition.Name)
+		infos := a.Tools.Infos()
+		toolCount = len(infos)
+		for _, info := range infos {
+			toolNames = append(toolNames, info.Name)
+			toolPermissions = append(toolPermissions, doctor.ToolPermission{
+				Name:               info.Name,
+				RequiredPermission: string(info.Permission),
+			})
 		}
 	}
 	sessionCount := -1
@@ -25781,6 +25786,7 @@ func (a *App) Doctor(args []string) error {
 		ConfigLoadError:      a.ConfigLoadError,
 		ConfigLoadErrorKind:  a.ConfigLoadErrorKind,
 		ToolCount:            toolCount,
+		ToolPermissions:      toolPermissions,
 		MCPServerStatuses:    mcpStatuses,
 		MCPValidation:        mcpValidation,
 		HookValidation:       hookValidation,

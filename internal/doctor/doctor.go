@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,6 +46,7 @@ type Options struct {
 	ConfigLoadError      string
 	ConfigLoadErrorKind  string
 	ToolCount            int
+	ToolPermissions      []ToolPermission
 	MCPServerStatuses    []mcp.ServerStatus
 	MCPValidation        localstatus.MCPValidationStatus
 	HookValidation       localstatus.HookValidationStatus
@@ -79,6 +81,12 @@ type Options struct {
 	SandboxFallback      string
 	SandboxInContainer   bool
 	SandboxRuntime       *sandbox.SandboxExecutionStatus
+}
+
+// ToolPermission describes the minimum permission a registered tool needs.
+type ToolPermission struct {
+	Name               string `json:"name"`
+	RequiredPermission string `json:"required_permission"`
 }
 
 // Summary counts doctor checks by severity.
@@ -124,7 +132,7 @@ func Run(opts Options) Report {
 		checkWorkspace(opts.Workspace),
 		checkMemory(opts.MemoryFiles),
 		checkModel(opts.Model),
-		checkPermissions(opts.PermissionMode, opts.PermissionModeRaw, opts.PermissionModeSource, opts.PermissionModeEnvVar),
+		checkPermissions(opts.PermissionMode, opts.PermissionModeRaw, opts.PermissionModeSource, opts.PermissionModeEnvVar, opts.ToolPermissions),
 		checkPermissionRules(opts.PermissionRules),
 		checkTools(opts.ToolCount),
 		checkMCPValidation(opts.MCPValidation),
@@ -353,24 +361,35 @@ func checkModel(model string) Check {
 	return Check{Name: "Model", Status: StatusOK, Summary: "Model is configured.", Details: []string{model}}
 }
 
-func checkPermissions(mode, raw, source, envVar string) Check {
+func checkPermissions(mode, raw, source, envVar string, toolPermissions []ToolPermission) Check {
 	mode = strings.TrimSpace(mode)
 	raw = defaultDoctorValue(raw, mode)
 	source = defaultDoctorValue(source, "unknown")
 	envVar = strings.TrimSpace(envVar)
+	allowedTools, gatedTools := permissionToolLists(mode, toolPermissions)
+	sourceExplicit := source != "default" && source != "unknown"
+	message := permissionModeMessage(mode, source, raw, len(allowedTools), len(gatedTools))
 	details := []string{
 		"mode: " + emptyDoctorValue(mode),
 		"raw: " + emptyDoctorValue(raw),
 		"source: " + emptyDoctorValue(source),
+		fmt.Sprintf("source explicit: %t", sourceExplicit),
+		message,
 	}
 	if envVar != "" {
 		details = append(details, "env var: "+envVar)
 	}
 	data := map[string]any{
-		"mode":    mode,
-		"raw":     raw,
-		"source":  source,
-		"env_var": envVar,
+		"mode":            mode,
+		"raw":             raw,
+		"source":          source,
+		"source_explicit": sourceExplicit,
+		"env_var":         envVar,
+		"message":         message,
+		"allowed_tools":   allowedTools,
+		"gated_tools":     gatedTools,
+		"allowed_count":   len(allowedTools),
+		"gated_count":     len(gatedTools),
 	}
 	switch mode {
 	case "read-only", "workspace-write", "danger-full-access", "prompt", "allow":
@@ -380,6 +399,60 @@ func checkPermissions(mode, raw, source, envVar string) Check {
 	default:
 		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is invalid.", Details: details, Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow.", Data: data}
 	}
+}
+
+func permissionToolLists(mode string, toolPermissions []ToolPermission) ([]string, []string) {
+	allowed := []string{}
+	gated := []string{}
+	mode = strings.TrimSpace(mode)
+	for _, tool := range toolPermissions {
+		name := strings.TrimSpace(tool.Name)
+		if name == "" {
+			continue
+		}
+		required := strings.TrimSpace(tool.RequiredPermission)
+		if permissionModeAllows(mode, required) {
+			allowed = append(allowed, name)
+		} else {
+			gated = append(gated, name)
+		}
+	}
+	sort.Strings(allowed)
+	sort.Strings(gated)
+	return allowed, gated
+}
+
+func permissionModeAllows(mode, required string) bool {
+	if mode == "allow" {
+		return true
+	}
+	if mode == "prompt" || mode == "" {
+		return false
+	}
+	requiredRank := permissionModeRank(required)
+	if requiredRank == 0 {
+		return false
+	}
+	return permissionModeRank(mode) >= requiredRank
+}
+
+func permissionModeRank(mode string) int {
+	switch strings.TrimSpace(mode) {
+	case "read-only":
+		return 1
+	case "workspace-write":
+		return 2
+	case "danger-full-access":
+		return 3
+	case "allow":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func permissionModeMessage(mode, source, raw string, allowedCount, gatedCount int) string {
+	return fmt.Sprintf("Permission mode %s resolved from %s raw value %q; %d tools are allowed by mode and %d require confirmation or a rule override.", emptyDoctorValue(mode), emptyDoctorValue(source), raw, allowedCount, gatedCount)
 }
 
 func checkPermissionRules(rules localstatus.PermissionRulesStatus) Check {
