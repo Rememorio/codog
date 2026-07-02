@@ -22988,7 +22988,7 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 		}
 		return a.SessionsCommand(args)
 	case "list", "ls":
-		return a.SessionsCommand(args)
+		return a.ListSessionsWithActive(args[1:], overrides.Resume)
 	default:
 		withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
 		return a.SessionsCommand(withSession)
@@ -34394,7 +34394,10 @@ func (a *App) resolveOutputPath(path string) string {
 
 func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 	if len(args) == 0 || args[0] == "list" {
-		if err := a.ListSessions(); err != nil {
+		if len(args) > 0 {
+			args = args[1:]
+		}
+		if err := a.ListSessionsWithActive(args, sess.ID); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 		return
@@ -34516,7 +34519,10 @@ func parseSessionDeleteArgs(command string, args []string) (sessionDeleteRequest
 
 func (a *App) SessionsCommand(args []string) error {
 	if len(args) == 0 || args[0] == "list" {
-		return a.ListSessions()
+		if len(args) > 0 {
+			args = args[1:]
+		}
+		return a.ListSessionsWithActive(args, "")
 	}
 	switch args[0] {
 	case "show":
@@ -34969,15 +34975,88 @@ func renderBackfillSessions(out io.Writer, report session.BackfillReport) {
 	fmt.Fprintf(out, "  Skipped disabled  %d\n", report.SkippedDisabled)
 }
 
+type sessionListReport struct {
+	Kind           string              `json:"kind"`
+	Status         string              `json:"status"`
+	Action         string              `json:"action"`
+	Sessions       []string            `json:"sessions"`
+	SessionDetails []sessionListDetail `json:"session_details"`
+	Active         string              `json:"active,omitempty"`
+	Count          int                 `json:"count"`
+	Workspace      string              `json:"workspace,omitempty"`
+}
+
+type sessionListDetail struct {
+	ID           string                  `json:"id"`
+	Path         string                  `json:"path"`
+	MessageCount int                     `json:"message_count"`
+	Active       bool                    `json:"active,omitempty"`
+	Identity     session.SessionIdentity `json:"identity,omitempty"`
+}
+
 func (a *App) ListSessions() error {
+	return a.ListSessionsWithActive(nil, "")
+}
+
+func (a *App) ListSessionsWithActive(args []string, activeID string) error {
+	format, remaining, err := parseTemplateOutputArgs("sessions list", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) > 0 {
+		return unexpectedExtraArgsError{
+			Command: "sessions list",
+			Args:    append([]string(nil), remaining...),
+			Usage:   "codog sessions list [--json|--output-format text|json]",
+		}
+	}
 	sessions, err := a.Sessions.List()
 	if err != nil {
 		return err
 	}
-	for _, sess := range sessions {
-		fmt.Fprintf(a.Out, "%s\t%d messages\t%s\n", sess.ID, len(sess.Messages), sess.Path)
+	report := buildSessionListReport(sessions, activeID, a.Workspace)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
+	renderSessionListText(a.Out, report)
 	return nil
+}
+
+func buildSessionListReport(sessions []session.Session, activeID string, workspace string) sessionListReport {
+	activeID = strings.TrimSpace(activeID)
+	report := sessionListReport{
+		Kind:           "sessions",
+		Status:         "ok",
+		Action:         "list",
+		Sessions:       make([]string, 0, len(sessions)),
+		SessionDetails: make([]sessionListDetail, 0, len(sessions)),
+		Active:         activeID,
+		Count:          len(sessions),
+		Workspace:      strings.TrimSpace(workspace),
+	}
+	for _, sess := range sessions {
+		report.Sessions = append(report.Sessions, sess.ID)
+		report.SessionDetails = append(report.SessionDetails, sessionListDetail{
+			ID:           sess.ID,
+			Path:         sess.Path,
+			MessageCount: len(sess.Messages),
+			Active:       activeID != "" && sess.ID == activeID,
+			Identity:     sess.Identity,
+		})
+	}
+	return report
+}
+
+func renderSessionListText(out io.Writer, report sessionListReport) {
+	for _, sess := range report.SessionDetails {
+		active := ""
+		if sess.Active {
+			active = "\tactive"
+		}
+		fmt.Fprintf(out, "%s\t%d messages\t%s%s\n", sess.ID, sess.MessageCount, sess.Path, active)
+	}
 }
 
 func (a *App) ListSkills() error {
