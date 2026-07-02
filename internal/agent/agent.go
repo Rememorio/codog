@@ -20237,6 +20237,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedSandboxToggleSlash(resumeSlashArgs("sandbox-toggle", args, format), format)
 	case "/mcp":
 		return a.MCP(ctx, resumeSlashArgs("mcp", args, format))
+	case "/capabilities":
+		return a.Capabilities(resumeSlashArgs("capabilities", args, format))
+	case "/acp":
+		return a.runResumedACPSlash(ctx, resumeSlashArgs("acp", args, format), format)
 	case "/skill":
 		return a.runResumedSkillsSlash("/skill", resumeSlashArgs("skills", args, format), format)
 	case "/skills":
@@ -20295,6 +20299,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedCodeIntelSlash(ctx, args, format)
 	case "/notebook-read":
 		return a.CodeIntel(resumeSlashArgs("notebook-read", append([]string{"notebook-read"}, args...), format))
+	case "/notebook-edit":
+		return a.CodeIntel(resumeSlashArgs("notebook-edit", append([]string{"notebook-edit"}, args...), format))
 	case "/metrics":
 		return a.Metrics(resumeSlashArgs("metrics", args, format), resumed)
 	case "/insights":
@@ -20716,7 +20722,7 @@ func (a *App) runResumedCodeIntelSlash(ctx context.Context, args []string, forma
 	case "notebook", "notebook-read":
 		return a.CodeIntel(resumeSlashArgs("notebook-read", append([]string{"notebook-read"}, rest...), format))
 	case "notebook-edit":
-		return renderUnsupportedResumedSlashCommand(a.Out, "/code-intel notebook-edit", format)
+		return a.CodeIntel(resumeSlashArgs("notebook-edit", append([]string{"notebook-edit"}, rest...), format))
 	case "lsp":
 		return a.runResumedCodeIntelLSPSlash(rest, format)
 	default:
@@ -20770,6 +20776,13 @@ func (a *App) runResumedIDESlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ide", req.Action), format)
 	}
 	return a.IDE(args)
+}
+
+func (a *App) runResumedACPSlash(ctx context.Context, args []string, format string) error {
+	if acpServeRequested(args) {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/acp", "serve"), format)
+	}
+	return a.ACP(ctx, args)
 }
 
 func (a *App) runResumedBridgeKickSlash(args []string, format string) error {

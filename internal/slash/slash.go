@@ -235,6 +235,7 @@ func Specs() []Spec {
 
 var resumeSupportedSlashCommands = map[string]bool{
 	"/add-dir":            true,
+	"/acp":                true,
 	"/agents":             true,
 	"/allowed-tools":      true,
 	"/android":            true,
@@ -256,6 +257,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/bughunter":          true,
 	"/cache":              true,
 	"/caches":             true,
+	"/capabilities":       true,
 	"/changelog":          true,
 	"/checkpoint":         true,
 	"/chrome":             true,
@@ -315,6 +317,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/mock-limits":        true,
 	"/model":              true,
 	"/notifications":      true,
+	"/notebook-edit":      true,
 	"/notebook-read":      true,
 	"/oauth":              true,
 	"/onboarding":         true,

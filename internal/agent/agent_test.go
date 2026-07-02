@@ -2225,6 +2225,22 @@ func risky(value any) {
 	require.Equal(t, "mcp", resumedMCP.Kind)
 	require.Equal(t, "list", resumedMCP.Action)
 
+	out, err = runResumedJSON("/capabilities")
+	require.NoError(t, err)
+	var resumedCapabilities capabilitiesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCapabilities))
+	require.Equal(t, "capabilities", resumedCapabilities.Kind)
+	require.Equal(t, "show", resumedCapabilities.Action)
+	require.True(t, capabilityReportHasSlash(resumedCapabilities, "/capabilities"))
+
+	out, err = runResumedJSON("/acp")
+	require.NoError(t, err)
+	var resumedACP acpStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedACP))
+	require.Equal(t, "acp", resumedACP.Kind)
+	require.Equal(t, "status", resumedACP.Action)
+	require.False(t, resumedACP.Protocol.Daemon)
+
 	out, err = runResumedJSON("/skills", "list")
 	require.NoError(t, err)
 	var resumedSkills struct {
@@ -2739,9 +2755,23 @@ func risky(value any) {
 	require.Equal(t, "resume-cell", resumedNotebookRead.Result.Cells[0].CellID)
 
 	out, err = runResumedJSON("/code-intel", "notebook-edit", "analysis.ipynb", "--source", "changed")
-	require.Error(t, err)
-	require.Contains(t, out, `"kind": "unsupported_resumed_slash_command"`)
-	require.Contains(t, out, `"/code-intel notebook-edit"`)
+	require.NoError(t, err)
+	var resumedCodeIntelNotebookEdit codeIntelNotebookEditReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCodeIntelNotebookEdit))
+	require.Equal(t, "notebook_edit", resumedCodeIntelNotebookEdit.Kind)
+	require.Equal(t, "replace", resumedCodeIntelNotebookEdit.Result.Mode)
+	require.Equal(t, 0, resumedCodeIntelNotebookEdit.Result.Index)
+	require.Equal(t, 1, resumedCodeIntelNotebookEdit.Result.CellCount)
+
+	out, err = runResumedJSON("/notebook-edit", "analysis.ipynb", "--mode", "insert", "--cell-type", "markdown", "--source", "inserted note")
+	require.NoError(t, err)
+	var resumedNotebookEdit codeIntelNotebookEditReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedNotebookEdit))
+	require.Equal(t, "notebook_edit", resumedNotebookEdit.Kind)
+	require.Equal(t, "insert", resumedNotebookEdit.Result.Mode)
+	require.Equal(t, 1, resumedNotebookEdit.Result.Index)
+	require.Equal(t, "markdown", resumedNotebookEdit.Result.CellType)
+	require.Equal(t, 2, resumedNotebookEdit.Result.CellCount)
 
 	out, err = runResumedJSON("/reset", "status")
 	require.NoError(t, err)
@@ -2857,6 +2887,7 @@ func risky(value any) {
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/think-back", Args: []string{"--year", "2026"}, Report: "/think-back default-output"},
 		{Command: "/thinkback", Args: nil, Report: "/thinkback default-output"},
+		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
@@ -12792,14 +12823,23 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	original := os.Stdout
 	reader, writer, err := os.Pipe()
 	require.NoError(t, err)
+	type readResult struct {
+		Data []byte
+		Err  error
+	}
+	readDone := make(chan readResult, 1)
+	go func() {
+		data, err := io.ReadAll(reader)
+		readDone <- readResult{Data: data, Err: err}
+	}()
 	os.Stdout = writer
 	runErr := fn()
 	os.Stdout = original
 	require.NoError(t, writer.Close())
-	data, readErr := io.ReadAll(reader)
-	require.NoError(t, readErr)
+	result := <-readDone
+	require.NoError(t, result.Err)
 	require.NoError(t, reader.Close())
-	return string(data), runErr
+	return string(result.Data), runErr
 }
 
 func TestParseAgentRunArgs(t *testing.T) {
