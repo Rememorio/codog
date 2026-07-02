@@ -3304,12 +3304,14 @@ type enterpriseVerifyReport struct {
 }
 
 func (a *App) Enterprise(args []string) error {
-	if len(args) == 0 || (len(args) == 1 && args[0] == "--json") {
-		return errors.New("usage: codog enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY")
-	}
+	args = stripEnterpriseJSONFlags(args)
 	var payload any
-	switch args[0] {
-	case "audit":
+	action := "audit"
+	if len(args) > 0 {
+		action = strings.ToLower(strings.TrimSpace(args[0]))
+	}
+	switch action {
+	case "", "audit", "status", "show":
 		limit := audit.DefaultLimit
 		if len(args) > 1 {
 			parsed, err := strconv.Atoi(args[1])
@@ -3331,6 +3333,22 @@ func (a *App) Enterprise(args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func stripEnterpriseJSONFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--json" || arg == "--output-format=json" {
+			continue
+		}
+		if arg == "--output-format" && index+1 < len(args) && strings.EqualFold(args[index+1], "json") {
+			index++
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func (a *App) enterpriseAuditReport(limit int) (enterpriseAuditReport, error) {

@@ -100,6 +100,37 @@ func TestEnterpriseAuditListsEvents(t *testing.T) {
 	require.False(t, *report.Events[0].Allowed)
 }
 
+func TestEnterpriseDefaultsToAudit(t *testing.T) {
+	configHome := t.TempDir()
+	require.NoError(t, audit.NewStore(configHome).Append(audit.Event{Type: "tool", ToolName: "read_file"}))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome, PermissionMode: "read-only"},
+		Out:    &out,
+	}
+
+	for _, args := range [][]string{
+		nil,
+		{"--json"},
+		{"--output-format", "json"},
+		{"status", "3"},
+		{"show"},
+	} {
+		out.Reset()
+		require.NoError(t, app.Enterprise(args), args)
+		var report enterpriseAuditReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &report), args)
+		require.Equal(t, "enterprise", report.Kind, args)
+		require.Equal(t, "audit", report.Action, args)
+		require.Equal(t, "ok", report.Status, args)
+		require.Equal(t, "read-only", report.EffectivePermissionMode, args)
+		require.Equal(t, 1, report.Summary.EventsReturned, args)
+		if len(args) > 0 && args[0] == "status" {
+			require.Equal(t, 3, report.Summary.Limit)
+		}
+	}
+}
+
 func TestEnterpriseVerifyCommand(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
