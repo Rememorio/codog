@@ -1164,6 +1164,9 @@ func applyStoredOAuthToken(cfg *config.Config, now time.Time) {
 }
 
 func applyPluginHookConfigs(cfg *config.Config, workspace string) error {
+	if cfg.EffectiveAllowManagedHooksOnly() {
+		cfg.Hooks = config.HookConfig{}
+	}
 	files, err := plugins.LoadHookConfigs(workspace)
 	if err != nil {
 		return err
@@ -11230,6 +11233,7 @@ type hooksListReport struct {
 	Action                     string               `json:"action"`
 	Status                     string               `json:"status"`
 	Disabled                   bool                 `json:"disabled,omitempty"`
+	ManagedOnly                bool                 `json:"managed_only,omitempty"`
 	PreToolUse                 []string             `json:"pre_tool_use"`
 	PostToolUse                []string             `json:"post_tool_use"`
 	PostToolUseFailure         []string             `json:"post_tool_use_failure"`
@@ -11283,6 +11287,7 @@ type hooksHealthReport struct {
 	Action          string               `json:"action"`
 	Status          string               `json:"status"`
 	Disabled        bool                 `json:"disabled,omitempty"`
+	ManagedOnly     bool                 `json:"managed_only,omitempty"`
 	Workspace       string               `json:"workspace"`
 	Event           string               `json:"event"`
 	MatcherTarget   string               `json:"matcher_target"`
@@ -11337,6 +11342,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 			Action:                     "list",
 			Status:                     hooksStatus(a.Config),
 			Disabled:                   a.Config.EffectiveDisableAllHooks(),
+			ManagedOnly:                a.Config.EffectiveAllowManagedHooksOnly(),
 			PreToolUse:                 append([]string(nil), a.Config.Hooks.PreToolUse...),
 			PostToolUse:                append([]string(nil), a.Config.Hooks.PostToolUse...),
 			PostToolUseFailure:         append([]string(nil), a.Config.Hooks.PostToolUseFailure...),
@@ -11403,7 +11409,7 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 	case "health":
 		payload := hooksPayloadForHealth(req)
 		matched := hooks.HooksForPayload(a.Config.Hooks, payload)
-		report := buildHooksHealthReport(a.Config.Hooks, a.Workspace, payload, matched)
+		report := buildHooksHealthReport(a.Config, a.Workspace, payload, matched)
 		if a.Config.EffectiveDisableAllHooks() {
 			report.Status = "disabled"
 			report.Disabled = true
@@ -11736,11 +11742,11 @@ func hooksPayloadForHealth(req hooksRequest) hooks.Payload {
 	return payload
 }
 
-func buildHooksHealthReport(cfg config.HookConfig, workspace string, payload hooks.Payload, matched []config.HookCommand) hooksHealthReport {
+func buildHooksHealthReport(cfg config.Config, workspace string, payload hooks.Payload, matched []config.HookCommand) hooksHealthReport {
 	events := make([]hookEventHealth, 0, len(allHookEvents()))
 	configured := 0
 	for _, event := range allHookEvents() {
-		count := hookConfiguredCount(cfg, event)
+		count := hookConfiguredCount(cfg.Hooks, event)
 		configured += count
 		events = append(events, hookEventHealth{Event: event, Configured: count})
 	}
@@ -11748,6 +11754,7 @@ func buildHooksHealthReport(cfg config.HookConfig, workspace string, payload hoo
 		Kind:            "hooks",
 		Action:          "health",
 		Status:          "ok",
+		ManagedOnly:     cfg.EffectiveAllowManagedHooksOnly(),
 		Workspace:       workspace,
 		Event:           payload.Event,
 		MatcherTarget:   hookMatcherTarget(payload),
@@ -11865,6 +11872,9 @@ func renderHooksHealth(out io.Writer, report hooksHealthReport) {
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
 	if report.Disabled {
 		fmt.Fprintf(out, "  Disabled         true\n")
+	}
+	if report.ManagedOnly {
+		fmt.Fprintf(out, "  Managed only     true\n")
 	}
 	fmt.Fprintf(out, "  Workspace        %s\n", emptyAsNone(report.Workspace))
 	fmt.Fprintf(out, "  Event            %s\n", report.Event)
@@ -12301,6 +12311,9 @@ func renderHooksList(out io.Writer, report hooksListReport) {
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
 	if report.Disabled {
 		fmt.Fprintf(out, "  Disabled         true\n")
+	}
+	if report.ManagedOnly {
+		fmt.Fprintf(out, "  Managed only     true\n")
 	}
 	fmt.Fprintf(out, "  Pre tool use     %d\n", len(report.PreToolUse))
 	for _, command := range report.PreToolUseCommands {

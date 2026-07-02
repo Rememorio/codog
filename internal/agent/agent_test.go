@@ -12706,6 +12706,41 @@ func TestPluginHooksLoadedByRunCLI(t *testing.T) {
 	require.Equal(t, pluginDataSlash+"/pre", report.PreToolUseCommands[0].Command)
 }
 
+func TestAllowManagedHooksOnlyKeepsPluginHooksAndDropsLocalHooks(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":           configHome,
+		"allowManagedHooksOnly": true,
+		"hooks":                 map[string]any{"user_prompt_submit": []string{"echo local-hook"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	pluginRoot := filepath.Join(workspace, ".codog", "plugins", "demo")
+	require.NoError(t, os.MkdirAll(filepath.Join(pluginRoot, "hooks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"id":"demo","name":"demo"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginRoot, "hooks", "hooks.json"), []byte(`{"user_prompt_submit":["echo managed-hook"]}`), 0o644))
+
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "hooks", "list"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report hooksListReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.True(t, report.ManagedOnly)
+	require.NotContains(t, report.UserPromptSubmit, "echo local-hook")
+	require.Contains(t, report.UserPromptSubmit, "echo managed-hook")
+	require.Len(t, report.UserPromptSubmitCommands, 1)
+	require.Equal(t, "echo managed-hook", report.UserPromptSubmitCommands[0].Command)
+}
+
 func TestPluginMCPServersMergeIntoRuntimeConfig(t *testing.T) {
 	workspace := t.TempDir()
 	pluginRoot := filepath.Join(workspace, ".codog", "plugins", "demo")

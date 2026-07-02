@@ -102,6 +102,7 @@ var topLevelFields = []fieldSpec{
 	{"cleanupPeriodDays", FieldNumber},
 	{"respectGitignore", FieldBool},
 	{"disableAllHooks", FieldBool},
+	{"allowManagedHooksOnly", FieldBool},
 	{"allowedHttpHookUrls", FieldStringArray},
 	{"httpHookAllowedEnvVars", FieldStringArray},
 	{"statusLine", FieldObject},

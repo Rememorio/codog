@@ -160,6 +160,15 @@ func TestValidateBytesValidatesDisableAllHooksType(t *testing.T) {
 	require.Equal(t, "a boolean", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesAllowManagedHooksOnlyType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"allowManagedHooksOnly":"true"}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "allowManagedHooksOnly", result.Errors[0].Field)
+	require.Equal(t, "a boolean", result.Errors[0].Expected)
+}
+
 func TestValidateBytesValidatesHTTPHookPolicyTypes(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedHttpHookUrls":"https://hooks.example.test","httpHookAllowedEnvVars":[42]}`), "config.json")
 

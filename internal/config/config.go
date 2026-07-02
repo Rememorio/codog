@@ -502,6 +502,7 @@ type Config struct {
 	CleanupPeriodDays          *int                       `json:"cleanupPeriodDays,omitempty"`
 	RespectGitignore           *bool                      `json:"respectGitignore,omitempty"`
 	DisableAllHooks            *bool                      `json:"disableAllHooks,omitempty"`
+	AllowManagedHooksOnly      *bool                      `json:"allowManagedHooksOnly,omitempty"`
 	AllowedHTTPHookURLs        *[]string                  `json:"allowedHttpHookUrls,omitempty"`
 	HTTPHookAllowedEnvVars     *[]string                  `json:"httpHookAllowedEnvVars,omitempty"`
 	StatusLine                 *StatusLineConfig          `json:"statusLine,omitempty"`
@@ -701,6 +702,11 @@ func (c Config) EffectiveRespectGitignore() bool {
 // EffectiveDisableAllHooks reports whether hook execution is globally disabled.
 func (c Config) EffectiveDisableAllHooks() bool {
 	return c.DisableAllHooks != nil && *c.DisableAllHooks
+}
+
+// EffectiveAllowManagedHooksOnly reports whether unmanaged hooks are ignored.
+func (c Config) EffectiveAllowManagedHooksOnly() bool {
+	return c.AllowManagedHooksOnly != nil && *c.AllowManagedHooksOnly
 }
 
 func defaultConfig() (Config, error) {
@@ -1392,6 +1398,10 @@ func merge(dst *Config, src Config) {
 	if src.DisableAllHooks != nil {
 		disabled := *src.DisableAllHooks
 		dst.DisableAllHooks = &disabled
+	}
+	if src.AllowManagedHooksOnly != nil {
+		managedOnly := *src.AllowManagedHooksOnly
+		dst.AllowManagedHooksOnly = &managedOnly
 	}
 	if src.AllowedHTTPHookURLs != nil {
 		allowed := mergeStringLists(stringListPointerValue(dst.AllowedHTTPHookURLs), *src.AllowedHTTPHookURLs)
