@@ -44741,6 +44741,7 @@ type helpReport struct {
 	Kind                    string   `json:"kind"`
 	Action                  string   `json:"action"`
 	Status                  string   `json:"status"`
+	SchemaVersion           string   `json:"schema_version,omitempty"`
 	Topic                   string   `json:"topic,omitempty"`
 	Command                 string   `json:"command,omitempty"`
 	Usage                   string   `json:"usage"`
@@ -44755,6 +44756,11 @@ type helpReport struct {
 	MutatesWorkspace        *bool    `json:"mutates_workspace,omitempty"`
 	ServeStartsDaemon       *bool    `json:"serve_starts_daemon,omitempty"`
 	OutputFields            []string `json:"output_fields,omitempty"`
+	WorkspaceFields         []string `json:"workspace_fields,omitempty"`
+	ConfigFields            []string `json:"config_fields,omitempty"`
+	SessionFields           []string `json:"session_fields,omitempty"`
+	GitFields               []string `json:"git_fields,omitempty"`
+	SandboxFields           []string `json:"sandbox_fields,omitempty"`
 	StatusValues            []string `json:"status_values,omitempty"`
 	CheckNames              []string `json:"check_names,omitempty"`
 	ProtocolFields          []string `json:"protocol_fields,omitempty"`
@@ -44826,6 +44832,7 @@ type commandHelpSpec struct {
 	Command                 string
 	Usage                   string
 	Text                    string
+	SchemaVersion           string
 	Aliases                 []string
 	Formats                 []string
 	Related                 []string
@@ -44836,6 +44843,11 @@ type commandHelpSpec struct {
 	MutatesWorkspace        bool
 	ServeStartsDaemon       *bool
 	OutputFields            []string
+	WorkspaceFields         []string
+	ConfigFields            []string
+	SessionFields           []string
+	GitFields               []string
+	SandboxFields           []string
 	StatusValues            []string
 	CheckNames              []string
 	ProtocolFields          []string
@@ -45006,6 +45018,7 @@ func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) e
 			Kind:                    "help",
 			Action:                  "help",
 			Status:                  "ok",
+			SchemaVersion:           spec.SchemaVersion,
 			Topic:                   spec.Topic,
 			Command:                 spec.Command,
 			Usage:                   spec.Usage,
@@ -45020,6 +45033,11 @@ func renderCommandHelpSpec(out io.Writer, spec commandHelpSpec, format string) e
 			MutatesWorkspace:        boolPtr(spec.MutatesWorkspace),
 			ServeStartsDaemon:       spec.ServeStartsDaemon,
 			OutputFields:            append([]string(nil), spec.OutputFields...),
+			WorkspaceFields:         append([]string(nil), spec.WorkspaceFields...),
+			ConfigFields:            append([]string(nil), spec.ConfigFields...),
+			SessionFields:           append([]string(nil), spec.SessionFields...),
+			GitFields:               append([]string(nil), spec.GitFields...),
+			SandboxFields:           append([]string(nil), spec.SandboxFields...),
 			StatusValues:            append([]string(nil), spec.StatusValues...),
 			CheckNames:              append([]string(nil), spec.CheckNames...),
 			ProtocolFields:          append([]string(nil), spec.ProtocolFields...),
@@ -45090,15 +45108,27 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Text = "Unpin\n\nUsage:\n  codog unpin [message-index|last] [--session ID] [--output-format text|json]\n  /unpin [message-index|last]\n\nRemoves a message pin from a saved session. Message indexes are entered as 1-based numbers; JSON reports include both zero-based `message_index` and 1-based `display_index`.\n"
 		return spec, true
 	case "status":
-		return localCommandHelpSpec(
-			"status",
-			"status",
-			"codog status [--output-format text|json]",
-			"Status\n\nUsage:\n  codog status [--output-format text|json]\n\nShows local workspace, session, config, git, hook, MCP, and runtime status without making a provider request.\n",
-			[]string{"workspace", "session_id", "model", "permission_mode", "git", "hooks", "mcp"},
-			[]string{"ok", "warn", "error"},
-			false,
-		), true
+		return commandHelpSpec{
+			Topic:                   "status",
+			Command:                 "status",
+			Usage:                   "codog status [--output-format text|json]",
+			Text:                    "Status\n\nUsage:\n  codog status [--output-format text|json]\n\nShows local workspace, session, config, git, hook, MCP, and runtime status without making a provider request.\n",
+			SchemaVersion:           "1.0",
+			Formats:                 []string{"text", "json"},
+			Related:                 []string{"/status", "codog --resume latest /status", "codog doctor"},
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"kind", "action", "status", "format_source", "format_raw", "format_overridden", "version", "workspace", "config", "session", "plan", "tools", "allowed_tools", "git", "lane_board", "sandbox", "runtime", "mcp_validation", "hook_validation"},
+			WorkspaceFields:         []string{"path", "name", "memory_file_count", "memory_files"},
+			ConfigFields:            []string{"config_home", "model", "model_env_var", "fast_mode", "base_url", "permission_mode", "permission_mode_raw", "permission_mode_source", "permission_mode_env_var", "permission_rules", "max_tokens", "max_turns", "auto_compact_messages", "auth_configured", "mcp_server_count", "hook_counts", "enabled_skill_count"},
+			SessionFields:           []string{"active", "id", "path", "message_count", "saved_count", "created_at_ms", "updated_at_ms", "modified_epoch_millis", "parent_session_id", "branch_name", "lifecycle"},
+			GitFields:               []string{"available", "error", "branch", "clean", "staged", "unstaged", "untracked", "conflicts", "freshness", "raw"},
+			SandboxFields:           []string{"os", "default", "strategies", "available"},
+			StatusValues:            []string{"ok", "warn", "degraded", "error"},
+		}, true
 	case "statusline":
 		return localCommandHelpSpec(
 			"statusline",
