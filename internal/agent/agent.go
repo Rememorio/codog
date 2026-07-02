@@ -24014,7 +24014,7 @@ func (a *App) runResumedTeamSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "list", "get", "status", "logs", "watch":
+	case "list", "get", "status", "logs", "watch", "delete":
 		return a.Team(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/team", req.Action), format)
@@ -24381,7 +24381,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune":
+	case "", "list", "show", "info", "describe", "create", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"

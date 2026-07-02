@@ -3250,6 +3250,16 @@ func risky(value any) {
 	require.Equal(t, "agents", resumedAgentRuns.Kind)
 	require.Equal(t, "runs", resumedAgentRuns.Action)
 
+	out, err = runResumedJSON("/agents", "create", "reviewer")
+	require.NoError(t, err)
+	var resumedAgentCreate agentCreateReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgentCreate))
+	require.Equal(t, "agents", resumedAgentCreate.Kind)
+	require.Equal(t, "create", resumedAgentCreate.Action)
+	require.Equal(t, "reviewer", resumedAgentCreate.Name)
+	require.Equal(t, "created", resumedAgentCreate.Result)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "agents", "reviewer.json"))
+
 	out, err = runResumedJSON("/subagent", "list")
 	require.NoError(t, err)
 	var resumedSubagentRuns agentRunsReport
@@ -3373,6 +3383,16 @@ func risky(value any) {
 	require.NoError(t, err)
 	require.Contains(t, out, `"kind":"team_watch"`)
 	require.Contains(t, out, `"type":"error"`)
+
+	out, err = runResumedJSON("/team", "delete", teamEntry.ID)
+	require.NoError(t, err)
+	var resumedTeamDelete teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeamDelete))
+	require.Equal(t, "team", resumedTeamDelete.Kind)
+	require.Equal(t, "delete", resumedTeamDelete.Action)
+	require.Equal(t, teamEntry.ID, resumedTeamDelete.Team.ID)
+	require.Equal(t, "deleted", resumedTeamDelete.Team.Status)
+	require.Equal(t, "Team deleted", resumedTeamDelete.Message)
 
 	out, err = runResumedJSON("/metrics")
 	require.NoError(t, err)
@@ -4265,7 +4285,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
-		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
 		{Command: "/skills", Args: []string{"install", "main.go"}, Report: "/skills install"},
 		{Command: "/skills", Args: []string{"add", "main.go"}, Report: "/skills add"},
@@ -4275,7 +4294,6 @@ func risky(value any) {
 		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
-		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
