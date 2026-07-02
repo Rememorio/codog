@@ -2,6 +2,7 @@ package bashvalidation
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 )
 
@@ -64,6 +65,9 @@ func Validate(command string, mode string, workspace string) Result {
 		return Result{Severity: SeverityBlock, Intent: IntentWrite, Reason: reason}
 	}
 	if mode == "read-only" {
+		if reason := readOnlyScopeReason(command, workspace); reason != "" {
+			return Result{Severity: SeverityBlock, Intent: intent, Reason: reason}
+		}
 		if intent == IntentReadOnly && !hasWriteRedirection(command) {
 			return Result{Severity: SeverityAllow, Intent: intent}
 		}
@@ -286,6 +290,60 @@ func pathReason(command string, intent Intent, workspace string) string {
 		}
 	}
 	return ""
+}
+
+func readOnlyScopeReason(command string, workspace string) string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return ""
+	}
+	root, err := filepath.Abs(workspace)
+	if err != nil {
+		return ""
+	}
+	root = filepath.Clean(root)
+	for _, token := range shellPathTokens(command) {
+		if token == "" || strings.HasPrefix(token, "-") || strings.Contains(token, "://") {
+			continue
+		}
+		if strings.HasPrefix(token, "~/") || token == "~" || strings.HasPrefix(token, "$HOME/") || token == "$HOME" {
+			return "path resolves outside workspace scope"
+		}
+		if !looksPathLike(token) {
+			continue
+		}
+		candidate := token
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(root, candidate)
+		}
+		candidate = filepath.Clean(candidate)
+		rel, err := filepath.Rel(root, candidate)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return "path resolves outside workspace scope"
+		}
+	}
+	return ""
+}
+
+func shellPathTokens(command string) []string {
+	fields := strings.Fields(command)
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.Trim(field, " \t\r\n'\"`")
+		field = strings.TrimRight(field, ",;)")
+		field = strings.TrimLeft(field, "(")
+		if before, _, ok := strings.Cut(field, "="); ok && before != "" && !strings.Contains(before, "/") {
+			field = strings.Trim(field[len(before)+1:], " \t\r\n'\"`")
+		}
+		if field != "" {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+func looksPathLike(token string) bool {
+	return filepath.IsAbs(token) || token == ".." || strings.HasPrefix(token, "../") || strings.Contains(token, "/../") || strings.HasPrefix(token, "./")
 }
 
 func hasWriteRedirection(command string) bool {

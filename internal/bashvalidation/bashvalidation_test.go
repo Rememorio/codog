@@ -1,6 +1,7 @@
 package bashvalidation
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,32 @@ func TestValidateReadOnlyAllowsReadOnlyPipeline(t *testing.T) {
 	result := Validate("cat README.md | grep Codog | wc -l", "read-only", "")
 	require.Equal(t, SeverityAllow, result.Severity)
 	require.Equal(t, IntentReadOnly, result.Intent)
+}
+
+func TestValidateReadOnlyBlocksExplicitPathsOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	insideFile := filepath.Join(workspace, "README.md")
+	outsideFile := filepath.Join(outside, "secret.txt")
+
+	result := Validate("cat "+insideFile, "read-only", workspace)
+	require.Equal(t, SeverityAllow, result.Severity)
+	require.Equal(t, IntentReadOnly, result.Intent)
+
+	result = Validate("cat "+outsideFile, "read-only", workspace)
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Equal(t, IntentReadOnly, result.Intent)
+	require.Contains(t, result.Reason, "outside workspace")
+
+	result = Validate("cat ../secret.txt", "read-only", workspace)
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Equal(t, IntentReadOnly, result.Intent)
+	require.Contains(t, result.Reason, "outside workspace")
+
+	result = Validate("cat $HOME/.ssh/config", "read-only", workspace)
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Equal(t, IntentReadOnly, result.Intent)
+	require.Contains(t, result.Reason, "outside workspace")
 }
 
 func TestValidateFlagsDestructiveCommands(t *testing.T) {
