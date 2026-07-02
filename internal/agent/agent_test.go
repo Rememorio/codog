@@ -16353,8 +16353,14 @@ func TestPermissionHooksFromPrompter(t *testing.T) {
 			PermissionMode:  "prompt",
 			PermissionRules: config.PermissionRules{},
 			Hooks: config.HookConfig{
-				PermissionRequestCommands: []config.HookCommand{{Matcher: "bash", Command: "cat > " + shellQuote(requestPath)}},
-				PermissionDeniedCommands:  []config.HookCommand{{Matcher: "bash", Command: "cat > " + shellQuote(deniedPath)}},
+				PermissionRequestCommands: []config.HookCommand{{
+					Matcher: "bash",
+					Command: "cat > " + shellQuote(requestPath) + `; printf '%s' '{"systemMessage":"request note","hookSpecificOutput":{"additionalContext":"request context"}}'`,
+				}},
+				PermissionDeniedCommands: []config.HookCommand{{
+					Matcher: "bash",
+					Command: "cat > " + shellQuote(deniedPath) + `; printf '%s' '{"systemMessage":"denied note","hookSpecificOutput":{"additionalContext":"denied context"}}'`,
+				}},
 			},
 		},
 		Workspace: workspace,
@@ -16376,6 +16382,12 @@ func TestPermissionHooksFromPrompter(t *testing.T) {
 	require.Contains(t, string(deniedPayload), `"event":"permission_denied"`)
 	require.Contains(t, string(deniedPayload), `"reason":"user_denied"`)
 	require.Contains(t, errOut.String(), "Allow? [y/N/a=always for session]")
+	require.Contains(t, errOut.String(), "permission request hook feedback:")
+	require.Contains(t, errOut.String(), "request note")
+	require.Contains(t, errOut.String(), "request context")
+	require.Contains(t, errOut.String(), "permission denied hook feedback:")
+	require.Contains(t, errOut.String(), "denied note")
+	require.Contains(t, errOut.String(), "denied context")
 }
 
 func TestMCPCommandToolsCallAndResources(t *testing.T) {

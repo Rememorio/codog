@@ -190,6 +190,18 @@ func (r Runner) PostToolUseFailureReport(ctx context.Context, tool string, input
 }
 
 func (r Runner) PermissionRequest(ctx context.Context, tool string, input []byte) error {
+	report, err := r.PermissionRequestReport(ctx, tool, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// PermissionRequestReport runs PermissionRequest hooks and returns parsed hook feedback.
+func (r Runner) PermissionRequestReport(ctx context.Context, tool string, input []byte) (RunReport, error) {
 	payload := Payload{
 		Event:     "permission_request",
 		Tool:      tool,
@@ -197,10 +209,22 @@ func (r Runner) PermissionRequest(ctx context.Context, tool string, input []byte
 		ToolInput: json.RawMessage(input),
 		Input:     string(input),
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PermissionDenied(ctx context.Context, tool string, input []byte, reason string) error {
+	report, err := r.PermissionDeniedReport(ctx, tool, input, reason)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// PermissionDeniedReport runs PermissionDenied hooks and returns parsed hook feedback.
+func (r Runner) PermissionDeniedReport(ctx context.Context, tool string, input []byte, reason string) (RunReport, error) {
 	payload := Payload{
 		Event:     "permission_denied",
 		Tool:      tool,
@@ -209,7 +233,7 @@ func (r Runner) PermissionDenied(ctx context.Context, tool string, input []byte,
 		Input:     string(input),
 		Reason:    reason,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {

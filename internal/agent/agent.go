@@ -45139,8 +45139,13 @@ func currentEffectiveAdditionalDirs(workspace string, configDirs []string) []str
 
 func (a *App) permissionRequestHook(sessionID string) func(tools.PermissionDecision) {
 	return func(decision tools.PermissionDecision) {
-		if err := a.lifecycleHookRunner().PermissionRequest(context.Background(), decision.ToolName, []byte(decision.Input)); err != nil && a.Err != nil {
+		report, err := a.lifecycleHookRunner().PermissionRequestReport(context.Background(), decision.ToolName, []byte(decision.Input))
+		if err != nil && a.Err != nil {
 			fmt.Fprintf(a.Err, "permission request hook error: %v\n", err)
+		}
+		a.renderLifecycleHookFeedback("permission request", report)
+		if report.Denied && a.Err != nil {
+			fmt.Fprintf(a.Err, "permission request hook denied: %s\n", hookReportDeniedMessage(report))
 		}
 	}
 }
@@ -45154,10 +45159,34 @@ func (a *App) permissionDecisionHandler(sessionID string) func(tools.PermissionD
 		if decision.Allowed {
 			return
 		}
-		if err := a.lifecycleHookRunner().PermissionDenied(context.Background(), decision.ToolName, []byte(decision.Input), decision.Reason); err != nil && a.Err != nil {
+		report, err := a.lifecycleHookRunner().PermissionDeniedReport(context.Background(), decision.ToolName, []byte(decision.Input), decision.Reason)
+		if err != nil && a.Err != nil {
 			fmt.Fprintf(a.Err, "permission denied hook error: %v\n", err)
 		}
+		a.renderLifecycleHookFeedback("permission denied", report)
+		if report.Denied && a.Err != nil {
+			fmt.Fprintf(a.Err, "permission denied hook denied: %s\n", hookReportDeniedMessage(report))
+		}
 	}
+}
+
+func (a *App) renderLifecycleHookFeedback(label string, report hooks.RunReport) {
+	if a.Err == nil {
+		return
+	}
+	messages := hooks.MessagesFromReport(report)
+	if len(messages) == 0 {
+		return
+	}
+	fmt.Fprintf(a.Err, "%s hook feedback:\n%s\n", label, strings.Join(messages, "\n"))
+}
+
+func hookReportDeniedMessage(report hooks.RunReport) string {
+	messages := hooks.MessagesFromReport(report)
+	if len(messages) > 0 {
+		return strings.Join(messages, "\n")
+	}
+	return "hook denied"
 }
 
 func (a *App) validateGlobalToolRules(overrides config.FlagOverrides, format string) error {
