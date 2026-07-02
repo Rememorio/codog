@@ -1039,6 +1039,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	exitPlanSlash, ok := capabilityReportSlash(report, "/exit-plan")
 	require.True(t, ok)
 	require.True(t, exitPlanSlash.ResumeSupported)
+	exitPlanModeSlash, ok := capabilityReportSlash(report, "/exit_plan_mode")
+	require.True(t, ok)
+	require.True(t, exitPlanModeSlash.ResumeSupported)
 	setupSlash, ok := capabilityReportSlash(report, "/setup")
 	require.True(t, ok)
 	require.True(t, setupSlash.ResumeSupported)
@@ -5003,6 +5006,19 @@ func risky(value any) {
 	require.Equal(t, "plan", resumedExitPlan.Kind)
 	require.Equal(t, "exit", resumedExitPlan.Action)
 	require.False(t, resumedExitPlan.State.Active)
+
+	out, err = runResumedJSON("/ultraplan", "inspect again")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUltraPlan))
+	require.True(t, resumedUltraPlan.State.Active)
+
+	out, err = runResumedJSON("/exit_plan_mode")
+	require.NoError(t, err)
+	var resumedExitPlanMode planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedExitPlanMode))
+	require.Equal(t, "plan", resumedExitPlanMode.Kind)
+	require.Equal(t, "exit", resumedExitPlanMode.Action)
+	require.False(t, resumedExitPlanMode.State.Active)
 
 	out, err = runResumedJSON("/plan", "clear")
 	require.NoError(t, err)

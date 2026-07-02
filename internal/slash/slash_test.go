@@ -297,6 +297,11 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.True(t, commit.ResumeSupported)
 	require.True(t, SupportsResume("/commit"))
 
+	exitPlanMode, ok := Lookup("/exit_plan_mode")
+	require.True(t, ok)
+	require.True(t, exitPlanMode.ResumeSupported)
+	require.True(t, SupportsResume("/exit_plan_mode"))
+
 	names := ResumeSupportedNames()
 	require.Contains(t, names, "/acp")
 	require.Contains(t, names, "/advisor")
@@ -310,6 +315,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/compact")
 	require.Contains(t, names, "/session")
 	require.Contains(t, names, "/cron")
+	require.Contains(t, names, "/exit_plan_mode")
 	require.Contains(t, names, "/hooks")
 	require.Contains(t, names, "/models")
 	require.Contains(t, names, "/skill")
