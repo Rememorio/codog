@@ -9276,6 +9276,34 @@ func TestDesktopAndMobileHandoffCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"session_id": "handoff-session"`)
 	require.Contains(t, out.String(), `"command": "codog bridge serve"`)
 	require.Contains(t, out.String(), `"token_configured": true`)
+	var desktopReport desktopHandoffReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &desktopReport))
+	require.NotEmpty(t, desktopReport.HandoffID)
+	require.FileExists(t, desktopReport.ManifestPath)
+	require.Contains(t, desktopReport.DeepLink, "codog://handoff/desktop")
+	desktopManifestData, err := os.ReadFile(desktopReport.ManifestPath)
+	require.NoError(t, err)
+	var desktopManifest handoffManifest
+	require.NoError(t, json.Unmarshal(desktopManifestData, &desktopManifest))
+	require.Equal(t, desktopReport.HandoffID, desktopManifest.ID)
+	require.Equal(t, "desktop", desktopManifest.Surface)
+	require.Equal(t, "codog bridge serve", desktopManifest.Command)
+	out.Reset()
+
+	require.NoError(t, app.Desktop([]string{"status", "--json"}, config.FlagOverrides{}))
+	var desktopStatus handoffStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &desktopStatus))
+	require.Equal(t, "handoff_status", desktopStatus.Kind)
+	require.Equal(t, 1, desktopStatus.Count)
+	require.Equal(t, desktopReport.HandoffID, desktopStatus.Manifests[0].ID)
+	out.Reset()
+
+	require.NoError(t, app.Desktop([]string{"clear", "--json"}, config.FlagOverrides{}))
+	var desktopClear handoffStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &desktopClear))
+	require.Equal(t, 1, desktopClear.Removed)
+	_, err = os.Stat(desktopReport.ManifestPath)
+	require.True(t, os.IsNotExist(err))
 	out.Reset()
 
 	require.NoError(t, app.Mobile([]string{"ios", "--addr", ":8799", "--resume", "latest", "--json"}, config.FlagOverrides{}))
@@ -9285,6 +9313,38 @@ func TestDesktopAndMobileHandoffCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"remote_url": "http://127.0.0.1:8799"`)
 	require.Contains(t, out.String(), `"auth_token_configured": true`)
 	require.NotContains(t, out.String(), "secret-token")
+	var mobileReport mobileHandoffReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &mobileReport))
+	require.NotEmpty(t, mobileReport.HandoffID)
+	require.FileExists(t, mobileReport.ManifestPath)
+	require.NotNil(t, mobileReport.ExpiresAt)
+	require.Contains(t, mobileReport.DeepLink, "codog://handoff/mobile")
+	mobileManifestData, err := os.ReadFile(mobileReport.ManifestPath)
+	require.NoError(t, err)
+	var mobileManifest handoffManifest
+	require.NoError(t, json.Unmarshal(mobileManifestData, &mobileManifest))
+	require.Equal(t, mobileReport.HandoffID, mobileManifest.ID)
+	require.Equal(t, "mobile", mobileManifest.Surface)
+	require.Equal(t, "ios", mobileManifest.Platform)
+	require.Equal(t, "http://127.0.0.1:8799", mobileManifest.RemoteURL)
+	require.NotContains(t, string(mobileManifestData), "secret-token")
+	out.Reset()
+
+	require.NoError(t, app.Mobile([]string{"status", "ios", "--json"}, config.FlagOverrides{}))
+	var mobileStatus handoffStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &mobileStatus))
+	require.Equal(t, "handoff_status", mobileStatus.Kind)
+	require.Equal(t, "ios", mobileStatus.Platform)
+	require.Equal(t, 1, mobileStatus.Count)
+	require.Equal(t, mobileReport.HandoffID, mobileStatus.Manifests[0].ID)
+	out.Reset()
+
+	require.NoError(t, app.Mobile([]string{"clear", "ios", "--json"}, config.FlagOverrides{}))
+	var mobileClear handoffStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &mobileClear))
+	require.Equal(t, 1, mobileClear.Removed)
+	_, err = os.Stat(mobileReport.ManifestPath)
+	require.True(t, os.IsNotExist(err))
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/mobile android --addr 127.0.0.1:9999", &session.Session{ID: "active-session"}))

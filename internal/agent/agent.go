@@ -2231,20 +2231,25 @@ type desktopHandoffRequest struct {
 }
 
 type desktopHandoffReport struct {
-	Kind      string             `json:"kind"`
-	Action    string             `json:"action"`
-	Surface   string             `json:"surface"`
-	Workspace string             `json:"workspace"`
-	SessionID string             `json:"session_id,omitempty"`
-	Supported bool               `json:"supported"`
-	Platform  string             `json:"platform"`
-	Bridge    ideBridgeReport    `json:"bridge"`
-	StatePath string             `json:"state_path,omitempty"`
-	State     bridge.EditorState `json:"state"`
-	Messages  []string           `json:"messages,omitempty"`
+	Kind         string             `json:"kind"`
+	Action       string             `json:"action"`
+	Surface      string             `json:"surface"`
+	Workspace    string             `json:"workspace"`
+	SessionID    string             `json:"session_id,omitempty"`
+	Supported    bool               `json:"supported"`
+	Platform     string             `json:"platform"`
+	Bridge       ideBridgeReport    `json:"bridge"`
+	StatePath    string             `json:"state_path,omitempty"`
+	State        bridge.EditorState `json:"state"`
+	HandoffID    string             `json:"handoff_id,omitempty"`
+	ManifestPath string             `json:"manifest_path,omitempty"`
+	CreatedAt    time.Time          `json:"created_at,omitempty"`
+	DeepLink     string             `json:"deep_link,omitempty"`
+	Messages     []string           `json:"messages,omitempty"`
 }
 
 type mobileHandoffRequest struct {
+	Action    string
 	Platform  string
 	Format    string
 	Addr      string
@@ -2252,25 +2257,90 @@ type mobileHandoffRequest struct {
 }
 
 type mobileHandoffReport struct {
-	Kind                string   `json:"kind"`
-	Action              string   `json:"action"`
-	Surface             string   `json:"surface"`
-	Workspace           string   `json:"workspace"`
-	SessionID           string   `json:"session_id,omitempty"`
-	Platform            string   `json:"platform"`
-	RemoteCommand       string   `json:"remote_command"`
-	RemoteAddr          string   `json:"remote_addr"`
-	RemoteURL           string   `json:"remote_url"`
-	RemoteEnabled       bool     `json:"remote_enabled"`
-	AuthTokenConfigured bool     `json:"auth_token_configured"`
-	LeaseSeconds        int      `json:"lease_seconds"`
-	Messages            []string `json:"messages,omitempty"`
+	Kind                string     `json:"kind"`
+	Action              string     `json:"action"`
+	Surface             string     `json:"surface"`
+	Workspace           string     `json:"workspace"`
+	SessionID           string     `json:"session_id,omitempty"`
+	Platform            string     `json:"platform"`
+	RemoteCommand       string     `json:"remote_command"`
+	RemoteAddr          string     `json:"remote_addr"`
+	RemoteURL           string     `json:"remote_url"`
+	RemoteEnabled       bool       `json:"remote_enabled"`
+	AuthTokenConfigured bool       `json:"auth_token_configured"`
+	LeaseSeconds        int        `json:"lease_seconds"`
+	HandoffID           string     `json:"handoff_id,omitempty"`
+	ManifestPath        string     `json:"manifest_path,omitempty"`
+	CreatedAt           time.Time  `json:"created_at,omitempty"`
+	ExpiresAt           *time.Time `json:"expires_at,omitempty"`
+	DeepLink            string     `json:"deep_link,omitempty"`
+	Messages            []string   `json:"messages,omitempty"`
+}
+
+type handoffManifest struct {
+	Kind                string           `json:"kind"`
+	Version             int              `json:"version"`
+	ID                  string           `json:"id"`
+	Surface             string           `json:"surface"`
+	Platform            string           `json:"platform,omitempty"`
+	Workspace           string           `json:"workspace,omitempty"`
+	SessionID           string           `json:"session_id,omitempty"`
+	Command             string           `json:"command,omitempty"`
+	RemoteAddr          string           `json:"remote_addr,omitempty"`
+	RemoteURL           string           `json:"remote_url,omitempty"`
+	RemoteEnabled       bool             `json:"remote_enabled,omitempty"`
+	AuthTokenConfigured bool             `json:"auth_token_configured,omitempty"`
+	LeaseSeconds        int              `json:"lease_seconds,omitempty"`
+	Bridge              *ideBridgeReport `json:"bridge,omitempty"`
+	StatePath           string           `json:"state_path,omitempty"`
+	Supported           bool             `json:"supported,omitempty"`
+	CreatedAt           time.Time        `json:"created_at"`
+	ExpiresAt           *time.Time       `json:"expires_at,omitempty"`
+	DeepLink            string           `json:"deep_link,omitempty"`
+	Path                string           `json:"path,omitempty"`
+	Messages            []string         `json:"messages,omitempty"`
+}
+
+type handoffStatusReport struct {
+	Kind      string            `json:"kind"`
+	Action    string            `json:"action"`
+	Status    string            `json:"status"`
+	Surface   string            `json:"surface"`
+	Platform  string            `json:"platform,omitempty"`
+	Workspace string            `json:"workspace,omitempty"`
+	Count     int               `json:"count"`
+	Removed   int               `json:"removed,omitempty"`
+	Manifests []handoffManifest `json:"manifests,omitempty"`
+	Message   string            `json:"message,omitempty"`
 }
 
 func (a *App) Desktop(args []string, overrides config.FlagOverrides) error {
 	req, err := parseDesktopHandoffArgs(args, overrides)
 	if err != nil {
 		return err
+	}
+	if req.Action == "status" {
+		report, err := buildHandoffStatusReport(a.Config.ConfigHome, "desktop", "", a.Workspace)
+		if err != nil {
+			return err
+		}
+		return renderHandoffStatusReport(a.Out, report, req.Format)
+	}
+	if req.Action == "clear" {
+		removed, err := clearHandoffManifests(a.Config.ConfigHome, "desktop", "")
+		if err != nil {
+			return err
+		}
+		report := handoffStatusReport{
+			Kind:      "handoff_status",
+			Action:    "clear",
+			Status:    "ok",
+			Surface:   "desktop",
+			Workspace: a.Workspace,
+			Removed:   removed,
+			Message:   fmt.Sprintf("Removed %d desktop handoff manifest(s).", removed),
+		}
+		return renderHandoffStatusReport(a.Out, report, req.Format)
 	}
 	sessionID, err := resolveHandoffSessionID(a.Sessions, req.SessionID)
 	if err != nil {
@@ -2291,6 +2361,7 @@ func (a *App) Desktop(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 	report := desktopHandoffReport{
 		Kind:      "desktop_handoff",
 		Action:    req.Action,
@@ -2306,11 +2377,38 @@ func (a *App) Desktop(args []string, overrides config.FlagOverrides) error {
 		},
 		StatePath: statePath,
 		State:     state,
+		CreatedAt: now,
 		Messages: []string{
 			"Start the bridge command, then connect a trusted desktop or editor client to the stdio bridge.",
 			"Use `codog ide status` to inspect the currently trusted client.",
 		},
 	}
+	report.DeepLink = buildHandoffDeepLink(report.Surface, sessionID, "", report.Bridge.Socket, "")
+	manifest := handoffManifest{
+		Kind:      "handoff_manifest",
+		Version:   1,
+		Surface:   report.Surface,
+		Platform:  report.Platform,
+		Workspace: report.Workspace,
+		SessionID: report.SessionID,
+		Command:   report.Bridge.Command,
+		Bridge: &ideBridgeReport{
+			Command:         report.Bridge.Command,
+			Socket:          report.Bridge.Socket,
+			TokenConfigured: report.Bridge.TokenConfigured,
+		},
+		StatePath: report.StatePath,
+		Supported: report.Supported,
+		CreatedAt: now,
+		DeepLink:  report.DeepLink,
+		Messages:  append([]string(nil), report.Messages...),
+	}
+	manifest, err = saveHandoffManifest(a.Config.ConfigHome, manifest)
+	if err != nil {
+		return err
+	}
+	report.HandoffID = manifest.ID
+	report.ManifestPath = manifest.Path
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -2360,8 +2458,12 @@ func parseDesktopHandoffArgs(args []string, overrides config.FlagOverrides) (des
 				return req, fmt.Errorf("unexpected desktop argument %q", arg)
 			}
 			switch strings.ToLower(arg) {
-			case "handoff", "show", "status":
+			case "handoff", "show":
 				req.Action = "handoff"
+			case "status", "list":
+				req.Action = "status"
+			case "clear", "remove":
+				req.Action = "clear"
 			default:
 				return req, fmt.Errorf("unknown desktop action %q", arg)
 			}
@@ -2382,9 +2484,18 @@ func renderDesktopHandoffReport(out io.Writer, report desktopHandoffReport) {
 	if report.SessionID != "" {
 		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
 	}
+	if report.HandoffID != "" {
+		fmt.Fprintf(out, "  Handoff ID       %s\n", report.HandoffID)
+	}
+	if report.ManifestPath != "" {
+		fmt.Fprintf(out, "  Manifest         %s\n", report.ManifestPath)
+	}
 	fmt.Fprintf(out, "  Bridge command   %s\n", report.Bridge.Command)
 	fmt.Fprintf(out, "  Socket           %s\n", emptyAsNone(report.Bridge.Socket))
 	fmt.Fprintf(out, "  Token configured %t\n", report.Bridge.TokenConfigured)
+	if report.DeepLink != "" {
+		fmt.Fprintf(out, "  Deep link        %s\n", report.DeepLink)
+	}
 	if report.State.Identity == nil {
 		fmt.Fprintln(out, "  Trusted client   none")
 	} else {
@@ -2404,6 +2515,30 @@ func (a *App) Mobile(args []string, overrides config.FlagOverrides) error {
 	if err != nil {
 		return err
 	}
+	if req.Action == "status" {
+		report, err := buildHandoffStatusReport(a.Config.ConfigHome, "mobile", req.Platform, a.Workspace)
+		if err != nil {
+			return err
+		}
+		return renderHandoffStatusReport(a.Out, report, req.Format)
+	}
+	if req.Action == "clear" {
+		removed, err := clearHandoffManifests(a.Config.ConfigHome, "mobile", req.Platform)
+		if err != nil {
+			return err
+		}
+		report := handoffStatusReport{
+			Kind:      "handoff_status",
+			Action:    "clear",
+			Status:    "ok",
+			Surface:   "mobile",
+			Platform:  req.Platform,
+			Workspace: a.Workspace,
+			Removed:   removed,
+			Message:   fmt.Sprintf("Removed %d mobile handoff manifest(s).", removed),
+		}
+		return renderHandoffStatusReport(a.Out, report, req.Format)
+	}
 	sessionID, err := resolveHandoffSessionID(a.Sessions, req.SessionID)
 	if err != nil {
 		return err
@@ -2411,6 +2546,12 @@ func (a *App) Mobile(args []string, overrides config.FlagOverrides) error {
 	addr, remoteURL, err := normalizeRemoteHandoffAddr(req.Addr)
 	if err != nil {
 		return err
+	}
+	now := time.Now().UTC()
+	var expiresAt *time.Time
+	if a.Config.Future.RemoteLeaseSeconds > 0 {
+		next := now.Add(time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second)
+		expiresAt = &next
 	}
 	report := mobileHandoffReport{
 		Kind:                "mobile_handoff",
@@ -2425,11 +2566,38 @@ func (a *App) Mobile(args []string, overrides config.FlagOverrides) error {
 		RemoteEnabled:       a.Config.Future.RemoteEnabled,
 		AuthTokenConfigured: strings.TrimSpace(a.Config.Future.RemoteAuthToken) != "",
 		LeaseSeconds:        a.Config.Future.RemoteLeaseSeconds,
+		CreatedAt:           now,
+		ExpiresAt:           expiresAt,
 		Messages: []string{
 			"Start the remote command, then connect a mobile or remote client to the local control API.",
 			"Use `codog remote-env set --auth-token TOKEN` when the endpoint is reachable outside localhost.",
 		},
 	}
+	report.DeepLink = buildHandoffDeepLink(report.Surface, sessionID, remoteURL, "", report.Platform)
+	manifest := handoffManifest{
+		Kind:                "handoff_manifest",
+		Version:             1,
+		Surface:             report.Surface,
+		Platform:            report.Platform,
+		Workspace:           report.Workspace,
+		SessionID:           report.SessionID,
+		Command:             report.RemoteCommand,
+		RemoteAddr:          report.RemoteAddr,
+		RemoteURL:           report.RemoteURL,
+		RemoteEnabled:       report.RemoteEnabled,
+		AuthTokenConfigured: report.AuthTokenConfigured,
+		LeaseSeconds:        report.LeaseSeconds,
+		CreatedAt:           now,
+		ExpiresAt:           expiresAt,
+		DeepLink:            report.DeepLink,
+		Messages:            append([]string(nil), report.Messages...),
+	}
+	manifest, err = saveHandoffManifest(a.Config.ConfigHome, manifest)
+	if err != nil {
+		return err
+	}
+	report.HandoffID = manifest.ID
+	report.ManifestPath = manifest.Path
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -2440,9 +2608,10 @@ func (a *App) Mobile(args []string, overrides config.FlagOverrides) error {
 }
 
 func parseMobileHandoffArgs(args []string, overrides config.FlagOverrides) (mobileHandoffRequest, error) {
-	req := mobileHandoffRequest{Platform: "all", Format: "text", Addr: "127.0.0.1:8791"}
+	req := mobileHandoffRequest{Action: "handoff", Platform: "all", Format: "text", Addr: "127.0.0.1:8791"}
 	req.SessionID = firstNonEmpty(overrides.Resume, overrides.SessionID)
 	platformSet := false
+	actionSet := false
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -2483,20 +2652,35 @@ func parseMobileHandoffArgs(args []string, overrides config.FlagOverrides) (mobi
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown mobile flag %q", arg)
 		default:
-			if platformSet {
+			normalized := strings.ToLower(arg)
+			switch normalized {
+			case "handoff", "show":
+				if actionSet {
+					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+				}
+				req.Action = "handoff"
+				actionSet = true
+			case "status", "list":
+				if actionSet {
+					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+				}
+				req.Action = "status"
+				actionSet = true
+			case "clear", "remove":
+				if actionSet {
+					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+				}
+				req.Action = "clear"
+				actionSet = true
+			case "all", "ios", "android":
+				if platformSet {
+					return req, fmt.Errorf("unexpected mobile argument %q", arg)
+				}
+				req.Platform = normalized
+				platformSet = true
+			default:
 				return req, fmt.Errorf("unexpected mobile argument %q", arg)
 			}
-			switch strings.ToLower(arg) {
-			case "show", "status", "all":
-				req.Platform = "all"
-			case "ios":
-				req.Platform = "ios"
-			case "android":
-				req.Platform = "android"
-			default:
-				return req, fmt.Errorf("unknown mobile platform %q", arg)
-			}
-			platformSet = true
 		}
 	}
 	if err := validateTextOrJSON(req.Format, "mobile"); err != nil {
@@ -2512,12 +2696,24 @@ func renderMobileHandoffReport(out io.Writer, report mobileHandoffReport) {
 	if report.SessionID != "" {
 		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
 	}
+	if report.HandoffID != "" {
+		fmt.Fprintf(out, "  Handoff ID       %s\n", report.HandoffID)
+	}
+	if report.ManifestPath != "" {
+		fmt.Fprintf(out, "  Manifest         %s\n", report.ManifestPath)
+	}
 	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
 	fmt.Fprintf(out, "  Remote URL       %s\n", report.RemoteURL)
 	fmt.Fprintf(out, "  Remote enabled   %t\n", report.RemoteEnabled)
 	fmt.Fprintf(out, "  Token configured %t\n", report.AuthTokenConfigured)
 	if report.LeaseSeconds > 0 {
 		fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
+	}
+	if report.ExpiresAt != nil {
+		fmt.Fprintf(out, "  Expires at       %s\n", report.ExpiresAt.Format(time.RFC3339))
+	}
+	if report.DeepLink != "" {
+		fmt.Fprintf(out, "  Deep link        %s\n", report.DeepLink)
 	}
 	for _, message := range report.Messages {
 		fmt.Fprintf(out, "  Note             %s\n", message)
@@ -2573,6 +2769,228 @@ func normalizeRemoteHandoffAddr(value string) (string, string, error) {
 		displayHost = "127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
 	}
 	return addr, "http://" + displayHost, nil
+}
+
+func saveHandoffManifest(configHome string, manifest handoffManifest) (handoffManifest, error) {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" {
+		return handoffManifest{}, errors.New("config home is required for handoff manifests")
+	}
+	if manifest.CreatedAt.IsZero() {
+		manifest.CreatedAt = time.Now().UTC()
+	}
+	manifest.ID = firstNonEmpty(manifest.ID, newHandoffID(manifest.Surface, manifest.SessionID, manifest.CreatedAt))
+	dir := handoffManifestRoot(configHome)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return handoffManifest{}, err
+	}
+	manifest.Path = filepath.Join(dir, manifest.ID+".json")
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return handoffManifest{}, err
+	}
+	if err := os.WriteFile(manifest.Path, append(data, '\n'), 0o644); err != nil {
+		return handoffManifest{}, err
+	}
+	return manifest, nil
+}
+
+func buildHandoffStatusReport(configHome, surface, platform, workspace string) (handoffStatusReport, error) {
+	manifests, err := loadHandoffManifests(configHome, surface, platform)
+	if err != nil {
+		return handoffStatusReport{}, err
+	}
+	return handoffStatusReport{
+		Kind:      "handoff_status",
+		Action:    "status",
+		Status:    "ok",
+		Surface:   surface,
+		Platform:  normalizedHandoffPlatform(platform),
+		Workspace: workspace,
+		Count:     len(manifests),
+		Manifests: manifests,
+	}, nil
+}
+
+func loadHandoffManifests(configHome, surface, platform string) ([]handoffManifest, error) {
+	configHome = strings.TrimSpace(configHome)
+	if configHome == "" {
+		return nil, errors.New("config home is required for handoff manifests")
+	}
+	dir := handoffManifestRoot(configHome)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []handoffManifest{}, nil
+		}
+		return nil, err
+	}
+	manifests := []handoffManifest{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var manifest handoffManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return nil, err
+		}
+		manifest.Path = path
+		if handoffManifestMatches(manifest, surface, platform) {
+			manifests = append(manifests, manifest)
+		}
+	}
+	sort.Slice(manifests, func(i, j int) bool {
+		return manifests[i].CreatedAt.After(manifests[j].CreatedAt)
+	})
+	return manifests, nil
+}
+
+func clearHandoffManifests(configHome, surface, platform string) (int, error) {
+	manifests, err := loadHandoffManifests(configHome, surface, platform)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, manifest := range manifests {
+		if manifest.Path == "" {
+			continue
+		}
+		if err := os.Remove(manifest.Path); err != nil && !os.IsNotExist(err) {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+func renderHandoffStatusReport(out io.Writer, report handoffStatusReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Handoff Manifests")
+	fmt.Fprintf(out, "  Surface          %s\n", report.Surface)
+	if report.Platform != "" && report.Platform != "all" {
+		fmt.Fprintf(out, "  Platform         %s\n", report.Platform)
+	}
+	if report.Workspace != "" {
+		fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	}
+	if report.Action == "clear" {
+		fmt.Fprintf(out, "  Removed          %d\n", report.Removed)
+		if report.Message != "" {
+			fmt.Fprintf(out, "  Message          %s\n", report.Message)
+		}
+		return nil
+	}
+	fmt.Fprintf(out, "  Count            %d\n", report.Count)
+	for _, manifest := range report.Manifests {
+		fmt.Fprintf(out, "  - %s\n", manifest.ID)
+		if manifest.SessionID != "" {
+			fmt.Fprintf(out, "    Session        %s\n", manifest.SessionID)
+		}
+		if manifest.Platform != "" {
+			fmt.Fprintf(out, "    Platform       %s\n", manifest.Platform)
+		}
+		if manifest.Command != "" {
+			fmt.Fprintf(out, "    Command        %s\n", manifest.Command)
+		}
+		if manifest.RemoteURL != "" {
+			fmt.Fprintf(out, "    Remote URL     %s\n", manifest.RemoteURL)
+		}
+		if manifest.DeepLink != "" {
+			fmt.Fprintf(out, "    Deep link      %s\n", manifest.DeepLink)
+		}
+		if manifest.ExpiresAt != nil {
+			fmt.Fprintf(out, "    Expires at     %s\n", manifest.ExpiresAt.Format(time.RFC3339))
+		}
+		if manifest.Path != "" {
+			fmt.Fprintf(out, "    Manifest       %s\n", manifest.Path)
+		}
+	}
+	return nil
+}
+
+func handoffManifestRoot(configHome string) string {
+	return filepath.Join(configHome, "handoffs")
+}
+
+func handoffManifestMatches(manifest handoffManifest, surface, platform string) bool {
+	if strings.TrimSpace(surface) != "" && manifest.Surface != surface {
+		return false
+	}
+	platform = normalizedHandoffPlatform(platform)
+	if platform == "" || platform == "all" {
+		return true
+	}
+	return manifest.Platform == platform
+}
+
+func normalizedHandoffPlatform(platform string) string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform == "" {
+		return ""
+	}
+	return platform
+}
+
+func newHandoffID(surface, sessionID string, now time.Time) string {
+	entropy := make([]byte, 4)
+	if _, err := rand.Read(entropy); err != nil {
+		copy(entropy, []byte(now.Format("15040500")))
+	}
+	parts := []string{"handoff", handoffIDComponent(surface)}
+	if session := handoffIDComponent(sessionID); session != "" {
+		parts = append(parts, session)
+	}
+	parts = append(parts, now.Format("20060102T150405.000000000Z"), hex.EncodeToString(entropy))
+	return strings.Join(parts, "-")
+}
+
+func handoffIDComponent(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastDash := false
+	for _, ch := range value {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= '0' && ch <= '9':
+			builder.WriteRune(ch)
+			lastDash = false
+		case ch == '-' || ch == '_' || ch == '.':
+			builder.WriteRune(ch)
+			lastDash = false
+		default:
+			if builder.Len() > 0 && !lastDash {
+				builder.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(builder.String(), "-_.")
+}
+
+func buildHandoffDeepLink(surface, sessionID, remoteURL, socket, platform string) string {
+	values := url.Values{}
+	if sessionID != "" {
+		values.Set("session", sessionID)
+	}
+	if remoteURL != "" {
+		values.Set("url", remoteURL)
+	}
+	if socket != "" {
+		values.Set("socket", socket)
+	}
+	if platform != "" && platform != "all" {
+		values.Set("platform", platform)
+	}
+	link := url.URL{Scheme: "codog", Host: "handoff", Path: "/" + surface, RawQuery: values.Encode()}
+	return link.String()
 }
 
 func firstNonEmpty(values ...string) string {
