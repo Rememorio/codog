@@ -7826,6 +7826,11 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"name": "Auth"`)
 	var doctorReport doctor.Report
 	require.NoError(t, json.Unmarshal(out.Bytes(), &doctorReport))
+	require.Equal(t, "1.0", doctorReport.SchemaVersion)
+	require.Contains(t, doctorReport.OutputFields, "check_names")
+	require.Contains(t, doctorReport.CheckNames, "auth")
+	require.Contains(t, doctorReport.CheckNames, "memory")
+	require.Equal(t, []string{doctor.StatusOK, doctor.StatusWarn, doctor.StatusFail}, doctorReport.StatusValues)
 	var sandboxCheck doctor.Check
 	for _, check := range doctorReport.Checks {
 		if check.Name == "Sandbox" {

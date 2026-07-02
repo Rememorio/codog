@@ -29,9 +29,30 @@ func TestRunWarnsWhenAuthMissing(t *testing.T) {
 
 	require.Equal(t, StatusWarn, report.Status)
 	require.False(t, report.HasFailures)
+	require.Equal(t, "1.0", report.SchemaVersion)
+	require.Contains(t, report.OutputFields, "checks")
+	require.Contains(t, report.OutputFields, "check_names")
+	require.Equal(t, []string{StatusOK, StatusWarn, StatusFail}, report.StatusValues)
+	require.Contains(t, report.CheckNames, "auth")
+	require.Contains(t, report.CheckNames, "mcp validation")
+	require.Contains(t, report.CheckNames, "hook validation")
 	auth := findCheck(t, report, "Auth")
 	require.Equal(t, StatusWarn, auth.Status)
 	require.Contains(t, auth.Summary, "No Anthropic credentials")
+}
+
+func TestNewReportSurfacesStableMetadata(t *testing.T) {
+	report := NewReport([]Check{
+		{Name: "Auth", Status: StatusOK, Summary: "ready"},
+		{Name: "MCP validation", Status: StatusWarn, Summary: "invalid"},
+		{Name: "Auth", Status: StatusOK, Summary: "duplicate"},
+	})
+
+	require.Equal(t, "1.0", report.SchemaVersion)
+	require.Equal(t, []string{"auth", "mcp validation"}, report.CheckNames)
+	require.Contains(t, report.OutputFields, "schema_version")
+	require.Contains(t, report.OutputFields, "status_values")
+	require.Equal(t, []string{StatusOK, StatusWarn, StatusFail}, report.StatusValues)
 }
 
 func TestRunFailsInvalidPermissionMode(t *testing.T) {

@@ -97,12 +97,16 @@ type Check struct {
 
 // Report is the stable JSON payload returned by `codog doctor --json`.
 type Report struct {
-	Kind        string  `json:"kind"`
-	Action      string  `json:"action"`
-	Status      string  `json:"status"`
-	HasFailures bool    `json:"has_failures"`
-	Summary     Summary `json:"summary"`
-	Checks      []Check `json:"checks"`
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	SchemaVersion string   `json:"schema_version"`
+	HasFailures   bool     `json:"has_failures"`
+	Summary       Summary  `json:"summary"`
+	Checks        []Check  `json:"checks"`
+	OutputFields  []string `json:"output_fields"`
+	CheckNames    []string `json:"check_names"`
+	StatusValues  []string `json:"status_values"`
 }
 
 // Run evaluates local Codog configuration, workspace, hooks, MCP, sandbox, and
@@ -151,13 +155,49 @@ func NewReport(checks []Check) Report {
 		status = StatusWarn
 	}
 	return Report{
-		Kind:        "doctor",
-		Action:      "doctor",
-		Status:      status,
-		HasFailures: summary.Failures > 0,
-		Summary:     summary,
-		Checks:      checks,
+		Kind:          "doctor",
+		Action:        "doctor",
+		Status:        status,
+		SchemaVersion: "1.0",
+		HasFailures:   summary.Failures > 0,
+		Summary:       summary,
+		Checks:        checks,
+		OutputFields:  doctorOutputFields(),
+		CheckNames:    doctorCheckNames(checks),
+		StatusValues:  []string{StatusOK, StatusWarn, StatusFail},
 	}
+}
+
+func doctorOutputFields() []string {
+	return []string{
+		"kind",
+		"action",
+		"status",
+		"schema_version",
+		"has_failures",
+		"summary",
+		"checks",
+		"output_fields",
+		"check_names",
+		"status_values",
+	}
+}
+
+func doctorCheckNames(checks []Check) []string {
+	names := make([]string, 0, len(checks))
+	seen := map[string]struct{}{}
+	for _, check := range checks {
+		name := strings.ToLower(strings.TrimSpace(check.Name))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
 }
 
 // RenderText writes a human-readable doctor report.
