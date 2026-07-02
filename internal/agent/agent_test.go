@@ -3991,6 +3991,89 @@ func TestLocalExtraArgumentErrorContracts(t *testing.T) {
 	}
 }
 
+func TestLocalArgumentErrorJSONContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := []struct {
+		name      string
+		args      []string
+		errorKind string
+		command   string
+		option    string
+		extra     []string
+		hintPart  string
+	}{
+		{
+			name:      "diff unknown option",
+			args:      []string{"--config", configPath, "--output-format", "json", "diff", "--bogus"},
+			errorKind: "unknown_option",
+			command:   "diff",
+			option:    "--bogus",
+			hintPart:  "codog diff",
+		},
+		{
+			name:      "diff trailing json",
+			args:      []string{"--config", configPath, "diff", "--bogus", "--output-format", "json"},
+			errorKind: "unknown_option",
+			command:   "diff",
+			option:    "--bogus",
+			hintPart:  "codog diff",
+		},
+		{
+			name:      "export missing output",
+			args:      []string{"--config", configPath, "--output-format", "json", "export", "--output"},
+			errorKind: "missing_flag_value",
+			command:   "export",
+			option:    "--output",
+			hintPart:  "codog export",
+		},
+		{
+			name:      "export extra positional",
+			args:      []string{"--config", configPath, "--output-format", "json", "export", "first.md", "second.md"},
+			errorKind: "unexpected_extra_args",
+			command:   "export",
+			extra:     []string{"second.md"},
+			hintPart:  "codog export",
+		},
+		{
+			name:      "system-prompt unknown option",
+			args:      []string{"--config", configPath, "--output-format", "json", "system-prompt", "bogus"},
+			errorKind: "unknown_option",
+			command:   "system-prompt",
+			option:    "bogus",
+			hintPart:  "system-prompt",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tc.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, tc.errorKind, report.ErrorKind)
+			require.Equal(t, tc.command, report.Command)
+			if tc.option != "" {
+				require.Equal(t, tc.option, report.Option)
+			}
+			if tc.extra != nil {
+				require.Equal(t, tc.extra, report.Args)
+			}
+			require.Contains(t, report.Hint, tc.hintPart)
+			require.NotContains(t, out, "config_load_failed")
+			require.NotContains(t, out, "missing_credentials")
+		})
+	}
+}
+
 func TestLocalListFlagOptionContracts(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

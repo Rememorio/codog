@@ -537,15 +537,24 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "exit-plan":
 		return app.Plan(append([]string{"exit"}, rest...))
 	case "export":
-		return app.ExportWithOverrides(rest, overrides)
+		if err := app.ExportWithOverrides(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "share":
 		return app.Share(rest, overrides)
 	case "copy":
 		return app.Copy(ctx, rest, overrides)
 	case "git":
-		return app.Git(rest)
+		if err := app.Git(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "diff", "log", "blame", "commit":
-		return app.Git(append([]string{command}, rest...))
+		if err := app.Git(append([]string{command}, rest...)); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "branch":
 		return app.Branch(rest)
 	case "branch-lock", "branchlock":
@@ -755,7 +764,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "dump-manifests":
 		return app.DumpManifests(rest)
 	case "system-prompt":
-		return app.SystemPromptCommand(rest)
+		if err := app.SystemPromptCommand(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "tool-details":
 		return app.ToolDetails(rest)
 	default:
@@ -19769,6 +19781,20 @@ func (e missingArgumentError) Error() string {
 	return fmt.Sprintf("missing_argument: %s requires a value", e.Argument)
 }
 
+type missingFlagValueError struct {
+	Command string
+	Flag    string
+	Usage   string
+}
+
+func (e missingFlagValueError) Error() string {
+	flag := strings.TrimSpace(e.Flag)
+	if flag == "" {
+		flag = "flag"
+	}
+	return fmt.Sprintf("missing_flag_value: %s requires a value", flag)
+}
+
 type toolNameError struct {
 	Argument  string
 	ToolName  string
@@ -20000,6 +20026,14 @@ func renderCLIError(out io.Writer, err error, format string) error {
 	return &ExitError{Code: 1, Err: exitErr}
 }
 
+func renderCLIErrorWhenStructured(out io.Writer, err error, format string) error {
+	var formatErr outputFormatError
+	if strings.EqualFold(format, "json") || errors.As(err, &formatErr) {
+		return renderCLIError(out, err, format)
+	}
+	return err
+}
+
 func buildCLIErrorReport(err error) cliErrorReport {
 	message := strings.TrimSpace(err.Error())
 	kind := "config_load_failed"
@@ -20061,6 +20095,41 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Message:   fmt.Sprintf("%s requires a value", argument),
 			Hint:      fmt.Sprintf("Provide a comma-separated tool list, for example `%s`.", example),
 			Argument:  argument,
+		}
+	}
+	var missingFlagErr missingFlagValueError
+	if errors.As(err, &missingFlagErr) {
+		command := strings.TrimSpace(missingFlagErr.Command)
+		flag := strings.TrimSpace(missingFlagErr.Flag)
+		if flag == "" {
+			flag = "flag"
+		}
+		usage := strings.TrimSpace(missingFlagErr.Usage)
+		hint := fmt.Sprintf("Provide a value for %s.", flag)
+		if usage != "" {
+			hint = "Usage: " + usage
+		}
+		return cliErrorReport{
+			Kind:      "missing_flag_value",
+			ErrorKind: "missing_flag_value",
+			Status:    "error",
+			Command:   command,
+			Option:    flag,
+			Message:   fmt.Sprintf("%s requires a value", flag),
+			Hint:      hint,
+		}
+	}
+	if rest, ok := strings.CutPrefix(message, "missing_flag_value:"); ok {
+		message = strings.TrimSpace(rest)
+		if message == "" {
+			message = "flag requires a value"
+		}
+		return cliErrorReport{
+			Kind:      "missing_flag_value",
+			ErrorKind: "missing_flag_value",
+			Status:    "error",
+			Message:   message,
+			Hint:      "Provide the required flag value.",
 		}
 	}
 	var toolErr toolNameError
@@ -21837,6 +21906,7 @@ func minInt(values ...int) int {
 
 func parseSimpleOutputFormat(command string, args []string) (string, error) {
 	format := "text"
+	usage := fmt.Sprintf("codog %s [--json|--output-format text|json]", command)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
@@ -21845,13 +21915,13 @@ func parseSimpleOutputFormat(command string, args []string) (string, error) {
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return "", fmt.Errorf("%s output format is required", command)
+				return "", missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
 			format = strings.TrimPrefix(arg, "--output-format=")
 		default:
-			return "", fmt.Errorf("unknown %s flag %q", command, arg)
+			return "", unknownOptionError{Command: command, Option: arg, Usage: usage}
 		}
 	}
 	switch format {
@@ -28607,6 +28677,7 @@ func (a *App) buildDiffReport(req diffRequest) (diffReport, error) {
 
 func parseDiffArgs(args []string) (diffRequest, error) {
 	req := diffRequest{Format: "text"}
+	usage := "codog diff [--staged] [PATH...] [--output-format text|json]"
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch {
@@ -28615,7 +28686,7 @@ func parseDiffArgs(args []string) (diffRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return req, errors.New("diff output format is required")
+				return req, missingFlagValueError{Command: "diff", Flag: arg, Usage: usage}
 			}
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -28626,7 +28697,7 @@ func parseDiffArgs(args []string) (diffRequest, error) {
 			req.Paths = append(req.Paths, args[i+1:]...)
 			i = len(args)
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown diff flag %q", arg)
+			return req, unknownOptionError{Command: "diff", Option: arg, Usage: usage}
 		default:
 			req.Paths = append(req.Paths, arg)
 		}
@@ -31691,13 +31762,14 @@ func (a *App) handleExportSlash(args []string, sess *session.Session) {
 
 func parseExportArgs(args []string, defaultSession string) (exportRequest, error) {
 	req := exportRequest{SessionID: defaultSession, Format: session.ExportMarkdown}
+	usage := "codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]")
+				return req, missingFlagValueError{Command: "export", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -31705,7 +31777,7 @@ func parseExportArgs(args []string, defaultSession string) (exportRequest, error
 		case arg == "--output" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]")
+				return req, missingFlagValueError{Command: "export", Flag: arg, Usage: usage}
 			}
 			req.Output = args[index]
 		case strings.HasPrefix(arg, "--output="):
@@ -31713,7 +31785,7 @@ func parseExportArgs(args []string, defaultSession string) (exportRequest, error
 		case arg == "--format" || arg == "--output-format":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html]")
+				return req, missingFlagValueError{Command: "export", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--format="):
@@ -31721,10 +31793,10 @@ func parseExportArgs(args []string, defaultSession string) (exportRequest, error
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown export option %q", arg)
+			return req, unknownOptionError{Command: "export", Option: arg, Usage: usage}
 		default:
 			if req.Output != "" {
-				return req, fmt.Errorf("unexpected export argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "export", Args: []string{arg}, Usage: usage}
 			}
 			req.Output = arg
 		}
