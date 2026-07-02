@@ -12360,6 +12360,38 @@ func TestSkillsInstallAndUninstallCommands(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(workspace, ".claude", "skills", "team", "audit-copy"))
 }
 
+func TestSkillsInstallMissingSourceReportsTypedJSON(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := [][]string{
+		{"--config", configPath, "--output-format", "json", "skills", "install"},
+		{"--config", configPath, "skills", "install", "--output-format", "json"},
+	}
+	for _, args := range cases {
+		out, err := captureStdout(t, func() error {
+			return RunCLI(context.Background(), args, config.FlagOverrides{})
+		})
+		require.Error(t, err)
+		var exitErr *ExitError
+		require.ErrorAs(t, err, &exitErr)
+		require.Equal(t, 1, exitErr.Code)
+		require.True(t, exitErr.Silent)
+
+		var report actionErrorReport
+		require.NoError(t, json.Unmarshal([]byte(out), &report))
+		require.Equal(t, "skills", report.Kind)
+		require.Equal(t, "install", report.Action)
+		require.Equal(t, "error", report.Status)
+		require.Equal(t, "missing_argument", report.ErrorKind)
+		require.Equal(t, "install_source", report.Argument)
+		require.Contains(t, report.Hint, "skills install")
+	}
+}
+
 func TestSkillsInfoAndDescribeAliasShow(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

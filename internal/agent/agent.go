@@ -19690,6 +19690,7 @@ type actionErrorReport struct {
 	Action    string `json:"action"`
 	Status    string `json:"status"`
 	ErrorKind string `json:"error_kind"`
+	Argument  string `json:"argument,omitempty"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint"`
 }
@@ -32506,6 +32507,9 @@ func (a *App) Skills(args []string) error {
 	case "install", "add":
 		req, err := parseSkillInstallArgs(rest)
 		if err != nil {
+			if errors.Is(err, errSkillInstallMissingSource) {
+				return renderSkillsInstallMissingSource(a.Out, req.Format)
+			}
 			return err
 		}
 		targetRoot, targetLabel, err := a.skillTargetRoot(req.Target)
@@ -32598,6 +32602,18 @@ func renderSkillNotFound(out io.Writer, action string, subject string, format st
 	}, format)
 }
 
+func renderSkillsInstallMissingSource(out io.Writer, format string) error {
+	return renderActionError(out, actionErrorReport{
+		Kind:      "skills",
+		Action:    "install",
+		Status:    "error",
+		ErrorKind: "missing_argument",
+		Argument:  "install_source",
+		Message:   "skills install requires a source",
+		Hint:      "Usage: codog skills install [--project|--user|--claude] [--name NAME] SOURCE [--json|--output-format text|json].",
+	}, format)
+}
+
 func renderUnsupportedSkillsAction(out io.Writer, action string, format string) error {
 	action = strings.TrimSpace(action)
 	if action == "" {
@@ -32633,6 +32649,8 @@ type skillActivationRequest struct {
 	Path   string
 	Names  []string
 }
+
+var errSkillInstallMissingSource = errors.New("skills install source is required")
 
 type skillActivationReport struct {
 	Kind                string   `json:"kind"`
@@ -33010,6 +33028,9 @@ func parseSkillInstallArgs(args []string) (skillInstallRequest, error) {
 	}
 	if req.Format != "text" && req.Format != "json" {
 		return req, fmt.Errorf("unknown skills install output format %q", req.Format)
+	}
+	if len(positionals) == 0 {
+		return req, errSkillInstallMissingSource
 	}
 	if len(positionals) != 1 {
 		return req, errors.New("usage: codog skills install [--project|--user|--claude] [--name NAME] SOURCE [--json]")
