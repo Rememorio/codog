@@ -1231,6 +1231,34 @@ func TestPrompterPowerShellValidation(t *testing.T) {
 	require.Contains(t, prompt.String(), "Tool validation warning")
 }
 
+func TestPrompterTaskCreateCommandValidation(t *testing.T) {
+	p := &Prompter{Mode: PermissionReadOnly}
+	err := p.Authorize("task_create", PermissionDanger, []byte(`{"command":"touch file.txt"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tool validation")
+
+	var prompt strings.Builder
+	p = &Prompter{
+		Mode: PermissionDanger,
+		In:   strings.NewReader("n\n"),
+		Err:  &prompt,
+	}
+	err = p.Authorize("task_create", PermissionDanger, []byte(`{"command":"rm -rf tmp"}`))
+	require.Error(t, err)
+	require.Contains(t, prompt.String(), "Tool validation warning")
+
+	var decision PermissionDecision
+	p = &Prompter{
+		Mode: PermissionAllow,
+		OnDecision: func(next PermissionDecision) {
+			decision = next
+		},
+	}
+	require.NoError(t, p.Authorize("task_create", PermissionDanger, []byte(`{"prompt":"review auth flow"}`)))
+	require.True(t, decision.Allowed)
+	require.Equal(t, "permission_mode", decision.Reason)
+}
+
 func TestPrompterAlwaysAllowAddsSessionRule(t *testing.T) {
 	var prompt strings.Builder
 	var decisions []PermissionDecision

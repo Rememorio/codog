@@ -852,6 +852,19 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 			}
 		}
 	}
+	if strings.EqualFold(name, "task_create") {
+		if command := bashvalidation.CommandFromInput(input); command != "" {
+			result := bashvalidation.ValidateWithAdditionalDirs(command, string(mode), p.Workspace, p.AdditionalDirs)
+			switch result.Severity {
+			case bashvalidation.SeverityBlock:
+				decision.Reason = "task_create_validation"
+				decision.Message = result.Reason
+				return decision
+			case bashvalidation.SeverityConfirm:
+				validationWarning = result.Reason
+			}
+		}
+	}
 	ask := mode == PermissionPrompt || ruleMatches(p.AskRules, name, inputText)
 	if validationWarning != "" && mode != PermissionAllow {
 		ask = true
@@ -873,7 +886,7 @@ func permissionDecisionError(decision PermissionDecision) error {
 		return fmt.Errorf("permission denied for tool %s by denied_tools", decision.ToolName)
 	case "deny_rule":
 		return fmt.Errorf("permission denied for tool %s by deny rule", decision.ToolName)
-	case "bash_validation", "powershell_validation":
+	case "bash_validation", "powershell_validation", "task_create_validation":
 		if decision.Message != "" {
 			return fmt.Errorf("permission denied for tool %s by tool validation: %s", decision.ToolName, decision.Message)
 		}
