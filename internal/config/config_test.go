@@ -889,6 +889,37 @@ func TestLoadWorktreeSettings(t *testing.T) {
 	require.Equal(t, []string{"cmd", "internal"}, cfg.Worktree.SparsePaths)
 }
 
+func TestLoadDefaultShellSetting(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"defaultShell":"PowerShell"}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "powershell", cfg.DefaultShell)
+}
+
+func TestLoadDefaultShellFromEnv(t *testing.T) {
+	t.Setenv("CODOG_DEFAULT_SHELL", "bash")
+
+	cfg, err := Default(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "bash", cfg.DefaultShell)
+}
+
+func TestLoadRejectsInvalidDefaultShell(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"defaultShell":"zsh"}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_default_shell")
+}
+
 func unsetCredentialEnv(t *testing.T) {
 	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
 	unsetProviderRoutingEnv(t)

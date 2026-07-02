@@ -206,6 +206,28 @@ esac
 	}, 5*time.Second, 50*time.Millisecond)
 }
 
+func TestDefaultShellPowerShellDelegatesBashTool(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell script")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	script := filepath.Join(t.TempDir(), "pwsh-shim")
+	require.NoError(t, os.WriteFile(script, []byte(`#!/bin/sh
+printf 'default-ps:%s\n' "$*"
+`), 0o755))
+	registry := NewRegistryWithOptions(workspace, RegistryOptions{
+		ConfigHome:   configHome,
+		DefaultShell: "powershell",
+		PowerShell:   script,
+	})
+
+	out, err := registry.Execute(context.Background(), "bash", []byte(`{"command":"Write-Output ok","timeout":10000}`), nil)
+
+	require.NoError(t, err)
+	require.Contains(t, out, `default-ps:-NoProfile -NonInteractive -Command Write-Output ok`)
+}
+
 func TestBashToolReportsExitCodeAndDuration(t *testing.T) {
 	workspace := t.TempDir()
 	out, err := BashTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"command":"printf ok; exit 7"}`))
@@ -1278,6 +1300,20 @@ func TestPrompterPowerShellValidation(t *testing.T) {
 	err = p.Authorize("powershell", PermissionDanger, []byte(`{"command":"Remove-Item -Recurse -Force tmp"}`))
 	require.Error(t, err)
 	require.Contains(t, prompt.String(), "Tool validation warning")
+}
+
+func TestPrompterUsesDefaultPowerShellForBashToolValidation(t *testing.T) {
+	p := &Prompter{
+		Mode:         PermissionReadOnly,
+		DefaultShell: "powershell",
+	}
+
+	err := p.Authorize("bash", PermissionDanger, []byte(`{"command":"Set-Content notes.txt ok"}`))
+
+	require.Error(t, err)
+	decision := p.Decide("bash", PermissionDanger, []byte(`{"command":"Set-Content notes.txt ok"}`))
+	require.Equal(t, "powershell_validation", decision.Reason)
+	require.Contains(t, decision.Message, "not read-only")
 }
 
 func TestPrompterTaskCreateCommandValidation(t *testing.T) {

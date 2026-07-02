@@ -484,6 +484,7 @@ type Config struct {
 	Language                   string                     `json:"language,omitempty"`
 	Theme                      string                     `json:"theme,omitempty"`
 	EditorMode                 string                     `json:"editorMode,omitempty"`
+	DefaultShell               string                     `json:"defaultShell,omitempty"`
 	ReasoningEffort            string                     `json:"reasoning_effort,omitempty"`
 	FastMode                   *bool                      `json:"fast_mode,omitempty"`
 	VoiceEnabled               *bool                      `json:"voice_enabled,omitempty"`
@@ -742,6 +743,9 @@ func finalizeConfig(cfg *Config) error {
 		return err
 	}
 	if err := validateForceLoginMethod(cfg); err != nil {
+		return err
+	}
+	if err := validateDefaultShell(cfg); err != nil {
 		return err
 	}
 	if err := validateStatusLineConfig(cfg); err != nil {
@@ -1316,6 +1320,9 @@ func merge(dst *Config, src Config) {
 	}
 	if src.EditorMode != "" {
 		dst.EditorMode = src.EditorMode
+	}
+	if src.DefaultShell != "" {
+		dst.DefaultShell = src.DefaultShell
 	}
 	if src.AdvisorModel != "" {
 		dst.AdvisorModel = src.AdvisorModel
@@ -1973,6 +1980,9 @@ func applyEnv(cfg *Config) {
 	if value := lookup("CODOG_EDITOR_MODE"); value != "" {
 		cfg.EditorMode = value
 	}
+	if value := lookup("CODOG_DEFAULT_SHELL"); value != "" {
+		cfg.DefaultShell = value
+	}
 	if value := lookup("CODOG_REASONING_EFFORT"); value != "" {
 		cfg.ReasoningEffort = value
 	}
@@ -2315,6 +2325,20 @@ func validateForceLoginMethod(cfg *Config) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid_force_login_method: unknown forceLoginMethod %q", cfg.ForceLoginMethod)
+	}
+}
+
+func validateDefaultShell(cfg *Config) error {
+	shell := strings.ToLower(strings.TrimSpace(cfg.DefaultShell))
+	switch shell {
+	case "":
+		cfg.DefaultShell = ""
+		return nil
+	case "bash", "powershell":
+		cfg.DefaultShell = shell
+		return nil
+	default:
+		return fmt.Errorf("invalid_default_shell: defaultShell must be %q or %q", "bash", "powershell")
 	}
 }
 

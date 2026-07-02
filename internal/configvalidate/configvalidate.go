@@ -84,6 +84,7 @@ var topLevelFields = []fieldSpec{
 	{"language", FieldString},
 	{"theme", FieldString},
 	{"editorMode", FieldString},
+	{"defaultShell", FieldString},
 	{"reasoning_effort", FieldString},
 	{"fast_mode", FieldBool},
 	{"voice_enabled", FieldBool},
@@ -393,6 +394,7 @@ func ValidateBytes(data []byte, path string) Result {
 	}
 	validateObject(&result, object, topLevelFields, "", data, path)
 	addDeprecatedWarnings(&result, object, deprecatedTopLevelFields, "", data, path)
+	validateDefaultShellValue(&result, object, data, path)
 	validateKnownNestedObjects(&result, object, data, path)
 	if result.ErrorCount > 0 {
 		result.Status = "error"
@@ -520,6 +522,30 @@ func addDeprecatedWarnings(result *Result, object map[string]any, fields []depre
 			Line:        findKeyLine(source, field.Name),
 			Kind:        "deprecated",
 			Replacement: field.Replacement,
+		})
+	}
+}
+
+func validateDefaultShellValue(result *Result, object map[string]any, source []byte, path string) {
+	value, ok := object["defaultShell"]
+	if !ok {
+		return
+	}
+	shell, ok := value.(string)
+	if !ok {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(shell)) {
+	case "", "bash", "powershell":
+		return
+	default:
+		result.addError(Diagnostic{
+			Path:     path,
+			Field:    "defaultShell",
+			Line:     findKeyLine(source, "defaultShell"),
+			Kind:     "invalid_value",
+			Expected: `"bash" or "powershell"`,
+			Got:      fmt.Sprintf("%q", shell),
 		})
 	}
 }

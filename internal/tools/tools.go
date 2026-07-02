@@ -131,6 +131,7 @@ type RegistryOptions struct {
 	AdditionalDirs   []string
 	ConfigHome       string
 	ConfigEnv        map[string]string
+	DefaultShell     string
 	TrustedRoots     []string
 	RespectGitignore bool
 	OAuthProfile     string
@@ -529,6 +530,7 @@ type Prompter struct {
 	DeniedTools    []string
 	Workspace      string
 	AdditionalDirs []string
+	DefaultShell   string
 	In             io.Reader
 	Err            io.Writer
 	OnRequest      func(PermissionDecision)
@@ -571,7 +573,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	if r.tools == nil {
 		r.tools = map[string]Tool{}
 	}
-	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
+	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, DefaultShell: opts.DefaultShell, PowerShell: opts.PowerShell, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
 	r.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.PowerShell})
 	r.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(KillBashTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -719,6 +721,15 @@ func ReadOnlyPrompter(base *Prompter, workspace string) *Prompter {
 	return &next
 }
 
+func effectiveDefaultShell(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "powershell":
+		return "powershell"
+	default:
+		return "bash"
+	}
+}
+
 func (r *Registry) Infos() []ToolInfo {
 	infos := make([]ToolInfo, 0, len(r.tools))
 	for _, tool := range r.tools {
@@ -848,7 +859,24 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 		return decision
 	}
 	validationWarning := ""
-	if strings.EqualFold(name, "bash") {
+	if strings.EqualFold(name, "bash") && effectiveDefaultShell(p.DefaultShell) == "powershell" {
+		result := powershellvalidation.Validate(powershellvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
+		switch result.Severity {
+		case powershellvalidation.SeverityBlock:
+			decision.Reason = "powershell_validation"
+			decision.Message = result.Reason
+			return decision
+		case powershellvalidation.SeverityConfirm:
+			validationWarning = result.Reason
+		case powershellvalidation.SeverityAllow:
+			if mode == PermissionReadOnly && result.Intent == powershellvalidation.IntentReadOnly && !ruleMatches(p.AskRules, name, inputText) {
+				decision.Allowed = true
+				decision.Reason = "powershell_validation_read_only"
+				return decision
+			}
+		}
+	}
+	if strings.EqualFold(name, "bash") && effectiveDefaultShell(p.DefaultShell) != "powershell" {
 		result := bashvalidation.ValidateWithAdditionalDirs(bashvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
 		switch result.Severity {
 		case bashvalidation.SeverityBlock:
@@ -2159,6 +2187,8 @@ type BashTool struct {
 	Workspace       string
 	ConfigHome      string
 	ConfigEnv       map[string]string
+	DefaultShell    string
+	PowerShell      string
 	SandboxStrategy string
 	Sandbox         config.SandboxConfig
 }
@@ -2510,6 +2540,14 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	}
 	if strings.TrimSpace(payload.Command) == "" {
 		return "", errors.New("command is required")
+	}
+	if effectiveDefaultShell(t.DefaultShell) == "powershell" {
+		return (PowerShellTool{
+			Workspace:  t.Workspace,
+			ConfigHome: t.ConfigHome,
+			ConfigEnv:  t.ConfigEnv,
+			Executable: t.PowerShell,
+		}).Execute(ctx, input)
 	}
 	cwd, err := toolCWD(ctx, t.ConfigHome, t.Workspace)
 	if err != nil {

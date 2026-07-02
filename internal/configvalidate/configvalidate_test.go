@@ -99,6 +99,23 @@ func TestValidateBytesValidatesForceLoginTypes(t *testing.T) {
 	require.Equal(t, "a string", errorsByField["forceLoginOrgUUID"])
 }
 
+func TestValidateBytesValidatesDefaultShell(t *testing.T) {
+	result := ValidateBytes([]byte(`{"defaultShell":42}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "defaultShell", result.Errors[0].Field)
+	require.Equal(t, "wrong_type", result.Errors[0].Kind)
+	require.Equal(t, "a string", result.Errors[0].Expected)
+
+	result = ValidateBytes([]byte(`{"defaultShell":"zsh"}`), "config.json")
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "defaultShell", result.Errors[0].Field)
+	require.Equal(t, "invalid_value", result.Errors[0].Kind)
+	require.Equal(t, `"bash" or "powershell"`, result.Errors[0].Expected)
+}
+
 func TestValidateBytesValidatesPermissionsDefaultModeType(t *testing.T) {
 	result := ValidateBytes([]byte(`{"permissions":{"defaultMode":42},"permission_rules":{"defaultMode":false}}`), "config.json")
 
