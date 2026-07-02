@@ -24864,6 +24864,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.PRComments(ctx, resumeSlashArgs("pr-comments", args, format))
 	case "/install-github-app":
 		return a.InstallGitHubApp(resumeSlashArgs("install-github-app", args, format))
+	case "/upgrade":
+		return a.Upgrade(ctx, resumeSlashArgs("upgrade", args, format))
+	case "/install":
+		return a.Install(ctx, resumeSlashArgs("install", args, format))
 	case "/review", "/ultrareview":
 		return a.Review(resumeSlashArgs("review", args, format))
 	case "/reviewremote", "/review-remote":

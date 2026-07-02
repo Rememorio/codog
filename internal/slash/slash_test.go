@@ -345,6 +345,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/generateSessionName")
 	require.Contains(t, names, "/generate-session-name")
 	require.Contains(t, names, "/init-verifiers")
+	require.Contains(t, names, "/install")
 	require.Contains(t, names, "/install-github-app")
 	require.Contains(t, names, "/install-slack-app")
 	require.Contains(t, names, "/issue")
@@ -373,6 +374,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/lint")
 	require.Contains(t, names, "/ultraplan")
 	require.Contains(t, names, "/undo")
+	require.Contains(t, names, "/upgrade")
 	require.Greater(t, len(names), 70)
 
 	for _, spec := range ResumeSupportedSpecs() {

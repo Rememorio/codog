@@ -2867,6 +2867,50 @@ func risky(value any) {
 	require.Equal(t, "show", resumedVersion.Action)
 	require.Equal(t, "ok", resumedVersion.Status)
 
+	out, err = runResumedJSON("/upgrade")
+	require.NoError(t, err)
+	var resumedUpgrade struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Status string `json:"status"`
+		Result struct {
+			CurrentVersion string   `json:"current_version"`
+			Platform       string   `json:"platform"`
+			Commands       []string `json:"commands"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUpgrade))
+	require.Equal(t, "updater", resumedUpgrade.Kind)
+	require.Equal(t, "status", resumedUpgrade.Action)
+	require.Equal(t, "ok", resumedUpgrade.Status)
+	require.Equal(t, version, resumedUpgrade.Result.CurrentVersion)
+	require.Equal(t, updater.PlatformKey(), resumedUpgrade.Result.Platform)
+	require.Contains(t, resumedUpgrade.Result.Commands, "install")
+
+	out, err = runResumedJSON("/install")
+	require.NoError(t, err)
+	var resumedInstall struct {
+		Kind   string `json:"kind"`
+		Action string `json:"action"`
+		Status string `json:"status"`
+		Result struct {
+			Usage            string `json:"usage"`
+			RequiresArtifact bool   `json:"requires_artifact"`
+			Updater          struct {
+				CurrentVersion string   `json:"current_version"`
+				Commands       []string `json:"commands"`
+			} `json:"updater"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedInstall))
+	require.Equal(t, "install", resumedInstall.Kind)
+	require.Equal(t, "status", resumedInstall.Action)
+	require.Equal(t, "ok", resumedInstall.Status)
+	require.Equal(t, "codog install ARTIFACT [TARGET]", resumedInstall.Result.Usage)
+	require.True(t, resumedInstall.Result.RequiresArtifact)
+	require.Equal(t, version, resumedInstall.Result.Updater.CurrentVersion)
+	require.Contains(t, resumedInstall.Result.Updater.Commands, "install")
+
 	out, err = runResumedJSON("/config", "paths")
 	require.NoError(t, err)
 	var configPaths struct {
