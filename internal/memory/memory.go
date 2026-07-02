@@ -12,8 +12,11 @@ import (
 	"unicode"
 )
 
+// MaxFileBytes limits how much of each instruction file is loaded into memory.
 const MaxFileBytes = 64 * 1024
 
+// CandidateNames lists workspace-relative instruction file names Codog treats
+// as project memory.
 var CandidateNames = []string{
 	"AGENTS.md",
 	"CLAUDE.md",
@@ -22,6 +25,7 @@ var CandidateNames = []string{
 	filepath.Join(".codog", "instructions.md"),
 }
 
+// File is a loaded project-memory instruction file.
 type File struct {
 	Path      string `json:"path"`
 	Name      string `json:"name"`
@@ -31,6 +35,7 @@ type File struct {
 	Body      string `json:"-"`
 }
 
+// Summary is the JSON-safe metadata view of a memory file.
 type Summary struct {
 	Path      string `json:"path"`
 	Name      string `json:"name"`
@@ -41,6 +46,7 @@ type Summary struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
+// Report describes discovered project-memory files for a workspace.
 type Report struct {
 	Kind             string    `json:"kind"`
 	Action           string    `json:"action"`
@@ -50,6 +56,7 @@ type Report struct {
 	Files            []Summary `json:"files"`
 }
 
+// SearchMatch records one relevant line found in project memory.
 type SearchMatch struct {
 	Path         string   `json:"path"`
 	Name         string   `json:"name"`
@@ -60,6 +67,7 @@ type SearchMatch struct {
 	MatchedTerms []string `json:"matched_terms,omitempty"`
 }
 
+// SearchReport describes a project-memory search result.
 type SearchReport struct {
 	Kind             string        `json:"kind"`
 	Action           string        `json:"action"`
@@ -70,6 +78,7 @@ type SearchReport struct {
 	Matches          []SearchMatch `json:"matches"`
 }
 
+// ShowReport contains the selected memory file and its body.
 type ShowReport struct {
 	Kind   string `json:"kind"`
 	Action string `json:"action"`
@@ -78,6 +87,7 @@ type ShowReport struct {
 	Body   string `json:"body,omitempty"`
 }
 
+// AppendReport describes a successful append to a memory file.
 type AppendReport struct {
 	Kind   string `json:"kind"`
 	Action string `json:"action"`
@@ -86,6 +96,7 @@ type AppendReport struct {
 	Bytes  int    `json:"bytes"`
 }
 
+// FileReport describes a memory file path, creation, or editor operation.
 type FileReport struct {
 	Kind    string `json:"kind"`
 	Action  string `json:"action"`
@@ -97,6 +108,7 @@ type FileReport struct {
 	Message string `json:"message,omitempty"`
 }
 
+// Discover loads project-memory files between the workspace and its boundary.
 func Discover(workspace string) ([]File, error) {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
@@ -114,6 +126,8 @@ func Discover(workspace string) ([]File, error) {
 	return discoverBetween(absWorkspace, boundary)
 }
 
+// Show returns a selected memory file, requiring a target when multiple files
+// are available.
 func Show(workspace string, target string) (ShowReport, error) {
 	files, err := Discover(workspace)
 	if err != nil {
@@ -143,6 +157,7 @@ func Show(workspace string, target string) (ShowReport, error) {
 	return ShowReport{Kind: "memory", Action: "show", Status: "ok", File: *selected, Body: selected.Body}, nil
 }
 
+// Append adds text to the workspace AGENTS.md memory file.
 func Append(workspace string, text string) (AppendReport, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -181,6 +196,7 @@ func Append(workspace string, text string) (AppendReport, error) {
 	return AppendReport{Kind: "memory", Action: "add", Status: "ok", Path: path, Bytes: len(payload)}, nil
 }
 
+// Path resolves the target memory file path without creating it.
 func Path(workspace string, target string) (FileReport, error) {
 	path, err := ResolvePath(workspace, target)
 	if err != nil {
@@ -189,6 +205,7 @@ func Path(workspace string, target string) (FileReport, error) {
 	return FileReport{Kind: "memory", Action: "path", Status: "ok", Path: path}, nil
 }
 
+// Ensure creates the target memory file if it does not already exist.
 func Ensure(workspace string, target string) (FileReport, error) {
 	path, err := ResolvePath(workspace, target)
 	if err != nil {
@@ -211,6 +228,8 @@ func Ensure(workspace string, target string) (FileReport, error) {
 	return report, nil
 }
 
+// Edit ensures the target memory file exists and optionally opens it in an
+// editor.
 func Edit(workspace string, target string, editor string, openEditor bool) (FileReport, error) {
 	report, err := Ensure(workspace, target)
 	if err != nil {
@@ -245,6 +264,7 @@ func Edit(workspace string, target string, editor string, openEditor bool) (File
 	return report, nil
 }
 
+// ResolvePath converts a memory target into a workspace-contained absolute path.
 func ResolvePath(workspace string, target string) (string, error) {
 	absWorkspace, err := absWorkspacePath(workspace)
 	if err != nil {
@@ -272,6 +292,7 @@ func ResolvePath(workspace string, target string) (string, error) {
 	return path, nil
 }
 
+// BuildReport discovers and summarizes project-memory files for a workspace.
 func BuildReport(workspace string) (Report, error) {
 	absWorkspace, err := absWorkspacePath(workspace)
 	if err != nil {
@@ -291,6 +312,7 @@ func BuildReport(workspace string) (Report, error) {
 	}, nil
 }
 
+// Search finds lines in project memory that match the query terms.
 func Search(workspace string, query string, limit int) (SearchReport, error) {
 	absWorkspace, err := absWorkspacePath(workspace)
 	if err != nil {
@@ -364,6 +386,7 @@ func Search(workspace string, query string, limit int) (SearchReport, error) {
 	}, nil
 }
 
+// RenderShowReport writes a human-readable memory file report.
 func RenderShowReport(w io.Writer, report ShowReport) {
 	fmt.Fprintln(w, "Memory File")
 	fmt.Fprintf(w, "  Path             %s\n", report.File.Path)
@@ -379,12 +402,14 @@ func RenderShowReport(w io.Writer, report ShowReport) {
 	}
 }
 
+// RenderAppendReport writes a human-readable memory append report.
 func RenderAppendReport(w io.Writer, report AppendReport) {
 	fmt.Fprintln(w, "Memory Updated")
 	fmt.Fprintf(w, "  Path             %s\n", report.Path)
 	fmt.Fprintf(w, "  Bytes appended   %d\n", report.Bytes)
 }
 
+// RenderSearchReport writes a human-readable memory search report.
 func RenderSearchReport(w io.Writer, report SearchReport) {
 	fmt.Fprintln(w, "Memory Search")
 	fmt.Fprintf(w, "  Working directory %s\n", report.WorkingDirectory)
@@ -401,6 +426,7 @@ func RenderSearchReport(w io.Writer, report SearchReport) {
 	}
 }
 
+// RenderFileReport writes a human-readable memory file operation report.
 func RenderFileReport(w io.Writer, report FileReport) {
 	fmt.Fprintln(w, "Memory File")
 	fmt.Fprintf(w, "  Action           %s\n", report.Action)
@@ -415,6 +441,7 @@ func RenderFileReport(w io.Writer, report FileReport) {
 	}
 }
 
+// Summaries converts loaded memory files to metadata-only summaries.
 func Summaries(files []File) []Summary {
 	summaries := make([]Summary, 0, len(files))
 	for _, file := range files {
@@ -442,6 +469,7 @@ func matchesTarget(file File, target string) bool {
 	return false
 }
 
+// RenderReport writes a human-readable memory discovery report.
 func RenderReport(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Memory")
 	fmt.Fprintf(w, "  Working directory %s\n", report.WorkingDirectory)
@@ -461,6 +489,7 @@ func RenderReport(w io.Writer, report Report) {
 	}
 }
 
+// Render formats loaded memory files for inclusion in the system prompt.
 func Render(files []File) string {
 	if len(files) == 0 {
 		return ""
