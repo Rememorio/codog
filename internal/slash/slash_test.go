@@ -388,3 +388,11 @@ func TestSuggestReturnsNearbySlashCommands(t *testing.T) {
 	require.Empty(t, Suggest("zzz", 3))
 	require.Empty(t, Suggest("/status", 0))
 }
+
+func TestSuggestWithCandidatesIncludesRuntimeSlashCommands(t *testing.T) {
+	suggestions := SuggestWithCandidates("/team/reveiw", 3, []string{"/team/review ", "/team/audit "})
+
+	require.Equal(t, "/team/review", suggestions[0])
+	require.Contains(t, suggestions, "/team/review")
+	require.NotContains(t, suggestions, "/team/review ")
+}

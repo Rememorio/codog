@@ -333,7 +333,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.RunResumedSlash(ctx, command, rest, overrides, requestedOutputFormat(originalArgs))
 	}
 	if strings.HasPrefix(command, "/") {
-		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
+		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, requestedOutputFormat(originalArgs), app.customSlashCompletionCandidates())
 		if err != nil {
 			return err
 		}
@@ -20113,7 +20113,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 	}
 }
 
-func normalizeDirectSlashInvocation(out io.Writer, command string, args []string, format string) (string, []string, error) {
+func normalizeDirectSlashInvocation(out io.Writer, command string, args []string, format string, extraSuggestions []string) (string, []string, error) {
 	name := strings.TrimSpace(command)
 	if !strings.HasPrefix(name, "/") {
 		return command, args, nil
@@ -20123,7 +20123,7 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 	}
 	mapped := directSlashCommandName(name)
 	if mapped == "" {
-		return "", nil, renderUnknownSlashCommand(out, name, format)
+		return "", nil, renderUnknownSlashCommand(out, name, format, extraSuggestions)
 	}
 	return mapped, injectGlobalOutputFormat(mapped, args, format), nil
 }
@@ -20135,7 +20135,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	}
 	if _, ok := slash.Lookup(name); !ok {
 		if mapped := directSlashCommandName(name); mapped == "" {
-			return renderUnknownSlashCommand(a.Out, command, format)
+			return renderUnknownSlashCommand(a.Out, command, format, a.customSlashCompletionCandidates())
 		}
 	}
 	resumed := overrides
@@ -21440,8 +21440,8 @@ func directSlashResumeSafe(name string) bool {
 	}
 }
 
-func renderUnknownSlashCommand(out io.Writer, command string, format string) error {
-	report := unknownSlashCommandReport(command)
+func renderUnknownSlashCommand(out io.Writer, command string, format string, extraSuggestions []string) error {
+	report := unknownSlashCommandReport(command, extraSuggestions)
 	err := errors.New(renderUnknownSlashCommandError(report))
 	if strings.EqualFold(format, "json") {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -21451,7 +21451,7 @@ func renderUnknownSlashCommand(out io.Writer, command string, format string) err
 	return &ExitError{Code: 1, Err: err}
 }
 
-func unknownSlashCommandReport(command string) slashErrorReport {
+func unknownSlashCommandReport(command string, extraSuggestions []string) slashErrorReport {
 	command = strings.TrimSpace(command)
 	return slashErrorReport{
 		Kind:              "unknown_slash_command",
@@ -21460,7 +21460,7 @@ func unknownSlashCommandReport(command string) slashErrorReport {
 		Command:           command,
 		Message:           fmt.Sprintf("unknown slash command %q", command),
 		Hint:              "Run `codog repl` and use `/help` to list interactive slash commands.",
-		Suggestions:       slash.Suggest(command, 3),
+		Suggestions:       slash.SuggestWithCandidates(command, 3, extraSuggestions),
 		CompatibilityNote: unknownSlashCompatibilityNote(command),
 	}
 }
@@ -21487,8 +21487,8 @@ func renderUnknownSlashCommandError(report slashErrorReport) string {
 	return strings.Join(lines, "\n")
 }
 
-func writeUnknownSlashCommand(out io.Writer, command string) {
-	report := unknownSlashCommandReport(command)
+func writeUnknownSlashCommand(out io.Writer, command string, extraSuggestions []string) {
+	report := unknownSlashCommandReport(command, extraSuggestions)
 	fmt.Fprintf(out, "unknown slash command: %s\n", report.Command)
 	if len(report.Suggestions) > 0 {
 		fmt.Fprintf(out, "Did you mean: %s\n", strings.Join(report.Suggestions, ", "))
@@ -24981,7 +24981,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			return true
 		}
 		if _, ok := slash.Lookup(fields[0]); !ok {
-			writeUnknownSlashCommand(a.Err, fields[0])
+			writeUnknownSlashCommand(a.Err, fields[0], a.customSlashCompletionCandidates())
 		}
 	}
 	return true

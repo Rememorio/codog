@@ -428,22 +428,43 @@ func Lookup(name string) (Spec, bool) {
 }
 
 func Suggest(input string, limit int) []string {
+	return SuggestWithCandidates(input, limit, nil)
+}
+
+func SuggestWithCandidates(input string, limit int, extraCandidates []string) []string {
 	query := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(input), "/"))
 	if query == "" || limit <= 0 {
 		return nil
 	}
+	names := []string{}
+	seen := map[string]bool{}
+	addName := func(name string) {
+		name = normalizeSuggestionCandidate(name)
+		if name == "" || seen[strings.ToLower(name)] {
+			return
+		}
+		seen[strings.ToLower(name)] = true
+		names = append(names, name)
+	}
+	for _, spec := range Specs() {
+		if spec.Hidden || spec.Disabled {
+			continue
+		}
+		addName(spec.Name)
+	}
+	for _, candidate := range extraCandidates {
+		addName(candidate)
+	}
 	type rankedSuggestion struct {
+		score      int
 		prefixRank int
 		distance   int
 		length     int
 		name       string
 	}
 	ranked := []rankedSuggestion{}
-	for _, spec := range Specs() {
-		if spec.Hidden || spec.Disabled {
-			continue
-		}
-		candidate := strings.ToLower(strings.TrimPrefix(spec.Name, "/"))
+	for _, name := range names {
+		candidate := strings.ToLower(strings.TrimPrefix(name, "/"))
 		prefixRank := 2
 		switch {
 		case strings.HasPrefix(candidate, query) || strings.HasPrefix(query, candidate):
@@ -454,15 +475,19 @@ func Suggest(input string, limit int) []string {
 		distance := levenshteinDistance(candidate, query)
 		if prefixRank <= 1 || distance <= 2 {
 			ranked = append(ranked, rankedSuggestion{
+				score:      distance + prefixRank,
 				prefixRank: prefixRank,
 				distance:   distance,
-				length:     len(spec.Name),
-				name:       spec.Name,
+				length:     len(name),
+				name:       name,
 			})
 		}
 	}
 	sort.Slice(ranked, func(i, j int) bool {
 		left, right := ranked[i], ranked[j]
+		if left.score != right.score {
+			return left.score < right.score
+		}
 		if left.prefixRank != right.prefixRank {
 			return left.prefixRank < right.prefixRank
 		}
@@ -482,6 +507,21 @@ func Suggest(input string, limit int) []string {
 		suggestions = append(suggestions, candidate.name)
 	}
 	return suggestions
+}
+
+func normalizeSuggestionCandidate(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" || !strings.HasPrefix(candidate, "/") {
+		return ""
+	}
+	if fields := strings.Fields(candidate); len(fields) > 0 {
+		candidate = fields[0]
+	}
+	candidate = strings.TrimRight(candidate, "/")
+	if candidate == "" {
+		return ""
+	}
+	return candidate
 }
 
 func levenshteinDistance(left string, right string) int {

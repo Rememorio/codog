@@ -1550,6 +1550,34 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Contains(t, slashReport.Hint, "--resume")
 }
 
+func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands", "team"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "team", "review.md"), []byte("Review $ARGUMENTS"), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/team/reveiw"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var slashReport slashErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
+	require.Equal(t, "/team/reveiw", slashReport.Command)
+	require.Contains(t, slashReport.Suggestions, "/team/review")
+}
+
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -6257,6 +6285,8 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 func TestUnknownSlashInREPLShowsSuggestions(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "commands", "team"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "commands", "team", "review.md"), []byte("Review $ARGUMENTS"), 0o644))
 	var errOut bytes.Buffer
 	app := &App{
 		Config:    config.Config{ConfigHome: configHome},
@@ -6268,6 +6298,11 @@ func TestUnknownSlashInREPLShowsSuggestions(t *testing.T) {
 	require.Contains(t, errOut.String(), "unknown slash command: /statuz")
 	require.Contains(t, errOut.String(), "Did you mean:")
 	require.Contains(t, errOut.String(), "/status")
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/team/reveiw", &session.Session{ID: "session"}))
+	require.Contains(t, errOut.String(), "unknown slash command: /team/reveiw")
+	require.Contains(t, errOut.String(), "/team/review")
 }
 
 func TestDoctorReportsConfigValidationChecks(t *testing.T) {
