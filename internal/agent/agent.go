@@ -24491,16 +24491,7 @@ func (a *App) runResumedHeapDumpSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedBranchSlash(args []string, format string) error {
-	req, err := parseBranchArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "list", "current", "freshness":
-		return a.Branch(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/branch", req.Action), format)
-	}
+	return a.Branch(args)
 }
 
 func (a *App) runResumedTagSlash(args []string, format string) error {

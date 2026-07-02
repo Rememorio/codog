@@ -3437,7 +3437,6 @@ func risky(value any) {
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
-		{Command: "/branch", Args: []string{"create", "resume-test"}, Report: "/branch create"},
 		{Command: "/tag", Args: []string{"create", "v9.9.9"}, Report: "/tag create"},
 		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},
 	} {
@@ -3512,6 +3511,22 @@ func risky(value any) {
 		require.Equal(t, "branch", resumedBranch.Kind)
 		require.Equal(t, "list", resumedBranch.Action)
 		require.NotEmpty(t, resumedBranch.Current)
+
+		out, err = runResumedJSON("/branch", "create", "resume-test")
+		require.NoError(t, err)
+		var resumedBranchCreate branchReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedBranchCreate))
+		require.Equal(t, "branch", resumedBranchCreate.Kind)
+		require.Equal(t, "create", resumedBranchCreate.Action)
+		require.NotEmpty(t, resumedBranchCreate.Current)
+		createdBranchFound := false
+		for _, branch := range resumedBranchCreate.Branches {
+			if branch.Name == "resume-test" {
+				createdBranchFound = true
+				break
+			}
+		}
+		require.True(t, createdBranchFound)
 
 		out, err = runResumedJSON("/tag", "show", "v0.1.0")
 		require.NoError(t, err)
