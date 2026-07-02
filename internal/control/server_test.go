@@ -48,6 +48,8 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 	require.Contains(t, byPath, "/sessions/{id}/fork")
 	require.Contains(t, byPath, "/sessions/{id}/rename")
 	require.Equal(t, []string{http.MethodPost}, byPath["/file/write"].Methods)
+	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/notebook/read"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/notebook/edit"].Methods)
 	require.True(t, byPath["/background/{id}/watch"].Streaming)
 	require.Contains(t, byPath, "/editor/selection")
 }
@@ -759,6 +761,116 @@ func TestControlCodeIntelligence(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestControlNotebookReadEdit(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	notebook := `{
+  "cells": [
+    {"cell_type": "markdown", "id": "intro", "metadata": {}, "source": ["# Title\n"]},
+    {"cell_type": "code", "id": "calc", "metadata": {}, "source": ["print(1)\n"], "outputs": [{"output_type": "stream", "name": "stdout", "text": ["1\n"]}], "execution_count": 1}
+  ],
+  "metadata": {"kernelspec": {"language": "python"}},
+  "nbformat": 4,
+  "nbformat_minor": 5
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "analysis.ipynb"), []byte(notebook), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("not a notebook"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "outside.ipynb"), []byte(`{"cells":[]}`), 0o644))
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  workspace,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/notebook/read?notebook_path=analysis.ipynb&limit=1&include_outputs=true")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"notebook_read"`)
+	require.Contains(t, string(body), `"path":"analysis.ipynb"`)
+	require.Contains(t, string(body), `"cell_count":2`)
+	require.Contains(t, string(body), `"truncated":true`)
+
+	resp, err = http.Get(server.URL + "/notebook/read?notebook_path=analysis.ipynb&cell_index=1&include_outputs=true")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"cell_id":"calc"`)
+	require.Contains(t, string(body), `"output_type":"stream"`)
+
+	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"notebook_path":"analysis.ipynb","cell_id":"intro","new_source":"# Renamed\n"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"mode":"replace"`)
+	require.Contains(t, string(body), `"cell_id":"intro"`)
+
+	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","edit_mode":"insert","cell_id":"intro","cell_type":"markdown","source":"inserted note"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"mode":"insert"`)
+	require.Contains(t, string(body), `"cell_type":"markdown"`)
+
+	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","mode":"delete","cell_id":"calc"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"mode":"delete"`)
+	require.Contains(t, string(body), `"cell_count":2`)
+
+	resp, err = http.Post(server.URL+"/notebook/read", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","cell_index":0}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "# Renamed")
+	require.NotContains(t, string(body), "print(1)")
+
+	data, err := os.ReadFile(filepath.Join(workspace, "analysis.ipynb"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Renamed")
+	require.Contains(t, string(data), "inserted note")
+	require.NotContains(t, string(data), "print(1)")
+
+	resp, err = http.Get(server.URL + "/notebook/read?path=notes.txt")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "notebook path must point to a .ipynb file")
+
+	resp, err = http.Get(server.URL + "/notebook/read?path=../outside.ipynb")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "escapes workspace")
+
+	resp, err = http.Post(server.URL+"/notebook/edit", "application/json", bytes.NewBufferString(`{"path":"analysis.ipynb","mode":"replace"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "new_source is required for insert and replace edits")
 }
 
 func TestControlWorkspaceAndFileOperations(t *testing.T) {

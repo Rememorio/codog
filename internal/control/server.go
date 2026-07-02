@@ -87,6 +87,8 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/code/hover", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Return hover-style symbol context."},
 		{Path: "/code/completion", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Return symbol completions."},
 		{Path: "/code/format", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Format a Go file."},
+		{Path: "/notebook/read", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read a Jupyter notebook through code intelligence."},
+		{Path: "/notebook/edit", Methods: []string{http.MethodPost}, Description: "Replace, insert, or delete a Jupyter notebook cell."},
 		{Path: "/editor/identify", Methods: []string{http.MethodPost}, Description: "Register or identify an editor bridge client."},
 		{Path: "/editor/state", Methods: []string{http.MethodGet}, Description: "Read editor bridge state."},
 		{Path: "/editor/open", Methods: []string{http.MethodPost}, Description: "Open a file through the editor bridge."},
@@ -199,6 +201,8 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/code/hover", s.codeHover)
 	mux.HandleFunc("/code/completion", s.codeCompletion)
 	mux.HandleFunc("/code/format", s.codeFormat)
+	mux.HandleFunc("/notebook/read", s.notebookRead)
+	mux.HandleFunc("/notebook/edit", s.notebookEdit)
 	mux.HandleFunc("/editor/identify", s.editorIdentify)
 	mux.HandleFunc("/editor/state", s.editorState)
 	mux.HandleFunc("/editor/open", s.editorOpen)
@@ -1650,6 +1654,150 @@ func (s Server) codeFormat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"kind": "format", "write": payload.Write, "result": result})
 }
 
+func (s Server) notebookRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Path           string `json:"path"`
+		NotebookPath   string `json:"notebook_path"`
+		CellIndex      *int   `json:"cell_index"`
+		Index          *int   `json:"index"`
+		Limit          int    `json:"limit"`
+		IncludeOutputs bool   `json:"include_outputs"`
+		Outputs        *bool  `json:"outputs"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		query := r.URL.Query()
+		payload.Path = query.Get("path")
+		payload.NotebookPath = query.Get("notebook_path")
+		if raw := strings.TrimSpace(firstNonEmpty(query.Get("cell_index"), query.Get("index"))); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 0 {
+				writeError(w, errors.New("cell_index must be non-negative"), http.StatusBadRequest)
+				return
+			}
+			payload.CellIndex = &parsed
+		}
+		payload.Limit = parseOptionalInt(query.Get("limit"))
+		payload.IncludeOutputs = parseOptionalBool(firstNonEmpty(query.Get("include_outputs"), query.Get("outputs")))
+	}
+	cellIndex := payload.CellIndex
+	if cellIndex == nil {
+		cellIndex = payload.Index
+	}
+	if cellIndex != nil && *cellIndex < 0 {
+		writeError(w, errors.New("cell_index must be non-negative"), http.StatusBadRequest)
+		return
+	}
+	includeOutputs := payload.IncludeOutputs
+	if payload.Outputs != nil {
+		includeOutputs = *payload.Outputs
+	}
+	absPath, relPath, err := s.resolveNotebookPath(firstNonEmpty(payload.NotebookPath, payload.Path))
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result, err := codeintel.ReadNotebook(absPath, codeintel.NotebookReadOptions{
+		CellIndex:      cellIndex,
+		Limit:          payload.Limit,
+		IncludeOutputs: includeOutputs,
+	})
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result.Path = relPath
+	writeJSON(w, result)
+}
+
+func (s Server) notebookEdit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Path         string  `json:"path"`
+		NotebookPath string  `json:"notebook_path"`
+		Mode         string  `json:"mode"`
+		EditMode     string  `json:"edit_mode"`
+		CellIndex    *int    `json:"cell_index"`
+		Index        *int    `json:"index"`
+		CellID       string  `json:"cell_id"`
+		CellType     string  `json:"cell_type"`
+		Type         string  `json:"type"`
+		Source       *string `json:"source"`
+		NewSource    *string `json:"new_source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	cellIndex := payload.CellIndex
+	if cellIndex == nil {
+		cellIndex = payload.Index
+	}
+	if cellIndex != nil && *cellIndex < 0 {
+		writeError(w, errors.New("cell_index must be non-negative"), http.StatusBadRequest)
+		return
+	}
+	if cellIndex != nil && strings.TrimSpace(payload.CellID) != "" {
+		writeError(w, errors.New("notebook/edit accepts either cell_index or cell_id, not both"), http.StatusBadRequest)
+		return
+	}
+	mode := strings.ToLower(firstNonEmpty(payload.Mode, payload.EditMode))
+	if mode == "" {
+		mode = "replace"
+	}
+	switch mode {
+	case "replace", "insert", "delete":
+	default:
+		writeError(w, fmt.Errorf("unknown notebook edit mode %q", mode), http.StatusBadRequest)
+		return
+	}
+	source, sourceSet := "", false
+	if payload.Source != nil {
+		source = *payload.Source
+		sourceSet = true
+	}
+	if payload.NewSource != nil {
+		source = *payload.NewSource
+		sourceSet = true
+	}
+	if (mode == "replace" || mode == "insert") && !sourceSet {
+		writeError(w, errors.New("new_source is required for insert and replace edits"), http.StatusBadRequest)
+		return
+	}
+	absPath, relPath, err := s.resolveNotebookPath(firstNonEmpty(payload.NotebookPath, payload.Path))
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	index, err := codeintel.ResolveNotebookEditIndex(absPath, cellIndex, payload.CellID, mode)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result, err := codeintel.EditNotebook(absPath, codeintel.NotebookEditOptions{
+		Index:    index,
+		CellType: firstNonEmpty(payload.CellType, payload.Type),
+		Source:   source,
+		Mode:     mode,
+	})
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	result.Path = relPath
+	writeJSON(w, result)
+}
+
 func (s Server) editorIdentify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1849,6 +1997,17 @@ func (s Server) workspace() (string, error) {
 
 func (s Server) resolveWorkspacePath(requested string) (string, string, error) {
 	return s.workspaceOps().Resolve(requested, false)
+}
+
+func (s Server) resolveNotebookPath(requested string) (string, string, error) {
+	absPath, relPath, err := s.resolveWorkspacePath(requested)
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.EqualFold(filepath.Ext(absPath), ".ipynb") {
+		return "", "", errors.New("notebook path must point to a .ipynb file")
+	}
+	return absPath, relPath, nil
 }
 
 func (s Server) workspaceOps() workspaceops.Service {
