@@ -2911,6 +2911,27 @@ func risky(value any) {
 	require.Equal(t, version, resumedInstall.Result.Updater.CurrentVersion)
 	require.Contains(t, resumedInstall.Result.Updater.Commands, "install")
 
+	out, err = runResumedJSON("/brief")
+	require.NoError(t, err)
+	var resumedBriefStatus briefStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBriefStatus))
+	require.Equal(t, "brief", resumedBriefStatus.Kind)
+	require.Equal(t, "status", resumedBriefStatus.Action)
+	require.Equal(t, "ready", resumedBriefStatus.Status)
+	expectedBriefWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	actualBriefWorkspace, err := filepath.EvalSymlinks(resumedBriefStatus.Workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedBriefWorkspace, actualBriefWorkspace)
+	require.Equal(t, "codog brief MESSAGE", resumedBriefStatus.NextCommand)
+
+	out, err = runResumedJSON("/brief", "Resume", "brief", "--status", "proactive")
+	require.NoError(t, err)
+	var resumedBrief briefReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBrief))
+	require.Equal(t, "Resume brief", resumedBrief.Message)
+	require.Equal(t, "proactive", resumedBrief.Status)
+
 	out, err = runResumedJSON("/config", "paths")
 	require.NoError(t, err)
 	var configPaths struct {

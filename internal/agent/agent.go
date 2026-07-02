@@ -24862,6 +24862,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.AutofixPR(ctx, resumeSlashArgs("autofix-pr", args, format))
 	case "/pr-comments", "/pr_comments":
 		return a.PRComments(ctx, resumeSlashArgs("pr-comments", args, format))
+	case "/brief":
+		return a.Brief(resumeSlashArgs("brief", args, format))
 	case "/install-github-app":
 		return a.InstallGitHubApp(resumeSlashArgs("install-github-app", args, format))
 	case "/upgrade":

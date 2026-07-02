@@ -270,6 +270,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/branch-lock":        true,
 	"/branchlock":         true,
 	"/break-cache":        true,
+	"/brief":              true,
 	"/bridge":             true,
 	"/bridge-kick":        true,
 	"/build":              true,
