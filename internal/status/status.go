@@ -24,6 +24,7 @@ type Options struct {
 	Workspace                   string
 	ConfigHome                  string
 	Model                       string
+	ModelEnvVar                 string
 	FastMode                    bool
 	BaseURL                     string
 	PermissionMode              string
@@ -140,6 +141,7 @@ type MemoryFileStatus struct {
 type ConfigStatus struct {
 	ConfigHome                  string `json:"config_home"`
 	Model                       string `json:"model"`
+	ModelEnvVar                 string `json:"model_env_var,omitempty"`
 	FastMode                    bool   `json:"fast_mode"`
 	BaseURL                     string `json:"base_url"`
 	PermissionMode              string `json:"permission_mode"`
@@ -334,6 +336,7 @@ func Build(opts Options) Snapshot {
 		Config: ConfigStatus{
 			ConfigHome:                  opts.ConfigHome,
 			Model:                       opts.Model,
+			ModelEnvVar:                 strings.TrimSpace(opts.ModelEnvVar),
 			FastMode:                    opts.FastMode,
 			BaseURL:                     opts.BaseURL,
 			PermissionMode:              opts.PermissionMode,

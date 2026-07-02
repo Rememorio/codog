@@ -495,6 +495,7 @@ type Config struct {
 	ForceLoginOrgUUID          string                     `json:"forceLoginOrgUUID,omitempty"`
 	BaseURL                    string                     `json:"base_url,omitempty"`
 	Model                      string                     `json:"model,omitempty"`
+	ModelEnvVar                string                     `json:"-"`
 	RuntimeProvider            string                     `json:"-"`
 	RuntimeProviderSource      string                     `json:"-"`
 	AdvisorModel               string                     `json:"advisor_model,omitempty"`
@@ -2026,8 +2027,9 @@ func applyEnv(cfg *Config) {
 	if value := lookup("CODOG_BASE_URL"); value != "" {
 		cfg.BaseURL = value
 	}
-	if value := lookup("CODOG_MODEL"); value != "" {
+	if value, envVar := lookupFirstEnv(lookup, "CODOG_MODEL", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_MODEL", "CLAUDE_MODEL"); value != "" {
 		cfg.Model = value
+		cfg.ModelEnvVar = envVar
 	}
 	if value := lookup("CODOG_API_KEY"); value != "" {
 		cfg.APIKey = value
@@ -2210,6 +2212,7 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 func applyFlags(cfg *Config, overrides FlagOverrides) {
 	if overrides.Model != "" {
 		cfg.Model = overrides.Model
+		cfg.ModelEnvVar = ""
 	}
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL
@@ -2244,6 +2247,15 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 		value := *overrides.Temperature
 		cfg.Temperature = &value
 	}
+}
+
+func lookupFirstEnv(lookup func(string) string, names ...string) (string, string) {
+	for _, name := range names {
+		if value := strings.TrimSpace(lookup(name)); value != "" {
+			return value, name
+		}
+	}
+	return "", ""
 }
 
 func applyAPIKeyHelper(cfg *Config) error {

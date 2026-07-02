@@ -590,6 +590,49 @@ func TestLoadOpenAIEnvironmentForGPTModelOverridesAnthropicEnv(t *testing.T) {
 	require.Equal(t, "https://api.openai.com/v1", cfg.BaseURL)
 }
 
+func TestLoadAnthropicModelEnvironmentAliases(t *testing.T) {
+	unsetEnv(t, "CODOG_MODEL", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_MODEL", "CLAUDE_MODEL")
+	t.Setenv("ANTHROPIC_MODEL", "claude-opus-4-7")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "claude-opus-4-7", cfg.Model)
+	require.Equal(t, "ANTHROPIC_MODEL", cfg.ModelEnvVar)
+
+	t.Setenv("CODOG_MODEL", "sonnet")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "sonnet", cfg.Model)
+	require.Equal(t, "CODOG_MODEL", cfg.ModelEnvVar)
+
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json"), Model: "haiku"})
+
+	require.NoError(t, err)
+	require.Equal(t, "haiku", cfg.Model)
+	require.Empty(t, cfg.ModelEnvVar)
+}
+
+func TestLoadAnthropicDefaultAndClaudeModelAliases(t *testing.T) {
+	unsetEnv(t, "CODOG_MODEL", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_MODEL", "CLAUDE_MODEL")
+	t.Setenv("ANTHROPIC_DEFAULT_MODEL", "opus")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "opus", cfg.Model)
+	require.Equal(t, "ANTHROPIC_DEFAULT_MODEL", cfg.ModelEnvVar)
+
+	t.Setenv("ANTHROPIC_DEFAULT_MODEL", "")
+	t.Setenv("CLAUDE_MODEL", "haiku")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "haiku", cfg.Model)
+	require.Equal(t, "CLAUDE_MODEL", cfg.ModelEnvVar)
+}
+
 func TestLoadDashScopeEnvironmentForQwenModel(t *testing.T) {
 	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "DASHSCOPE_BASE_URL")
 	t.Setenv("CODOG_MODEL", "qwen-plus")

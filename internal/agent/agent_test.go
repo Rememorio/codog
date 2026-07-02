@@ -9549,6 +9549,8 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	out.Reset()
 
 	t.Setenv("CODOG_OUTPUT_FORMAT", "json")
+	t.Setenv("CODOG_MODEL", "")
+	t.Setenv("ANTHROPIC_MODEL", "claude-opus-4-7")
 	outText, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "status"}, config.FlagOverrides{})
 	})
@@ -9558,6 +9560,8 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Equal(t, "env", envStatus.FormatSource)
 	require.Equal(t, "json", envStatus.FormatRaw)
 	require.False(t, envStatus.FormatOverridden)
+	require.Equal(t, "claude-opus-4-7", envStatus.Config.Model)
+	require.Equal(t, "ANTHROPIC_MODEL", envStatus.Config.ModelEnvVar)
 
 	outText, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "status"}, config.FlagOverrides{})
