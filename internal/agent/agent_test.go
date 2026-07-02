@@ -3868,6 +3868,19 @@ func risky(value any) {
 	require.Equal(t, "mock_limits", resumedMockLimits.Kind)
 	require.Equal(t, "show", resumedMockLimits.Action)
 
+	out, err = runResumedJSON("/mock-limits", "serve", "--addr", "127.0.0.1:0")
+	require.NoError(t, err)
+	var resumedMockLimitsServe backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedMockLimitsServe))
+	require.Equal(t, "background", resumedMockLimitsServe.Kind)
+	require.Equal(t, "run", resumedMockLimitsServe.Action)
+	require.Equal(t, "ok", resumedMockLimitsServe.Status)
+	require.Equal(t, "resume-slash", resumedMockLimitsServe.SessionID)
+	require.NotNil(t, resumedMockLimitsServe.Task)
+	require.Equal(t, "mock_limits", resumedMockLimitsServe.Task.Kind)
+	require.Contains(t, resumedMockLimitsServe.Task.Command, "mock-limits serve")
+	require.Contains(t, resumedMockLimitsServe.Task.Command, "127.0.0.1:0")
+
 	out, err = runResumedJSON("/extra-usage", "--admin", "--no-open")
 	require.NoError(t, err)
 	var resumedExtraUsage extraUsageReport
@@ -4506,7 +4519,6 @@ func risky(value any) {
 	}{
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
-		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
 		require.Error(t, err, guarded.Command)

@@ -23756,7 +23756,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/ant-trace":
 		return a.runResumedAntTraceSlash(ctx, resumeSlashArgs("ant-trace", args, format), format)
 	case "/mock-limits":
-		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), format)
+		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), resumed, format)
 	case "/extra-usage":
 		return a.runResumedExtraUsageSlash(resumeSlashArgs("extra-usage", args, format), format)
 	case "/install-slack-app":
@@ -24221,15 +24221,56 @@ func (a *App) runResumedAntTraceSlash(ctx context.Context, args []string, format
 	return a.AntTrace(ctx, args)
 }
 
-func (a *App) runResumedMockLimitsSlash(args []string, format string) error {
+func (a *App) runResumedMockLimitsSlash(args []string, overrides config.FlagOverrides, format string) error {
 	req, err := parseMockLimitsArgs(args)
 	if err != nil {
 		return err
 	}
-	if req.Action != "show" {
+	switch req.Action {
+	case "show":
+		return a.MockLimits(args)
+	case "serve":
+		return a.startResumedMockLimitsServer(args, overrides)
+	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/mock-limits", req.Action), format)
 	}
-	return a.MockLimits(args)
+}
+
+func (a *App) startResumedMockLimitsServer(args []string, overrides config.FlagOverrides) error {
+	executable, err := a.executablePath()
+	if err != nil {
+		return err
+	}
+	sessionID, err := a.sessionIDFromOverrides(overrides)
+	if err != nil {
+		return err
+	}
+	commandParts := []string{"CODOG_CONFIG_HOME=" + shellQuote(a.Config.ConfigHome), shellQuote(executable), "mock-limits"}
+	commandParts = append(commandParts, shellQuoteArgs(args)...)
+	command := strings.Join(commandParts, " ")
+	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, a.Workspace, background.RunOptions{
+		Kind:        "mock_limits",
+		SessionID:   sessionID,
+		Description: "mock-limits server",
+	})
+	if err != nil {
+		return err
+	}
+	if err := renderBackgroundReport(a.Out, backgroundCommandReport{
+		Kind:      "background",
+		Action:    "run",
+		Status:    "ok",
+		Count:     1,
+		SessionID: sessionID,
+		TaskID:    task.ID,
+		Task:      &task,
+		Message:   "Mock limits server started",
+	}); err != nil {
+		return err
+	}
+	a.runTaskCreatedHook(context.Background(), task)
+	a.runNotificationHook(context.Background(), "background_task_started", "Mock limits server started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
+	return nil
 }
 
 func (a *App) runResumedExtraUsageSlash(args []string, format string) error {
