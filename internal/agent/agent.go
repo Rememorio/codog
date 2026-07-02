@@ -23020,6 +23020,22 @@ func (e invalidFlagValueError) Error() string {
 	return "invalid_flag_value: " + message
 }
 
+type invalidCWDError struct {
+	Path string
+	Err  error
+}
+
+func (e invalidCWDError) Error() string {
+	path := strings.TrimSpace(e.Path)
+	if path == "" {
+		path = "."
+	}
+	if e.Err != nil {
+		return fmt.Sprintf("invalid_cwd: cannot use cwd %q: %v", path, e.Err)
+	}
+	return fmt.Sprintf("invalid_cwd: cannot use cwd %q", path)
+}
+
 type toolNameError struct {
 	Argument  string
 	ToolName  string
@@ -23481,6 +23497,21 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Value:     value,
 			Message:   message,
 			Hint:      hint,
+		}
+	}
+	var cwdErr invalidCWDError
+	if errors.As(err, &cwdErr) {
+		path := strings.TrimSpace(cwdErr.Path)
+		if path == "" {
+			path = "."
+		}
+		return cliErrorReport{
+			Kind:      "invalid_cwd",
+			ErrorKind: "invalid_cwd",
+			Status:    "error",
+			Message:   fmt.Sprintf("cannot use cwd %q", path),
+			Hint:      "Pass an existing directory with --cwd, -C, or --directory.",
+			Path:      path,
 		}
 	}
 	var toolErr toolNameError
@@ -44251,6 +44282,8 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.CWD, "cwd", base.CWD, "run as if Codog was started in this directory")
+	flags.StringVar(&base.CWD, "C", base.CWD, "alias for --cwd")
+	flags.StringVar(&base.CWD, "directory", base.CWD, "alias for --cwd")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
 	flags.StringVar(&base.SystemPrompt, "system-prompt", base.SystemPrompt, "override the base system prompt")
@@ -44352,7 +44385,7 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--cwd", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "-C", "--directory", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
@@ -44369,7 +44402,7 @@ func applyGlobalCWD(path string) (func(), error) {
 		return nil, err
 	}
 	if err := os.Chdir(path); err != nil {
-		return nil, err
+		return nil, invalidCWDError{Path: path, Err: err}
 	}
 	return func() {
 		_ = os.Chdir(previous)
@@ -46017,7 +46050,7 @@ Usage:
 
 Flags:
   --model NAME
-  --cwd PATH
+  --cwd PATH | -C PATH | --directory PATH
   --base-url URL
   --system-prompt TEXT
   --append-system-prompt TEXT

@@ -1508,38 +1508,61 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 func TestGlobalCWDFlagChangesWorkspaceAndConfigRoot(t *testing.T) {
 	originalCWD, err := os.Getwd()
 	require.NoError(t, err)
-	workspace := t.TempDir()
-	configHome := t.TempDir()
-	data, err := json.Marshal(map[string]string{
-		"config_home": configHome,
-		"model":       "cwd-model",
-	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), data, 0o644))
+	for _, flagName := range []string{"--cwd", "-C", "--directory"} {
+		t.Run(flagName, func(t *testing.T) {
+			workspace := t.TempDir()
+			configHome := t.TempDir()
+			data, err := json.Marshal(map[string]string{
+				"config_home": configHome,
+				"model":       "cwd-model",
+			})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), data, 0o644))
 
-	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--cwd", workspace, "--output-format", "json", "status"}, config.FlagOverrides{})
-	})
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), []string{flagName, workspace, "--output-format", "json", "status"}, config.FlagOverrides{})
+			})
 
-	require.NoError(t, err)
-	currentCWD, err := os.Getwd()
-	require.NoError(t, err)
-	require.Equal(t, originalCWD, currentCWD)
-	var report struct {
-		Workspace struct {
-			Path string `json:"path"`
-		} `json:"workspace"`
-		Config struct {
-			ConfigHome string `json:"config_home"`
-			Model      string `json:"model"`
-		} `json:"config"`
+			require.NoError(t, err)
+			currentCWD, err := os.Getwd()
+			require.NoError(t, err)
+			require.Equal(t, originalCWD, currentCWD)
+			var report struct {
+				Workspace struct {
+					Path string `json:"path"`
+				} `json:"workspace"`
+				Config struct {
+					ConfigHome string `json:"config_home"`
+					Model      string `json:"model"`
+				} `json:"config"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			expectedWorkspace, err := filepath.EvalSymlinks(workspace)
+			require.NoError(t, err)
+			require.Equal(t, expectedWorkspace, report.Workspace.Path)
+			require.Equal(t, configHome, report.Config.ConfigHome)
+			require.Equal(t, "cwd-model", report.Config.Model)
+		})
 	}
+}
+
+func TestGlobalCWDInvalidPathJSONContract(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--cwd", missing, "--output-format", "json", "status"}, config.FlagOverrides{})
+	})
+
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
-	require.NoError(t, err)
-	require.Equal(t, expectedWorkspace, report.Workspace.Path)
-	require.Equal(t, configHome, report.Config.ConfigHome)
-	require.Equal(t, "cwd-model", report.Config.Model)
+	require.Equal(t, "invalid_cwd", report.Kind)
+	require.Equal(t, "invalid_cwd", report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, missing, report.Path)
+	require.Contains(t, report.Hint, "--cwd")
 }
 
 func TestApprovalSlashAliasesReturnInteractiveOnly(t *testing.T) {
