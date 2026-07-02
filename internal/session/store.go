@@ -25,6 +25,8 @@ type Record struct {
 	SessionID       string             `json:"session_id,omitempty"`
 	ParentSessionID string             `json:"parent_session_id,omitempty"`
 	BranchName      string             `json:"branch_name,omitempty"`
+	MessageIndex    int                `json:"message_index,omitempty"`
+	Action          string             `json:"action,omitempty"`
 }
 
 type Session struct {
@@ -41,6 +43,7 @@ type SessionMetadata struct {
 	ModifiedAt      time.Time `json:"modified_at,omitempty"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
 	BranchName      string    `json:"branch_name,omitempty"`
+	PinnedMessages  []int     `json:"pinned_messages,omitempty"`
 }
 
 type SessionIdentity struct {
@@ -116,6 +119,16 @@ type RenameResult struct {
 	OldPath      string `json:"old_path"`
 	NewPath      string `json:"new_path"`
 	MessageCount int    `json:"message_count"`
+}
+
+// PinResult describes a message pin mutation in a saved session.
+type PinResult struct {
+	SessionID      string `json:"session_id"`
+	Path           string `json:"path"`
+	Action         string `json:"action"`
+	MessageIndex   int    `json:"message_index"`
+	MessageCount   int    `json:"message_count"`
+	PinnedMessages []int  `json:"pinned_messages"`
 }
 
 type messageRecordInfo struct {
@@ -405,6 +418,60 @@ func (s *Store) Delete(id string) error {
 	return nil
 }
 
+// PinMessage marks the zero-based message index as pinned for the session.
+func (s *Store) PinMessage(id string, index int) (PinResult, error) {
+	return s.setMessagePin(id, index, true)
+}
+
+// UnpinMessage removes a pin from the zero-based message index.
+func (s *Store) UnpinMessage(id string, index int) (PinResult, error) {
+	return s.setMessagePin(id, index, false)
+}
+
+func (s *Store) setMessagePin(id string, index int, pinned bool) (PinResult, error) {
+	if index < 0 {
+		return PinResult{}, errors.New("message index must be non-negative")
+	}
+	sess, err := s.OpenExisting(id)
+	if err != nil {
+		return PinResult{}, err
+	}
+	if index >= len(sess.Messages) {
+		return PinResult{}, fmt.Errorf("message index %d out of range for %d messages", index, len(sess.Messages))
+	}
+	action := "pin"
+	if !pinned {
+		action = "unpin"
+	}
+	record := Record{
+		Type:         "pin",
+		Time:         time.Now().UTC(),
+		SessionID:    sess.ID,
+		MessageIndex: index,
+		Action:       action,
+	}
+	file, err := os.OpenFile(sess.Path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return PinResult{}, err
+	}
+	defer file.Close()
+	if err := writeRecord(file, record); err != nil {
+		return PinResult{}, err
+	}
+	updated, err := s.OpenExisting(sess.ID)
+	if err != nil {
+		return PinResult{}, err
+	}
+	return PinResult{
+		SessionID:      updated.ID,
+		Path:           updated.Path,
+		Action:         action,
+		MessageIndex:   index,
+		MessageCount:   len(updated.Messages),
+		PinnedMessages: append([]int(nil), updated.Metadata.PinnedMessages...),
+	}, nil
+}
+
 func (s *Store) Rename(oldID string, newID string) (RenameResult, error) {
 	oldID = strings.TrimSpace(oldID)
 	newID = strings.TrimSpace(newID)
@@ -545,6 +612,17 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 			return nil, err
 		}
 	}
+	for _, index := range source.Metadata.PinnedMessages {
+		if err := writeRecord(file, Record{
+			Type:         "pin",
+			Time:         time.Now().UTC(),
+			SessionID:    forkID,
+			MessageIndex: index,
+			Action:       "pin",
+		}); err != nil {
+			return nil, err
+		}
+	}
 	now := time.Now().UTC()
 	return &Session{ID: forkID, Messages: append([]anthropic.Message(nil), source.Messages...), Path: path, Identity: identity, Metadata: SessionMetadata{
 		CreatedAt:       now,
@@ -552,6 +630,7 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 		ModifiedAt:      now,
 		ParentSessionID: source.ID,
 		BranchName:      branchName,
+		PinnedMessages:  append([]int(nil), source.Metadata.PinnedMessages...),
 	}}, nil
 }
 
@@ -841,18 +920,28 @@ func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 	}
 	kept := preservedSessionRecords(records)
 	seenMessages := 0
+	oldToNewMessageIndex := map[int]int{}
+	oldMessageIndex := -1
 	for _, record := range records {
 		if isSessionMetadataRecord(record.Type) {
+			continue
+		}
+		if record.Message != nil {
+			oldMessageIndex++
+		}
+		if record.Type == "pin" {
 			continue
 		}
 		if seenMessages >= remainingMessages {
 			break
 		}
 		if record.Message != nil {
+			oldToNewMessageIndex[oldMessageIndex] = seenMessages
 			seenMessages++
 		}
 		kept = append(kept, record)
 	}
+	kept = append(kept, remappedPinRecords(records, id, oldToNewMessageIndex)...)
 	if err := s.writeRecords(path, kept); err != nil {
 		return RewindResult{}, err
 	}
@@ -915,7 +1004,9 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 	}
 	metadata := messageRecordMetadata(existingRecords)
 	records := preservedSessionRecords(existingRecords)
+	preservedCount := len(records)
 	searchFrom := 0
+	oldToNewMessageIndex := map[int]int{}
 	for _, msg := range messages {
 		next := msg
 		record := Record{
@@ -926,6 +1017,7 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 		}
 		if index := findMessageIndex(sess.Messages, msg, searchFrom); index >= 0 {
 			searchFrom = index + 1
+			oldToNewMessageIndex[index] = len(records) - preservedCount
 			if info, ok := metadata[index]; ok {
 				if !info.Time.IsZero() {
 					record.Time = info.Time
@@ -938,6 +1030,7 @@ func (s *Store) ReplaceMessages(sess *Session, messages []anthropic.Message) (Re
 		}
 		records = append(records, record)
 	}
+	records = append(records, remappedPinRecords(existingRecords, sess.ID, oldToNewMessageIndex)...)
 	if err := s.writeRecords(path, records); err != nil {
 		return ReplaceResult{}, err
 	}
@@ -976,6 +1069,55 @@ func messageRecordMetadata(records []Record) map[int]messageRecordInfo {
 		metadata[messageIndex] = messageRecordInfo{Time: record.Time, Usage: usage}
 	}
 	return metadata
+}
+
+func remappedPinRecords(records []Record, sessionID string, oldToNew map[int]int) []Record {
+	pinned := pinnedMessagesFromRecords(records, -1)
+	if len(pinned) == 0 {
+		return nil
+	}
+	out := []Record{}
+	for _, oldIndex := range pinned {
+		newIndex, ok := oldToNew[oldIndex]
+		if !ok {
+			continue
+		}
+		out = append(out, Record{
+			Type:         "pin",
+			Time:         time.Now().UTC(),
+			SessionID:    sessionID,
+			MessageIndex: newIndex,
+			Action:       "pin",
+		})
+	}
+	return out
+}
+
+func pinnedMessagesFromRecords(records []Record, messageCount int) []int {
+	pinned := map[int]bool{}
+	for _, record := range records {
+		if record.Type != "pin" {
+			continue
+		}
+		if record.MessageIndex < 0 {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(record.Action)) {
+		case "", "pin":
+			pinned[record.MessageIndex] = true
+		case "unpin":
+			delete(pinned, record.MessageIndex)
+		}
+	}
+	indexes := make([]int, 0, len(pinned))
+	for index := range pinned {
+		if messageCount >= 0 && index >= messageCount {
+			continue
+		}
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	return indexes
 }
 
 func preservedSessionRecords(records []Record) []Record {
@@ -1050,7 +1192,11 @@ func (s *Store) readSession(path string, id string) ([]anthropic.Message, Sessio
 
 func metadataFromRecords(path string, records []Record) SessionMetadata {
 	var metadata SessionMetadata
+	messageCount := 0
 	for _, record := range records {
+		if record.Message != nil {
+			messageCount++
+		}
 		if !record.Time.IsZero() {
 			at := record.Time.UTC()
 			if metadata.CreatedAt.IsZero() || at.Before(metadata.CreatedAt) {
@@ -1067,6 +1213,7 @@ func metadataFromRecords(path string, records []Record) SessionMetadata {
 			metadata.BranchName = strings.TrimSpace(record.BranchName)
 		}
 	}
+	metadata.PinnedMessages = pinnedMessagesFromRecords(records, messageCount)
 	if info, err := os.Stat(path); err == nil {
 		modified := info.ModTime().UTC()
 		metadata.ModifiedAt = modified

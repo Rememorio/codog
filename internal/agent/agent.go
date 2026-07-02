@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/pprof"
 	"sort"
@@ -576,6 +577,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Copy(ctx, rest, overrides)
 	case "paste":
 		return app.Paste(ctx, rest, overrides)
+	case "pin":
+		return app.Pin(rest, overrides)
+	case "unpin":
+		return app.Unpin(rest, overrides)
 	case "git":
 		if err := app.Git(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -22181,6 +22186,7 @@ func builtInCommandNames() []string {
 		"paste",
 		"perf-issue",
 		"permissions",
+		"pin",
 		"plan",
 		"plugin",
 		"PluginErrors",
@@ -22273,6 +22279,7 @@ func builtInCommandNames() []string {
 		"ultrareviewEnabled",
 		"undo",
 		"UnifiedInstalledCell",
+		"unpin",
 		"unfocus",
 		"updater",
 		"upgrade",
@@ -28012,6 +28019,14 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/paste":
 		a.handlePasteSlash(ctx, fields[1:], sess)
+	case "/pin":
+		if err := a.Pin(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/unpin":
+		if err := a.Unpin(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/history", "/prompt-history":
 		a.handleHistorySlash(fields[1:], sess)
 	case "/summary":
@@ -34113,6 +34128,24 @@ type pasteReport struct {
 	Preview   string `json:"preview,omitempty"`
 }
 
+type pinRequest struct {
+	SessionID    string
+	Format       string
+	MessageIndex int
+}
+
+type pinReport struct {
+	Kind           string `json:"kind"`
+	Action         string `json:"action"`
+	Status         string `json:"status"`
+	SessionID      string `json:"session_id"`
+	Path           string `json:"path"`
+	MessageIndex   int    `json:"message_index"`
+	DisplayIndex   int    `json:"display_index"`
+	MessageCount   int    `json:"message_count"`
+	PinnedMessages []int  `json:"pinned_messages"`
+}
+
 var writeClipboard = writeSystemClipboard
 var readClipboard = readSystemClipboard
 
@@ -34675,6 +34708,165 @@ func (a *App) handlePasteSlash(ctx context.Context, args []string, sess *session
 	if err := a.runSessionTurnWithOptions(ctx, "repl", sess, string(data), "idle", turnOptions{}); err != nil {
 		fmt.Fprintln(a.Err, "error:", err)
 	}
+}
+
+func (a *App) Pin(args []string, overrides config.FlagOverrides) error {
+	return a.setPin("pin", args, overrides)
+}
+
+func (a *App) Unpin(args []string, overrides config.FlagOverrides) error {
+	return a.setPin("unpin", args, overrides)
+}
+
+func (a *App) setPin(action string, args []string, overrides config.FlagOverrides) error {
+	req, err := parsePinArgs(action, args, overrides)
+	if err != nil {
+		return err
+	}
+	if req.MessageIndex < 0 {
+		sess, err := a.Sessions.OpenExisting(req.SessionID)
+		if err != nil {
+			return err
+		}
+		if len(sess.Messages) == 0 {
+			return errors.New("session has no messages")
+		}
+		req.SessionID = sess.ID
+		req.MessageIndex = len(sess.Messages) - 1
+	}
+	var result session.PinResult
+	if action == "unpin" {
+		result, err = a.Sessions.UnpinMessage(req.SessionID, req.MessageIndex)
+	} else {
+		result, err = a.Sessions.PinMessage(req.SessionID, req.MessageIndex)
+	}
+	if err != nil {
+		return err
+	}
+	report := pinReport{
+		Kind:           "message_pin",
+		Action:         result.Action,
+		Status:         "ok",
+		SessionID:      result.SessionID,
+		Path:           result.Path,
+		MessageIndex:   result.MessageIndex,
+		DisplayIndex:   result.MessageIndex + 1,
+		MessageCount:   result.MessageCount,
+		PinnedMessages: append([]int(nil), result.PinnedMessages...),
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderPinReport(a.Out, report)
+	return nil
+}
+
+func parsePinArgs(command string, args []string, overrides config.FlagOverrides) (pinRequest, error) {
+	req := pinRequest{SessionID: "latest", Format: "text", MessageIndex: -1}
+	if strings.TrimSpace(overrides.Resume) != "" {
+		req.SessionID = overrides.Resume
+	}
+	if strings.TrimSpace(overrides.SessionID) != "" {
+		req.SessionID = overrides.SessionID
+	}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", command)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s session id is required", command)
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s resume id is required", command)
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Command: command,
+				Option:  arg,
+				Usage:   "codog " + command + " [message-index|last] [--session ID] [--json|--output-format text|json]",
+			}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) > 1 {
+		return req, unexpectedExtraArgsError{
+			Command: command,
+			Args:    append([]string(nil), positionals[1:]...),
+			Usage:   "codog " + command + " [message-index|last] [--session ID] [--json|--output-format text|json]",
+		}
+	}
+	if len(positionals) == 1 {
+		index, err := parsePinMessageIndex(positionals[0], command)
+		if err != nil {
+			return req, err
+		}
+		req.MessageIndex = index
+	}
+	if err := validateTextOrJSON(req.Format, command); err != nil {
+		return req, err
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func parsePinMessageIndex(value string, command string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "last") || strings.EqualFold(value, "latest") {
+		return -1, nil
+	}
+	display, err := strconv.Atoi(value)
+	if err != nil || display < 1 {
+		return 0, fmt.Errorf("%s message index must be a positive integer or last", command)
+	}
+	return display - 1, nil
+}
+
+func renderPinReport(out io.Writer, report pinReport) {
+	title := "Message pinned"
+	if report.Action == "unpin" {
+		title = "Message unpinned"
+	}
+	fmt.Fprintln(out, title)
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Message          %d\n", report.DisplayIndex)
+	fmt.Fprintf(out, "  Pinned messages  %s\n", formatIntList(report.PinnedMessages))
+}
+
+func formatIntList(values []int) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.Itoa(value+1))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func pasteClipboardPayload(ctx context.Context, req pasteRequest) ([]byte, string, error) {
@@ -35375,6 +35567,7 @@ type sessionShowReport struct {
 	ModifiedEpochMillis int64                   `json:"modified_epoch_millis,omitempty"`
 	ParentSessionID     string                  `json:"parent_session_id,omitempty"`
 	BranchName          string                  `json:"branch_name,omitempty"`
+	PinnedMessages      []int                   `json:"pinned_messages,omitempty"`
 	Lifecycle           sessionLifecycleReport  `json:"lifecycle"`
 	Identity            session.SessionIdentity `json:"identity,omitempty"`
 	Messages            []anthropic.Message     `json:"messages"`
@@ -35485,6 +35678,7 @@ func (a *App) buildSessionShowReport(id string) (sessionShowReport, error) {
 		ModifiedEpochMillis: timeMillis(sess.Metadata.ModifiedAt),
 		ParentSessionID:     sess.Metadata.ParentSessionID,
 		BranchName:          sess.Metadata.BranchName,
+		PinnedMessages:      append([]int(nil), sess.Metadata.PinnedMessages...),
 		Lifecycle:           lifecycleForStoredSession(sess),
 		Identity:            sess.Identity,
 		Messages:            append([]anthropic.Message(nil), sess.Messages...),
@@ -35501,6 +35695,9 @@ func renderSessionShowText(out io.Writer, report sessionShowReport) {
 	}
 	if report.BranchName != "" {
 		fmt.Fprintf(out, "  Branch           %s\n", report.BranchName)
+	}
+	if len(report.PinnedMessages) > 0 {
+		fmt.Fprintf(out, "  Pinned           %s\n", formatIntList(report.PinnedMessages))
 	}
 	fmt.Fprintf(out, "  File             %s\n", report.Path)
 	if strings.TrimSpace(report.Identity.Title) != "" {
@@ -36195,6 +36392,7 @@ type sessionListDetail struct {
 	ModifiedEpochMillis int64                   `json:"modified_epoch_millis,omitempty"`
 	ParentSessionID     string                  `json:"parent_session_id,omitempty"`
 	BranchName          string                  `json:"branch_name,omitempty"`
+	PinnedMessages      []int                   `json:"pinned_messages,omitempty"`
 	Lifecycle           sessionLifecycleReport  `json:"lifecycle"`
 	Active              bool                    `json:"active,omitempty"`
 	Identity            session.SessionIdentity `json:"identity,omitempty"`
@@ -36260,6 +36458,7 @@ func buildSessionListReport(sessions []session.Session, activeID string, workspa
 			ModifiedEpochMillis: timeMillis(sess.Metadata.ModifiedAt),
 			ParentSessionID:     sess.Metadata.ParentSessionID,
 			BranchName:          sess.Metadata.BranchName,
+			PinnedMessages:      append([]int(nil), sess.Metadata.PinnedMessages...),
 			Lifecycle:           lifecycleForStoredSession(&sess),
 			Active:              activeID != "" && sess.ID == activeID,
 			Identity:            sess.Identity,
@@ -36274,6 +36473,10 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 		if sess.Active {
 			active = "\tactive"
 		}
+		pinned := ""
+		if len(sess.PinnedMessages) > 0 {
+			pinned = "\tpinned=" + formatIntList(sess.PinnedMessages)
+		}
 		lineage := ""
 		switch {
 		case sess.ParentSessionID != "" && sess.BranchName != "":
@@ -36283,7 +36486,7 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 		case sess.BranchName != "":
 			lineage = fmt.Sprintf("\tbranch=%s", sess.BranchName)
 		}
-		fmt.Fprintf(out, "%s\t%d messages\tlifecycle=%s\t%s%s%s\n", sess.ID, sess.MessageCount, sess.Lifecycle.Signal, sess.Path, lineage, active)
+		fmt.Fprintf(out, "%s\t%d messages\tlifecycle=%s\t%s%s%s%s\n", sess.ID, sess.MessageCount, sess.Lifecycle.Signal, sess.Path, lineage, pinned, active)
 	}
 }
 
@@ -40168,9 +40371,9 @@ func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
 	if err := a.lifecycleHookRunner().PreCompact(context.Background(), compactPayload); err != nil {
 		return err
 	}
-	compacted := runloop.CompactMessages(sess.Messages, req.Keep)
+	compacted := compactMessagesPreservingPins(sess.Messages, req.Keep, sess.Metadata.PinnedMessages)
 	var result session.ReplaceResult
-	if len(compacted) == len(sess.Messages) {
+	if reflect.DeepEqual(compacted, sess.Messages) {
 		result = session.ReplaceResult{
 			SessionID:         sess.ID,
 			Path:              sess.Path,
@@ -40198,6 +40401,28 @@ func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
 	fmt.Fprintf(a.Out, "  Remaining        %d\n", result.RemainingMessages)
 	fmt.Fprintf(a.Out, "  Removed          %d\n", result.RemovedMessages)
 	return nil
+}
+
+func compactMessagesPreservingPins(messages []anthropic.Message, keep int, pinned []int) []anthropic.Message {
+	compacted := runloop.CompactMessages(messages, keep)
+	if len(compacted) == len(messages) || keep <= 0 {
+		return compacted
+	}
+	keepFrom := len(messages) - keep
+	pinnedBeforeRecent := []anthropic.Message{}
+	for _, index := range pinned {
+		if index >= 0 && index < keepFrom {
+			pinnedBeforeRecent = append(pinnedBeforeRecent, messages[index])
+		}
+	}
+	if len(pinnedBeforeRecent) == 0 {
+		return compacted
+	}
+	out := make([]anthropic.Message, 0, len(compacted)+len(pinnedBeforeRecent))
+	out = append(out, compacted[0])
+	out = append(out, pinnedBeforeRecent...)
+	out = append(out, compacted[1:]...)
+	return out
 }
 
 func parseCompactArgs(args []string, overrides config.FlagOverrides, defaultKeep int) (compactRequest, error) {
@@ -42961,13 +43186,13 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
+		"ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
 	default:
 		return false
@@ -43318,6 +43543,23 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			[]string{"ok", "error"},
 			false,
 		), true
+	case "pin":
+		return localCommandHelpSpec(
+			"pin",
+			"pin",
+			"codog pin [message-index|last] [--session ID] [--output-format text|json]",
+			"Pin\n\nUsage:\n  codog pin [message-index|last] [--session ID] [--output-format text|json]\n  /pin [message-index|last]\n\nPins a saved session message so manual compaction keeps it even when it is outside the recent-message window. Message indexes are entered as 1-based numbers; JSON reports include both zero-based `message_index` and 1-based `display_index`.\n",
+			[]string{"session_id", "message_index", "display_index", "pinned_messages", "message_count"},
+			[]string{"ok", "error"},
+			true,
+		), true
+	case "unpin":
+		spec, _ := commandHelpSpecFor("pin")
+		spec.Topic = "unpin"
+		spec.Command = "unpin"
+		spec.Usage = "codog unpin [message-index|last] [--session ID] [--output-format text|json]"
+		spec.Text = "Unpin\n\nUsage:\n  codog unpin [message-index|last] [--session ID] [--output-format text|json]\n  /unpin [message-index|last]\n\nRemoves a message pin from a saved session. Message indexes are entered as 1-based numbers; JSON reports include both zero-based `message_index` and 1-based `display_index`.\n"
+		return spec, true
 	case "status":
 		return localCommandHelpSpec(
 			"status",
@@ -44286,6 +44528,7 @@ Usage:
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
   %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
+  %s [flags] pin|unpin [message-index|last] [--session ID] [--json|--output-format text|json]
   %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]

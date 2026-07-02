@@ -140,6 +140,8 @@ func Specs() []Spec {
 		{Name: "/export", Usage: "/export [file]", Description: "Export the current session transcript."},
 		{Name: "/copy", Usage: "/copy [last|N|all]", Description: "Copy the latest, Nth-latest response, or session transcript to the clipboard."},
 		{Name: "/paste", Usage: "/paste [--print|--json]", Description: "Paste clipboard text as input, or print a local clipboard report."},
+		{Name: "/pin", Usage: "/pin [message-index|last]", Description: "Pin a message so manual compaction keeps it."},
+		{Name: "/unpin", Usage: "/unpin [message-index|last]", Description: "Remove a message pin."},
 		{Name: "/history", Usage: "/history [limit]", Description: "Show recent prompts recorded for the current session."},
 		{Name: "/summary", Usage: "/summary", Description: "Summarize the current session."},
 		{Name: "/todos", Usage: "/todos [list|add|start|done|pending|clear]", Description: "Show or update the workspace todo list."},

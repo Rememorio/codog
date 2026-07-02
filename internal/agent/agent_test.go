@@ -599,6 +599,16 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "paste",
 		},
 		{
+			name:  "pin local help",
+			args:  []string{"--config", configPath, "pin", "--help", "--output-format", "json"},
+			topic: "pin",
+		},
+		{
+			name:  "unpin local help",
+			args:  []string{"--config", configPath, "unpin", "--help", "--output-format", "json"},
+			topic: "unpin",
+		},
+		{
 			name:  "extra-usage core local help",
 			args:  []string{"--config", configPath, "extra-usage-core", "--help", "--output-format", "json"},
 			topic: "extra-usage-core",
@@ -977,6 +987,12 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	pasteSlash, ok := capabilityReportSlash(report, "/paste")
 	require.True(t, ok)
 	require.True(t, pasteSlash.ResumeSupported)
+	pinSlash, ok := capabilityReportSlash(report, "/pin")
+	require.True(t, ok)
+	require.False(t, pinSlash.ResumeSupported)
+	unpinSlash, ok := capabilityReportSlash(report, "/unpin")
+	require.True(t, ok)
+	require.False(t, unpinSlash.ResumeSupported)
 	thinkBackSlash, ok := capabilityReportSlash(report, "/think-back")
 	require.True(t, ok)
 	require.True(t, thinkBackSlash.ResumeSupported)
@@ -3196,6 +3212,8 @@ func risky(value any) {
 		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
 		{Command: "/passes", Args: []string{"set-url", "https://example.test/guest"}, Report: "/passes set-url"},
 		{Command: "/passes", Args: []string{"clear-url"}, Report: "/passes clear-url"},
+		{Command: "/pin", Args: nil, Report: "/pin"},
+		{Command: "/unpin", Args: nil, Report: "/unpin"},
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
@@ -14684,6 +14702,64 @@ func TestPasteCommandAndSlashPrint(t *testing.T) {
 	out.Reset()
 
 	require.ErrorContains(t, app.Paste(context.Background(), []string{"--max-bytes", "4"}, config.FlagOverrides{}), "over paste max")
+}
+
+func TestPinCommandSlashAndCompactPreservesPinnedMessages(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	for _, text := range []string{"one", "two", "three", "four", "five"} {
+		require.NoError(t, store.Append("source", anthropic.TextMessage("user", text)))
+	}
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Pin([]string{"1", "--session", "source", "--json"}, config.FlagOverrides{}))
+	var report pinReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "pin", report.Action)
+	require.Equal(t, 0, report.MessageIndex)
+	require.Equal(t, 1, report.DisplayIndex)
+	require.Equal(t, []int{0}, report.PinnedMessages)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/pin 2", sess))
+	require.Empty(t, errOut.String())
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Equal(t, []int{0, 1}, opened.Metadata.PinnedMessages)
+	out.Reset()
+
+	require.NoError(t, app.ListSessionsWithActive([]string{"--json"}, "source"))
+	var list sessionListReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &list))
+	require.Equal(t, []int{0, 1}, list.SessionDetails[0].PinnedMessages)
+	out.Reset()
+
+	require.NoError(t, app.SessionShow([]string{"source", "--json"}))
+	var shown sessionShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &shown))
+	require.Equal(t, []int{0, 1}, shown.PinnedMessages)
+	out.Reset()
+
+	require.NoError(t, app.Compact([]string{"--session", "source", "--keep", "2", "--json"}, config.FlagOverrides{}))
+	opened, err = store.Open("source")
+	require.NoError(t, err)
+	require.Len(t, opened.Messages, 5)
+	require.Contains(t, opened.Messages[0].Content[0].Text, "auto-compacted")
+	require.Equal(t, "one", opened.Messages[1].Content[0].Text)
+	require.Equal(t, "two", opened.Messages[2].Content[0].Text)
+	require.Equal(t, "four", opened.Messages[3].Content[0].Text)
+	require.Equal(t, "five", opened.Messages[4].Content[0].Text)
+	require.Equal(t, []int{1, 2}, opened.Metadata.PinnedMessages)
+	out.Reset()
+
+	require.NoError(t, app.Unpin([]string{"2", "--session", "source", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "unpin", report.Action)
+	require.Equal(t, []int{2}, report.PinnedMessages)
 }
 
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {

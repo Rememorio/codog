@@ -254,6 +254,8 @@ func TestRewindToZeroPreservesSessionIdentity(t *testing.T) {
 func TestForkExistsAndDeleteSession(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "before fork"}}}))
+	_, err := store.PinMessage("source", 0)
+	require.NoError(t, err)
 
 	ok, err := store.Exists("source")
 	require.NoError(t, err)
@@ -266,6 +268,7 @@ func TestForkExistsAndDeleteSession(t *testing.T) {
 	require.Equal(t, "before fork", forked.Messages[0].Content[0].Text)
 	require.Equal(t, "source", forked.Metadata.ParentSessionID)
 	require.Equal(t, "investigation", forked.Metadata.BranchName)
+	require.Equal(t, []int{0}, forked.Metadata.PinnedMessages)
 	require.False(t, forked.Metadata.CreatedAt.IsZero())
 	require.False(t, forked.Metadata.UpdatedAt.IsZero())
 
@@ -279,6 +282,7 @@ func TestForkExistsAndDeleteSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "source", reopened.Metadata.ParentSessionID)
 	require.Equal(t, "investigation", reopened.Metadata.BranchName)
+	require.Equal(t, []int{0}, reopened.Metadata.PinnedMessages)
 	require.False(t, reopened.Metadata.CreatedAt.IsZero())
 	require.False(t, reopened.Metadata.UpdatedAt.IsZero())
 	require.False(t, reopened.Metadata.ModifiedAt.IsZero())
@@ -445,6 +449,29 @@ func TestReplaceMessagesRewritesSessionMessages(t *testing.T) {
 	require.Equal(t, "compacted", entries[0].Text)
 }
 
+func TestPinMessagePersistsAndUnpins(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "second")))
+
+	result, err := store.PinMessage("source", 1)
+	require.NoError(t, err)
+	require.Equal(t, "pin", result.Action)
+	require.Equal(t, 1, result.MessageIndex)
+	require.Equal(t, []int{1}, result.PinnedMessages)
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Equal(t, []int{1}, opened.Metadata.PinnedMessages)
+
+	result, err = store.UnpinMessage("source", 1)
+	require.NoError(t, err)
+	require.Equal(t, "unpin", result.Action)
+	require.Empty(t, result.PinnedMessages)
+	opened, err = store.Open("source")
+	require.NoError(t, err)
+	require.Empty(t, opened.Metadata.PinnedMessages)
+}
+
 func TestReplaceMessagesPreservesRetainedUsage(t *testing.T) {
 	store := NewStore(t.TempDir())
 	usage := anthropic.Usage{InputTokens: 12, OutputTokens: 5, CacheReadInputTokens: 2}
@@ -466,6 +493,32 @@ func TestReplaceMessagesPreservesRetainedUsage(t *testing.T) {
 	require.Equal(t, usage.InputTokens, entries[0].Usage.InputTokens)
 	require.Equal(t, usage.OutputTokens, entries[0].Usage.OutputTokens)
 	require.Equal(t, usage.CacheReadInputTokens, entries[0].Usage.CacheReadInputTokens)
+}
+
+func TestReplaceAndRewindRemapPinnedMessages(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "three")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "four")))
+	_, err := store.PinMessage("source", 1)
+	require.NoError(t, err)
+	_, err = store.PinMessage("source", 3)
+	require.NoError(t, err)
+
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	_, err = store.ReplaceMessages(sess, []anthropic.Message{sess.Messages[1], sess.Messages[3]})
+	require.NoError(t, err)
+	opened, err := store.Open("source")
+	require.NoError(t, err)
+	require.Equal(t, []int{0, 1}, opened.Metadata.PinnedMessages)
+
+	_, err = store.Rewind("source", 1)
+	require.NoError(t, err)
+	opened, err = store.Open("source")
+	require.NoError(t, err)
+	require.Equal(t, []int{0}, opened.Metadata.PinnedMessages)
 }
 
 func TestAppendInputIgnoresBlankInput(t *testing.T) {
