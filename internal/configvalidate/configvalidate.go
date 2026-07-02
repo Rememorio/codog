@@ -188,6 +188,8 @@ var mcpServerFields = []fieldSpec{
 	{"command", FieldString},
 	{"args", FieldStringArray},
 	{"env", FieldStringArray},
+	{"url", FieldString},
+	{"headers", FieldObject},
 }
 
 var futureFields = []fieldSpec{
