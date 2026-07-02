@@ -3049,10 +3049,38 @@ type briefAttachmentReport struct {
 	IsImage bool   `json:"is_image"`
 }
 
+type briefStatusReport struct {
+	Kind           string   `json:"kind"`
+	Action         string   `json:"action"`
+	Status         string   `json:"status"`
+	Workspace      string   `json:"workspace,omitempty"`
+	AdditionalDirs []string `json:"additional_dirs,omitempty"`
+	Usage          string   `json:"usage"`
+	NextCommand    string   `json:"next_command"`
+}
+
 func (a *App) Brief(args []string) error {
 	req, err := parseBriefArgs(args)
 	if err != nil {
 		return err
+	}
+	if req.Message == "" {
+		report := briefStatusReport{
+			Kind:           "brief",
+			Action:         "status",
+			Status:         "ready",
+			Workspace:      a.Workspace,
+			AdditionalDirs: append([]string(nil), a.Config.AdditionalDirs...),
+			Usage:          "codog brief MESSAGE [--status normal|proactive] [--attach PATH] [--json]",
+			NextCommand:    "codog brief MESSAGE",
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderBriefStatus(a.Out, report)
+		return nil
 	}
 	input, err := json.Marshal(map[string]any{
 		"message":     req.Message,
@@ -3079,6 +3107,18 @@ func (a *App) Brief(args []string) error {
 	}
 	renderBriefReport(a.Out, report)
 	return nil
+}
+
+func renderBriefStatus(out io.Writer, report briefStatusReport) {
+	fmt.Fprintln(out, "Brief")
+	fmt.Fprintf(out, "  Status      %s\n", report.Status)
+	if report.Workspace != "" {
+		fmt.Fprintf(out, "  Workspace   %s\n", report.Workspace)
+	}
+	if len(report.AdditionalDirs) > 0 {
+		fmt.Fprintf(out, "  Extra dirs   %s\n", strings.Join(report.AdditionalDirs, ", "))
+	}
+	fmt.Fprintf(out, "  Usage       %s\n", report.Usage)
 }
 
 func parseBriefArgs(args []string) (briefRequest, error) {
@@ -3124,9 +3164,6 @@ func parseBriefArgs(args []string) (briefRequest, error) {
 		}
 	}
 	req.Message = strings.TrimSpace(strings.Join(message, " "))
-	if req.Message == "" {
-		return req, errors.New("usage: codog brief MESSAGE [--status normal|proactive] [--attach PATH] [--json]")
-	}
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	switch req.Status {
 	case "normal", "proactive":
@@ -43817,7 +43854,7 @@ Usage:
   %s [flags] max-turns [N]
   %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
-  %s [flags] brief MESSAGE [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
+  %s [flags] brief [MESSAGE] [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] capabilities [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]

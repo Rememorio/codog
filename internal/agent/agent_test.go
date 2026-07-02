@@ -12818,6 +12818,16 @@ func TestBriefCommandUsesToolPayloadAndSlash(t *testing.T) {
 		Err:       &errOut,
 	}
 
+	require.NoError(t, app.Brief([]string{"--json"}))
+	var status briefStatusReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &status))
+	require.Equal(t, "brief", status.Kind)
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "ready", status.Status)
+	require.Equal(t, workspace, status.Workspace)
+	require.Equal(t, "codog brief MESSAGE", status.NextCommand)
+	out.Reset()
+
 	require.NoError(t, app.Brief([]string{"Build", "passed", "--status", "proactive", "--attach", "notes.md", "--json"}))
 	require.Contains(t, out.String(), `"message": "Build passed"`)
 	require.Contains(t, out.String(), `"status": "proactive"`)
