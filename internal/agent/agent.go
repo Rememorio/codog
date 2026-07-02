@@ -23391,6 +23391,10 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Copy(ctx, resumeSlashJSONArgs(args, format), resumed)
 	case "/paste":
 		return a.Paste(ctx, resumeSlashJSONArgs(args, format), resumed)
+	case "/pin":
+		return a.Pin(resumeSlashArgs("pin", args, format), resumed)
+	case "/unpin":
+		return a.Unpin(resumeSlashArgs("unpin", args, format), resumed)
 	case "/cost", "/tokens":
 		return a.ShowCost(resumed)
 	case "/usage", "/stats":

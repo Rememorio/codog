@@ -997,10 +997,10 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, pasteSlash.ResumeSupported)
 	pinSlash, ok := capabilityReportSlash(report, "/pin")
 	require.True(t, ok)
-	require.False(t, pinSlash.ResumeSupported)
+	require.True(t, pinSlash.ResumeSupported)
 	unpinSlash, ok := capabilityReportSlash(report, "/unpin")
 	require.True(t, ok)
-	require.False(t, unpinSlash.ResumeSupported)
+	require.True(t, unpinSlash.ResumeSupported)
 	thinkBackSlash, ok := capabilityReportSlash(report, "/think-back")
 	require.True(t, ok)
 	require.True(t, thinkBackSlash.ResumeSupported)
@@ -3348,8 +3348,6 @@ func risky(value any) {
 		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
 		{Command: "/passes", Args: []string{"set-url", "https://example.test/guest"}, Report: "/passes set-url"},
 		{Command: "/passes", Args: []string{"clear-url"}, Report: "/passes clear-url"},
-		{Command: "/pin", Args: nil, Report: "/pin"},
-		{Command: "/unpin", Args: nil, Report: "/unpin"},
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
@@ -15042,6 +15040,22 @@ func TestPinCommandSlashAndCompactPreservesPinnedMessages(t *testing.T) {
 	require.Equal(t, "pin", report.Action)
 	require.Equal(t, 0, report.MessageIndex)
 	require.Equal(t, 1, report.DisplayIndex)
+	require.Equal(t, []int{0}, report.PinnedMessages)
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/pin", []string{"3"}, config.FlagOverrides{Resume: "source"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "pin", report.Action)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 2, report.MessageIndex)
+	require.Equal(t, []int{0, 2}, report.PinnedMessages)
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/unpin", []string{"3"}, config.FlagOverrides{Resume: "source"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "unpin", report.Action)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 2, report.MessageIndex)
 	require.Equal(t, []int{0}, report.PinnedMessages)
 	out.Reset()
 
