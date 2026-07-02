@@ -2749,6 +2749,35 @@ func risky(value any) {
 	require.Equal(t, "snippet", resumedSetupTerminal.Terminal.Action)
 	require.Contains(t, resumedSetupTerminal.Terminal.Snippet, "codog_statusline")
 
+	out, err = runResumedJSON("/setup", "terminal", "install", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedSetupTerminalInstall setupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSetupTerminalInstall))
+	require.Equal(t, "setup", resumedSetupTerminalInstall.Kind)
+	require.Equal(t, "terminal", resumedSetupTerminalInstall.Action)
+	require.NotNil(t, resumedSetupTerminalInstall.Terminal)
+	require.Equal(t, "install", resumedSetupTerminalInstall.Terminal.Action)
+	require.True(t, resumedSetupTerminalInstall.Terminal.Installed)
+	require.True(t, resumedSetupTerminalInstall.Terminal.Changed)
+	require.Equal(t, terminalProfilePath, resumedSetupTerminalInstall.Terminal.Path)
+	profileData, err := os.ReadFile(terminalProfilePath)
+	require.NoError(t, err)
+	require.Contains(t, string(profileData), "codog shell integration")
+
+	out, err = runResumedJSON("/setup", "terminal", "uninstall", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedSetupTerminalUninstall setupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSetupTerminalUninstall))
+	require.Equal(t, "setup", resumedSetupTerminalUninstall.Kind)
+	require.Equal(t, "terminal", resumedSetupTerminalUninstall.Action)
+	require.NotNil(t, resumedSetupTerminalUninstall.Terminal)
+	require.Equal(t, "uninstall", resumedSetupTerminalUninstall.Terminal.Action)
+	require.False(t, resumedSetupTerminalUninstall.Terminal.Installed)
+	require.True(t, resumedSetupTerminalUninstall.Terminal.Changed)
+	profileData, err = os.ReadFile(terminalProfilePath)
+	require.NoError(t, err)
+	require.NotContains(t, string(profileData), "codog shell integration")
+
 	out, err = runResumedJSON("/system-prompt")
 	require.NoError(t, err)
 	var resumedSystemPrompt struct {
@@ -2801,6 +2830,35 @@ func risky(value any) {
 	require.Equal(t, "snippet", resumedTerminalSnippet.Action)
 	require.Equal(t, "zsh", resumedTerminalSnippet.Shell)
 	require.Contains(t, resumedTerminalSnippet.Snippet, "codog_statusline")
+
+	out, err = runResumedJSON("/terminal-setup", "install", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedTerminalInstall terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTerminalInstall))
+	require.Equal(t, "terminal_setup", resumedTerminalInstall.Kind)
+	require.Equal(t, "install", resumedTerminalInstall.Action)
+	require.Equal(t, "ok", resumedTerminalInstall.Status)
+	require.Equal(t, "zsh", resumedTerminalInstall.Shell)
+	require.Equal(t, terminalProfilePath, resumedTerminalInstall.Path)
+	require.True(t, resumedTerminalInstall.Installed)
+	require.True(t, resumedTerminalInstall.Changed)
+	profileData, err = os.ReadFile(terminalProfilePath)
+	require.NoError(t, err)
+	require.Contains(t, string(profileData), "codog shell integration")
+
+	out, err = runResumedJSON("/terminal-setup", "uninstall", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedTerminalUninstall terminalsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTerminalUninstall))
+	require.Equal(t, "terminal_setup", resumedTerminalUninstall.Kind)
+	require.Equal(t, "uninstall", resumedTerminalUninstall.Action)
+	require.Equal(t, "ok", resumedTerminalUninstall.Status)
+	require.Equal(t, terminalProfilePath, resumedTerminalUninstall.Path)
+	require.False(t, resumedTerminalUninstall.Installed)
+	require.True(t, resumedTerminalUninstall.Changed)
+	profileData, err = os.ReadFile(terminalProfilePath)
+	require.NoError(t, err)
+	require.NotContains(t, string(profileData), "codog shell integration")
 
 	out, err = runResumedJSON("/terminalSetup", "status", "--shell", "zsh", "--path", terminalProfilePath)
 	require.NoError(t, err)
@@ -3747,10 +3805,6 @@ func risky(value any) {
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
 		{Command: "/setup", Args: []string{"init"}, Report: "/setup init"},
 		{Command: "/setup", Args: []string{"all"}, Report: "/setup all"},
-		{Command: "/setup", Args: []string{"terminal", "install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/setup terminal install"},
-		{Command: "/setup", Args: []string{"terminal", "uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/setup terminal uninstall"},
-		{Command: "/terminal-setup", Args: []string{"install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup install"},
-		{Command: "/terminal-setup", Args: []string{"uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup uninstall"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/reset", Args: []string{"model"}, Report: "/reset model"},
 		{Command: "/reset", Args: []string{"all", "--confirm"}, Report: "/reset all"},

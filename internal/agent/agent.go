@@ -24021,11 +24021,10 @@ func (a *App) runResumedTerminalSetupSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "status", "snippet", "print":
+	case "status", "snippet", "print", "install", "uninstall", "remove":
 		return a.TerminalSetup(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/terminal-setup", req.Action), format)
 	}
+	return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/terminal-setup", req.Action), format)
 }
 
 func (a *App) runResumedSetupSlash(ctx context.Context, args []string, format string) error {
@@ -24038,7 +24037,7 @@ func (a *App) runResumedSetupSlash(ctx context.Context, args []string, format st
 		return a.Setup(ctx, args)
 	case "terminal":
 		switch req.TerminalAction {
-		case "status", "snippet", "print":
+		case "status", "snippet", "print", "install", "uninstall", "remove":
 			return a.Setup(ctx, args)
 		default:
 			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/setup terminal", req.TerminalAction), format)
