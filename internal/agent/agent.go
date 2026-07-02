@@ -34451,22 +34451,28 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 		}
 		renderSessionForkText(a.Err, report)
 	case "rename":
-		if len(args) < 2 {
-			fmt.Fprintln(a.Err, "usage: /session rename NEW_ID")
-			return
-		}
-		result, err := a.Sessions.Rename(sess.ID, args[1])
+		req, err := parseSessionRenameArgs("/session rename", args[1:], sess.ID, "text")
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return
 		}
-		next, err := a.Sessions.Open(result.NewID)
+		report, err := a.renameSessionWithReport(req.OldID, req.NewID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		next, err := a.Sessions.Open(report.NewSessionID)
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return
 		}
 		*sess = *next
-		fmt.Fprintf(a.Err, "session renamed: %s -> %s\n", result.OldID, result.NewID)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return
+		}
+		renderSessionRenameText(a.Err, report)
 	case "delete":
 		req, err := parseSessionDeleteArgs("/session delete", args[1:])
 		if err != nil {
@@ -34587,15 +34593,20 @@ func (a *App) SessionsCommand(args []string) error {
 		}
 		renderSessionForkText(a.Out, report)
 	case "rename":
-		if len(args) < 3 {
-			return errors.New("usage: codog sessions rename OLD_ID NEW_ID")
-		}
-		result, err := a.Sessions.Rename(args[1], args[2])
+		req, err := parseSessionRenameArgs("codog sessions rename", args[1:], "", "json")
 		if err != nil {
 			return err
 		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		report, err := a.renameSessionWithReport(req.OldID, req.NewID)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionRenameText(a.Out, report)
 	case "delete":
 		deleteArgs := args[1:]
 		if !argsHaveOutputFormat(deleteArgs) {
@@ -34747,6 +34758,105 @@ func renderSessionForkText(out io.Writer, report sessionForkReport) {
 	}
 	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
 	fmt.Fprintf(out, "  File             %s\n", report.Path)
+}
+
+type sessionRenameRequest struct {
+	OldID  string
+	NewID  string
+	Format string
+}
+
+type sessionRenameReport struct {
+	Kind         string `json:"kind"`
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	OldSessionID string `json:"old_session_id"`
+	NewSessionID string `json:"new_session_id"`
+	OldPath      string `json:"old_path"`
+	NewPath      string `json:"new_path"`
+	MessageCount int    `json:"message_count"`
+}
+
+func parseSessionRenameArgs(command string, args []string, defaultOldID string, defaultFormat string) (sessionRenameRequest, error) {
+	req := sessionRenameRequest{OldID: strings.TrimSpace(defaultOldID), Format: defaultFormat}
+	if req.Format == "" {
+		req.Format = "text"
+	}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", command)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Command: command,
+				Option:  arg,
+				Usage:   command + " OLD_ID NEW_ID [--json|--output-format text|json]",
+			}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if defaultOldID == "" {
+		if len(positionals) < 2 {
+			return req, fmt.Errorf("usage: %s OLD_ID NEW_ID [--json|--output-format text|json]", command)
+		}
+		req.OldID = positionals[0]
+		req.NewID = positionals[1]
+		if len(positionals) > 2 {
+			return req, unexpectedExtraArgsError{
+				Command: command,
+				Args:    append([]string(nil), positionals[2:]...),
+				Usage:   command + " OLD_ID NEW_ID [--json|--output-format text|json]",
+			}
+		}
+	} else {
+		if len(positionals) != 1 {
+			return req, fmt.Errorf("usage: %s NEW_ID [--json|--output-format text|json]", command)
+		}
+		req.NewID = positionals[0]
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown %s output format %q", command, req.Format)
+	}
+	return req, nil
+}
+
+func (a *App) renameSessionWithReport(oldID string, newID string) (sessionRenameReport, error) {
+	result, err := a.Sessions.Rename(oldID, newID)
+	if err != nil {
+		return sessionRenameReport{}, err
+	}
+	return sessionRenameReport{
+		Kind:         "session_rename",
+		Action:       "rename",
+		Status:       "ok",
+		OldSessionID: result.OldID,
+		NewSessionID: result.NewID,
+		OldPath:      result.OldPath,
+		NewPath:      result.NewPath,
+		MessageCount: result.MessageCount,
+	}, nil
+}
+
+func renderSessionRenameText(out io.Writer, report sessionRenameReport) {
+	fmt.Fprintln(out, "Session renamed")
+	fmt.Fprintf(out, "  Old session      %s\n", report.OldSessionID)
+	fmt.Fprintf(out, "  New session      %s\n", report.NewSessionID)
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  File             %s\n", report.NewPath)
 }
 
 type sessionDeleteReport struct {

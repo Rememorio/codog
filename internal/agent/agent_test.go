@@ -5445,7 +5445,15 @@ func TestRenameSessionCommandAndSlash(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.SessionsCommand([]string{"rename", "cli-renamed", "sessions-renamed"}))
-	require.Contains(t, out.String(), `"new_id": "sessions-renamed"`)
+	var renameReport sessionRenameReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &renameReport))
+	require.Equal(t, "session_rename", renameReport.Kind)
+	require.Equal(t, "rename", renameReport.Action)
+	require.Equal(t, "ok", renameReport.Status)
+	require.Equal(t, "cli-renamed", renameReport.OldSessionID)
+	require.Equal(t, "sessions-renamed", renameReport.NewSessionID)
+	require.Equal(t, 1, renameReport.MessageCount)
+	require.NotEmpty(t, renameReport.NewPath)
 	out.Reset()
 
 	sess, err := store.Open("sessions-renamed")
@@ -5457,11 +5465,33 @@ func TestRenameSessionCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/session rename final-renamed", sess))
 	require.Equal(t, "final-renamed", sess.ID)
-	require.Contains(t, errOut.String(), "session renamed: slash-renamed -> final-renamed")
+	require.Contains(t, errOut.String(), "Session renamed")
+	require.Contains(t, errOut.String(), "final-renamed")
 	opened, err := store.Open("final-renamed")
 	require.NoError(t, err)
 	require.Len(t, opened.Messages, 1)
 	require.Equal(t, "rename me", opened.Messages[0].Content[0].Text)
+}
+
+func TestSessionSlashRenameJSONReportsRenamedSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "rename me")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/session rename renamed --json", sess))
+	require.Empty(t, errOut.String())
+	var report sessionRenameReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_rename", report.Kind)
+	require.Equal(t, "source", report.OldSessionID)
+	require.Equal(t, "renamed", report.NewSessionID)
+	require.Equal(t, "renamed", sess.ID)
+	require.Equal(t, 1, report.MessageCount)
+	require.NotEmpty(t, report.NewPath)
 }
 
 func TestSessionsDeleteRequiresForce(t *testing.T) {
