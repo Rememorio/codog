@@ -8202,13 +8202,36 @@ type SkillTool struct {
 	ConfigHome string
 }
 
+type skillToolRequest struct {
+	Action     string `json:"action"`
+	Skill      string `json:"skill"`
+	Args       string `json:"args"`
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results"`
+}
+
+type skillToolEntry struct {
+	Name          string         `json:"name"`
+	Source        string         `json:"source"`
+	Path          string         `json:"path"`
+	Description   string         `json:"description,omitempty"`
+	WhenToUse     string         `json:"when_to_use,omitempty"`
+	UserInvocable bool           `json:"user_invocable"`
+	Origin        *skills.Origin `json:"origin,omitempty"`
+}
+
 func (SkillTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "skill",
-		Description: "Load a local Codog or Claude-style skill definition and render its invocation text.",
+		Description: "List, inspect, or invoke local Codog and Claude-style skills available to the model.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"action": map[string]any{
+					"type":        "string",
+					"enum":        []string{"list", "show", "invoke"},
+					"description": "Action to run. Defaults to invoke when skill is set, otherwise list.",
+				},
 				"skill": map[string]any{
 					"type":        "string",
 					"description": "Skill name, such as review or team:audit.",
@@ -8217,8 +8240,17 @@ func (SkillTool) Definition() anthropic.ToolDefinition {
 					"type":        "string",
 					"description": "Optional user request or arguments to render with the skill.",
 				},
+				"query": map[string]any{
+					"type":        "string",
+					"description": "Optional list filter matched against name, source, description, and when_to_use.",
+				},
+				"max_results": map[string]any{
+					"type":        "integer",
+					"minimum":     1,
+					"maximum":     100,
+					"description": "Maximum skills to return for list.",
+				},
 			},
-			"required":             []string{"skill"},
 			"additionalProperties": false,
 		},
 	}
@@ -8229,12 +8261,24 @@ func (SkillTool) Permission() Permission {
 }
 
 func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
-	var payload struct {
-		Skill string `json:"skill"`
-		Args  string `json:"args"`
-	}
+	var payload skillToolRequest
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
+	}
+	action := normalizeSkillToolAction(payload.Action, payload.Skill)
+	if action == "list" {
+		entries, total, err := t.listSkills(payload.Query, payload.MaxResults)
+		if err != nil {
+			return "", err
+		}
+		return pretty(map[string]any{
+			"kind":     "skill",
+			"action":   "list",
+			"query":    strings.TrimSpace(payload.Query),
+			"total":    total,
+			"returned": len(entries),
+			"skills":   entries,
+		}), nil
 	}
 	requested := normalizeSkillToolName(payload.Skill)
 	if requested == "" {
@@ -8244,8 +8288,30 @@ func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, er
 	if err != nil {
 		return "", err
 	}
+	if skill.DisableModelInvocation {
+		return "", fmt.Errorf("skill %q cannot be used by the model because disable-model-invocation is true", skill.Name)
+	}
+	if action == "show" {
+		return pretty(map[string]any{
+			"kind":           "skill",
+			"action":         "show",
+			"skill":          skill.Name,
+			"source":         skill.Source,
+			"origin":         skill.Origin,
+			"path":           skill.Path,
+			"description":    skill.Description,
+			"when_to_use":    skill.WhenToUse,
+			"user_invocable": skill.UserInvocable,
+			"prompt":         skill.Body,
+			"metadata":       skills.RenderPromptBlock(skill),
+		}), nil
+	}
+	if action != "invoke" {
+		return "", fmt.Errorf("unsupported skill action %q", action)
+	}
 	return pretty(map[string]any{
 		"kind":        "skill",
+		"action":      "invoke",
 		"skill":       skill.Name,
 		"source":      skill.Source,
 		"path":        skill.Path,
@@ -8254,6 +8320,71 @@ func (t SkillTool) Execute(_ context.Context, input json.RawMessage) (string, er
 		"prompt":      skill.Body,
 		"rendered":    skills.RenderInvocation(skill, payload.Args),
 	}), nil
+}
+
+func normalizeSkillToolAction(action string, skill string) string {
+	action = strings.ToLower(strings.TrimSpace(action))
+	switch action {
+	case "":
+		if strings.TrimSpace(skill) == "" {
+			return "list"
+		}
+		return "invoke"
+	case "run", "use", "load":
+		return "invoke"
+	case "info", "describe":
+		return "show"
+	default:
+		return action
+	}
+}
+
+func (t SkillTool) listSkills(query string, limit int) ([]skillToolEntry, int, error) {
+	all, err := skills.Load(t.ConfigHome, t.Workspace)
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	entries := []skillToolEntry{}
+	total := 0
+	for _, skill := range all {
+		if !skill.Active || skill.DisableModelInvocation {
+			continue
+		}
+		entry := skillToolEntry{
+			Name:          skill.Name,
+			Source:        skill.Source,
+			Path:          skill.Path,
+			Description:   skill.Description,
+			WhenToUse:     skill.WhenToUse,
+			UserInvocable: skill.UserInvocable,
+			Origin:        skill.Origin,
+		}
+		if query != "" && !skillToolEntryMatches(entry, query) {
+			continue
+		}
+		total++
+		if len(entries) < limit {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, total, nil
+}
+
+func skillToolEntryMatches(entry skillToolEntry, query string) bool {
+	haystack := strings.ToLower(strings.Join([]string{
+		entry.Name,
+		entry.Source,
+		entry.Description,
+		entry.WhenToUse,
+	}, "\n"))
+	return strings.Contains(haystack, query)
 }
 
 func normalizeSkillToolName(name string) string {
