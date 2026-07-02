@@ -23192,6 +23192,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedDebugToolCallSlash(ctx, resumeSlashArgs("debug-tool-call", args, format), resumed, format)
 	case "/model":
 		return a.ResumedModel(resumeSlashArgs("model", args, format))
+	case "/models":
+		return a.Models(resumeSlashArgs("models", args, format))
 	case "/status":
 		return a.Status(resumeSlashArgs("status", args, format), resumed)
 	case "/statusline":
@@ -27873,6 +27875,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/model":
 		a.handleModelSlash(fields[1:])
+	case "/models":
+		if err := a.Models(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/advisor":
 		if err := a.Advisor(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)

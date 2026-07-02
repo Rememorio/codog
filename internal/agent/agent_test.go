@@ -1045,6 +1045,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	backfillSlash, ok := capabilityReportSlash(report, "/backfill-sessions")
 	require.True(t, ok)
 	require.True(t, backfillSlash.ResumeSupported)
+	modelsSlash, ok := capabilityReportSlash(report, "/models")
+	require.True(t, ok)
+	require.True(t, modelsSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/generateSessionName"))
 	generateSessionNameSlash, ok := capabilityReportSlash(report, "/generateSessionName")
 	require.True(t, ok)
@@ -7114,6 +7117,26 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Equal(t, "model-b", app.Config.Model)
 	require.Contains(t, errOut.String(), "model=model-b")
 	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/models current --json", sess))
+	var currentSlashModel modelDetailReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &currentSlashModel))
+	require.Equal(t, "models", currentSlashModel.Kind)
+	require.Equal(t, "show", currentSlashModel.Action)
+	require.Equal(t, "model-b", currentSlashModel.RequestedModel)
+	require.Equal(t, "model-b", currentSlashModel.ResolvedModel)
+	require.False(t, currentSlashModel.RequiresProviderRequest)
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/models", []string{"show", "kimi"}, config.FlagOverrides{Resume: sess.ID}, "json"))
+	var resumedSlashModel modelDetailReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &resumedSlashModel))
+	require.Equal(t, "models", resumedSlashModel.Kind)
+	require.Equal(t, "show", resumedSlashModel.Action)
+	require.Equal(t, "kimi", resumedSlashModel.RequestedModel)
+	require.Equal(t, "kimi-k2.5", resumedSlashModel.ResolvedModel)
+	require.Equal(t, modelrouting.ProviderDashScope, resumedSlashModel.Provider)
+	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/max-tokens 2048", sess))
 	require.Equal(t, 2048, app.Config.MaxTokens)
