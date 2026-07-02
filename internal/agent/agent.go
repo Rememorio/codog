@@ -24634,13 +24634,6 @@ func (a *App) runResumedThemeSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedLanguageSlash(args []string, format string) error {
-	req, err := parseLanguageArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/language", req.Action), format)
-	}
 	return a.Language(args)
 }
 

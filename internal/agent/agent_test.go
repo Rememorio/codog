@@ -2381,6 +2381,17 @@ func risky(value any) {
 	require.Equal(t, "status", resumedLanguage.Action)
 	require.Equal(t, "Japanese", resumedLanguage.Language)
 
+	out, err = runResumedJSON("/language", "French")
+	require.NoError(t, err)
+	var resumedLanguageSet languageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLanguageSet))
+	require.Equal(t, "language", resumedLanguageSet.Kind)
+	require.Equal(t, "set", resumedLanguageSet.Action)
+	require.True(t, resumedLanguageSet.Configured)
+	require.Equal(t, "French", resumedLanguageSet.Language)
+	require.Equal(t, "Japanese", resumedLanguageSet.Previous)
+	require.NotEmpty(t, resumedLanguageSet.Path)
+
 	out, err = runResumedJSON("/effort")
 	require.NoError(t, err)
 	var resumedEffort effortReport
@@ -3368,7 +3379,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
 		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
-		{Command: "/language", Args: []string{"French"}, Report: "/language set"},
 		{Command: "/effort", Args: []string{"low"}, Report: "/effort set"},
 		{Command: "/fast", Args: []string{"toggle"}, Report: "/fast toggle"},
 		{Command: "/voice", Args: []string{"set-command", "say"}, Report: "/voice set-command"},
