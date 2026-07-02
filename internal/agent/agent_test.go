@@ -5073,7 +5073,14 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.True(t, ok)
 
 	require.NoError(t, app.SessionsCommand([]string{"delete", forked.ID, "--force"}))
-	require.Contains(t, out.String(), `"deleted": true`)
+	var deleteReport sessionDeleteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleteReport))
+	require.Equal(t, "session_delete", deleteReport.Kind)
+	require.Equal(t, "delete", deleteReport.Action)
+	require.Equal(t, "ok", deleteReport.Status)
+	require.True(t, deleteReport.Deleted)
+	require.Equal(t, forked.ID, deleteReport.SessionID)
+	require.NotEmpty(t, deleteReport.Path)
 }
 
 func TestSessionsListJSONIncludesDetails(t *testing.T) {
@@ -5384,7 +5391,8 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	errOut.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/session delete "+forkedID+" --force", sess))
-	require.Contains(t, errOut.String(), "session deleted: "+forkedID)
+	require.Contains(t, errOut.String(), "Session deleted")
+	require.Contains(t, errOut.String(), forkedID)
 	errOut.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/session delete source --force", sess))
@@ -5443,8 +5451,38 @@ func TestSessionsDeleteRequiresForce(t *testing.T) {
 	require.True(t, ok)
 
 	require.NoError(t, app.SessionsCommand([]string{"delete", "delete-me", "--force"}))
-	require.Contains(t, out.String(), `"deleted": true`)
+	var deleteReport sessionDeleteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleteReport))
+	require.Equal(t, "session_delete", deleteReport.Kind)
+	require.Equal(t, "delete-me", deleteReport.SessionID)
+	require.True(t, deleteReport.Deleted)
+	require.NotEmpty(t, deleteReport.Path)
 	ok, existsErr = store.Exists("delete-me")
+	require.NoError(t, existsErr)
+	require.False(t, ok)
+}
+
+func TestSessionSlashDeleteJSONReportsDeletedSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
+	require.NoError(t, store.Append("other", anthropic.TextMessage("user", "other")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+	sess, err := store.Open("active")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/session delete other --force --json", sess))
+	require.Empty(t, errOut.String())
+	var report sessionDeleteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_delete", report.Kind)
+	require.Equal(t, "delete", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.Deleted)
+	require.Equal(t, "other", report.SessionID)
+	require.NotEmpty(t, report.Path)
+	ok, existsErr := store.Exists("other")
 	require.NoError(t, existsErr)
 	require.False(t, ok)
 }
@@ -5471,7 +5509,12 @@ func TestResumedSessionDeleteRefusesActiveSession(t *testing.T) {
 	require.True(t, ok)
 
 	require.NoError(t, app.runResumedSessionSlash([]string{"delete", "other", "--force"}, config.FlagOverrides{Resume: "active"}))
-	require.Contains(t, out.String(), `"deleted": true`)
+	var deleteReport sessionDeleteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &deleteReport))
+	require.Equal(t, "session_delete", deleteReport.Kind)
+	require.Equal(t, "other", deleteReport.SessionID)
+	require.True(t, deleteReport.Deleted)
+	require.NotEmpty(t, deleteReport.Path)
 	ok, existsErr = store.Exists("other")
 	require.NoError(t, existsErr)
 	require.False(t, ok)

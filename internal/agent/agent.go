@@ -34467,23 +34467,30 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 			fmt.Fprintf(a.Err, "delete: refusing to delete the active session %q\n", target.ID)
 			return
 		}
-		if err := a.Sessions.Delete(target.ID); err != nil {
+		report, err := a.deleteSessionWithReport(target.ID)
+		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return
 		}
-		fmt.Fprintf(a.Err, "session deleted: %s\n", target.ID)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return
+		}
+		renderSessionDeleteText(a.Err, report)
 	default:
 		fmt.Fprintf(a.Err, "unknown /session action: %s\n", args[0])
 	}
 }
 
 type sessionDeleteRequest struct {
-	ID    string
-	Force bool
+	ID     string
+	Force  bool
+	Format string
 }
 
 func parseSessionDeleteArgs(command string, args []string) (sessionDeleteRequest, error) {
-	req := sessionDeleteRequest{}
+	req := sessionDeleteRequest{Format: "text"}
 	usage := command + " ID --force"
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
@@ -34492,12 +34499,15 @@ func parseSessionDeleteArgs(command string, args []string) (sessionDeleteRequest
 		case arg == "--force" || arg == "-f":
 			req.Force = true
 		case arg == "--json":
+			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
 				return req, fmt.Errorf("%s output format is required", command)
 			}
+			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
 			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
 		default:
@@ -34509,6 +34519,11 @@ func parseSessionDeleteArgs(command string, args []string) (sessionDeleteRequest
 	}
 	if req.ID == "" {
 		return req, fmt.Errorf("usage: %s", usage)
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown %s output format %q", command, req.Format)
 	}
 	return req, nil
 }
@@ -34558,18 +34573,27 @@ func (a *App) SessionsCommand(args []string) error {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 	case "delete":
-		req, err := parseSessionDeleteArgs("codog sessions delete", args[1:])
+		deleteArgs := args[1:]
+		if !argsHaveOutputFormat(deleteArgs) {
+			deleteArgs = append(append([]string(nil), deleteArgs...), "--json")
+		}
+		req, err := parseSessionDeleteArgs("codog sessions delete", deleteArgs)
 		if err != nil {
 			return err
 		}
 		if !req.Force {
 			return fmt.Errorf("delete: confirmation required; rerun with codog sessions delete %s --force", req.ID)
 		}
-		if err := a.Sessions.Delete(req.ID); err != nil {
+		report, err := a.deleteSessionWithReport(req.ID)
+		if err != nil {
 			return err
 		}
-		data, _ := json.MarshalIndent(map[string]any{"deleted": true, "id": req.ID}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionDeleteText(a.Out, report)
 	default:
 		return sessionsActionError{Action: args[0]}
 	}
@@ -34605,6 +34629,39 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 		}, format)
 	}
 	return renderCLIError(out, err, format)
+}
+
+type sessionDeleteReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	Deleted   bool   `json:"deleted"`
+	SessionID string `json:"session_id"`
+	Path      string `json:"path"`
+}
+
+func (a *App) deleteSessionWithReport(id string) (sessionDeleteReport, error) {
+	target, err := a.Sessions.OpenExisting(id)
+	if err != nil {
+		return sessionDeleteReport{}, err
+	}
+	if err := a.Sessions.Delete(target.ID); err != nil {
+		return sessionDeleteReport{}, err
+	}
+	return sessionDeleteReport{
+		Kind:      "session_delete",
+		Action:    "delete",
+		Status:    "ok",
+		Deleted:   true,
+		SessionID: target.ID,
+		Path:      target.Path,
+	}, nil
+}
+
+func renderSessionDeleteText(out io.Writer, report sessionDeleteReport) {
+	fmt.Fprintln(out, "Session deleted")
+	fmt.Fprintf(out, "  Deleted session  %s\n", report.SessionID)
+	fmt.Fprintf(out, "  File             %s\n", report.Path)
 }
 
 type sessionExistsReport struct {
