@@ -11389,6 +11389,146 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestRateLimitErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"rate-limit", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "rate-limit"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"rate-limit", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing target",
+			args:      []string{"rate-limit", "--target"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "rate-limit"`, `"option": "--target"`},
+		},
+		{
+			name:      "missing path",
+			args:      []string{"rate-limit", "--path"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "rate-limit"`, `"option": "--path"`},
+		},
+		{
+			name:      "missing max retries",
+			args:      []string{"rate-limit", "--max-retries"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "rate-limit"`, `"option": "--max-retries"`},
+		},
+		{
+			name:      "invalid max retries",
+			args:      []string{"rate-limit", "--max-retries", "many"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--max-retries"`, `"value": "many"`},
+		},
+		{
+			name:      "negative max retries",
+			args:      []string{"rate-limit", "--max-retries", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--max-retries"`, `"value": "-1"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"rate-limit", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "rate-limit"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "unknown action",
+			args:      []string{"rate-limit", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "rate-limit"`, `"bogus"`},
+		},
+		{
+			name:      "set missing value",
+			args:      []string{"rate-limit", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "rate-limit set"`, `"argument": "VALUE"`},
+		},
+		{
+			name:      "set missing field value",
+			args:      []string{"rate-limit", "set", "max-retries"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "rate-limit set"`, `"option": "max-retries"`},
+		},
+		{
+			name:      "set invalid field value",
+			args:      []string{"rate-limit", "set", "max-retries", "many"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "max-retries"`, `"value": "many"`},
+		},
+		{
+			name:      "set unknown field",
+			args:      []string{"rate-limit", "set", "bogus", "1"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "rate-limit set"`, `"bogus"`},
+		},
+		{
+			name:      "status with set flag",
+			args:      []string{"rate-limit", "--max-retries", "2", "status"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "rate-limit status"`, `"--max-retries"`},
+		},
+		{
+			name:      "options unknown option",
+			args:      []string{"rate-limit-options", "bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "rate-limit-options"`, `"option": "bogus"`},
+		},
+		{
+			name:      "options invalid format",
+			args:      []string{"rate-limit-options", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestMockLimitsErrorsHonorGlobalJSONFormat(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")
@@ -11715,6 +11855,76 @@ func TestResetLimitsCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Reset Limits")
 	require.Contains(t, out.String(), "Previous retries 3")
 	require.Empty(t, errOut.String())
+}
+
+func TestResetLimitsErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"reset-limits", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "reset-limits"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"reset-limits", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing target",
+			args:      []string{"reset-limits", "--target"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "reset-limits"`, `"option": "--target"`},
+		},
+		{
+			name:      "missing path",
+			args:      []string{"reset-limits", "--path"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "reset-limits"`, `"option": "--path"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"reset-limits", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "reset-limits"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "unexpected argument",
+			args:      []string{"reset-limits", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "reset-limits"`, `"bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
 }
 
 func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {

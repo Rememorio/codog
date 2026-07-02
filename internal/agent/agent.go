@@ -613,11 +613,20 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "extra-usage-noninteractive":
 		return app.ExtraUsage(appendExtraUsageNoOpen(rest))
 	case "rate-limit":
-		return app.RateLimit(rest)
+		if err := app.RateLimit(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "rate-limit-options":
-		return app.RateLimitOptions(rest)
+		if err := app.RateLimitOptions(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "reset-limits":
-		return app.ResetLimits(rest)
+		if err := app.ResetLimits(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "ant-trace":
 		if err := app.AntTrace(ctx, rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -42318,7 +42327,11 @@ func (a *App) RateLimit(args []string) error {
 	case "show":
 	case "set":
 		if !req.hasSetValues() {
-			return errors.New("rate-limit set requires at least one value")
+			return requiredArgumentError{
+				Command:  "rate-limit set",
+				Argument: "VALUE",
+				Usage:    rateLimitSetUsage,
+			}
 		}
 		path, err = a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
@@ -42895,6 +42908,13 @@ func isOutputFormatFlag(arg string) bool {
 	return arg == "--json" || arg == "--output-format" || arg == "-o" || strings.HasPrefix(arg, "--output-format=")
 }
 
+const (
+	rateLimitUsage      = "codog rate-limit [status|set|reset] [--max-retries N] [--initial-backoff-ms N] [--max-backoff-ms N] [--target user|project|local] [--output-format text|json]"
+	resetLimitsUsage    = "codog reset-limits [--target user|project|local] [--path PATH] [--output-format text|json]"
+	rateLimitSetUsage   = "codog rate-limit set [max-retries N] [initial-backoff-ms N] [max-backoff-ms N]"
+	rateLimitFieldUsage = "codog rate-limit set max-retries N | initial-backoff-ms N | max-backoff-ms N"
+)
+
 func parseRateLimitArgs(args []string) (rateLimitRequest, error) {
 	req := rateLimitRequest{Action: "show", Format: "text", Target: "user"}
 	rest := []string{}
@@ -42906,102 +42926,132 @@ func parseRateLimitArgs(args []string) (rateLimitRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("rate-limit output format is required")
+				return req, missingFlagValueError{
+					Command: "rate-limit",
+					Flag:    arg,
+					Usage:   rateLimitUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rate-limit target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "rate-limit",
+					Flag:    arg,
+					Usage:   rateLimitUsage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rate-limit config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "rate-limit",
+					Flag:    arg,
+					Usage:   rateLimitUsage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--max-retries" || arg == "--retries":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rate-limit max retries is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "rate-limit",
+					Flag:    arg,
+					Usage:   rateLimitUsage,
+				}
 			}
-			value, err := parseRateLimitPositiveInt(args[index], "rate-limit max retries")
+			value, err := parseRateLimitPositiveInt(args[index], arg, "rate-limit max retries")
 			if err != nil {
 				return req, err
 			}
 			req.MaxRetries = &value
 		case strings.HasPrefix(arg, "--max-retries="):
-			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-retries="), "rate-limit max retries")
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-retries="), "--max-retries", "rate-limit max retries")
 			if err != nil {
 				return req, err
 			}
 			req.MaxRetries = &value
 		case strings.HasPrefix(arg, "--retries="):
-			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--retries="), "rate-limit max retries")
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--retries="), "--retries", "rate-limit max retries")
 			if err != nil {
 				return req, err
 			}
 			req.MaxRetries = &value
 		case arg == "--initial-backoff-ms" || arg == "--initial-backoff":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rate-limit initial backoff is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "rate-limit",
+					Flag:    arg,
+					Usage:   rateLimitUsage,
+				}
 			}
-			value, err := parseRateLimitPositiveInt(args[index], "rate-limit initial backoff")
+			value, err := parseRateLimitPositiveInt(args[index], arg, "rate-limit initial backoff")
 			if err != nil {
 				return req, err
 			}
 			req.InitialBackoffMS = &value
 		case strings.HasPrefix(arg, "--initial-backoff-ms="):
-			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--initial-backoff-ms="), "rate-limit initial backoff")
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--initial-backoff-ms="), "--initial-backoff-ms", "rate-limit initial backoff")
 			if err != nil {
 				return req, err
 			}
 			req.InitialBackoffMS = &value
 		case strings.HasPrefix(arg, "--initial-backoff="):
-			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--initial-backoff="), "rate-limit initial backoff")
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--initial-backoff="), "--initial-backoff", "rate-limit initial backoff")
 			if err != nil {
 				return req, err
 			}
 			req.InitialBackoffMS = &value
 		case arg == "--max-backoff-ms" || arg == "--max-backoff":
 			index++
-			if index >= len(args) {
-				return req, errors.New("rate-limit max backoff is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "rate-limit",
+					Flag:    arg,
+					Usage:   rateLimitUsage,
+				}
 			}
-			value, err := parseRateLimitPositiveInt(args[index], "rate-limit max backoff")
+			value, err := parseRateLimitPositiveInt(args[index], arg, "rate-limit max backoff")
 			if err != nil {
 				return req, err
 			}
 			req.MaxBackoffMS = &value
 		case strings.HasPrefix(arg, "--max-backoff-ms="):
-			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-backoff-ms="), "rate-limit max backoff")
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-backoff-ms="), "--max-backoff-ms", "rate-limit max backoff")
 			if err != nil {
 				return req, err
 			}
 			req.MaxBackoffMS = &value
 		case strings.HasPrefix(arg, "--max-backoff="):
-			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-backoff="), "rate-limit max backoff")
+			value, err := parseRateLimitPositiveInt(strings.TrimPrefix(arg, "--max-backoff="), "--max-backoff", "rate-limit max backoff")
 			if err != nil {
 				return req, err
 			}
 			req.MaxBackoffMS = &value
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown rate-limit flag %q", arg)
+			return req, unknownOptionError{
+				Command: "rate-limit",
+				Option:  arg,
+				Usage:   rateLimitUsage,
+			}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "rate-limit"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("rate-limit", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		if req.hasSetValues() {
 			req.Action = "set"
@@ -43012,10 +43062,18 @@ func parseRateLimitArgs(args []string) (rateLimitRequest, error) {
 	switch action {
 	case "status", "show", "options", "list":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected rate-limit argument %q", rest[1])
+			return req, unexpectedExtraArgsError{
+				Command: "rate-limit",
+				Args:    rest[1:],
+				Usage:   rateLimitUsage,
+			}
 		}
 		if req.hasSetValues() {
-			return req, errors.New("rate-limit status does not accept set values")
+			return req, unexpectedExtraArgsError{
+				Command: "rate-limit status",
+				Args:    rateLimitSetFlags(req),
+				Usage:   rateLimitUsage,
+			}
 		}
 		req.Action = "show"
 	case "set", "configure":
@@ -43025,24 +43083,53 @@ func parseRateLimitArgs(args []string) (rateLimitRequest, error) {
 		}
 	case "reset", "clear":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected rate-limit argument %q", rest[1])
+			return req, unexpectedExtraArgsError{
+				Command: "rate-limit reset",
+				Args:    rest[1:],
+				Usage:   rateLimitUsage,
+			}
 		}
 		if req.hasSetValues() {
-			return req, errors.New("rate-limit reset does not accept set values")
+			return req, unexpectedExtraArgsError{
+				Command: "rate-limit reset",
+				Args:    rateLimitSetFlags(req),
+				Usage:   rateLimitUsage,
+			}
 		}
 		req.Action = "reset"
 	default:
 		if len(rest) == 1 {
-			value, err := parseRateLimitPositiveInt(rest[0], "rate-limit max retries")
+			value, err := parseRateLimitPositiveInt(rest[0], "max-retries", "rate-limit max retries")
 			if err == nil {
 				req.Action = "set"
 				req.MaxRetries = &value
 				return req, nil
 			}
 		}
-		return req, fmt.Errorf("unknown rate-limit action %q", rest[0])
+		return req, unexpectedExtraArgsError{
+			Command: "rate-limit",
+			Args:    []string{rest[0]},
+			Usage:   rateLimitUsage,
+		}
 	}
 	return req, nil
+}
+
+func rateLimitSetFlags(req rateLimitRequest) []string {
+	flags := []string{}
+	if req.MaxRetries != nil {
+		flags = append(flags, "--max-retries")
+	}
+	if req.InitialBackoffMS != nil {
+		flags = append(flags, "--initial-backoff-ms")
+	}
+	if req.MaxBackoffMS != nil {
+		flags = append(flags, "--max-backoff-ms")
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	return flags
 }
 
 func parseRateLimitSetArgs(req *rateLimitRequest, args []string) error {
@@ -43050,7 +43137,14 @@ func parseRateLimitSetArgs(req *rateLimitRequest, args []string) error {
 		return nil
 	}
 	if len(args) == 1 {
-		value, err := parseRateLimitPositiveInt(args[0], "rate-limit max retries")
+		if isRateLimitSetField(args[0]) {
+			return missingFlagValueError{
+				Command: "rate-limit set",
+				Flag:    args[0],
+				Usage:   rateLimitSetUsage,
+			}
+		}
+		value, err := parseRateLimitPositiveInt(args[0], "max-retries", "rate-limit max retries")
 		if err != nil {
 			return err
 		}
@@ -43059,7 +43153,11 @@ func parseRateLimitSetArgs(req *rateLimitRequest, args []string) error {
 	}
 	for index := 0; index < len(args); index += 2 {
 		if index+1 >= len(args) {
-			return fmt.Errorf("rate-limit value is required for %q", args[index])
+			return missingFlagValueError{
+				Command: "rate-limit set",
+				Flag:    args[index],
+				Usage:   rateLimitSetUsage,
+			}
 		}
 		if err := assignRateLimitSetValue(req, args[index], args[index+1]); err != nil {
 			return err
@@ -43068,35 +43166,59 @@ func parseRateLimitSetArgs(req *rateLimitRequest, args []string) error {
 	return nil
 }
 
+func isRateLimitSetField(raw string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(strings.TrimLeft(raw, "-")))
+	switch normalized {
+	case "max-retries", "retries", "initial-backoff-ms", "initial-backoff", "max-backoff-ms", "max-backoff":
+		return true
+	default:
+		return false
+	}
+}
+
 func assignRateLimitSetValue(req *rateLimitRequest, key string, raw string) error {
 	normalized := strings.ToLower(strings.TrimSpace(strings.TrimLeft(key, "-")))
 	switch normalized {
 	case "max-retries", "retries":
-		value, err := parseRateLimitPositiveInt(raw, "rate-limit max retries")
+		value, err := parseRateLimitPositiveInt(raw, key, "rate-limit max retries")
 		if err != nil {
 			return err
 		}
 		req.MaxRetries = &value
 	case "initial-backoff-ms", "initial-backoff":
-		value, err := parseRateLimitPositiveInt(raw, "rate-limit initial backoff")
+		value, err := parseRateLimitPositiveInt(raw, key, "rate-limit initial backoff")
 		if err != nil {
 			return err
 		}
 		req.InitialBackoffMS = &value
 	case "max-backoff-ms", "max-backoff":
-		value, err := parseRateLimitPositiveInt(raw, "rate-limit max backoff")
+		value, err := parseRateLimitPositiveInt(raw, key, "rate-limit max backoff")
 		if err != nil {
 			return err
 		}
 		req.MaxBackoffMS = &value
 	default:
-		return fmt.Errorf("unknown rate-limit set field %q", key)
+		return unexpectedExtraArgsError{
+			Command: "rate-limit set",
+			Args:    []string{key},
+			Usage:   rateLimitFieldUsage,
+		}
 	}
 	return nil
 }
 
-func parseRateLimitPositiveInt(value string, label string) (int, error) {
-	return parsePositiveInt(strings.TrimSpace(value), label)
+func parseRateLimitPositiveInt(value string, flag string, label string) (int, error) {
+	trimmed := strings.TrimSpace(value)
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil || parsed <= 0 {
+		return 0, invalidFlagValueError{
+			Flag:    flag,
+			Value:   value,
+			Message: label + " must be a positive integer",
+			Usage:   rateLimitUsage,
+		}
+	}
+	return parsed, nil
 }
 
 func (a *App) ResetLimits(args []string) error {
@@ -43141,34 +43263,59 @@ func parseResetLimitsArgs(args []string) (resetLimitsRequest, error) {
 		case arg == "--output-format":
 			index++
 			if index >= len(args) {
-				return req, errors.New("reset-limits output format is required")
+				return req, missingFlagValueError{
+					Command: "reset-limits",
+					Flag:    arg,
+					Usage:   resetLimitsUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("reset-limits target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "reset-limits",
+					Flag:    arg,
+					Usage:   resetLimitsUsage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("reset-limits config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "reset-limits",
+					Flag:    arg,
+					Usage:   resetLimitsUsage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
-			return req, fmt.Errorf("unknown reset-limits argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: "reset-limits",
+					Option:  arg,
+					Usage:   resetLimitsUsage,
+				}
+			}
+			return req, unexpectedExtraArgsError{
+				Command: "reset-limits",
+				Args:    []string{arg},
+				Usage:   resetLimitsUsage,
+			}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "reset-limits"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("reset-limits", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
