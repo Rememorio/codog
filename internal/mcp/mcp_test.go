@@ -37,22 +37,27 @@ func TestCallToolAndReadResource(t *testing.T) {
 
 	resources := ListResources(context.Background(), "test", server)
 	require.Empty(t, resources.Error)
+	require.Equal(t, "ready", resources.Lifecycle.Phase)
 	require.Contains(t, string(resources.Resources), "codog://note")
 
 	templates := ListResourceTemplates(context.Background(), "test", server)
 	require.Empty(t, templates.Error)
+	require.Equal(t, "ready", templates.Lifecycle.Phase)
 	require.Contains(t, string(templates.Templates), "codog://notes/{name}")
 
 	read := ReadResource(context.Background(), "test", server, "codog://note")
 	require.Empty(t, read.Error)
+	require.Equal(t, "ready", read.Lifecycle.Phase)
 	require.Contains(t, string(read.Result), "note body")
 
 	prompts := ListPrompts(context.Background(), "test", server)
 	require.Empty(t, prompts.Error)
+	require.Equal(t, "ready", prompts.Lifecycle.Phase)
 	require.Contains(t, string(prompts.Prompts), "review")
 
 	prompt := GetPrompt(context.Background(), "test", server, "review", json.RawMessage(`{"topic":"hooks"}`))
 	require.Empty(t, prompt.Error)
+	require.Equal(t, "ready", prompt.Lifecycle.Phase)
 	require.Contains(t, string(prompt.Result), "Review hooks")
 
 	auth := InspectAuth(context.Background(), "test", server)
@@ -129,6 +134,7 @@ func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
 
 	read := ReadResource(context.Background(), "remote", cfg, "codog://remote")
 	require.Empty(t, read.Error)
+	require.Equal(t, "ready", read.Lifecycle.Phase)
 	require.Contains(t, string(read.Result), "remote note")
 
 	description := DescribeServer("remote", cfg)
@@ -189,6 +195,37 @@ func TestCallToolClassifiesInvocationFailures(t *testing.T) {
 	require.Equal(t, "invocation", call.Lifecycle.Error.Phase)
 	require.True(t, call.Lifecycle.Error.Recoverable)
 	require.Equal(t, "echo", call.Lifecycle.Error.Context["tool"])
+}
+
+func TestResourceAndPromptCallsClassifyLifecycleFailures(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPHelperProcess"},
+		Env:     []string{"CODOG_MCP_HELPER=1", "CODOG_MCP_FAIL_RESOURCES=1", "CODOG_MCP_FAIL_PROMPTS=1"},
+	}
+
+	resources := ListResources(context.Background(), "test", server)
+	require.Contains(t, resources.Error, "resource discovery failed")
+	require.Equal(t, "resource_discovery", resources.Lifecycle.Error.Phase)
+	require.True(t, resources.Lifecycle.Error.Recoverable)
+
+	templates := ListResourceTemplates(context.Background(), "test", server)
+	require.Contains(t, templates.Error, "resource templates failed")
+	require.Equal(t, "resource_discovery", templates.Lifecycle.Error.Phase)
+
+	read := ReadResource(context.Background(), "test", server, "codog://note")
+	require.Contains(t, read.Error, "resource read failed")
+	require.Equal(t, "invocation", read.Lifecycle.Error.Phase)
+	require.Equal(t, "codog://note", read.Lifecycle.Error.Context["uri"])
+
+	prompts := ListPrompts(context.Background(), "test", server)
+	require.Contains(t, prompts.Error, "prompt discovery failed")
+	require.Equal(t, "resource_discovery", prompts.Lifecycle.Error.Phase)
+
+	prompt := GetPrompt(context.Background(), "test", server, "review", json.RawMessage(`{}`))
+	require.Contains(t, prompt.Error, "prompt render failed")
+	require.Equal(t, "invocation", prompt.Lifecycle.Error.Phase)
+	require.Equal(t, "review", prompt.Lifecycle.Error.Context["prompt"])
 }
 
 func TestPreflightReportsReadinessAndMissingCommand(t *testing.T) {
@@ -353,15 +390,31 @@ func TestMCPHelperProcess(t *testing.T) {
 			}
 			writeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi"}}})
 		case "resources/list":
+			if os.Getenv("CODOG_MCP_FAIL_RESOURCES") == "1" {
+				writeMCPError(id, "resource discovery failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
 		case "resources/templates/list":
+			if os.Getenv("CODOG_MCP_FAIL_RESOURCES") == "1" {
+				writeMCPError(id, "resource templates failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"resourceTemplates": []map[string]any{{
 				"uriTemplate": "codog://notes/{name}",
 				"name":        "note by name",
 			}}})
 		case "resources/read":
+			if os.Getenv("CODOG_MCP_FAIL_RESOURCES") == "1" {
+				writeMCPError(id, "resource read failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
 		case "prompts/list":
+			if os.Getenv("CODOG_MCP_FAIL_PROMPTS") == "1" {
+				writeMCPError(id, "prompt discovery failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"prompts": []map[string]any{{
 				"name":        "review",
 				"description": "Review a topic.",
@@ -371,6 +424,10 @@ func TestMCPHelperProcess(t *testing.T) {
 				}},
 			}}})
 		case "prompts/get":
+			if os.Getenv("CODOG_MCP_FAIL_PROMPTS") == "1" {
+				writeMCPError(id, "prompt render failed")
+				continue
+			}
 			writeMCP(id, map[string]any{"messages": []map[string]any{{
 				"role": "user",
 				"content": map[string]any{

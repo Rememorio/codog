@@ -99,34 +99,39 @@ type ToolCallResult struct {
 
 type ResourceListResult struct {
 	Server    string          `json:"server"`
+	Lifecycle LifecycleStatus `json:"lifecycle"`
 	Resources json.RawMessage `json:"resources,omitempty"`
 	Error     string          `json:"error,omitempty"`
 }
 
 type ResourceReadResult struct {
-	Server string          `json:"server"`
-	URI    string          `json:"uri"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  string          `json:"error,omitempty"`
+	Server    string          `json:"server"`
+	URI       string          `json:"uri"`
+	Lifecycle LifecycleStatus `json:"lifecycle"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 type ResourceTemplateListResult struct {
 	Server    string          `json:"server"`
+	Lifecycle LifecycleStatus `json:"lifecycle"`
 	Templates json.RawMessage `json:"templates,omitempty"`
 	Error     string          `json:"error,omitempty"`
 }
 
 type PromptListResult struct {
-	Server  string          `json:"server"`
-	Prompts json.RawMessage `json:"prompts,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	Server    string          `json:"server"`
+	Lifecycle LifecycleStatus `json:"lifecycle"`
+	Prompts   json.RawMessage `json:"prompts,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 type PromptGetResult struct {
-	Server string          `json:"server"`
-	Prompt string          `json:"prompt"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  string          `json:"error,omitempty"`
+	Server    string          `json:"server"`
+	Prompt    string          `json:"prompt"`
+	Lifecycle LifecycleStatus `json:"lifecycle"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 func lifecycleReady(phase string) LifecycleStatus {
@@ -847,9 +852,13 @@ func ListResources(ctx context.Context, serverName string, server config.MCPServ
 		Method:  "resources/list",
 	})
 	if err != nil {
-		return ResourceListResult{Server: serverName, Error: err.Error()}
+		return ResourceListResult{
+			Server:    serverName,
+			Lifecycle: lifecycleFailure("resource_discovery", err.Error(), true, map[string]string{"server": serverName}),
+			Error:     err.Error(),
+		}
 	}
-	return ResourceListResult{Server: serverName, Resources: result}
+	return ResourceListResult{Server: serverName, Lifecycle: lifecycleReady("ready"), Resources: result}
 }
 
 func ReadResource(ctx context.Context, serverName string, server config.MCPServerConfig, uri string) ResourceReadResult {
@@ -860,9 +869,14 @@ func ReadResource(ctx context.Context, serverName string, server config.MCPServe
 		Params:  map[string]any{"uri": uri},
 	})
 	if err != nil {
-		return ResourceReadResult{Server: serverName, URI: uri, Error: err.Error()}
+		return ResourceReadResult{
+			Server:    serverName,
+			URI:       uri,
+			Lifecycle: lifecycleFailure("invocation", err.Error(), true, map[string]string{"server": serverName, "uri": uri}),
+			Error:     err.Error(),
+		}
 	}
-	return ResourceReadResult{Server: serverName, URI: uri, Result: result}
+	return ResourceReadResult{Server: serverName, URI: uri, Lifecycle: lifecycleReady("ready"), Result: result}
 }
 
 func ListResourceTemplates(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceTemplateListResult {
@@ -872,9 +886,13 @@ func ListResourceTemplates(ctx context.Context, serverName string, server config
 		Method:  "resources/templates/list",
 	})
 	if err != nil {
-		return ResourceTemplateListResult{Server: serverName, Error: err.Error()}
+		return ResourceTemplateListResult{
+			Server:    serverName,
+			Lifecycle: lifecycleFailure("resource_discovery", err.Error(), true, map[string]string{"server": serverName}),
+			Error:     err.Error(),
+		}
 	}
-	return ResourceTemplateListResult{Server: serverName, Templates: result}
+	return ResourceTemplateListResult{Server: serverName, Lifecycle: lifecycleReady("ready"), Templates: result}
 }
 
 func ListPrompts(ctx context.Context, serverName string, server config.MCPServerConfig) PromptListResult {
@@ -884,9 +902,13 @@ func ListPrompts(ctx context.Context, serverName string, server config.MCPServer
 		Method:  "prompts/list",
 	})
 	if err != nil {
-		return PromptListResult{Server: serverName, Error: err.Error()}
+		return PromptListResult{
+			Server:    serverName,
+			Lifecycle: lifecycleFailure("resource_discovery", err.Error(), true, map[string]string{"server": serverName}),
+			Error:     err.Error(),
+		}
 	}
-	return PromptListResult{Server: serverName, Prompts: result}
+	return PromptListResult{Server: serverName, Lifecycle: lifecycleReady("ready"), Prompts: result}
 }
 
 func GetPrompt(ctx context.Context, serverName string, server config.MCPServerConfig, promptName string, arguments json.RawMessage) PromptGetResult {
@@ -903,9 +925,14 @@ func GetPrompt(ctx context.Context, serverName string, server config.MCPServerCo
 		},
 	})
 	if err != nil {
-		return PromptGetResult{Server: serverName, Prompt: promptName, Error: err.Error()}
+		return PromptGetResult{
+			Server:    serverName,
+			Prompt:    promptName,
+			Lifecycle: lifecycleFailure("invocation", err.Error(), true, map[string]string{"server": serverName, "prompt": promptName}),
+			Error:     err.Error(),
+		}
 	}
-	return PromptGetResult{Server: serverName, Prompt: promptName, Result: result}
+	return PromptGetResult{Server: serverName, Prompt: promptName, Lifecycle: lifecycleReady("ready"), Result: result}
 }
 
 func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
