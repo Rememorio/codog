@@ -41388,7 +41388,7 @@ func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
 		if req.Format == "json" {
 			mcpArgs = append(mcpArgs, "--json")
 		}
-		return a.MCP(ctx, mcpArgs)
+		return a.withOAuthProfile(req.Profile).MCP(ctx, mcpArgs)
 	}
 	configuredServers := sortedMCPServerNames(a.Config.MCPServers)
 	authStatuses := make([]mcpauthdiag.Report, 0, len(configuredServers))
@@ -41501,12 +41501,20 @@ func parseXAAIDPArgs(args []string) (xaaIDPRequest, error) {
 		return req, errors.New("usage: codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--json]")
 	}
 	if len(positionals) == 1 {
-		if req.Profile != "" {
-			return req, errors.New("xaaIdpCommand --profile only applies to the overview form without SERVER")
-		}
 		req.Server = positionals[0]
 	}
 	return req, nil
+}
+
+func (a *App) withOAuthProfile(profileName string) *App {
+	profileName = strings.TrimSpace(profileName)
+	if profileName == "" {
+		return a
+	}
+	copied := *a
+	copied.Config = a.Config
+	copied.Config.OAuthProfile = profileName
+	return &copied
 }
 
 func (a *App) xaaOAuthStatus(profileName string) (oauth.Status, []oauthProviderSummary) {

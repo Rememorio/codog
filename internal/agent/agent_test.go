@@ -16958,6 +16958,46 @@ func TestXAAIDPRefreshCommand(t *testing.T) {
 	require.Equal(t, "refreshed-access", loaded.AccessToken)
 }
 
+func TestXAAIDPServerHonorsProfile(t *testing.T) {
+	server := oauthRefreshTestServer(t)
+	defer server.Close()
+	configHome := t.TempDir()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "work", server.URL, "client-1", nil)
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "profile-access",
+		RefreshToken: "refresh-1",
+		ExpiresAt:    time.Now().UTC().Add(time.Hour),
+	})
+	require.NoError(t, err)
+	mcpServer := config.MCPServerConfig{
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
+	}
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:   configHome,
+			OAuthProfile: "default",
+			MCPServers:   map[string]config.MCPServerConfig{"test": mcpServer},
+		},
+		Out: &out,
+		Err: io.Discard,
+	}
+
+	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"test", "--profile", "work", "--json"}))
+	var report mcpauthdiag.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "test", report.Server)
+	require.Equal(t, "work", report.OAuthProfile)
+	require.NotNil(t, report.OAuthStatus)
+	require.Equal(t, "work", report.OAuthStatus.ProfileName)
+	require.True(t, report.OAuthStatus.ProfileConfigured)
+	require.True(t, report.OAuthStatus.TokenPresent)
+}
+
 func TestMCPAddCommandCompatibility(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")
