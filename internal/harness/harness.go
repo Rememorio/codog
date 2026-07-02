@@ -306,6 +306,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
 		{
 			name: "auto_compact_triggered",
@@ -473,6 +474,79 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport.OK = true
 	return scenarioReport
+}
+
+func pluginLifecycleScenario() scenario {
+	var installedRoot string
+	var disabledRoot string
+	return scenario{
+		name:   "plugin_lifecycle_roundtrip",
+		turns:  []mockanthropic.Turn{{Text: "plugin lifecycle harness ok"}},
+		prompt: "verify plugin lifecycle",
+		setup: func(workspace string) error {
+			source := filepath.Join(workspace, "plugin-source")
+			if err := os.MkdirAll(source, 0o755); err != nil {
+				return err
+			}
+			manifest := `{"id":"lifecycle","name":"lifecycle","version":"1.0.0","description":"Lifecycle harness plugin","tools":[{"name":"lifecycle_tool","command":"cat","permission":"read-only"}]}`
+			if err := os.WriteFile(filepath.Join(source, "plugin.json"), []byte(manifest), 0o644); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(source, "tool.sh"), []byte("#!/bin/sh\ncat\n"), 0o755); err != nil {
+				return err
+			}
+			installed, err := plugins.Install(workspace, source)
+			if err != nil {
+				return err
+			}
+			installedRoot = installed.Root
+			if !installed.Enabled {
+				return fmt.Errorf("installed plugin is disabled")
+			}
+			disabled, err := plugins.Disable(workspace, installed.ID)
+			if err != nil {
+				return err
+			}
+			disabledRoot = disabled.Root
+			if disabled.Enabled {
+				return fmt.Errorf("disabled plugin still reports enabled")
+			}
+			if _, err := os.Stat(filepath.Join(disabled.Root, plugins.DisabledMarker)); err != nil {
+				return err
+			}
+			enabled, err := plugins.Enable(workspace, installed.ID)
+			if err != nil {
+				return err
+			}
+			if !enabled.Enabled {
+				return fmt.Errorf("enabled plugin still reports disabled")
+			}
+			if _, err := os.Stat(filepath.Join(enabled.Root, plugins.DisabledMarker)); !os.IsNotExist(err) {
+				return fmt.Errorf("disabled marker still present after enable: %v", err)
+			}
+			if err := plugins.Remove(workspace, installed.ID); err != nil {
+				return err
+			}
+			return nil
+		},
+		verify: func(_ string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "plugin lifecycle harness ok") {
+				return fmt.Errorf("missing plugin lifecycle final response")
+			}
+			if err := expectToolCalls(result, 0, false); err != nil {
+				return err
+			}
+			for _, root := range []string{installedRoot, disabledRoot} {
+				if strings.TrimSpace(root) == "" {
+					return fmt.Errorf("missing lifecycle plugin root")
+				}
+				if _, err := os.Stat(root); !os.IsNotExist(err) {
+					return fmt.Errorf("plugin root still exists after remove: %s", root)
+				}
+			}
+			return nil
+		},
+	}
 }
 
 func remoteTriggerScenario() scenario {
