@@ -23965,6 +23965,8 @@ func (a *App) runResumedDebugToolCallSlash(ctx context.Context, args []string, o
 func resumedDebugToolCallAllowed(name string) bool {
 	switch tools.CanonicalToolName(strings.TrimSpace(name)) {
 	case "read_file",
+		"write_file",
+		"bash",
 		"grep",
 		"glob",
 		"ls",
@@ -24425,6 +24427,11 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 	}
 	action := strings.ToLower(strings.TrimSpace(normalized[0]))
 	switch action {
+	case "pkce":
+		if len(normalized) == 1 {
+			return a.OAuth(normalized)
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
 	case "status":
 		if len(normalized) <= 2 {
 			return a.OAuth(normalized)
@@ -24442,18 +24449,40 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 				if len(normalized) == 3 {
 					return a.OAuth(normalized)
 				}
+			case "delete":
+				if len(normalized) == 3 {
+					return a.OAuth(normalized)
+				}
 			}
 			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth provider", providerAction), format)
 		}
 	case "token":
-		if len(normalized) == 2 && strings.EqualFold(strings.TrimSpace(normalized[1]), "show") {
-			return a.OAuth(normalized)
+		if len(normalized) >= 2 {
+			switch strings.ToLower(strings.TrimSpace(normalized[1])) {
+			case "show":
+				if len(normalized) == 2 {
+					return a.OAuth(normalized)
+				}
+			case "save":
+				if len(normalized) >= 3 && len(normalized) <= 5 {
+					return a.OAuth(normalized)
+				}
+			case "delete":
+				if len(normalized) == 2 {
+					return a.OAuth(normalized)
+				}
+			}
 		}
 		tokenAction := ""
 		if len(normalized) >= 2 {
 			tokenAction = normalized[1]
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth token", tokenAction), format)
+	case "logout":
+		if len(normalized) <= 2 {
+			return a.OAuth(normalized)
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
 	}
 	return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
 }

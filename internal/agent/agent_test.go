@@ -1870,6 +1870,8 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", oauthServer.URL, "client-work", []string{"profile"})
 	require.NoError(t, err)
+	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "delete-me", oauthServer.URL, "client-delete", []string{"profile"})
+	require.NoError(t, err)
 	_, err = oauth.SaveToken(configHome, oauth.Token{
 		AccessToken:  "resume-oauth-access-1234",
 		RefreshToken: "resume-oauth-refresh-1234",
@@ -2248,6 +2250,13 @@ func risky(value any) {
 	require.True(t, resumedOAuthStatus.Ready)
 	require.NotContains(t, out, "resume-oauth-access-1234")
 
+	out, err = runResumedJSON("/oauth", "pkce")
+	require.NoError(t, err)
+	var resumedOAuthPKCE oauth.PKCE
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthPKCE))
+	require.NotEmpty(t, resumedOAuthPKCE.CodeVerifier)
+	require.NotEmpty(t, resumedOAuthPKCE.CodeChallenge)
+
 	out, err = runResumedJSON("/oauth", "status", "default", "--json")
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthStatus))
@@ -2258,13 +2267,14 @@ func risky(value any) {
 	require.NoError(t, err)
 	var resumedOAuthProfiles []oauth.ProviderProfile
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProfiles))
-	require.Len(t, resumedOAuthProfiles, 2)
+	require.Len(t, resumedOAuthProfiles, 3)
 	resumedOAuthProfileClients := map[string]string{}
 	for _, profile := range resumedOAuthProfiles {
 		resumedOAuthProfileClients[profile.Name] = profile.ClientID
 	}
 	require.Equal(t, "client-resume", resumedOAuthProfileClients["default"])
 	require.Equal(t, "client-work", resumedOAuthProfileClients["work"])
+	require.Equal(t, "client-delete", resumedOAuthProfileClients["delete-me"])
 
 	out, err = runResumedJSON("/oauth", "provider", "show", "default")
 	require.NoError(t, err)
@@ -2273,6 +2283,13 @@ func risky(value any) {
 	require.Equal(t, "default", resumedOAuthProfile.Name)
 	require.Equal(t, "client-resume", resumedOAuthProfile.ClientID)
 
+	out, err = runResumedJSON("/oauth", "provider", "delete", "delete-me")
+	require.NoError(t, err)
+	var resumedOAuthProviderDelete map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProviderDelete))
+	require.Equal(t, true, resumedOAuthProviderDelete["deleted"])
+	require.Equal(t, "delete-me", resumedOAuthProviderDelete["name"])
+
 	out, err = runResumedJSON("/oauth", "token", "show", "--json")
 	require.NoError(t, err)
 	var resumedOAuthToken oauth.TokenView
@@ -2280,6 +2297,31 @@ func risky(value any) {
 	require.Equal(t, "resu...1234", resumedOAuthToken.AccessToken)
 	require.False(t, resumedOAuthToken.Expired)
 	require.NotContains(t, out, "resume-oauth-access-1234")
+
+	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-new-access", "resume-oauth-new-refresh")
+	require.NoError(t, err)
+	var resumedOAuthTokenSave oauth.TokenView
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenSave))
+	require.Equal(t, "resu...cess", resumedOAuthTokenSave.AccessToken)
+	require.Equal(t, "resu...resh", resumedOAuthTokenSave.RefreshToken)
+	require.NotContains(t, out, "resume-oauth-new-access")
+
+	out, err = runResumedJSON("/oauth", "token", "delete")
+	require.NoError(t, err)
+	var resumedOAuthTokenDelete map[string]bool
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenDelete))
+	require.True(t, resumedOAuthTokenDelete["deleted"])
+
+	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-logout-access")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenSave))
+
+	out, err = runResumedJSON("/oauth", "logout", "default")
+	require.NoError(t, err)
+	var resumedOAuthLogout oauth.LogoutResult
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthLogout))
+	require.True(t, resumedOAuthLogout.Deleted)
+	require.Equal(t, "unavailable", resumedOAuthLogout.Revocation)
 
 	out, err = runResumedJSON("/profile", "list")
 	require.NoError(t, err)
@@ -2939,6 +2981,16 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionReadOnly, resumedDebugToolCall.Permission)
 	require.True(t, resumedDebugToolCall.Success)
 	require.Contains(t, resumedDebugToolCall.Output, "helper")
+
+	out, err = runResumedJSON("/debug-tool-call", "bash", `{"command":"echo resumed-debug-bash"}`)
+	require.NoError(t, err)
+	var resumedDebugBash debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugBash))
+	require.Equal(t, "debug_tool_call", resumedDebugBash.Kind)
+	require.Equal(t, "bash", resumedDebugBash.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugBash.Permission)
+	require.True(t, resumedDebugBash.Success)
+	require.Contains(t, resumedDebugBash.Output, "resumed-debug-bash")
 
 	out, err = runResumedJSON("/terminal-setup", "status", "--shell", "zsh", "--path", terminalProfilePath)
 	require.NoError(t, err)
@@ -4111,6 +4163,24 @@ func risky(value any) {
 	require.False(t, resumedPlanClear.State.Active)
 	require.NoFileExists(t, planmode.Path(workspace))
 
+	out, err = runResumedJSON("/permissions", "set", "allow", "--path", configPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPermissionsSet))
+	require.Equal(t, "allow", resumedPermissionsSet.PermissionMode)
+
+	out, err = runResumedJSON("/debug-tool-call", "write_file", `{"path":"debug-write.txt","content":"resumed debug write"}`)
+	require.NoError(t, err)
+	var resumedDebugWrite debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWrite))
+	require.Equal(t, "debug_tool_call", resumedDebugWrite.Kind)
+	require.Equal(t, "write_file", resumedDebugWrite.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugWrite.Permission)
+	require.True(t, resumedDebugWrite.Success)
+	require.FileExists(t, filepath.Join(workspace, "debug-write.txt"))
+	debugWriteData, err := os.ReadFile(filepath.Join(workspace, "debug-write.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "resumed debug write", string(debugWriteData))
+
 	out, err = runResumedJSON("/unfocus")
 	require.NoError(t, err)
 	var resumedUnfocus focus.Report
@@ -4189,14 +4259,9 @@ func risky(value any) {
 		Args    []string
 		Report  string
 	}{
-		{Command: "/oauth", Args: []string{"pkce"}, Report: "/oauth pkce"},
 		{Command: "/oauth", Args: []string{"discover", "https://example.test"}, Report: "/oauth discover"},
 		{Command: "/oauth", Args: []string{"provider", "save", "work", "https://example.test", "client"}, Report: "/oauth provider save"},
-		{Command: "/oauth", Args: []string{"provider", "delete", "default"}, Report: "/oauth provider delete"},
-		{Command: "/oauth", Args: []string{"token", "save", "access-token"}, Report: "/oauth token save"},
 		{Command: "/oauth", Args: []string{"token", "refresh"}, Report: "/oauth token refresh"},
-		{Command: "/oauth", Args: []string{"token", "delete"}, Report: "/oauth token delete"},
-		{Command: "/oauth", Args: []string{"logout"}, Report: "/oauth logout"},
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
@@ -4214,8 +4279,6 @@ func risky(value any) {
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
-		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
-		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
 		require.Error(t, err, guarded.Command)
