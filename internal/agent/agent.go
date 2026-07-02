@@ -24905,7 +24905,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/remote-setup", "/web-setup":
 		return a.runResumedRemoteSetupSlash(resumeSlashArgs("remote-setup", args, format), resumed, format)
 	case "/bridge", "/remote-control", "/rc":
-		return a.runResumedBridgeSlash(name, resumeSlashArgs("bridge", args, format), format)
+		return a.runResumedBridgeSlash(name, resumeSlashArgs("bridge", args, format), resumed, format)
 	case "/ide":
 		return a.runResumedIDESlash(resumeSlashArgs("ide", args, format), format)
 	case "/bridge-kick":
@@ -25402,9 +25402,13 @@ func (a *App) runResumedIDESlash(args []string, format string) error {
 	return a.IDE(args)
 }
 
-func (a *App) runResumedBridgeSlash(command string, args []string, format string) error {
+func (a *App) runResumedBridgeSlash(command string, args []string, overrides config.FlagOverrides, format string) error {
 	if len(routeMeaningfulArgs(args)) > 0 && strings.EqualFold(strings.TrimSpace(routeMeaningfulArgs(args)[0]), "serve") {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, "serve"), format)
+		serveArgs, err := resumedBridgeServeArgs(args)
+		if err != nil {
+			return err
+		}
+		return a.startResumedServerTask("bridge", serveArgs, "bridge", "Bridge server started", overrides)
 	}
 	bridgeArgs := bridgeStatusArgs(args)
 	req, err := parseIDEArgs(bridgeArgs)
@@ -25415,6 +25419,40 @@ func (a *App) runResumedBridgeSlash(command string, args []string, format string
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, req.Action), format)
 	}
 	return a.IDE(bridgeArgs)
+}
+
+func resumedBridgeServeArgs(args []string) ([]string, error) {
+	const usage = "codog bridge serve [--json|--output-format text|json]"
+	actionSeen := false
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case strings.EqualFold(arg, "serve"):
+			if actionSeen {
+				return nil, unexpectedExtraArgsError{Command: "bridge serve", Args: []string{arg}, Usage: usage}
+			}
+			actionSeen = true
+		case arg == "--json":
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if missingFlagValueAt(args, index) {
+				return nil, missingFlagValueError{Command: "bridge serve", Flag: arg, Usage: usage}
+			}
+			if _, err := normalizeOutputFormat("bridge serve", args[index], []string{"text", "json"}); err != nil {
+				return nil, err
+			}
+		case strings.HasPrefix(arg, "--output-format="):
+			if _, err := normalizeOutputFormat("bridge serve", strings.TrimPrefix(arg, "--output-format="), []string{"text", "json"}); err != nil {
+				return nil, err
+			}
+		case strings.HasPrefix(arg, "-"):
+			return nil, unknownOptionError{Command: "bridge serve", Option: arg, Usage: usage}
+		default:
+			return nil, unexpectedExtraArgsError{Command: "bridge serve", Args: []string{arg}, Usage: usage}
+		}
+	}
+	return []string{"serve"}, nil
 }
 
 func (a *App) runResumedACPSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {

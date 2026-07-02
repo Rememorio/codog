@@ -17461,21 +17461,29 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Equal(t, "status", bridgeStatus.Action)
 	out.Reset()
 
-	require.NoError(t, app.runResumedBridgeSlash("/bridge", []string{"status", "--json"}, "json"))
+	require.NoError(t, app.runResumedBridgeSlash("/bridge", []string{"status", "--json"}, config.FlagOverrides{Resume: "bridge-session"}, "json"))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeStatus))
 	require.Equal(t, "ide", bridgeStatus.Kind)
 	require.Equal(t, "status", bridgeStatus.Action)
 	out.Reset()
 
-	err = app.runResumedBridgeSlash("/remote-control", []string{"serve", "--json"}, "json")
-	require.Error(t, err)
-	var exitErr *ExitError
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	var slashReport slashErrorReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &slashReport))
-	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
-	require.Equal(t, "/remote-control serve", slashReport.Command)
+	executableShim := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(executableShim, []byte("#!/bin/sh\necho bridge-shim \"$@\"\n"), 0o755))
+	app.Executable = executableShim
+	require.NoError(t, app.runResumedBridgeSlash("/remote-control", []string{"serve", "--json"}, config.FlagOverrides{Resume: "bridge-session"}, "json"))
+	var bridgeTask backgroundCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeTask))
+	require.Equal(t, "background", bridgeTask.Kind)
+	require.Equal(t, "run", bridgeTask.Action)
+	require.Equal(t, "ok", bridgeTask.Status)
+	require.Equal(t, "bridge-session", bridgeTask.SessionID)
+	require.NotEmpty(t, bridgeTask.TaskID)
+	require.NotNil(t, bridgeTask.Task)
+	require.Equal(t, "bridge", bridgeTask.Task.Kind)
+	require.Equal(t, "bridge-session", bridgeTask.Task.SessionID)
+	require.Contains(t, bridgeTask.Task.Command, "bridge serve")
+	require.NotContains(t, bridgeTask.Task.Command, "--json")
+	require.NotContains(t, bridgeTask.Task.Command, "--output-format")
 	out.Reset()
 
 	require.NoError(t, app.BridgeKick([]string{"status", "--json"}))
