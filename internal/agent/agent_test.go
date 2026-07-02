@@ -2497,6 +2497,18 @@ func risky(value any) {
 	require.True(t, resumedPrivacy.Settings["telemetry_enabled"])
 	require.False(t, resumedPrivacy.Settings["prompt_history_enabled"])
 
+	out, err = runResumedJSON("/privacy-settings", "set", "telemetry", "off")
+	require.NoError(t, err)
+	var resumedPrivacySet privacyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPrivacySet))
+	require.Equal(t, "privacy_settings", resumedPrivacySet.Kind)
+	require.Equal(t, "set", resumedPrivacySet.Action)
+	require.Equal(t, "telemetry_enabled", resumedPrivacySet.Key)
+	require.NotNil(t, resumedPrivacySet.Value)
+	require.False(t, *resumedPrivacySet.Value)
+	require.False(t, resumedPrivacySet.Settings["telemetry_enabled"])
+	require.NotEmpty(t, resumedPrivacySet.Path)
+
 	out, err = runResumedJSON("/telemetry")
 	require.NoError(t, err)
 	var resumedTelemetry telemetryReport
@@ -3425,7 +3437,6 @@ func risky(value any) {
 		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
 		{Command: "/vim", Args: []string{"toggle"}, Report: "/vim toggle"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
-		{Command: "/privacy-settings", Args: []string{"set", "telemetry", "off"}, Report: "/privacy-settings set"},
 		{Command: "/telemetry", Args: []string{"on"}, Report: "/telemetry on"},
 		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},

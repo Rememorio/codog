@@ -24681,13 +24681,6 @@ func (a *App) runResumedNotificationsSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedPrivacySlash(args []string, format string) error {
-	req, err := parsePrivacyArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "show" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/privacy-settings", req.Action), format)
-	}
 	return a.PrivacySettings(args)
 }
 
