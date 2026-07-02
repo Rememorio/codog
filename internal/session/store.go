@@ -157,6 +157,11 @@ var ErrAllSessionsEmpty = errors.New("all saved sessions are empty")
 // DefaultCleanupPeriodDays matches Claude Code's default transcript retention.
 const DefaultCleanupPeriodDays = 30
 
+const primarySessionExtension = ".jsonl"
+const legacySessionExtension = ".json"
+
+var sessionFileExtensions = []string{primarySessionExtension, legacySessionExtension}
+
 type PathIsDirectoryError struct {
 	Path string
 }
@@ -334,7 +339,7 @@ func looksLikeSessionPath(value string) bool {
 	if value == "" {
 		return false
 	}
-	return filepath.IsAbs(value) || strings.ContainsAny(value, `/\`) || strings.EqualFold(filepath.Ext(value), ".jsonl")
+	return filepath.IsAbs(value) || strings.ContainsAny(value, `/\`) || isSessionFileExtension(filepath.Ext(value))
 }
 
 func (s *Store) Create(id string) (*Session, error) {
@@ -369,7 +374,7 @@ func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Sessio
 	} else if exists {
 		return nil, fmt.Errorf("session %q already exists", id)
 	}
-	path := filepath.Join(s.Dir, id+".jsonl")
+	path := filepath.Join(s.Dir, id+primarySessionExtension)
 	return s.createAtPath(id, path, identity)
 }
 
@@ -615,7 +620,7 @@ func (s *Store) Rename(oldID string, newID string) (RenameResult, error) {
 		return RenameResult{}, fmt.Errorf("session %q already exists", newID)
 	}
 	oldPath := s.pathFor(oldID)
-	newPath := filepath.Join(s.Dir, newID+".jsonl")
+	newPath := filepath.Join(s.Dir, newID+primarySessionExtension)
 	records, err := s.readRecords(oldPath)
 	if err != nil {
 		return RenameResult{}, err
@@ -668,7 +673,7 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 		return nil, err
 	}
 	forkID := newID()
-	path := filepath.Join(s.Dir, forkID+".jsonl")
+	path := filepath.Join(s.Dir, forkID+primarySessionExtension)
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -753,21 +758,23 @@ func (s *Store) List() ([]Session, error) {
 			}
 			return nil, err
 		}
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-				continue
+		for _, extension := range sessionFileExtensions {
+			for _, entry := range entries {
+				if entry.IsDir() || filepath.Ext(entry.Name()) != extension {
+					continue
+				}
+				id := sessionIDFromFileName(entry.Name())
+				if _, ok := seen[id]; ok {
+					continue
+				}
+				path := filepath.Join(dir, entry.Name())
+				messages, identity, metadata, err := s.readSession(path, id)
+				if err != nil {
+					return nil, err
+				}
+				sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity, Metadata: metadata})
+				seen[id] = struct{}{}
 			}
-			id := strings.TrimSuffix(entry.Name(), ".jsonl")
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			path := filepath.Join(dir, entry.Name())
-			messages, identity, metadata, err := s.readSession(path, id)
-			if err != nil {
-				return nil, err
-			}
-			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity, Metadata: metadata})
-			seen[id] = struct{}{}
 		}
 	}
 	sortSessions(sessions)
@@ -1363,18 +1370,18 @@ func findMessageIndex(messages []anthropic.Message, target anthropic.Message, st
 }
 
 func (s *Store) pathFor(id string) string {
-	path := filepath.Join(s.Dir, id+".jsonl")
-	if s.LegacyDir == "" || sameDir(s.Dir, s.LegacyDir) {
-		return path
+	for _, dir := range []string{s.Dir, s.LegacyDir} {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		for _, extension := range sessionFileExtensions {
+			path := filepath.Join(dir, id+extension)
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
+		}
 	}
-	if _, err := os.Stat(path); err == nil {
-		return path
-	}
-	legacy := filepath.Join(s.LegacyDir, id+".jsonl")
-	if _, err := os.Stat(legacy); err == nil {
-		return legacy
-	}
-	return path
+	return filepath.Join(s.Dir, id+primarySessionExtension)
 }
 
 func validateSessionID(id string) error {
@@ -1750,17 +1757,24 @@ func (s *Store) sessionsInDir(dir string) ([]Session, error) {
 		return nil, err
 	}
 	sessions := make([]Session, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
+	seen := map[string]struct{}{}
+	for _, extension := range sessionFileExtensions {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != extension {
+				continue
+			}
+			id := sessionIDFromFileName(entry.Name())
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			messages, identity, metadata, err := s.readSession(path, id)
+			if err != nil {
+				return nil, err
+			}
+			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity, Metadata: metadata})
+			seen[id] = struct{}{}
 		}
-		id := strings.TrimSuffix(entry.Name(), ".jsonl")
-		path := filepath.Join(dir, entry.Name())
-		messages, identity, metadata, err := s.readSession(path, id)
-		if err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity, Metadata: metadata})
 	}
 	return sessions, nil
 }
@@ -1802,6 +1816,27 @@ func sortSessions(sessions []Session) {
 	})
 }
 
+func isSessionFileName(name string) bool {
+	return isSessionFileExtension(filepath.Ext(name))
+}
+
+func isSessionFileExtension(extension string) bool {
+	for _, candidate := range sessionFileExtensions {
+		if strings.EqualFold(extension, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func sessionIDFromFileName(name string) string {
+	extension := filepath.Ext(name)
+	if isSessionFileExtension(extension) {
+		return strings.TrimSuffix(name, extension)
+	}
+	return strings.TrimSuffix(name, primarySessionExtension)
+}
+
 func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {
 	if shouldRemove == nil {
 		return nil
@@ -1821,7 +1856,7 @@ func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {
 			if entry.IsDir() {
 				return nil
 			}
-			if !strings.HasSuffix(entry.Name(), ".jsonl") {
+			if !isSessionFileName(entry.Name()) {
 				return nil
 			}
 			clean := filepath.Clean(path)

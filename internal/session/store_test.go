@@ -296,6 +296,44 @@ func TestOpenExistingDoesNotCreateAndReportsDirectoryPaths(t *testing.T) {
 	require.Equal(t, "from path", opened.Messages[0].Content[0].Text)
 }
 
+func TestOpenExistingResolvesLegacyJSONSession(t *testing.T) {
+	store := NewStore(t.TempDir())
+	path := filepath.Join(store.Dir, "legacy-json.json")
+	writeTestSessionIdentity(t, path, "legacy-json", SessionIdentity{Title: "Legacy JSON", Purpose: "test"})
+
+	ok, err := store.Exists("legacy-json")
+	require.NoError(t, err)
+	require.True(t, ok)
+	opened, err := store.OpenExisting("legacy-json")
+	require.NoError(t, err)
+	require.Equal(t, "legacy-json", opened.ID)
+	require.Equal(t, path, opened.Path)
+	require.Len(t, opened.Messages, 1)
+
+	sessions, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	require.Equal(t, "legacy-json", sessions[0].ID)
+	require.Equal(t, path, sessions[0].Path)
+}
+
+func TestSessionResolutionPrefersJSONLOverLegacyJSON(t *testing.T) {
+	store := NewStore(t.TempDir())
+	legacyPath := filepath.Join(store.Dir, "dual.json")
+	primaryPath := filepath.Join(store.Dir, "dual.jsonl")
+	writeTestSessionIdentity(t, legacyPath, "dual", SessionIdentity{Title: "Legacy", Purpose: "test"})
+	writeTestSessionIdentity(t, primaryPath, "dual", SessionIdentity{Title: "Primary", Purpose: "test"})
+
+	opened, err := store.OpenExisting("dual")
+	require.NoError(t, err)
+	require.Equal(t, primaryPath, opened.Path)
+	require.Equal(t, "Primary", opened.Identity.Title)
+	sessions, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	require.Equal(t, primaryPath, sessions[0].Path)
+}
+
 func TestCreateEmptySession(t *testing.T) {
 	store := NewStore(t.TempDir())
 
