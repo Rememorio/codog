@@ -16,6 +16,7 @@ func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	root := repoRoot(t)
 	packages := []string{
 		"internal/control",
+		"internal/mcp",
 		"internal/mcpserver",
 		"internal/onboarding",
 		"internal/planmode",

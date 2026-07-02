@@ -1,3 +1,4 @@
+// Package mcp implements Codog's Model Context Protocol client helpers.
 package mcp
 
 import (
@@ -23,6 +24,8 @@ const claudeAIServerPrefix = "claude.ai "
 
 var ccrProxyPathMarkers = []string{"/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"}
 
+// ServerStatus reports the local inspection status for one configured MCP
+// server.
 type ServerStatus struct {
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
@@ -39,6 +42,7 @@ type ServerStatus struct {
 	Error           string          `json:"error,omitempty"`
 }
 
+// InitializeResult records the outcome of an MCP initialize handshake.
 type InitializeResult struct {
 	Server          string          `json:"server"`
 	Status          string          `json:"status"`
@@ -49,6 +53,8 @@ type InitializeResult struct {
 	Error           string          `json:"error,omitempty"`
 }
 
+// AuthStatusResult summarizes authentication and discovery health for an MCP
+// server.
 type AuthStatusResult struct {
 	Server        string          `json:"server"`
 	Status        string          `json:"status"`
@@ -77,18 +83,21 @@ type LifecycleError struct {
 	Recoverable bool              `json:"recoverable"`
 }
 
+// ToolInfo describes one MCP tool exposed by a server.
 type ToolInfo struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema,omitempty"`
 }
 
+// ToolListResult records the tools discovered from one MCP server.
 type ToolListResult struct {
 	Server string     `json:"server"`
 	Tools  []ToolInfo `json:"tools,omitempty"`
 	Error  string     `json:"error,omitempty"`
 }
 
+// ToolCallResult records the result of invoking one MCP tool.
 type ToolCallResult struct {
 	Server    string          `json:"server"`
 	Tool      string          `json:"tool"`
@@ -97,6 +106,7 @@ type ToolCallResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// ResourceListResult records resources discovered from one MCP server.
 type ResourceListResult struct {
 	Server    string          `json:"server"`
 	Lifecycle LifecycleStatus `json:"lifecycle"`
@@ -104,6 +114,7 @@ type ResourceListResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// ResourceReadResult records the result of reading one MCP resource.
 type ResourceReadResult struct {
 	Server    string          `json:"server"`
 	URI       string          `json:"uri"`
@@ -112,6 +123,8 @@ type ResourceReadResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// ResourceTemplateListResult records resource templates discovered from one
+// MCP server.
 type ResourceTemplateListResult struct {
 	Server    string          `json:"server"`
 	Lifecycle LifecycleStatus `json:"lifecycle"`
@@ -119,6 +132,7 @@ type ResourceTemplateListResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// PromptListResult records prompts discovered from one MCP server.
 type PromptListResult struct {
 	Server    string          `json:"server"`
 	Lifecycle LifecycleStatus `json:"lifecycle"`
@@ -126,6 +140,7 @@ type PromptListResult struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// PromptGetResult records the result of rendering one MCP prompt.
 type PromptGetResult struct {
 	Server    string          `json:"server"`
 	Prompt    string          `json:"prompt"`
@@ -203,11 +218,13 @@ func cleanLifecycleContext(context map[string]string) map[string]string {
 	return out
 }
 
+// ServerTransport identifies the MCP transport configured for a server.
 type ServerTransport struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 }
 
+// ServerDetails contains redacted transport-specific configuration details.
 type ServerDetails struct {
 	Command    string   `json:"command,omitempty"`
 	URL        string   `json:"url,omitempty"`
@@ -216,6 +233,7 @@ type ServerDetails struct {
 	HeaderKeys []string `json:"header_keys,omitempty"`
 }
 
+// ServerDescriptor is a redacted, user-facing description of one MCP server.
 type ServerDescriptor struct {
 	Name      string          `json:"name"`
 	Valid     bool            `json:"valid"`
@@ -239,6 +257,8 @@ type rpcResponse struct {
 	} `json:"error"`
 }
 
+// NormalizeNameForTooling converts an MCP server or member name into the form
+// used in Codog tool names.
 func NormalizeNameForTooling(name string) string {
 	var builder strings.Builder
 	for _, r := range name {
@@ -262,14 +282,18 @@ func NormalizeNameForTooling(name string) string {
 	return normalized
 }
 
+// ToolPrefix returns the Codog tool-name prefix for one MCP server.
 func ToolPrefix(serverName string) string {
 	return "mcp__" + NormalizeNameForTooling(serverName) + "__"
 }
 
+// ToolName returns the fully qualified Codog tool name for an MCP tool.
 func ToolName(serverName, toolName string) string {
 	return ToolPrefix(serverName) + NormalizeNameForTooling(toolName)
 }
 
+// UnwrapCCRProxyURL returns the upstream target URL embedded in a Claude Code
+// remote proxy URL when one is present.
 func UnwrapCCRProxyURL(rawURL string) string {
 	for _, marker := range ccrProxyPathMarkers {
 		if strings.Contains(rawURL, marker) {
@@ -279,10 +303,13 @@ func UnwrapCCRProxyURL(rawURL string) string {
 	return rawURL
 }
 
+// URLServerSignature returns the stable MCP server signature for a URL.
 func URLServerSignature(rawURL string) string {
 	return "url:" + UnwrapCCRProxyURL(rawURL)
 }
 
+// ServerSignature returns a redacted, stable signature for a configured MCP
+// server.
 func ServerSignature(server config.MCPServerConfig) string {
 	if isHTTPServer(server) {
 		return "url:" + redactedURL(server.URL)
@@ -292,6 +319,7 @@ func ServerSignature(server config.MCPServerConfig) string {
 	return "stdio:" + renderCommandSignature(parts)
 }
 
+// ServerConfigHash returns a stable hash for an MCP server configuration.
 func ServerConfigHash(server config.MCPServerConfig) string {
 	if isHTTPServer(server) {
 		rendered := fmt.Sprintf(
@@ -310,6 +338,7 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 	return stableHexHash("required:false|" + rendered)
 }
 
+// DescribeServer returns a redacted descriptor for one configured MCP server.
 func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor {
 	if isHTTPServer(server) {
 		return ServerDescriptor{
@@ -497,10 +526,13 @@ func collapseUnderscores(value string) string {
 	return builder.String()
 }
 
+// InspectAll inspects all configured MCP servers in deterministic name order.
 func InspectAll(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
 	return inspectServers(ctx, servers, Inspect)
 }
 
+// PreflightAll preflights all configured MCP servers in deterministic name
+// order.
 func PreflightAll(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
 	return inspectServers(ctx, servers, Preflight)
 }
@@ -518,6 +550,8 @@ func inspectServers(ctx context.Context, servers map[string]config.MCPServerConf
 	return statuses
 }
 
+// Inspect preflights one MCP server and discovers its tool list when
+// initialization succeeds.
 func Inspect(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
 	status := Preflight(ctx, name, server)
 	if status.Error != "" {
@@ -541,6 +575,8 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 	return status
 }
 
+// Preflight validates one MCP server configuration and performs its initialize
+// handshake.
 func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
 	status := ServerStatus{
 		Name:       name,
@@ -592,6 +628,7 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 	return status
 }
 
+// Initialize performs the MCP initialize handshake for one configured server.
 func Initialize(ctx context.Context, serverName string, server config.MCPServerConfig) InitializeResult {
 	if isHTTPServer(server) {
 		result, _ := initializeHTTP(ctx, serverName, server)
@@ -663,6 +700,8 @@ func Initialize(ctx context.Context, serverName string, server config.MCPServerC
 	}
 }
 
+// InspectAuth checks initialize, tool discovery, and resource discovery health
+// for one MCP server.
 func InspectAuth(ctx context.Context, serverName string, server config.MCPServerConfig) AuthStatusResult {
 	initialized := Initialize(ctx, serverName, server)
 	if initialized.Error != "" {
@@ -709,6 +748,7 @@ func countJSONArrayField(raw json.RawMessage, field string) int {
 	return len(items)
 }
 
+// ListTools discovers the tools exposed by one MCP server.
 func ListTools(ctx context.Context, serverName string, server config.MCPServerConfig) ToolListResult {
 	if isHTTPServer(server) {
 		result, err := requestAfterInitialize(ctx, server, rpcRequest{
@@ -821,6 +861,7 @@ func decodeTool(raw map[string]json.RawMessage) (ToolInfo, error) {
 	return tool, nil
 }
 
+// CallTool invokes one MCP tool after initializing the server connection.
 func CallTool(ctx context.Context, serverName string, server config.MCPServerConfig, toolName string, arguments json.RawMessage) ToolCallResult {
 	if len(arguments) == 0 {
 		arguments = json.RawMessage(`{}`)
@@ -845,6 +886,7 @@ func CallTool(ctx context.Context, serverName string, server config.MCPServerCon
 	return ToolCallResult{Server: serverName, Tool: toolName, Lifecycle: lifecycleReady("ready"), Result: result}
 }
 
+// ListResources discovers the resources exposed by one MCP server.
 func ListResources(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceListResult {
 	result, err := requestAfterInitialize(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
@@ -861,6 +903,8 @@ func ListResources(ctx context.Context, serverName string, server config.MCPServ
 	return ResourceListResult{Server: serverName, Lifecycle: lifecycleReady("ready"), Resources: result}
 }
 
+// ReadResource reads one MCP resource by URI after initializing the server
+// connection.
 func ReadResource(ctx context.Context, serverName string, server config.MCPServerConfig, uri string) ResourceReadResult {
 	result, err := requestAfterInitialize(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
@@ -879,6 +923,7 @@ func ReadResource(ctx context.Context, serverName string, server config.MCPServe
 	return ResourceReadResult{Server: serverName, URI: uri, Lifecycle: lifecycleReady("ready"), Result: result}
 }
 
+// ListResourceTemplates discovers resource templates exposed by one MCP server.
 func ListResourceTemplates(ctx context.Context, serverName string, server config.MCPServerConfig) ResourceTemplateListResult {
 	result, err := requestAfterInitialize(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
@@ -895,6 +940,7 @@ func ListResourceTemplates(ctx context.Context, serverName string, server config
 	return ResourceTemplateListResult{Server: serverName, Lifecycle: lifecycleReady("ready"), Templates: result}
 }
 
+// ListPrompts discovers prompts exposed by one MCP server.
 func ListPrompts(ctx context.Context, serverName string, server config.MCPServerConfig) PromptListResult {
 	result, err := requestAfterInitialize(ctx, server, rpcRequest{
 		JSONRPC: "2.0",
@@ -911,6 +957,7 @@ func ListPrompts(ctx context.Context, serverName string, server config.MCPServer
 	return PromptListResult{Server: serverName, Lifecycle: lifecycleReady("ready"), Prompts: result}
 }
 
+// GetPrompt renders one MCP prompt after initializing the server connection.
 func GetPrompt(ctx context.Context, serverName string, server config.MCPServerConfig, promptName string, arguments json.RawMessage) PromptGetResult {
 	if len(arguments) == 0 {
 		arguments = json.RawMessage(`{}`)

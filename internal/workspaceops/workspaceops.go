@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -409,9 +410,8 @@ func readEditableFile(path string) ([]byte, error) {
 }
 
 func safeInt64(value int64) int {
-	maxInt := int64(^uint(0) >> 1)
-	if value > maxInt {
-		return int(maxInt)
+	if value > int64(math.MaxInt) {
+		return math.MaxInt
 	}
 	return int(value)
 }

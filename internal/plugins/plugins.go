@@ -1180,10 +1180,7 @@ func compareVersions(a, b string) int {
 	aParts, aOK := versionParts(a)
 	bParts, bOK := versionParts(b)
 	if aOK && bOK {
-		maxLen := len(aParts)
-		if len(bParts) > maxLen {
-			maxLen = len(bParts)
-		}
+		maxLen := max(len(aParts), len(bParts))
 		for i := 0; i < maxLen; i++ {
 			var av, bv int
 			if i < len(aParts) {
