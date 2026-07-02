@@ -4496,6 +4496,38 @@ func TestPromptMissingPromptOutputContract(t *testing.T) {
 	require.Equal(t, "missing_prompt", report.ErrorKind)
 }
 
+func TestExplicitEmptyTopLevelPromptOutputContract(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", ""}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report promptErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "prompt", report.Kind)
+	require.Equal(t, "abort", report.Action)
+	require.Equal(t, "empty_prompt", report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.Contains(t, report.Hint, "codog prompt")
+}
+
+func TestHasExplicitEmptyPositionalSkipsFlagValues(t *testing.T) {
+	require.True(t, hasExplicitEmptyPositional([]string{"--output-format", "json", ""}))
+	require.True(t, hasExplicitEmptyPositional([]string{"--config", "config.json", "--", ""}))
+	require.False(t, hasExplicitEmptyPositional(nil))
+	require.False(t, hasExplicitEmptyPositional([]string{"--output-format", "json"}))
+	require.False(t, hasExplicitEmptyPositional([]string{"--config", "", "status"}))
+}
+
 func TestDumpManifestsCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

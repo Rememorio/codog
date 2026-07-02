@@ -166,6 +166,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
+	if command == "" && hasExplicitEmptyPositional(originalArgs) {
+		return renderEmptyPrompt(os.Stdout, requestedOutputFormat(originalArgs))
+	}
 	if command == "help" || command == "--help" || command == "-h" {
 		return renderHelpCommand(os.Stdout, rest)
 	}
@@ -20022,6 +20025,26 @@ func renderMissingPrompt(out io.Writer, format string) error {
 	}
 }
 
+func renderEmptyPrompt(out io.Writer, format string) error {
+	report := promptErrorReport{
+		Kind:      "prompt",
+		Action:    "abort",
+		ErrorKind: "empty_prompt",
+		Status:    "error",
+		Message:   "empty prompt",
+		Hint:      "Provide a prompt with `codog prompt \"...\"`, run a local command such as `codog status`, or start the REPL with no positional argument.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json", "stream-json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	default:
+		return &ExitError{Code: 1, Err: err}
+	}
+}
+
 func renderActionError(out io.Writer, report actionErrorReport, format string) error {
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	if strings.EqualFold(format, "json") {
@@ -38427,6 +38450,39 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	}
 	rest = injectGlobalOutputFormat(command, rest, outputFormat)
 	return base, command, rest, nil
+}
+
+func hasExplicitEmptyPositional(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			return index+1 < len(args) && strings.TrimSpace(args[index+1]) == ""
+		}
+		if globalFlagTakesValue(arg) {
+			if !strings.Contains(arg, "=") {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return strings.TrimSpace(arg) == ""
+	}
+	return false
+}
+
+func globalFlagTakesValue(arg string) bool {
+	name := arg
+	if before, _, ok := strings.Cut(arg, "="); ok {
+		name = before
+	}
+	switch name {
+	case "--config", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--max-turns", "--max-tokens", "--temperature":
+		return true
+	default:
+		return false
+	}
 }
 
 func missingToolFlagArgument(args []string) (missingArgumentError, bool) {
