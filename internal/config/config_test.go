@@ -1310,6 +1310,29 @@ func TestLoadAdditionalDirsConfigAndEnv(t *testing.T) {
 	require.Equal(t, []string{"one", "two"}, cfg.AdditionalDirs)
 }
 
+func TestLoadPermissionsAdditionalDirectoriesAlias(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{
+		"permissions": {"additionalDirectories": ["../shared", "../common"]}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{
+		"permissions": {"additionalDirectories": ["../common", "../project"]}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"../shared", "../common", "../project"}, cfg.AdditionalDirs)
+	require.Equal(t, []string{"../shared", "../common", "../project"}, cfg.PermissionRules.AdditionalDirectories)
+}
+
 func TestLoadEditorBridgeToken(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

@@ -94,6 +94,19 @@ func TestValidateBytesValidatesPermissionsDefaultModeType(t *testing.T) {
 	require.Equal(t, "a string", errorsByField["permission_rules.defaultMode"])
 }
 
+func TestValidateBytesValidatesPermissionsAdditionalDirectoriesType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"permissions":{"additionalDirectories":[42]},"permission_rules":{"additionalDirectories":"../shared"}}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 2)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "an array of strings", errorsByField["permissions.additionalDirectories"])
+	require.Equal(t, "an array of strings", errorsByField["permission_rules.additionalDirectories"])
+}
+
 func TestValidateBytesValidatesRespectGitignoreType(t *testing.T) {
 	result := ValidateBytes([]byte(`{"respectGitignore":"false"}`), "config.json")
 

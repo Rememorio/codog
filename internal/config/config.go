@@ -437,11 +437,12 @@ type FutureConfig struct {
 }
 
 type PermissionRules struct {
-	DefaultMode string   `json:"defaultMode,omitempty"`
-	Allow       []string `json:"allow,omitempty"`
-	Deny        []string `json:"deny,omitempty"`
-	Ask         []string `json:"ask,omitempty"`
-	DeniedTools []string `json:"denied_tools,omitempty"`
+	DefaultMode           string   `json:"defaultMode,omitempty"`
+	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
+	Allow                 []string `json:"allow,omitempty"`
+	Deny                  []string `json:"deny,omitempty"`
+	Ask                   []string `json:"ask,omitempty"`
+	DeniedTools           []string `json:"denied_tools,omitempty"`
 }
 
 type ManagedPolicy struct {
@@ -1326,6 +1327,9 @@ func merge(dst *Config, src Config) {
 				dst.PlanMode = planMode
 			}
 		}
+		if len(src.PermissionRules.AdditionalDirectories) != 0 {
+			dst.AdditionalDirs = mergeStringLists(dst.AdditionalDirs, src.PermissionRules.AdditionalDirectories)
+		}
 	}
 	if src.ConfigHome != "" {
 		dst.ConfigHome = expandHome(src.ConfigHome)
@@ -1528,6 +1532,7 @@ func mergeSandboxConfig(dst *SandboxConfig, src SandboxConfig) {
 
 func permissionRulesSet(rules PermissionRules) bool {
 	return rules.DefaultMode != "" ||
+		len(rules.AdditionalDirectories) != 0 ||
 		len(rules.Allow) != 0 ||
 		len(rules.Deny) != 0 ||
 		len(rules.Ask) != 0 ||
@@ -1839,6 +1844,9 @@ func hookCommandKey(command HookCommand) string {
 func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
 	if src.DefaultMode != "" {
 		dst.DefaultMode = src.DefaultMode
+	}
+	if len(src.AdditionalDirectories) != 0 {
+		dst.AdditionalDirectories = mergeStringLists(dst.AdditionalDirectories, src.AdditionalDirectories)
 	}
 	dst.Allow = append(dst.Allow, src.Allow...)
 	dst.Deny = append(dst.Deny, src.Deny...)
