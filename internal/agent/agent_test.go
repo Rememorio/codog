@@ -2523,6 +2523,13 @@ func risky(value any) {
 	require.Equal(t, "agents", resumedAgents.Kind)
 	require.Equal(t, "list", resumedAgents.Action)
 
+	out, err = runResumedJSON("/agents", "runs")
+	require.NoError(t, err)
+	var resumedAgentRuns agentRunsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgentRuns))
+	require.Equal(t, "agents", resumedAgentRuns.Kind)
+	require.Equal(t, "runs", resumedAgentRuns.Action)
+
 	out, err = runResumedJSON("/plugins", "list")
 	require.NoError(t, err)
 	var resumedPlugins pluginsListReport
@@ -14010,6 +14017,15 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.NoError(t, app.AgentsWithOverrides([]string{"run", "reviewer", "check auth"}, config.FlagOverrides{SessionID: "session-1"}))
 	require.Contains(t, out.String(), `"agent": "reviewer"`)
 	require.Contains(t, out.String(), `"kind": "agent"`)
+	var runReport agentRunReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runReport))
+	require.Equal(t, "agents", runReport.Kind)
+	require.Equal(t, "run", runReport.Action)
+	require.Equal(t, "ok", runReport.Status)
+	require.NotEmpty(t, runReport.RunID)
+	require.Equal(t, runReport.Task.ID, runReport.Run.TaskID)
+	require.Equal(t, "reviewer", runReport.Run.Agent)
+	require.Equal(t, "check auth", runReport.Run.Prompt)
 	select {
 	case payload := <-received:
 		require.Equal(t, "subagent_start", payload.Event)
@@ -14019,6 +14035,34 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 		t.Fatal("subagent start hook was not called")
 	}
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"runs", "--json"}, config.FlagOverrides{}))
+	var runsReport agentRunsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runsReport))
+	require.Equal(t, "agents", runsReport.Kind)
+	require.Equal(t, "runs", runsReport.Action)
+	require.Equal(t, 1, runsReport.Count)
+	require.Equal(t, runReport.RunID, runsReport.Runs[0].Run.ID)
+	require.NotEmpty(t, runsReport.Runs[0].CurrentStatus)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"status", runReport.RunID, "--json"}, config.FlagOverrides{}))
+	var statusReport agentRunsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Equal(t, "status", statusReport.Action)
+	require.NotNil(t, statusReport.Run)
+	require.Equal(t, runReport.RunID, statusReport.Run.Run.ID)
+	require.Equal(t, runReport.Task.ID, statusReport.Run.Run.TaskID)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"run-remove", runReport.RunID, "--json"}, config.FlagOverrides{}))
+	require.Contains(t, out.String(), `"removed": true`)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"runs", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runsReport))
+	require.Zero(t, runsReport.Count)
 }
 
 func initGitRepo(t *testing.T) string {
