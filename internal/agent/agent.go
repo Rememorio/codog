@@ -22964,7 +22964,24 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 		return a.ResumeCommand(append([]string{overrides.Resume}, args...))
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
-	case "show", "exists", "fork", "rename", "delete":
+	case "delete":
+		req, err := parseSessionDeleteArgs("codog sessions delete", args[1:])
+		if err != nil {
+			return err
+		}
+		active, err := a.Sessions.OpenExisting(overrides.Resume)
+		if err != nil {
+			return err
+		}
+		target, err := a.Sessions.OpenExisting(req.ID)
+		if err != nil {
+			return err
+		}
+		if target.ID == active.ID || target.Path == active.Path {
+			return fmt.Errorf("delete: refusing to delete the active session %q", target.ID)
+		}
+		return a.SessionsCommand(args)
+	case "show", "exists", "fork", "rename":
 		if len(args) == 1 || strings.HasPrefix(strings.TrimSpace(args[1]), "-") {
 			withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
 			return a.SessionsCommand(withSession)
@@ -34433,22 +34450,68 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 		*sess = *next
 		fmt.Fprintf(a.Err, "session renamed: %s -> %s\n", result.OldID, result.NewID)
 	case "delete":
-		if len(args) < 2 {
-			fmt.Fprintln(a.Err, "usage: /session delete ID")
-			return
-		}
-		if args[1] == sess.ID && !containsFold(args[2:], "--force") {
-			fmt.Fprintln(a.Err, "refusing to delete active session without --force")
-			return
-		}
-		if err := a.Sessions.Delete(args[1]); err != nil {
+		req, err := parseSessionDeleteArgs("/session delete", args[1:])
+		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return
 		}
-		fmt.Fprintf(a.Err, "session deleted: %s\n", args[1])
+		if !req.Force {
+			fmt.Fprintf(a.Err, "delete: confirmation required; rerun with /session delete %s --force\n", req.ID)
+			return
+		}
+		target, err := a.Sessions.OpenExisting(req.ID)
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		if target.ID == sess.ID || target.Path == sess.Path {
+			fmt.Fprintf(a.Err, "delete: refusing to delete the active session %q\n", target.ID)
+			return
+		}
+		if err := a.Sessions.Delete(target.ID); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		fmt.Fprintf(a.Err, "session deleted: %s\n", target.ID)
 	default:
 		fmt.Fprintf(a.Err, "unknown /session action: %s\n", args[0])
 	}
+}
+
+type sessionDeleteRequest struct {
+	ID    string
+	Force bool
+}
+
+func parseSessionDeleteArgs(command string, args []string) (sessionDeleteRequest, error) {
+	req := sessionDeleteRequest{}
+	usage := command + " ID --force"
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--force" || arg == "-f":
+			req.Force = true
+		case arg == "--json":
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", command)
+			}
+		case strings.HasPrefix(arg, "--output-format="):
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		default:
+			if req.ID != "" {
+				return req, unexpectedExtraArgsError{Command: command, Args: []string{arg}, Usage: usage}
+			}
+			req.ID = arg
+		}
+	}
+	if req.ID == "" {
+		return req, fmt.Errorf("usage: %s", usage)
+	}
+	return req, nil
 }
 
 func (a *App) SessionsCommand(args []string) error {
@@ -34497,13 +34560,17 @@ func (a *App) SessionsCommand(args []string) error {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 	case "delete":
-		if len(args) < 2 {
-			return errors.New("usage: codog sessions delete ID")
-		}
-		if err := a.Sessions.Delete(args[1]); err != nil {
+		req, err := parseSessionDeleteArgs("codog sessions delete", args[1:])
+		if err != nil {
 			return err
 		}
-		data, _ := json.MarshalIndent(map[string]any{"deleted": true, "id": args[1]}, "", "  ")
+		if !req.Force {
+			return fmt.Errorf("delete: confirmation required; rerun with codog sessions delete %s --force", req.ID)
+		}
+		if err := a.Sessions.Delete(req.ID); err != nil {
+			return err
+		}
+		data, _ := json.MarshalIndent(map[string]any{"deleted": true, "id": req.ID}, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 	default:
 		return sessionsActionError{Action: args[0]}

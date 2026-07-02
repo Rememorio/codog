@@ -5056,7 +5056,14 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.NotEmpty(t, forked.ID)
 	out.Reset()
 
-	require.NoError(t, app.SessionsCommand([]string{"delete", forked.ID}))
+	err := app.SessionsCommand([]string{"delete", forked.ID})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirmation required")
+	ok, err := store.Exists(forked.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.NoError(t, app.SessionsCommand([]string{"delete", forked.ID, "--force"}))
 	require.Contains(t, out.String(), `"deleted": true`)
 }
 
@@ -5339,7 +5346,21 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	errOut.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/session delete "+forkedID, sess))
+	require.Contains(t, errOut.String(), "confirmation required")
+	ok, err := store.Exists(forkedID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/session delete "+forkedID+" --force", sess))
 	require.Contains(t, errOut.String(), "session deleted: "+forkedID)
+	errOut.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/session delete source --force", sess))
+	require.Contains(t, errOut.String(), `refusing to delete the active session "source"`)
+	ok, err = store.Exists("source")
+	require.NoError(t, err)
+	require.True(t, ok)
 }
 
 func TestRenameSessionCommandAndSlash(t *testing.T) {
@@ -5375,6 +5396,54 @@ func TestRenameSessionCommandAndSlash(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, opened.Messages, 1)
 	require.Equal(t, "rename me", opened.Messages[0].Content[0].Text)
+}
+
+func TestSessionsDeleteRequiresForce(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("delete-me", anthropic.TextMessage("user", "delete me")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	err := app.SessionsCommand([]string{"delete", "delete-me"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirmation required")
+	ok, existsErr := store.Exists("delete-me")
+	require.NoError(t, existsErr)
+	require.True(t, ok)
+
+	require.NoError(t, app.SessionsCommand([]string{"delete", "delete-me", "--force"}))
+	require.Contains(t, out.String(), `"deleted": true`)
+	ok, existsErr = store.Exists("delete-me")
+	require.NoError(t, existsErr)
+	require.False(t, ok)
+}
+
+func TestResumedSessionDeleteRefusesActiveSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
+	require.NoError(t, store.Append("other", anthropic.TextMessage("user", "other")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	err := app.runResumedSessionSlash([]string{"delete", "other"}, config.FlagOverrides{Resume: "active"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirmation required")
+	ok, existsErr := store.Exists("other")
+	require.NoError(t, existsErr)
+	require.True(t, ok)
+
+	err = app.runResumedSessionSlash([]string{"delete", "active", "--force"}, config.FlagOverrides{Resume: "active"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refusing to delete the active session")
+	ok, existsErr = store.Exists("active")
+	require.NoError(t, existsErr)
+	require.True(t, ok)
+
+	require.NoError(t, app.runResumedSessionSlash([]string{"delete", "other", "--force"}, config.FlagOverrides{Resume: "active"}))
+	require.Contains(t, out.String(), `"deleted": true`)
+	ok, existsErr = store.Exists("other")
+	require.NoError(t, existsErr)
+	require.False(t, ok)
 }
 
 func TestGenerateSessionNameCommandAndSlash(t *testing.T) {
