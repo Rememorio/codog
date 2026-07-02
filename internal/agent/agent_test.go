@@ -1891,6 +1891,11 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 			case "refresh_token":
 				require.Equal(t, "resume-oauth-refresh-1234", r.Form.Get("refresh_token"))
 				_, _ = w.Write([]byte(`{"access_token":"refreshed-access-1234","refresh_token":"refreshed-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+			case "authorization_code":
+				require.Equal(t, "resume-browser-code-1", r.Form.Get("code"))
+				require.NotEmpty(t, r.Form.Get("code_verifier"))
+				require.Equal(t, "http://127.0.0.1:18080/oauth/callback", r.Form.Get("redirect_uri"))
+				_, _ = w.Write([]byte(`{"access_token":"browser-access-1234","refresh_token":"browser-refresh-1234","token_type":"Bearer","expires_in":3600}`))
 			case oauth.DeviceCodeGrantType:
 				require.Equal(t, "resume-device-1", r.Form.Get("device_code"))
 				_, _ = w.Write([]byte(`{"access_token":"device-access-1234","refresh_token":"device-refresh-1234","token_type":"Bearer","expires_in":3600}`))
@@ -2068,6 +2073,17 @@ func risky(value any) {
 		return "test-open", nil
 	}
 	t.Cleanup(func() { openExternalURL = previousOpen })
+	previousBrowserCallback := startBrowserCallbackServer
+	startBrowserCallbackServer = func(_ context.Context, _, _, state string) (oauth.BrowserCallbackServer, error) {
+		results := make(chan oauth.BrowserCallbackResult, 1)
+		results <- oauth.BrowserCallbackResult{Callback: oauth.BrowserCallback{Code: "resume-browser-code-1", State: state}}
+		return oauth.BrowserCallbackServer{
+			RedirectURI: "http://127.0.0.1:18080/oauth/callback",
+			Results:     results,
+			Close:       func() error { return nil },
+		}, nil
+	}
+	t.Cleanup(func() { startBrowserCallbackServer = previousBrowserCallback })
 	voiceCommand := filepath.Join(t.TempDir(), "voice-helper.sh")
 	require.NoError(t, os.WriteFile(voiceCommand, []byte("#!/bin/sh\ninput=$(cat)\nprintf 'voice:%s' \"$input\"\n"), 0o755))
 	speakCommand := filepath.Join(t.TempDir(), "speak-helper.sh")
@@ -4524,23 +4540,16 @@ func risky(value any) {
 	require.Equal(t, "devi...1234", resumedOAuthDeviceLogin.Token.AccessToken)
 	require.Equal(t, "devi...1234", resumedOAuthDeviceLogin.Token.RefreshToken)
 
-	for _, guarded := range []struct {
-		Command string
-		Args    []string
-		Report  string
-	}{
-		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
-	} {
-		out, err = runResumedJSON(guarded.Command, guarded.Args...)
-		require.Error(t, err, guarded.Command)
-		var guardedExit *ExitError
-		require.ErrorAs(t, err, &guardedExit, guarded.Command)
-		require.True(t, guardedExit.Silent, guarded.Command)
-		var guardedReport slashErrorReport
-		require.NoError(t, json.Unmarshal([]byte(out), &guardedReport), guarded.Command)
-		require.Equal(t, "unsupported_resumed_slash_command", guardedReport.ErrorKind, guarded.Command)
-		require.Equal(t, guarded.Report, guardedReport.Command, guarded.Command)
+	out, err = runResumedJSON("/oauth", "browser", "login", "default")
+	require.NoError(t, err)
+	var resumedOAuthBrowserLogin struct {
+		RedirectURI string          `json:"redirect_uri"`
+		Token       oauth.TokenView `json:"token"`
 	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthBrowserLogin))
+	require.Equal(t, "http://127.0.0.1:18080/oauth/callback", resumedOAuthBrowserLogin.RedirectURI)
+	require.Equal(t, "brow...1234", resumedOAuthBrowserLogin.Token.AccessToken)
+	require.Equal(t, "brow...1234", resumedOAuthBrowserLogin.Token.RefreshToken)
 
 	out, err = runResumedJSON("/doctor")
 	require.NoError(t, err)

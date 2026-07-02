@@ -10165,6 +10165,8 @@ func buildOAuthFlowStatusReport(flow string, profiles []oauth.ProviderProfile) o
 	return report
 }
 
+var startBrowserCallbackServer = oauth.StartBrowserCallbackServer
+
 func (a *App) oauthBrowser(args []string) error {
 	if len(args) == 0 {
 		return a.oauthFlowStatus("browser", "")
@@ -10245,7 +10247,7 @@ func (a *App) oauthBrowser(args []string) error {
 		if err != nil {
 			return err
 		}
-		callback, err := oauth.StartBrowserCallbackServer(ctx, addr, "/oauth/callback", state)
+		callback, err := startBrowserCallbackServer(ctx, addr, "/oauth/callback", state)
 		if err != nil {
 			return err
 		}
@@ -24566,6 +24568,29 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 				}
 			}
 			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth device", deviceAction), format)
+		}
+	case "browser":
+		if len(normalized) >= 2 {
+			browserAction := strings.ToLower(strings.TrimSpace(normalized[1]))
+			switch browserAction {
+			case "status":
+				if len(normalized) <= 3 {
+					return a.OAuth(normalized)
+				}
+			case "start":
+				if len(normalized) >= 4 {
+					return a.OAuth(normalized)
+				}
+			case "exchange":
+				if len(normalized) >= 6 {
+					return a.OAuth(normalized)
+				}
+			case "login":
+				if len(normalized) >= 3 && len(normalized) <= 4 {
+					return a.OAuth(normalized)
+				}
+			}
+			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth browser", browserAction), format)
 		}
 	}
 	return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
