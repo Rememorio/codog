@@ -1151,6 +1151,8 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "retrieve_context", CanonicalToolName("RetrieveContextTool"))
 	require.Equal(t, "enter_plan_mode", CanonicalToolName("EnterPlanMode"))
 	require.Equal(t, "exit_plan_mode", CanonicalToolName("ExitPlanMode"))
+	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
+	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
 
 	aliases := ClaudeToolAliases()
@@ -1160,6 +1162,8 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "apply_patch", aliases["ApplyPatchTool"])
 	require.Equal(t, "enter_plan_mode", aliases["EnterPlanMode"])
 	require.Equal(t, "exit_plan_mode", aliases["ExitPlanMode"])
+	require.Equal(t, "sleep", aliases["SleepTool"])
+	require.Equal(t, "repl", aliases["REPLTool"])
 	aliases["WebFetch"] = "changed"
 	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
 }
@@ -1195,6 +1199,8 @@ func TestClaudeToolAliasesCoverArchivedToolEntries(t *testing.T) {
 		"RemoteTriggerTool",
 		"SendMessageTool",
 		"SkillTool",
+		"SleepTool",
+		"REPLTool",
 		"SyntheticOutputTool",
 		"TaskCreateTool",
 		"TaskGetTool",
@@ -1843,6 +1849,8 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"SendMessage":                  "send_user_message",
 		"SendMessageTool":              "send_user_message",
 		"SkillTool":                    "skill",
+		"SleepTool":                    "sleep",
+		"REPLTool":                     "repl",
 		"SyntheticOutputTool":          "structured_output",
 		"TaskCreate":                   "task_create",
 		"TaskCreateTool":               "task_create",
