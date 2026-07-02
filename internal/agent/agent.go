@@ -24437,6 +24437,11 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 	}
 	action := strings.ToLower(strings.TrimSpace(normalized[0]))
 	switch action {
+	case "discover":
+		if len(normalized) == 2 {
+			return a.OAuth(normalized)
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/oauth", action), format)
 	case "pkce":
 		if len(normalized) == 1 {
 			return a.OAuth(normalized)
@@ -24451,6 +24456,10 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 		if len(normalized) >= 2 {
 			providerAction := strings.ToLower(strings.TrimSpace(normalized[1]))
 			switch providerAction {
+			case "save":
+				if len(normalized) >= 5 {
+					return a.OAuth(normalized)
+				}
 			case "list":
 				if len(normalized) == 2 {
 					return a.OAuth(normalized)
@@ -24471,6 +24480,10 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 			switch strings.ToLower(strings.TrimSpace(normalized[1])) {
 			case "show":
 				if len(normalized) == 2 {
+					return a.OAuth(normalized)
+				}
+			case "refresh":
+				if len(normalized) <= 3 {
 					return a.OAuth(normalized)
 				}
 			case "save":

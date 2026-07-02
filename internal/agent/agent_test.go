@@ -1854,6 +1854,7 @@ func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	t.Setenv("CODOG_OAUTH_STORAGE", "file")
 	t.Cleanup(func() {
 		store := background.NewStore(configHome)
 		tasks, err := store.List()
@@ -1874,9 +1875,19 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	t.Setenv("USERPROFILE", "")
 	var oauthServer *httptest.Server
 	oauthServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
 		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token"}`))
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token","device_authorization_endpoint":"` + oauthServer.URL + `/device"}`))
+		case "/token":
+			require.NoError(t, r.ParseForm())
+			require.Equal(t, "refresh_token", r.Form.Get("grant_type"))
+			require.Equal(t, "resume-oauth-refresh-1234", r.Form.Get("refresh_token"))
+			require.Equal(t, "client-resume", r.Form.Get("client_id"))
+			_, _ = w.Write([]byte(`{"access_token":"refreshed-access-1234","refresh_token":"refreshed-refresh-1234","token_type":"Bearer","expires_in":3600}`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(oauthServer.Close)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
@@ -4420,14 +4431,43 @@ func risky(value any) {
 	require.Equal(t, "clear", resumedClearDir.Action)
 	require.Equal(t, 0, resumedClearDir.Total)
 
+	out, err = runResumedJSON("/oauth", "discover", oauthServer.URL)
+	require.NoError(t, err)
+	var resumedOAuthDiscovery oauth.ProviderMetadata
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthDiscovery))
+	require.Equal(t, oauthServer.URL+"/authorize", resumedOAuthDiscovery.AuthorizationEndpoint)
+	require.Equal(t, oauthServer.URL+"/token", resumedOAuthDiscovery.TokenEndpoint)
+	require.Equal(t, oauthServer.URL+"/.well-known/oauth-authorization-server", resumedOAuthDiscovery.SourceURL)
+
+	out, err = runResumedJSON("/oauth", "provider", "save", "resumed-work", oauthServer.URL, "client-resumed-work", "profile", "email")
+	require.NoError(t, err)
+	var resumedOAuthProviderSave oauth.ProviderProfile
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProviderSave))
+	require.Equal(t, "resumed-work", resumedOAuthProviderSave.Name)
+	require.Equal(t, "client-resumed-work", resumedOAuthProviderSave.ClientID)
+	require.Equal(t, []string{"profile", "email"}, resumedOAuthProviderSave.Scopes)
+	require.Equal(t, oauthServer.URL+"/token", resumedOAuthProviderSave.Metadata.TokenEndpoint)
+
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "resume-oauth-access-1234",
+		RefreshToken: "resume-oauth-refresh-1234",
+		ExpiresAt:    time.Now().UTC().Add(time.Hour),
+	})
+	require.NoError(t, err)
+	out, err = runResumedJSON("/oauth", "token", "refresh")
+	require.NoError(t, err)
+	var resumedOAuthTokenRefresh oauth.TokenView
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenRefresh))
+	require.Equal(t, "refr...1234", resumedOAuthTokenRefresh.AccessToken)
+	require.Equal(t, "refr...1234", resumedOAuthTokenRefresh.RefreshToken)
+	require.Equal(t, "Bearer", resumedOAuthTokenRefresh.TokenType)
+	require.False(t, resumedOAuthTokenRefresh.ExpiresAt.IsZero())
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
 		Report  string
 	}{
-		{Command: "/oauth", Args: []string{"discover", "https://example.test"}, Report: "/oauth discover"},
-		{Command: "/oauth", Args: []string{"provider", "save", "work", "https://example.test", "client"}, Report: "/oauth provider save"},
-		{Command: "/oauth", Args: []string{"token", "refresh"}, Report: "/oauth token refresh"},
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
