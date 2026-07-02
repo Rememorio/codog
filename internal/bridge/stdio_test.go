@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/stretchr/testify/require"
 )
@@ -59,6 +60,16 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"lsp/status"`)
 	require.Contains(t, out.String(), `"lsp/stop"`)
 	require.Contains(t, out.String(), `"lsp/query"`)
+	require.Contains(t, out.String(), `"mcp/list"`)
+	require.Contains(t, out.String(), `"mcp/show"`)
+	require.Contains(t, out.String(), `"mcp/auth"`)
+	require.Contains(t, out.String(), `"mcp/tools"`)
+	require.Contains(t, out.String(), `"mcp/call"`)
+	require.Contains(t, out.String(), `"mcp/resources"`)
+	require.Contains(t, out.String(), `"mcp/resource-templates"`)
+	require.Contains(t, out.String(), `"mcp/read"`)
+	require.Contains(t, out.String(), `"mcp/prompts"`)
+	require.Contains(t, out.String(), `"mcp/prompt"`)
 	require.Contains(t, out.String(), `"background/list"`)
 	require.Contains(t, out.String(), `"background/run"`)
 	require.Contains(t, out.String(), `"background/logs"`)
@@ -459,6 +470,146 @@ func bridgeTestLSPDocumentURI(params json.RawMessage) string {
 func jsonEscape(value string) string {
 	data, _ := json.Marshal(value)
 	return strings.Trim(string(data), `"`)
+}
+
+func TestBridgeMCPMethods(t *testing.T) {
+	workspace := t.TempDir()
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	servers := map[string]config.MCPServerConfig{
+		"test": {
+			Command: os.Args[0],
+			Args:    []string{"-test.run", "^TestBridgeMCPHelperProcess$"},
+			Env:     []string{"CODOG_BRIDGE_MCP_HELPER=1"},
+		},
+	}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"mcp/list","params":{"inspect":false}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"mcp/show","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"mcp/tools","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"mcp/call","params":{"server":"test","tool":"echo","arguments":{"text":"hi"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"mcp/resources","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"mcp/resource-templates","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"mcp/read","params":{"server":"test","uri":"codog://note"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"mcp/prompts","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"mcp/prompt","params":{"server":"test","prompt":"review","arguments":{"topic":"hooks"}}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"mcp/auth","params":{"server":"test"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, MCPServers: servers}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"mcp_list"`)
+	require.Contains(t, out.String(), `"servers":["test"]`)
+	require.Contains(t, out.String(), `"kind":"mcp_show"`)
+	require.Contains(t, out.String(), `"descriptor"`)
+	require.Contains(t, out.String(), `"kind":"mcp_tools"`)
+	require.Contains(t, out.String(), `"name":"echo"`)
+	require.Contains(t, out.String(), `"description":"Echo text."`)
+	require.Contains(t, out.String(), `"kind":"mcp_call"`)
+	require.Contains(t, out.String(), `"text":"hi bridge"`)
+	require.Contains(t, out.String(), `"kind":"mcp_resources"`)
+	require.Contains(t, out.String(), `"uri":"codog://note"`)
+	require.Contains(t, out.String(), `"kind":"mcp_resource_templates"`)
+	require.Contains(t, out.String(), `"uriTemplate":"codog://notes/{name}"`)
+	require.Contains(t, out.String(), `"kind":"mcp_read"`)
+	require.Contains(t, out.String(), `"text":"note body"`)
+	require.Contains(t, out.String(), `"kind":"mcp_prompts"`)
+	require.Contains(t, out.String(), `"name":"review"`)
+	require.Contains(t, out.String(), `"kind":"mcp_prompt"`)
+	require.Contains(t, out.String(), `"text":"Review hooks"`)
+	require.Contains(t, out.String(), `"kind":"mcp_auth"`)
+	require.Contains(t, out.String(), `"status":"ok"`)
+}
+
+func TestBridgeMCPRejectsInvalidInputs(t *testing.T) {
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"mcp/show","params":{"server":"missing"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"mcp/call","params":{"server":"missing"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"mcp/read","params":{"server":"missing"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"mcp/prompt","params":{"server":"missing"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test"}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "no mcp servers configured")
+	require.Contains(t, out.String(), "tool is required")
+	require.Contains(t, out.String(), "uri is required")
+	require.Contains(t, out.String(), "prompt is required")
+}
+
+func TestBridgeMCPHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_BRIDGE_MCP_HELPER") != "1" {
+		return
+	}
+	reader := bufio.NewScanner(os.Stdin)
+	for reader.Scan() {
+		line := reader.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var req map[string]any
+		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			continue
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			writeBridgeMCP(id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]any{"name": "bridge-test", "version": "0.0.0"},
+			})
+		case "tools/list":
+			writeBridgeMCP(id, map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{"type": "string"},
+					},
+				},
+			}}})
+		case "tools/call":
+			writeBridgeMCP(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi bridge"}}})
+		case "resources/list":
+			writeBridgeMCP(id, map[string]any{"resources": []map[string]any{{"uri": "codog://note", "name": "note"}}})
+		case "resources/templates/list":
+			writeBridgeMCP(id, map[string]any{"resourceTemplates": []map[string]any{{
+				"uriTemplate": "codog://notes/{name}",
+				"name":        "note by name",
+			}}})
+		case "resources/read":
+			writeBridgeMCP(id, map[string]any{"contents": []map[string]any{{"uri": "codog://note", "text": "note body"}}})
+		case "prompts/list":
+			writeBridgeMCP(id, map[string]any{"prompts": []map[string]any{{
+				"name":        "review",
+				"description": "Review a topic.",
+				"arguments": []map[string]any{{
+					"name":     "topic",
+					"required": true,
+				}},
+			}}})
+		case "prompts/get":
+			writeBridgeMCP(id, map[string]any{"messages": []map[string]any{{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": "Review hooks",
+				},
+			}}})
+		}
+	}
+	os.Exit(0)
+}
+
+func writeBridgeMCP(id any, result map[string]any) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, _ := json.Marshal(payload)
+	fmt.Println(string(data))
 }
 
 func TestBridgeEditorIdentifyOpenSelectionState(t *testing.T) {

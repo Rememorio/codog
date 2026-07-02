@@ -1939,6 +1939,7 @@ func (a *App) Bridge(args []string) error {
 		ConfigHome: a.Config.ConfigHome,
 		TrustToken: a.Config.Future.EditorBridgeToken,
 		Executable: executable,
+		MCPServers: a.Config.MCPServers,
 	}.Serve(a.In, a.Out)
 }
 

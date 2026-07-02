@@ -9,12 +9,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/codeintel"
+	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
@@ -26,6 +29,7 @@ type Server struct {
 	ConfigHome string
 	TrustToken string
 	Executable string
+	MCPServers map[string]config.MCPServerConfig
 }
 
 type Request struct {
@@ -123,6 +127,16 @@ func (s Server) handle(req Request) (any, *Error) {
 				"lsp/status",
 				"lsp/stop",
 				"lsp/query",
+				"mcp/list",
+				"mcp/show",
+				"mcp/auth",
+				"mcp/tools",
+				"mcp/call",
+				"mcp/resources",
+				"mcp/resource-templates",
+				"mcp/read",
+				"mcp/prompts",
+				"mcp/prompt",
 				"background/list",
 				"background/run",
 				"background/get",
@@ -364,6 +378,62 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "lsp/query":
 		result, err := s.lspQuery(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/list":
+		return s.mcpList(req.Params), nil
+	case "mcp/show":
+		result, err := s.mcpShow(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/auth":
+		result, err := s.mcpAuth(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/tools":
+		result, err := s.mcpTools(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/call":
+		result, err := s.mcpCall(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/resources":
+		result, err := s.mcpResources(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/resource-templates":
+		result, err := s.mcpResourceTemplates(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/read":
+		result, err := s.mcpRead(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/prompts":
+		result, err := s.mcpPrompts(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "mcp/prompt":
+		result, err := s.mcpPrompt(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -821,6 +891,233 @@ func (s Server) lspQuery(params json.RawMessage) (any, error) {
 		Line:      payload.Line,
 		Character: payload.Character,
 	})
+}
+
+func (s Server) mcpList(params json.RawMessage) any {
+	var payload struct {
+		Inspect *bool `json:"inspect"`
+	}
+	if len(params) != 0 {
+		_ = json.Unmarshal(params, &payload)
+	}
+	names := s.mcpServerNames()
+	descriptors := make([]mcp.ServerDescriptor, 0, len(names))
+	for _, name := range names {
+		descriptors = append(descriptors, mcp.DescribeServer(name, s.MCPServers[name]))
+	}
+	inspect := true
+	if payload.Inspect != nil {
+		inspect = *payload.Inspect
+	}
+	result := map[string]any{
+		"kind":        "mcp_list",
+		"count":       len(names),
+		"servers":     names,
+		"descriptors": descriptors,
+	}
+	if inspect {
+		result["statuses"] = mcp.InspectAll(context.Background(), s.MCPServers)
+	}
+	return result
+}
+
+func (s Server) mcpShow(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	name := firstNonEmpty(payload.Server, payload.Name)
+	server, err := s.mcpServer(name)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"kind":       "mcp_show",
+		"server":     name,
+		"descriptor": mcp.DescribeServer(name, server),
+		"status":     mcp.Inspect(context.Background(), name, server),
+	}, nil
+}
+
+func (s Server) mcpAuth(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"kind": "mcp_auth", "server": payload.Server, "result": mcp.InspectAuth(context.Background(), payload.Server, server)}, nil
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.AuthStatusResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.InspectAuth(context.Background(), name, s.MCPServers[name]))
+	}
+	return map[string]any{"kind": "mcp_auth", "count": len(results), "servers": results}, nil
+}
+
+func (s Server) mcpTools(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"kind": "mcp_tools", "server": payload.Server, "result": mcp.ListTools(context.Background(), payload.Server, server)}, nil
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.ToolListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListTools(context.Background(), name, s.MCPServers[name]))
+	}
+	return map[string]any{"kind": "mcp_tools", "count": len(results), "servers": results}, nil
+}
+
+func (s Server) mcpCall(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server    string          `json:"server"`
+		Tool      string          `json:"tool"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(payload.Tool) == "" {
+		return nil, errors.New("tool is required")
+	}
+	server, err := s.mcpServer(payload.Server)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "mcp_call", "server": payload.Server, "tool": payload.Tool, "result": mcp.CallTool(context.Background(), payload.Server, server, payload.Tool, payload.Arguments)}, nil
+}
+
+func (s Server) mcpResources(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"kind": "mcp_resources", "server": payload.Server, "result": mcp.ListResources(context.Background(), payload.Server, server)}, nil
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.ResourceListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListResources(context.Background(), name, s.MCPServers[name]))
+	}
+	return map[string]any{"kind": "mcp_resources", "count": len(results), "servers": results}, nil
+}
+
+func (s Server) mcpResourceTemplates(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"kind": "mcp_resource_templates", "server": payload.Server, "result": mcp.ListResourceTemplates(context.Background(), payload.Server, server)}, nil
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.ResourceTemplateListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListResourceTemplates(context.Background(), name, s.MCPServers[name]))
+	}
+	return map[string]any{"kind": "mcp_resource_templates", "count": len(results), "servers": results}, nil
+}
+
+func (s Server) mcpRead(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+		URI    string `json:"uri"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(payload.URI) == "" {
+		return nil, errors.New("uri is required")
+	}
+	server, err := s.mcpServer(payload.Server)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "mcp_read", "server": payload.Server, "uri": payload.URI, "result": mcp.ReadResource(context.Background(), payload.Server, server, payload.URI)}, nil
+}
+
+func (s Server) mcpPrompts(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server string `json:"server"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(payload.Server) != "" {
+		server, err := s.mcpServer(payload.Server)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"kind": "mcp_prompts", "server": payload.Server, "result": mcp.ListPrompts(context.Background(), payload.Server, server)}, nil
+	}
+	names := s.mcpServerNames()
+	results := make([]mcp.PromptListResult, 0, len(names))
+	for _, name := range names {
+		results = append(results, mcp.ListPrompts(context.Background(), name, s.MCPServers[name]))
+	}
+	return map[string]any{"kind": "mcp_prompts", "count": len(results), "servers": results}, nil
+}
+
+func (s Server) mcpPrompt(params json.RawMessage) (any, error) {
+	var payload struct {
+		Server    string          `json:"server"`
+		Prompt    string          `json:"prompt"`
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	promptName := firstNonEmpty(payload.Prompt, payload.Name)
+	if promptName == "" {
+		return nil, errors.New("prompt is required")
+	}
+	server, err := s.mcpServer(payload.Server)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "mcp_prompt", "server": payload.Server, "prompt": promptName, "result": mcp.GetPrompt(context.Background(), payload.Server, server, promptName, payload.Arguments)}, nil
 }
 
 func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (any, *Error) {
@@ -1410,6 +1707,30 @@ func (s Server) lspStore() (codeintel.LSPStore, error) {
 		return codeintel.LSPStore{}, err
 	}
 	return codeintel.NewLSPStore(s.ConfigHome, workspace), nil
+}
+
+func (s Server) mcpServer(name string) (config.MCPServerConfig, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return config.MCPServerConfig{}, errors.New("server is required")
+	}
+	if len(s.MCPServers) == 0 {
+		return config.MCPServerConfig{}, errors.New("no mcp servers configured")
+	}
+	server, ok := s.MCPServers[name]
+	if !ok {
+		return config.MCPServerConfig{}, fmt.Errorf("mcp server %q not found", name)
+	}
+	return server, nil
+}
+
+func (s Server) mcpServerNames() []string {
+	names := make([]string, 0, len(s.MCPServers))
+	for name := range s.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func parseBridgeBackgroundID(params json.RawMessage) (string, error) {
