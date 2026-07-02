@@ -454,6 +454,8 @@ type Config struct {
 	APIKey                     string                     `json:"api_key,omitempty"`
 	AuthToken                  string                     `json:"auth_token,omitempty"`
 	OAuthProfile               string                     `json:"oauth_profile,omitempty"`
+	ForceLoginMethod           string                     `json:"forceLoginMethod,omitempty"`
+	ForceLoginOrgUUID          string                     `json:"forceLoginOrgUUID,omitempty"`
 	BaseURL                    string                     `json:"base_url,omitempty"`
 	Model                      string                     `json:"model,omitempty"`
 	AdvisorModel               string                     `json:"advisor_model,omitempty"`
@@ -696,6 +698,9 @@ func finalizeConfig(cfg *Config) error {
 		return err
 	}
 	if err := validatePermissionMode(cfg); err != nil {
+		return err
+	}
+	if err := validateForceLoginMethod(cfg); err != nil {
 		return err
 	}
 	if err := validateSandboxConfig(cfg.Future.Sandbox); err != nil {
@@ -1237,6 +1242,12 @@ func merge(dst *Config, src Config) {
 	}
 	if src.OAuthProfile != "" {
 		dst.OAuthProfile = src.OAuthProfile
+	}
+	if src.ForceLoginMethod != "" {
+		dst.ForceLoginMethod = src.ForceLoginMethod
+	}
+	if src.ForceLoginOrgUUID != "" {
+		dst.ForceLoginOrgUUID = src.ForceLoginOrgUUID
 	}
 	if src.BaseURL != "" {
 		dst.BaseURL = src.BaseURL
@@ -2130,6 +2141,20 @@ func validatePermissionMode(cfg *Config) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
+	}
+}
+
+func validateForceLoginMethod(cfg *Config) error {
+	method := strings.ToLower(strings.TrimSpace(cfg.ForceLoginMethod))
+	switch method {
+	case "":
+		cfg.ForceLoginMethod = ""
+		return nil
+	case "claudeai", "console":
+		cfg.ForceLoginMethod = method
+		return nil
+	default:
+		return fmt.Errorf("invalid_force_login_method: unknown forceLoginMethod %q", cfg.ForceLoginMethod)
 	}
 }
 

@@ -68,6 +68,19 @@ func TestValidateBytesValidatesCleanupPeriodDaysType(t *testing.T) {
 	require.Equal(t, "a number", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesForceLoginTypes(t *testing.T) {
+	result := ValidateBytes([]byte(`{"forceLoginMethod":true,"forceLoginOrgUUID":42}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 2)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "a string", errorsByField["forceLoginMethod"])
+	require.Equal(t, "a string", errorsByField["forceLoginOrgUUID"])
+}
+
 func TestValidateBytesValidatesRespectGitignoreType(t *testing.T) {
 	result := ValidateBytes([]byte(`{"respectGitignore":"false"}`), "config.json")
 

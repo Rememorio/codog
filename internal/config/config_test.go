@@ -682,6 +682,29 @@ func TestLoadProjectMCPJSONDoesNotOverrideExplicitSettingsTrust(t *testing.T) {
 	require.NotContains(t, cfg.MCPServers, "ignored")
 }
 
+func TestLoadForceLoginSettings(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"forceLoginMethod":"CONSOLE","forceLoginOrgUUID":"org-123"}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "console", cfg.ForceLoginMethod)
+	require.Equal(t, "org-123", cfg.ForceLoginOrgUUID)
+}
+
+func TestLoadRejectsInvalidForceLoginMethod(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"forceLoginMethod":"password"}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_force_login_method")
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

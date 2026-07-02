@@ -73,6 +73,8 @@ var topLevelFields = []fieldSpec{
 	{"api_key", FieldString},
 	{"auth_token", FieldString},
 	{"oauth_profile", FieldString},
+	{"forceLoginMethod", FieldString},
+	{"forceLoginOrgUUID", FieldString},
 	{"base_url", FieldString},
 	{"model", FieldString},
 	{"advisor_model", FieldString},

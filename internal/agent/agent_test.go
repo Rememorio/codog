@@ -16508,6 +16508,28 @@ func TestLoginLogoutAliases(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "oauth device")
 
+	err = app.Login([]string{"--console"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "oauth device")
+
+	err = app.Login([]string{"--claudeai"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "oauth browser login PROFILE")
+
+	app.Config.ForceLoginMethod = "console"
+	err = app.Login([]string{"--claudeai"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "oauth device")
+
+	app.Config.ForceLoginMethod = "claudeai"
+	err = app.Login([]string{"--console"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "oauth browser login PROFILE")
+
+	err = app.Login([]string{"--console", "--claudeai"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be used together")
+
 	_, err = oauth.SaveToken(configHome, oauth.Token{AccessToken: "access-token-1234"})
 	require.NoError(t, err)
 	require.NoError(t, app.Logout(nil))

@@ -8894,19 +8894,55 @@ func (a *App) marketplacePublicKey(marketplaceURL string) string {
 }
 
 func (a *App) Login(args []string) error {
-	flow := "browser"
-	rest := args
-	if len(args) > 0 {
-		switch strings.ToLower(args[0]) {
-		case "browser":
-			flow = "browser"
-			rest = args[1:]
-		case "device":
-			flow = "device"
-			rest = args[1:]
-		}
+	flow, rest, err := parseLoginArgs(args)
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(a.Config.ForceLoginMethod)) {
+	case "claudeai":
+		flow = "browser"
+	case "console":
+		flow = "device"
 	}
 	return a.OAuth(append([]string{flow, "login"}, rest...))
+}
+
+func parseLoginArgs(args []string) (string, []string, error) {
+	flow := "browser"
+	rest := []string{}
+	claudeAI := false
+	console := false
+	for index, arg := range args {
+		switch strings.ToLower(arg) {
+		case "browser":
+			if index == 0 {
+				flow = "browser"
+				continue
+			}
+		case "device":
+			if index == 0 {
+				flow = "device"
+				continue
+			}
+		case "--claudeai":
+			claudeAI = true
+			continue
+		case "--console":
+			console = true
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	if claudeAI && console {
+		return "", nil, errors.New("login --console and --claudeai cannot be used together")
+	}
+	if claudeAI {
+		flow = "browser"
+	}
+	if console {
+		flow = "device"
+	}
+	return flow, rest, nil
 }
 
 func (a *App) Logout(args []string) error {
