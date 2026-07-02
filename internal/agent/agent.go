@@ -112,6 +112,8 @@ const version = "0.1.0"
 const maxSystemGitStatusChars = 2000
 const maxDynamicSkillContextPaths = 64
 
+var resolveExecutablePath = os.Executable
+
 type App struct {
 	Config     config.Config
 	Client     *anthropic.Client
@@ -332,15 +334,17 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return err
 	}
+	executable, _ := resolveExecutablePath()
 	app := &App{
-		Config:    cfg,
-		Client:    anthropicClientFromConfig(cfg),
-		Tools:     tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
-		Sessions:  sessionStore,
-		Workspace: workspace,
-		Out:       os.Stdout,
-		Err:       os.Stderr,
-		In:        os.Stdin,
+		Config:     cfg,
+		Client:     anthropicClientFromConfig(cfg),
+		Tools:      tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Sessions:   sessionStore,
+		Workspace:  workspace,
+		Executable: executable,
+		Out:        os.Stdout,
+		Err:        os.Stderr,
+		In:         os.Stdin,
 	}
 	if err := app.RegisterPluginTools(); err != nil {
 		return err
@@ -4238,7 +4242,7 @@ func (a *App) executablePath() (string, error) {
 	if strings.TrimSpace(a.Executable) != "" {
 		return a.Executable, nil
 	}
-	return os.Executable()
+	return resolveExecutablePath()
 }
 
 func buildCronPromptCommand(exe string, prompt string) string {
@@ -6539,7 +6543,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	if selected == nil {
 		return fmt.Errorf("unknown agent %q", req.Name)
 	}
-	exe, err := os.Executable()
+	exe, err := a.executablePath()
 	if err != nil {
 		return err
 	}
@@ -23923,7 +23927,7 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "status", "logs", "board", "lane-board", "lanes":
+	case "", "list", "run", "status", "logs", "board", "lane-board", "lanes":
 		return a.BackgroundWithOverrides(args, overrides)
 	default:
 		command := "/tasks"
@@ -24005,7 +24009,7 @@ func (a *App) runResumedCronSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "list", "create", "delete", "due", "mark-run":
+	case "list", "create", "delete", "due", "mark-run", "run-due":
 		return a.Cron(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/cron", req.Action), format)
@@ -24018,7 +24022,7 @@ func (a *App) runResumedTeamSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "list", "get", "status", "logs", "watch", "delete":
+	case "list", "get", "status", "logs", "watch", "create", "delete":
 		return a.Team(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/team", req.Action), format)
@@ -24385,7 +24389,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "create", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune":
+	case "", "list", "show", "info", "describe", "create", "run", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"

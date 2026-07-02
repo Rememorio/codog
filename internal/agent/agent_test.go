@@ -1854,6 +1854,18 @@ func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	t.Cleanup(func() {
+		store := background.NewStore(configHome)
+		tasks, err := store.List()
+		if err != nil {
+			return
+		}
+		for _, task := range tasks {
+			if task.Status == "running" {
+				_, _ = store.Stop(task.ID)
+			}
+		}
+	})
 	externalContext := filepath.Join(t.TempDir(), "external-context")
 	require.NoError(t, os.MkdirAll(externalContext, 0o755))
 	externalContext, err := filepath.EvalSymlinks(externalContext)
@@ -2005,6 +2017,11 @@ func risky(value any) {
 	require.NoError(t, os.WriteFile(filepath.Join(pluginInstallSource, "tool.sh"), []byte("echo ok\n"), 0o755))
 	skillSourcePath := filepath.Join(t.TempDir(), "review.md")
 	require.NoError(t, os.WriteFile(skillSourcePath, []byte("Review resumed skill body."), 0o644))
+	executableShim := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(executableShim, []byte("#!/bin/sh\necho codog-shim \"$@\"\n"), 0o755))
+	previousExecutableResolver := resolveExecutablePath
+	resolveExecutablePath = func() (string, error) { return executableShim, nil }
+	t.Cleanup(func() { resolveExecutablePath = previousExecutableResolver })
 
 	oldWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -3381,6 +3398,31 @@ func risky(value any) {
 	require.Empty(t, resumedTaskBoard.Blocked)
 	require.Empty(t, resumedTaskBoard.Finished)
 
+	out, err = runResumedJSON("/tasks", "run", "echo", "resumed-task")
+	require.NoError(t, err)
+	var resumedTaskRun background.Task
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTaskRun))
+	require.Equal(t, "resume-slash", resumedTaskRun.SessionID)
+	require.Equal(t, "echo resumed-task", resumedTaskRun.Command)
+	resumedTaskWorkspace, err := filepath.EvalSymlinks(resumedTaskRun.Workspace)
+	require.NoError(t, err)
+	expectedTaskWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedTaskWorkspace, resumedTaskWorkspace)
+
+	out, err = runResumedJSON("/agents", "run", "reviewer", "check auth")
+	require.NoError(t, err)
+	var resumedAgentRun agentRunReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgentRun))
+	require.Equal(t, "agents", resumedAgentRun.Kind)
+	require.Equal(t, "run", resumedAgentRun.Action)
+	require.Equal(t, "ok", resumedAgentRun.Status)
+	require.Equal(t, "reviewer", resumedAgentRun.Agent)
+	require.Equal(t, "check auth", resumedAgentRun.Run.Prompt)
+	require.Equal(t, "agent", resumedAgentRun.Task.Kind)
+	require.Equal(t, resumedAgentRun.Task.ID, resumedAgentRun.Run.TaskID)
+	require.Equal(t, "resume-slash", resumedAgentRun.Task.SessionID)
+
 	out, err = runResumedJSON("/cron", "list")
 	require.NoError(t, err)
 	var resumedCronList cronCommandReport
@@ -3397,6 +3439,17 @@ func risky(value any) {
 	require.Equal(t, "due", resumedCronDue.Action)
 	require.Equal(t, 1, resumedCronDue.Count)
 	require.Equal(t, cronEntry.ID, resumedCronDue.Entries[0].ID)
+
+	out, err = runResumedJSON("/cron", "run-due", "--now", "2026-07-01T00:00:00Z")
+	require.NoError(t, err)
+	var resumedCronRunDue cronCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCronRunDue))
+	require.Equal(t, "cron", resumedCronRunDue.Kind)
+	require.Equal(t, "run-due", resumedCronRunDue.Action)
+	require.Equal(t, 1, resumedCronRunDue.Count)
+	require.Len(t, resumedCronRunDue.Tasks, 1)
+	require.Equal(t, "cron", resumedCronRunDue.Tasks[0].Kind)
+	require.Equal(t, 1, resumedCronRunDue.Entries[0].RunCount)
 
 	out, err = runResumedJSON("/cron", "create", "@hourly", "resume created cron")
 	require.NoError(t, err)
@@ -3474,6 +3527,18 @@ func risky(value any) {
 	require.Equal(t, teamEntry.ID, resumedTeamDelete.Team.ID)
 	require.Equal(t, "deleted", resumedTeamDelete.Team.Status)
 	require.Equal(t, "Team deleted", resumedTeamDelete.Message)
+
+	out, err = runResumedJSON("/team", "create", "writers", "check draft")
+	require.NoError(t, err)
+	var resumedTeamCreate teamCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTeamCreate))
+	require.Equal(t, "team", resumedTeamCreate.Kind)
+	require.Equal(t, "create", resumedTeamCreate.Action)
+	require.NotNil(t, resumedTeamCreate.Team)
+	require.Equal(t, "writers", resumedTeamCreate.Team.Name)
+	require.Equal(t, "Team created", resumedTeamCreate.Message)
+	require.Len(t, resumedTeamCreate.Tasks, 1)
+	require.Equal(t, "team", resumedTeamCreate.Tasks[0].Kind)
 
 	out, err = runResumedJSON("/metrics")
 	require.NoError(t, err)
@@ -4365,10 +4430,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"token", "refresh"}, Report: "/oauth token refresh"},
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
-		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
-		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
-		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
-		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
