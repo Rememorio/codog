@@ -751,8 +751,11 @@ func applyProjectMCPJSON(cfg *Config, path string) error {
 		return &FileError{Path: path, Err: err}
 	}
 	var parsed struct {
-		MCPServersSnake map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
-		MCPServersCamel map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+		MCPServersSnake         map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+		MCPServersCamel         map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+		EnableAllProjectServers *bool                      `json:"enableAllProjectMcpServers,omitempty"`
+		EnabledMCPJSONServers   []string                   `json:"enabledMcpjsonServers,omitempty"`
+		DisabledMCPJSONServers  []string                   `json:"disabledMcpjsonServers,omitempty"`
 	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return &FileError{Path: path, Err: err}
@@ -770,8 +773,15 @@ func applyProjectMCPJSON(cfg *Config, path string) error {
 	if cfg.MCPServers == nil {
 		cfg.MCPServers = map[string]MCPServerConfig{}
 	}
+	effective := *cfg
+	if effective.EnableAllProjectMCPServers == nil && parsed.EnableAllProjectServers != nil {
+		enabled := *parsed.EnableAllProjectServers
+		effective.EnableAllProjectMCPServers = &enabled
+	}
+	effective.EnabledMCPJSONServers = mergeStringLists(effective.EnabledMCPJSONServers, parsed.EnabledMCPJSONServers)
+	effective.DisabledMCPJSONServers = mergeStringLists(effective.DisabledMCPJSONServers, parsed.DisabledMCPJSONServers)
 	for _, name := range sortedMCPServerNames(servers) {
-		if !projectMCPServerEnabled(*cfg, name) {
+		if !projectMCPServerEnabled(effective, name) {
 			continue
 		}
 		if _, exists := cfg.MCPServers[name]; exists {

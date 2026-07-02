@@ -630,6 +630,58 @@ func TestLoadProjectMCPJSONRequiresExplicitEnablement(t *testing.T) {
 	require.NotContains(t, cfg.MCPServers, "ignored")
 }
 
+func TestLoadProjectMCPJSONUsesLegacyTrustFields(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".mcp.json"), []byte(`{
+		"enableAllProjectMcpServers": true,
+		"disabledMcpjsonServers": ["blocked"],
+		"mcpServers": {
+			"project": {"command": "project-mcp"},
+			"blocked": {"command": "blocked-mcp"}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "project-mcp", cfg.MCPServers["project"].Command)
+	require.NotContains(t, cfg.MCPServers, "blocked")
+}
+
+func TestLoadProjectMCPJSONDoesNotOverrideExplicitSettingsTrust(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{
+		"enableAllProjectMcpServers": false
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".mcp.json"), []byte(`{
+		"enableAllProjectMcpServers": true,
+		"enabledMcpjsonServers": ["allowed"],
+		"mcpServers": {
+			"allowed": {"command": "allowed-mcp"},
+			"ignored": {"command": "ignored-mcp"}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "allowed-mcp", cfg.MCPServers["allowed"].Command)
+	require.NotContains(t, cfg.MCPServers, "ignored")
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
