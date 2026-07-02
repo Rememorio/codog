@@ -17,6 +17,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/sandbox"
 	localstatus "github.com/Rememorio/codog/internal/status"
 )
@@ -32,55 +33,57 @@ const (
 
 // Options contains the runtime and configuration facts checked by Doctor.
 type Options struct {
-	Workspace            string
-	ConfigHome           string
-	Model                string
-	BaseURL              string
-	APIKey               string
-	AuthToken            string
-	PermissionMode       string
-	PermissionModeRaw    string
-	PermissionModeSource string
-	PermissionModeEnvVar string
-	PermissionRules      localstatus.PermissionRulesStatus
-	ConfigLoadError      string
-	ConfigLoadErrorKind  string
-	ToolCount            int
-	ToolPermissions      []ToolPermission
-	MCPServerStatuses    []mcp.ServerStatus
-	MCPValidation        localstatus.MCPValidationStatus
-	HookValidation       localstatus.HookValidationStatus
-	SessionCount         int
-	MemoryFiles          []string
-	UserPromptSubmit     []string
-	SessionStart         []string
-	PreToolUse           []string
-	PostToolUse          []string
-	PostToolUseFailure   []string
-	PermissionRequest    []string
-	PermissionDenied     []string
-	Stop                 []string
-	StopFailure          []string
-	SessionEnd           []string
-	Setup                []string
-	PreCompact           []string
-	PostCompact          []string
-	Notification         []string
-	SubagentStart        []string
-	SubagentStop         []string
-	WorktreeCreate       []string
-	WorktreeRemove       []string
-	CwdChanged           []string
-	TaskCreated          []string
-	TaskCompleted        []string
-	InstructionsLoaded   []string
-	FileChanged          []string
-	SandboxDefault       string
-	SandboxOK            bool
-	SandboxStrategies    []string
-	SandboxFallback      string
-	SandboxInContainer   bool
-	SandboxRuntime       *sandbox.SandboxExecutionStatus
+	Workspace             string
+	ConfigHome            string
+	Model                 string
+	RuntimeProvider       string
+	RuntimeProviderSource string
+	BaseURL               string
+	APIKey                string
+	AuthToken             string
+	PermissionMode        string
+	PermissionModeRaw     string
+	PermissionModeSource  string
+	PermissionModeEnvVar  string
+	PermissionRules       localstatus.PermissionRulesStatus
+	ConfigLoadError       string
+	ConfigLoadErrorKind   string
+	ToolCount             int
+	ToolPermissions       []ToolPermission
+	MCPServerStatuses     []mcp.ServerStatus
+	MCPValidation         localstatus.MCPValidationStatus
+	HookValidation        localstatus.HookValidationStatus
+	SessionCount          int
+	MemoryFiles           []string
+	UserPromptSubmit      []string
+	SessionStart          []string
+	PreToolUse            []string
+	PostToolUse           []string
+	PostToolUseFailure    []string
+	PermissionRequest     []string
+	PermissionDenied      []string
+	Stop                  []string
+	StopFailure           []string
+	SessionEnd            []string
+	Setup                 []string
+	PreCompact            []string
+	PostCompact           []string
+	Notification          []string
+	SubagentStart         []string
+	SubagentStop          []string
+	WorktreeCreate        []string
+	WorktreeRemove        []string
+	CwdChanged            []string
+	TaskCreated           []string
+	TaskCompleted         []string
+	InstructionsLoaded    []string
+	FileChanged           []string
+	SandboxDefault        string
+	SandboxOK             bool
+	SandboxStrategies     []string
+	SandboxFallback       string
+	SandboxInContainer    bool
+	SandboxRuntime        *sandbox.SandboxExecutionStatus
 }
 
 // ToolPermission describes the minimum permission a registered tool needs.
@@ -281,19 +284,119 @@ func checkConfigLoad(opts Options) Check {
 }
 
 func checkAuth(opts Options) Check {
-	details := []string{
-		fmt.Sprintf("API key configured: %t", opts.APIKey != ""),
-		fmt.Sprintf("Auth token configured: %t", opts.AuthToken != ""),
+	provider := selectedProvider(opts)
+	requiredKeyEnv, requiredAuthEnvs, authOptional := providerAuthRequirements(provider, opts.RuntimeProviderSource)
+	apiKeyConfigured := strings.TrimSpace(opts.APIKey) != ""
+	authTokenConfigured := strings.TrimSpace(opts.AuthToken) != ""
+	authOK := apiKeyConfigured || authTokenConfigured || authOptional
+	authSource := "none"
+	switch {
+	case authOptional:
+		authSource = strings.TrimSpace(opts.RuntimeProviderSource)
+		if authSource == "" {
+			authSource = "provider_does_not_require_auth"
+		}
+	case apiKeyConfigured:
+		authSource = "api_key"
+	case authTokenConfigured:
+		authSource = "auth_token"
 	}
-	if opts.APIKey != "" || opts.AuthToken != "" {
-		return Check{Name: "Auth", Status: StatusOK, Summary: "Anthropic credentials are configured.", Details: details}
+	details := []string{
+		"Selected provider: " + provider,
+		fmt.Sprintf("API key configured: %t", apiKeyConfigured),
+		fmt.Sprintf("Auth token configured: %t", authTokenConfigured),
+	}
+	if requiredKeyEnv != "" {
+		details = append(details, "Required API key env: "+requiredKeyEnv)
+	}
+	if len(requiredAuthEnvs) != 0 {
+		details = append(details, "Accepted auth envs: "+strings.Join(requiredAuthEnvs, ", "))
+	}
+	if strings.TrimSpace(opts.RuntimeProviderSource) != "" {
+		details = append(details, "Provider source: "+strings.TrimSpace(opts.RuntimeProviderSource))
+	}
+	data := providerAuthData(provider, opts.RuntimeProviderSource, requiredKeyEnv, requiredAuthEnvs, apiKeyConfigured, authTokenConfigured, authSource)
+	if authOK {
+		summary := providerDisplayName(provider) + " credentials are configured."
+		if authOptional {
+			summary = providerDisplayName(provider) + " does not require credentials for the selected local route."
+		}
+		return Check{Name: "Auth", Status: StatusOK, Summary: summary, Details: details, Data: data}
 	}
 	return Check{
 		Name:    "Auth",
 		Status:  StatusWarn,
-		Summary: "No Anthropic credentials are configured.",
+		Summary: "No " + providerDisplayName(provider) + " credentials are configured.",
 		Details: details,
-		Hint:    "Set ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or save an OAuth token before making provider requests.",
+		Hint:    providerAuthHint(provider, requiredKeyEnv, requiredAuthEnvs),
+		Data:    data,
+	}
+}
+
+func selectedProvider(opts Options) string {
+	if provider := strings.TrimSpace(opts.RuntimeProvider); provider != "" {
+		return provider
+	}
+	return modelrouting.ProviderForModel(opts.Model)
+}
+
+func providerAuthRequirements(provider string, source string) (string, []string, bool) {
+	if provider == modelrouting.ProviderOpenAI && strings.EqualFold(strings.TrimSpace(source), "OLLAMA_HOST") {
+		return "", nil, true
+	}
+	switch provider {
+	case modelrouting.ProviderOpenAI:
+		return "OPENAI_API_KEY", []string{"OPENAI_API_KEY"}, false
+	case modelrouting.ProviderXAI:
+		return "XAI_API_KEY", []string{"XAI_API_KEY"}, false
+	case modelrouting.ProviderDashScope:
+		return "DASHSCOPE_API_KEY", []string{"DASHSCOPE_API_KEY"}, false
+	default:
+		return "ANTHROPIC_API_KEY", []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}, false
+	}
+}
+
+func providerAuthData(provider string, source string, requiredKeyEnv string, requiredAuthEnvs []string, apiKeyConfigured bool, authTokenConfigured bool, authSource string) map[string]any {
+	return map[string]any{
+		"selected_provider":                 provider,
+		"runtime_provider_source":           strings.TrimSpace(source),
+		"required_api_key_env":              requiredKeyEnv,
+		"required_auth_envs":                append([]string(nil), requiredAuthEnvs...),
+		"selected_provider_api_key_present": apiKeyConfigured,
+		"selected_provider_auth_present":    apiKeyConfigured || authTokenConfigured || authSource == "OLLAMA_HOST",
+		"anthropic_api_key_present":         strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "",
+		"anthropic_auth_token_present":      strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "",
+		"openai_api_key_present":            strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "",
+		"xai_api_key_present":               strings.TrimSpace(os.Getenv("XAI_API_KEY")) != "",
+		"dashscope_api_key_present":         strings.TrimSpace(os.Getenv("DASHSCOPE_API_KEY")) != "",
+		"ollama_host_present":               strings.TrimSpace(os.Getenv("OLLAMA_HOST")) != "",
+		"effective_auth_source":             authSource,
+	}
+}
+
+func providerAuthHint(provider string, requiredKeyEnv string, requiredAuthEnvs []string) string {
+	if provider == modelrouting.ProviderOpenAI && requiredKeyEnv == "" {
+		return "OLLAMA_HOST routes to a local OpenAI-compatible endpoint without an API key."
+	}
+	if len(requiredAuthEnvs) > 1 {
+		return "Set " + strings.Join(requiredAuthEnvs, ", ") + ", or save an OAuth token before making provider requests."
+	}
+	if requiredKeyEnv != "" {
+		return "Set " + requiredKeyEnv + " before making provider requests."
+	}
+	return "Configure credentials for the selected provider before making provider requests."
+}
+
+func providerDisplayName(provider string) string {
+	switch provider {
+	case modelrouting.ProviderOpenAI:
+		return "OpenAI-compatible"
+	case modelrouting.ProviderXAI:
+		return "xAI"
+	case modelrouting.ProviderDashScope:
+		return "DashScope"
+	default:
+		return "Anthropic"
 	}
 }
 

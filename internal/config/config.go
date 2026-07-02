@@ -2253,10 +2253,23 @@ func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredenti
 	}
 }
 
+func applyRoutedProviderEnvFromCurrentEnvironment(cfg *Config) {
+	dotenv := envfile.Current()
+	lookup := func(name string) string {
+		value, _ := envfile.Lookup(name, dotenv)
+		return value
+	}
+	genericBaseURLSet := strings.TrimSpace(lookup("CODOG_BASE_URL")) != ""
+	genericCredentialSet := strings.TrimSpace(lookup("CODOG_API_KEY")) != "" ||
+		strings.TrimSpace(lookup("CODOG_AUTH_TOKEN")) != ""
+	applyRoutedProviderEnv(cfg, genericBaseURLSet, genericCredentialSet, lookup)
+}
+
 func applyFlags(cfg *Config, overrides FlagOverrides) {
 	if overrides.Model != "" {
 		cfg.Model = overrides.Model
 		cfg.ModelEnvVar = ""
+		applyRoutedProviderEnvFromCurrentEnvironment(cfg)
 	}
 	if overrides.BaseURL != "" {
 		cfg.BaseURL = overrides.BaseURL

@@ -561,6 +561,43 @@ func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8080/v1", cfg.BaseURL)
 }
 
+func TestLoadOpenAIEnvironmentForFlagModelOverride(t *testing.T) {
+	unsetEnv(t, "CODOG_MODEL", "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_BASE_URL", "OLLAMA_HOST")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath: filepath.Join(t.TempDir(), "missing.json"),
+		Model:      "openai/gpt-4.1-mini",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "openai/gpt-4.1-mini", cfg.Model)
+	require.Empty(t, cfg.ModelEnvVar)
+	require.Equal(t, "openai-secret", cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, modelrouting.DefaultOpenAIBaseURL, cfg.BaseURL)
+}
+
+func TestLoadOllamaEnvironmentForFlagModelOverride(t *testing.T) {
+	unsetEnv(t, "CODOG_MODEL", "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY", "OPENAI_BASE_URL")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434/")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{
+		ConfigPath: filepath.Join(t.TempDir(), "missing.json"),
+		Model:      "qwen3:8b",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "qwen3:8b", cfg.Model)
+	require.Equal(t, "http://127.0.0.1:11434/v1", cfg.BaseURL)
+	require.Empty(t, cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, modelrouting.ProviderOpenAI, cfg.RuntimeProvider)
+	require.Equal(t, "OLLAMA_HOST", cfg.RuntimeProviderSource)
+}
+
 func TestLoadProviderEnvironmentFromDotenv(t *testing.T) {
 	unsetEnv(t,
 		"CODOG_MODEL",

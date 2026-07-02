@@ -15,6 +15,7 @@ import (
 )
 
 func TestRunWarnsWhenAuthMissing(t *testing.T) {
+	clearProviderAuthEnv(t)
 	report := Run(Options{
 		Workspace:      t.TempDir(),
 		ConfigHome:     t.TempDir(),
@@ -39,6 +40,104 @@ func TestRunWarnsWhenAuthMissing(t *testing.T) {
 	auth := findCheck(t, report, "Auth")
 	require.Equal(t, StatusWarn, auth.Status)
 	require.Contains(t, auth.Summary, "No Anthropic credentials")
+	require.Equal(t, "anthropic", auth.Data["selected_provider"])
+	require.Equal(t, "ANTHROPIC_API_KEY", auth.Data["required_api_key_env"])
+}
+
+func TestRunUsesSelectedProviderForAuthPreflight(t *testing.T) {
+	clearProviderAuthEnv(t)
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	report := Run(Options{
+		Workspace:       t.TempDir(),
+		ConfigHome:      t.TempDir(),
+		Model:           "openai/gpt-4.1-mini",
+		RuntimeProvider: "openai",
+		BaseURL:         "https://api.openai.com/v1",
+		PermissionMode:  "workspace-write",
+		ToolCount:       6,
+		SessionCount:    0,
+		SandboxDefault:  "test-sandbox",
+		SandboxOK:       true,
+	})
+
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusWarn, auth.Status)
+	require.Contains(t, auth.Summary, "No OpenAI-compatible credentials")
+	require.Equal(t, "openai", auth.Data["selected_provider"])
+	require.Equal(t, "OPENAI_API_KEY", auth.Data["required_api_key_env"])
+	require.Equal(t, true, auth.Data["anthropic_api_key_present"])
+	require.Equal(t, false, auth.Data["openai_api_key_present"])
+	require.Equal(t, false, auth.Data["selected_provider_api_key_present"])
+	require.Contains(t, auth.Hint, "OPENAI_API_KEY")
+}
+
+func TestRunReportsProviderSpecificAuthConfigured(t *testing.T) {
+	clearProviderAuthEnv(t)
+	cases := []struct {
+		name        string
+		model       string
+		provider    string
+		apiKey      string
+		requiredEnv string
+		summary     string
+	}{
+		{name: "openai", model: "openai/gpt-4.1-mini", provider: "openai", apiKey: "openai-secret", requiredEnv: "OPENAI_API_KEY", summary: "OpenAI-compatible credentials"},
+		{name: "xai", model: "grok", provider: "xai", apiKey: "xai-secret", requiredEnv: "XAI_API_KEY", summary: "xAI credentials"},
+		{name: "dashscope", model: "qwen-plus", provider: "dashscope", apiKey: "dashscope-secret", requiredEnv: "DASHSCOPE_API_KEY", summary: "DashScope credentials"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := Run(Options{
+				Workspace:       t.TempDir(),
+				ConfigHome:      t.TempDir(),
+				Model:           tc.model,
+				RuntimeProvider: tc.provider,
+				BaseURL:         "https://api.example.test/v1",
+				APIKey:          tc.apiKey,
+				PermissionMode:  "workspace-write",
+				ToolCount:       6,
+				SessionCount:    0,
+				SandboxDefault:  "test-sandbox",
+				SandboxOK:       true,
+			})
+
+			auth := findCheck(t, report, "Auth")
+			require.Equal(t, StatusOK, auth.Status)
+			require.Contains(t, auth.Summary, tc.summary)
+			require.Equal(t, tc.provider, auth.Data["selected_provider"])
+			require.Equal(t, tc.requiredEnv, auth.Data["required_api_key_env"])
+			require.Equal(t, true, auth.Data["selected_provider_api_key_present"])
+			require.Equal(t, "api_key", auth.Data["effective_auth_source"])
+		})
+	}
+}
+
+func TestRunTreatsOllamaRouteAsCredentialOptional(t *testing.T) {
+	clearProviderAuthEnv(t)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	report := Run(Options{
+		Workspace:             t.TempDir(),
+		ConfigHome:            t.TempDir(),
+		Model:                 "qwen3:8b",
+		RuntimeProvider:       "openai",
+		RuntimeProviderSource: "OLLAMA_HOST",
+		BaseURL:               "http://127.0.0.1:11434/v1",
+		PermissionMode:        "workspace-write",
+		ToolCount:             6,
+		SessionCount:          0,
+		SandboxDefault:        "test-sandbox",
+		SandboxOK:             true,
+	})
+
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusOK, auth.Status)
+	require.Contains(t, auth.Summary, "does not require credentials")
+	require.Equal(t, "openai", auth.Data["selected_provider"])
+	require.Equal(t, "OLLAMA_HOST", auth.Data["runtime_provider_source"])
+	require.Equal(t, "", auth.Data["required_api_key_env"])
+	require.Equal(t, true, auth.Data["ollama_host_present"])
+	require.Equal(t, true, auth.Data["selected_provider_auth_present"])
+	require.Equal(t, "OLLAMA_HOST", auth.Data["effective_auth_source"])
 }
 
 func TestNewReportSurfacesStableMetadata(t *testing.T) {
@@ -460,4 +559,18 @@ func findCheck(t *testing.T, report Report, name string) Check {
 	}
 	t.Fatalf("missing check %q in %#v", name, report.Checks)
 	return Check{}
+}
+
+func clearProviderAuthEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"OPENAI_API_KEY",
+		"XAI_API_KEY",
+		"DASHSCOPE_API_KEY",
+		"OLLAMA_HOST",
+	} {
+		t.Setenv(name, "")
+	}
 }
