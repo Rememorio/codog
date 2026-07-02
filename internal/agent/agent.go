@@ -389,7 +389,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if strings.TrimSpace(input) == "" {
 			return renderMissingPrompt(app.Out, req.Format)
 		}
-		return app.PromptWithOutput(ctx, input, overrides, req.Format)
+		return app.promptWithOutput(ctx, input, overrides, req.Format, req.Compact)
 	case "acp":
 		return app.ACP(ctx, rest)
 	case "btw":
@@ -23939,6 +23939,10 @@ func (a *App) Prompt(ctx context.Context, input string, overrides config.FlagOve
 }
 
 func (a *App) PromptWithOutput(ctx context.Context, input string, overrides config.FlagOverrides, format string) error {
+	return a.promptWithOutput(ctx, input, overrides, format, false)
+}
+
+func (a *App) promptWithOutput(ctx context.Context, input string, overrides config.FlagOverrides, format string, compact bool) error {
 	format = strings.TrimSpace(strings.ToLower(format))
 	if format == "" {
 		format = "text"
@@ -23967,9 +23971,12 @@ func (a *App) PromptWithOutput(ctx context.Context, input string, overrides conf
 	if err := a.runSessionStartHook(ctx, sess, sessionStartSource(overrides)); err != nil {
 		return err
 	}
+	priorMessageCount := len(sess.Messages)
 	var streamCapture bytes.Buffer
 	var turnOut io.Writer = a.Out
-	if format == "json" {
+	if compact {
+		turnOut = &streamCapture
+	} else if format == "json" {
 		turnOut = &streamCapture
 	} else if format == "stream-json" {
 		writer := promptStreamJSONWriter{Out: a.Out}
@@ -24001,6 +24008,25 @@ func (a *App) PromptWithOutput(ctx context.Context, input string, overrides conf
 		}
 		return runErr
 	}
+	if compact {
+		current, err := a.Sessions.Open(sess.ID)
+		if err != nil {
+			return err
+		}
+		report := promptCompactOutputReport(a.Sessions, current, a.Config.Model, priorMessageCount)
+		switch format {
+		case "json":
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		case "stream-json":
+			writer := promptStreamJSONWriter{Out: a.Out}
+			return writer.Event("result", report)
+		default:
+			fmt.Fprintln(a.Out, report.Message)
+			return nil
+		}
+	}
 	if format == "json" || format == "stream-json" {
 		current, err := a.Sessions.Open(sess.ID)
 		if err != nil {
@@ -24028,6 +24054,20 @@ type promptReport struct {
 	Response     string `json:"response"`
 }
 
+type promptCompactReport struct {
+	Message string             `json:"message"`
+	Compact bool               `json:"compact"`
+	Model   string             `json:"model"`
+	Usage   promptCompactUsage `json:"usage"`
+}
+
+type promptCompactUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+}
+
 func promptOutputReport(sess *session.Session, streamed string, status string) promptReport {
 	response := strings.TrimSpace(streamed)
 	if response == "" && sess != nil {
@@ -24046,6 +24086,54 @@ func promptOutputReport(sess *session.Session, streamed string, status string) p
 		SessionID:    sessionID,
 		MessageCount: messageCount,
 		Response:     response,
+	}
+}
+
+func promptCompactOutputReport(store *session.Store, sess *session.Session, model string, priorMessageCount int) promptCompactReport {
+	message := ""
+	messages := []anthropic.Message{}
+	sessionID := ""
+	if sess != nil {
+		message = strings.TrimSpace(lastAssistantText(sess.Messages))
+		messages = sess.Messages
+		sessionID = sess.ID
+	}
+	return promptCompactReport{
+		Message: message,
+		Compact: true,
+		Model:   strings.TrimSpace(model),
+		Usage:   promptCompactUsageForTurn(store, sessionID, model, messages, priorMessageCount),
+	}
+}
+
+func promptCompactUsageForTurn(store *session.Store, sessionID string, model string, messages []anthropic.Message, priorMessageCount int) promptCompactUsage {
+	if store != nil && strings.TrimSpace(sessionID) != "" {
+		entries, err := store.Usage(sessionID)
+		if err == nil {
+			actual := []anthropic.Usage{}
+			for _, entry := range entries {
+				if entry.MessageIndex >= priorMessageCount {
+					actual = append(actual, entry.Usage)
+				}
+			}
+			if summary, ok := usage.ActualSummary(actual, model); ok {
+				return promptCompactUsageFromSummary(summary)
+			}
+		}
+	}
+	if priorMessageCount < 0 || priorMessageCount > len(messages) {
+		priorMessageCount = 0
+	}
+	summary := usage.Estimate(messages[priorMessageCount:], model)
+	return promptCompactUsageFromSummary(summary)
+}
+
+func promptCompactUsageFromSummary(summary usage.Summary) promptCompactUsage {
+	return promptCompactUsage{
+		InputTokens:              summary.InputTokens,
+		OutputTokens:             summary.OutputTokens,
+		CacheCreationInputTokens: summary.CacheCreationInputTokens,
+		CacheReadInputTokens:     summary.CacheReadInputTokens,
 	}
 }
 

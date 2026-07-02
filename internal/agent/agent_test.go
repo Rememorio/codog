@@ -11914,6 +11914,22 @@ func TestPromptOutputFormats(t *testing.T) {
 	var resultEvent map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[len(lines)-1]), &resultEvent))
 	require.Equal(t, "result", resultEvent["type"])
+	out.Reset()
+
+	require.NoError(t, app.promptWithOutput(context.Background(), "compact text", config.FlagOverrides{SessionID: "compact-text-session"}, "text", true))
+	require.Equal(t, "done\n", out.String())
+	require.NotContains(t, out.String(), `"response"`)
+	require.NotContains(t, out.String(), `"tool_uses"`)
+	out.Reset()
+
+	require.NoError(t, app.promptWithOutput(context.Background(), "compact json", config.FlagOverrides{SessionID: "compact-json-session"}, "json", true))
+	var compactReport promptCompactReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &compactReport))
+	require.True(t, compactReport.Compact)
+	require.Equal(t, "done", compactReport.Message)
+	require.Equal(t, "mock", compactReport.Model)
+	require.Equal(t, 10, compactReport.Usage.InputTokens)
+	require.Equal(t, 5, compactReport.Usage.OutputTokens)
 }
 
 func TestBTWUsesForkedSideSession(t *testing.T) {
