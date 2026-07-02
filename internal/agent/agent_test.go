@@ -8237,6 +8237,8 @@ func TestRunCLIRoutesTopLevelGitAliases(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &diffJSON))
 	require.Equal(t, "diff", diffJSON.Kind)
 	require.Equal(t, "ok", diffJSON.Status)
+	require.Equal(t, 1, diffJSON.ChangedFileCount)
+	require.Equal(t, []string{"notes.txt"}, diffJSON.ChangedFiles)
 	require.Contains(t, diffJSON.Diff, "+again")
 }
 
@@ -8268,6 +8270,8 @@ func TestDiffNonGitDirReportsTypedJSON(t *testing.T) {
 	require.Equal(t, "no_git_repo", report.ErrorKind)
 	require.Contains(t, report.Message, "git repository")
 	require.Contains(t, report.Hint, "git init")
+	require.Equal(t, 0, report.ChangedFileCount)
+	require.Empty(t, report.ChangedFiles)
 }
 
 func TestGitSlashDiffAndCommit(t *testing.T) {

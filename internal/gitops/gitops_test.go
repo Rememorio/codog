@@ -29,6 +29,10 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, diff)
 
+	changedFiles, err := DiffChangedFilesWithOptions(workspace, DiffOptions{})
+	require.NoError(t, err)
+	require.Empty(t, changedFiles)
+
 	result, err := Commit(workspace, CommitOptions{All: true, Message: "add notes"})
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Commit)
@@ -61,6 +65,11 @@ func TestStatusDiffAndCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, blame, "hello")
 	require.Contains(t, blame, "Codog Test")
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("hello\nagain\n"), 0o644))
+	changedFiles, err = DiffChangedFilesWithOptions(workspace, DiffOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"notes.txt"}, changedFiles)
 
 	status, err = Status(workspace)
 	require.NoError(t, err)

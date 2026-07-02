@@ -137,6 +137,32 @@ func DiffWithOptions(workspace string, options DiffOptions) (string, error) {
 	return git(workspace, args...)
 }
 
+func DiffChangedFilesWithOptions(workspace string, options DiffOptions) ([]string, error) {
+	args := []string{"diff", "--name-only"}
+	if options.Staged {
+		args = append(args, "--cached")
+	}
+	if len(options.Paths) > 0 {
+		args = append(args, "--")
+		args = append(args, options.Paths...)
+	}
+	raw, err := git(workspace, args...)
+	if err != nil {
+		return nil, err
+	}
+	files := []string{}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(raw, "\n") {
+		file := strings.TrimSpace(line)
+		if file == "" || seen[file] {
+			continue
+		}
+		seen[file] = true
+		files = append(files, file)
+	}
+	return files, nil
+}
+
 func IsNoGitRepoError(err error) bool {
 	if err == nil {
 		return false
