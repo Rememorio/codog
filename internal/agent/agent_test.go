@@ -1795,7 +1795,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
-	for _, command := range []string{"/pr", "/issue", "/new", "/quit", "/ultraplan"} {
+	for _, command := range []string{"/new", "/quit", "/ultraplan"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
@@ -12638,6 +12638,35 @@ func TestPullRequestAndIssueDraftCommands(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "# Issue Draft")
 	require.Contains(t, string(data), "Issue: flaky workflow")
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/pr", "direct", "slash", "--session", "source"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "pr"`)
+	require.Contains(t, cliOut, `"session_id": "source"`)
+	files, err = filepath.Glob(filepath.Join(workspace, ".codog", "drafts", "pr-*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/issue", "direct", "issue", "--session", "source"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "issue"`)
+	require.Contains(t, cliOut, `"session_id": "source"`)
+	files, err = filepath.Glob(filepath.Join(workspace, ".codog", "drafts", "issue-*.md"))
+	require.NoError(t, err)
+	require.Len(t, files, 2)
 }
 
 func TestCommitPushPRDryRunCommandAndSlash(t *testing.T) {

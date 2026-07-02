@@ -24755,7 +24755,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/pr", "/issue", "/ultraplan":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/ultraplan":
 		return true
 	default:
 		return false
