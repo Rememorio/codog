@@ -12589,6 +12589,46 @@ func TestMCPConfigCommands(t *testing.T) {
 		Err:    io.Discard,
 	}
 
+	err := app.MCP(context.Background(), []string{"add", "--json"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var addNameError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &addNameError))
+	require.Equal(t, "mcp", addNameError.Kind)
+	require.Equal(t, "add", addNameError.Action)
+	require.Equal(t, "missing_argument", addNameError.ErrorKind)
+	require.Equal(t, "server_name", addNameError.Argument)
+	out.Reset()
+
+	err = app.MCP(context.Background(), []string{"add", "demo", "--json"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var addCommandError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &addCommandError))
+	require.Equal(t, "mcp", addCommandError.Kind)
+	require.Equal(t, "add", addCommandError.Action)
+	require.Equal(t, "missing_argument", addCommandError.ErrorKind)
+	require.Equal(t, "command_or_url", addCommandError.Argument)
+	out.Reset()
+
+	err = app.MCP(context.Background(), []string{"remove", "--json"})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var removeError actionErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &removeError))
+	require.Equal(t, "mcp", removeError.Kind)
+	require.Equal(t, "remove", removeError.Action)
+	require.Equal(t, "missing_argument", removeError.ErrorKind)
+	require.Equal(t, "server_name", removeError.Argument)
+	out.Reset()
+
 	require.NoError(t, app.MCP(context.Background(), []string{"add", "demo", "demo-server", "--env", "A=B", "--env=C=D", "arg1", "arg2"}))
 	require.Contains(t, out.String(), `"action": "add"`)
 	require.Contains(t, out.String(), `"name": "demo"`)

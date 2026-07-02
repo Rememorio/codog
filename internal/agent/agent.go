@@ -37264,9 +37264,9 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	case "show", "info", "describe":
 		return a.mcpShow(args[1:], format)
 	case "add":
-		return a.mcpAdd(args[1:])
+		return a.mcpAdd(args[1:], format)
 	case "remove", "delete", "rm":
-		return a.mcpRemove(args[1:])
+		return a.mcpRemove(args[1:], format)
 	}
 	if !mcpRemoteAction(args[0]) {
 		verb := strings.TrimSpace(args[0])
@@ -38116,9 +38116,15 @@ func (a *App) mcpShow(args []string, format string) error {
 	return nil
 }
 
-func (a *App) mcpAdd(args []string) error {
+func (a *App) mcpAdd(args []string, format string) error {
 	req, err := parseMCPAddArgs(args)
 	if err != nil {
+		switch {
+		case errors.Is(err, errMCPAddMissingName):
+			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] or codog mcp add NAME --url URL [--header KEY=VALUE].", format)
+		case errors.Is(err, errMCPAddMissingCommand):
+			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] or codog mcp add NAME --url URL [--header KEY=VALUE].", format)
+		}
 		return err
 	}
 	path := filepath.Join(a.Config.ConfigHome, "config.json")
@@ -38146,8 +38152,11 @@ func (a *App) mcpAdd(args []string) error {
 	return nil
 }
 
-func (a *App) mcpRemove(args []string) error {
+func (a *App) mcpRemove(args []string, format string) error {
 	if len(args) != 1 {
+		if len(args) == 0 {
+			return renderMissingActionArgument(a.Out, "mcp", "remove", "server_name", "mcp remove requires a server name", "Usage: codog mcp remove SERVER.", format)
+		}
 		return errors.New("usage: codog mcp remove SERVER")
 	}
 	name := args[0]
@@ -38358,6 +38367,11 @@ type mcpAddRequest struct {
 	Headers map[string]string
 }
 
+var (
+	errMCPAddMissingName    = errors.New("mcp add missing name")
+	errMCPAddMissingCommand = errors.New("mcp add missing command")
+)
+
 func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 	var req mcpAddRequest
 	var positionals []string
@@ -38406,7 +38420,7 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		}
 	}
 	if len(positionals) < 1 {
-		return req, errors.New("usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] or codog mcp add NAME --url URL [--header KEY=VALUE]")
+		return req, errMCPAddMissingName
 	}
 	req.Name = positionals[0]
 	if err := validateMCPServerName(req.Name); err != nil {
@@ -38422,7 +38436,7 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		req.URL = strings.TrimSpace(req.URL)
 	} else {
 		if len(positionals) < 2 {
-			return req, errors.New("usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE]")
+			return req, errMCPAddMissingCommand
 		}
 		req.Command = positionals[1]
 		req.Args = append([]string(nil), positionals[2:]...)
