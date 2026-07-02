@@ -267,7 +267,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if command == "self-test" {
 			defaultFormat = "json"
 		}
-		return runMockParityCommand(ctx, os.Stdout, rest, requestedOutputFormat(originalArgs), defaultFormat)
+		if err := runMockParityCommand(ctx, os.Stdout, rest, requestedOutputFormat(originalArgs), defaultFormat); err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	}
 	if command == "init" {
 		workspace, err := os.Getwd()
@@ -618,9 +621,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "ant-trace":
 		return app.AntTrace(ctx, rest)
 	case "mock-limits":
-		return app.MockLimits(rest)
+		if err := app.MockLimits(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "mock-parity", "parity", "self-test":
-		return app.MockParity(ctx, rest)
+		if err := app.MockParity(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "plan":
 		return app.Plan(rest)
 	case "ultraplan":
@@ -42598,6 +42607,7 @@ func runMockParityCommand(ctx context.Context, out io.Writer, args []string, fal
 }
 
 func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat string) (string, error) {
+	const usage = "codog mock-parity [run|check] [--output-format text|json]"
 	format := strings.TrimSpace(fallbackFormat)
 	if format == "" {
 		format = strings.TrimSpace(defaultFormat)
@@ -42613,14 +42623,22 @@ func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat str
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return "", errors.New("mock-parity output format is required")
+				return "", missingFlagValueError{
+					Command: "mock-parity",
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.EqualFold(arg, "run") || strings.EqualFold(arg, "check"):
 		default:
-			return "", fmt.Errorf("unknown mock-parity argument %q", arg)
+			return "", unexpectedExtraArgsError{
+				Command: "mock-parity",
+				Args:    []string{arg},
+				Usage:   usage,
+			}
 		}
 	}
 	normalized, err := normalizeOutputFormat("mock-parity", format, []string{"text", "json"})
@@ -42660,6 +42678,7 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 }
 
 func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
+	const usage = "codog mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--output-format text|json]"
 	req := mockLimitsRequest{Action: "show", Format: "text", Addr: ":8089", Failures: 2, RetryAfterMS: 1000, Text: "mock response after rate limits"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -42670,7 +42689,11 @@ func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("mock-limits output format is required")
+				return req, missingFlagValueError{
+					Command: "mock-limits",
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -42678,47 +42701,85 @@ func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
 		case arg == "--addr":
 			index++
 			if index >= len(args) {
-				return req, errors.New("mock-limits address is required")
+				return req, missingFlagValueError{
+					Command: "mock-limits",
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			req.Addr = args[index]
 		case strings.HasPrefix(arg, "--addr="):
 			req.Addr = strings.TrimPrefix(arg, "--addr=")
 		case arg == "--failures":
 			index++
-			if index >= len(args) {
-				return req, errors.New("mock-limits failures is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "mock-limits",
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			value, err := strconv.Atoi(args[index])
 			if err != nil {
-				return req, err
+				return req, invalidFlagValueError{
+					Flag:    arg,
+					Value:   args[index],
+					Message: "mock-limits failures must be an integer",
+					Usage:   usage,
+				}
 			}
 			req.Failures = value
 		case strings.HasPrefix(arg, "--failures="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--failures="))
+			raw := strings.TrimPrefix(arg, "--failures=")
+			value, err := strconv.Atoi(raw)
 			if err != nil {
-				return req, err
+				return req, invalidFlagValueError{
+					Flag:    "--failures",
+					Value:   raw,
+					Message: "mock-limits failures must be an integer",
+					Usage:   usage,
+				}
 			}
 			req.Failures = value
 		case arg == "--retry-after-ms":
 			index++
-			if index >= len(args) {
-				return req, errors.New("mock-limits retry-after is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "mock-limits",
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			value, err := strconv.Atoi(args[index])
 			if err != nil {
-				return req, err
+				return req, invalidFlagValueError{
+					Flag:    arg,
+					Value:   args[index],
+					Message: "mock-limits retry-after must be an integer",
+					Usage:   usage,
+				}
 			}
 			req.RetryAfterMS = value
 		case strings.HasPrefix(arg, "--retry-after-ms="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--retry-after-ms="))
+			raw := strings.TrimPrefix(arg, "--retry-after-ms=")
+			value, err := strconv.Atoi(raw)
 			if err != nil {
-				return req, err
+				return req, invalidFlagValueError{
+					Flag:    "--retry-after-ms",
+					Value:   raw,
+					Message: "mock-limits retry-after must be an integer",
+					Usage:   usage,
+				}
 			}
 			req.RetryAfterMS = value
 		case arg == "--text":
 			index++
 			if index >= len(args) {
-				return req, errors.New("mock-limits text is required")
+				return req, missingFlagValueError{
+					Command: "mock-limits",
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			req.Text = args[index]
 		case strings.HasPrefix(arg, "--text="):
@@ -42727,9 +42788,11 @@ func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "mock-limits"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("mock-limits", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	for _, arg := range rest {
 		normalized := strings.ToLower(strings.TrimSpace(arg))
 		switch {
@@ -42741,16 +42804,34 @@ func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
 			req.Action = "serve"
 			req.Addr = arg
 		default:
-			return req, fmt.Errorf("unknown mock-limits argument %q", arg)
+			return req, unexpectedExtraArgsError{
+				Command: "mock-limits",
+				Args:    []string{arg},
+				Usage:   usage,
+			}
 		}
 	}
 	if req.Failures < 0 {
-		return req, errors.New("mock-limits failures must be non-negative")
+		return req, invalidFlagValueError{
+			Flag:    "--failures",
+			Value:   strconv.Itoa(req.Failures),
+			Message: "mock-limits failures must be non-negative",
+			Usage:   usage,
+		}
 	}
 	if req.RetryAfterMS < 0 {
-		return req, errors.New("mock-limits retry-after must be non-negative")
+		return req, invalidFlagValueError{
+			Flag:    "--retry-after-ms",
+			Value:   strconv.Itoa(req.RetryAfterMS),
+			Message: "mock-limits retry-after must be non-negative",
+			Usage:   usage,
+		}
 	}
 	return req, nil
+}
+
+func isOutputFormatFlag(arg string) bool {
+	return arg == "--json" || arg == "--output-format" || arg == "-o" || strings.HasPrefix(arg, "--output-format=")
 }
 
 func parseRateLimitArgs(args []string) (rateLimitRequest, error) {

@@ -1733,6 +1733,49 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("mock-parity"))
 }
 
+func TestMockParityErrorsHonorGlobalJSONFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "unknown argument",
+			args:      []string{"mock-parity", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "mock-parity"`, `"bogus"`},
+		},
+		{
+			name:      "missing output format",
+			args:      []string{"mock-parity", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "mock-parity"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"mock-parity", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestDirectSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -11344,6 +11387,97 @@ func TestRateLimitOptionsCommandAndSlash(t *testing.T) {
 	require.Contains(t, cliOut, `"kind": "mock_limits"`)
 	require.Contains(t, cliOut, `"failures": 1`)
 	require.Empty(t, errOut.String())
+}
+
+func TestMockLimitsErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "unknown argument",
+			args:      []string{"mock-limits", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "mock-limits"`, `"bogus"`},
+		},
+		{
+			name:      "missing output format",
+			args:      []string{"mock-limits", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "mock-limits"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"mock-limits", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing failures",
+			args:      []string{"mock-limits", "--failures"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "mock-limits"`, `"option": "--failures"`},
+		},
+		{
+			name:      "invalid failures",
+			args:      []string{"mock-limits", "--failures", "many"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--failures"`, `"value": "many"`},
+		},
+		{
+			name:      "negative failures",
+			args:      []string{"mock-limits", "--failures", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--failures"`, `"value": "-1"`},
+		},
+		{
+			name:      "missing retry after",
+			args:      []string{"mock-limits", "--retry-after-ms"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "mock-limits"`, `"option": "--retry-after-ms"`},
+		},
+		{
+			name:      "invalid retry after",
+			args:      []string{"mock-limits", "--retry-after-ms", "slow"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--retry-after-ms"`, `"value": "slow"`},
+		},
+		{
+			name:      "negative retry after",
+			args:      []string{"mock-limits", "--retry-after-ms", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--retry-after-ms"`, `"value": "-1"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
 }
 
 func TestAnthropicClientOptionsUseAPITimeoutConfig(t *testing.T) {
