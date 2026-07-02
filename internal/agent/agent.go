@@ -34433,14 +34433,23 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 		*sess = *next
 		fmt.Fprintf(a.Err, "session switched: %s\n", sess.ID)
 	case "fork":
-		branch := strings.Join(args[1:], " ")
-		next, err := a.Sessions.Fork(sess.ID, branch)
+		req, err := parseSessionForkArgs("/session fork", args[1:], sess.ID, "text")
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			return
+		}
+		report, next, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return
 		}
 		*sess = *next
-		fmt.Fprintf(a.Err, "session forked: %s\n", sess.ID)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return
+		}
+		renderSessionForkText(a.Err, report)
 	case "rename":
 		if len(args) < 2 {
 			fmt.Fprintln(a.Err, "usage: /session rename NEW_ID")
@@ -34563,15 +34572,20 @@ func (a *App) SessionsCommand(args []string) error {
 		}
 		return a.SessionExists(existsArgs, "")
 	case "fork":
-		if len(args) < 2 {
-			return errors.New("usage: codog sessions fork ID [branch-name]")
-		}
-		forked, err := a.Sessions.Fork(args[1], strings.Join(args[2:], " "))
+		req, err := parseSessionForkArgs("codog sessions fork", args[1:], "", "json")
 		if err != nil {
 			return err
 		}
-		data, _ := json.MarshalIndent(forked, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		report, _, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionForkText(a.Out, report)
 	case "rename":
 		if len(args) < 3 {
 			return errors.New("usage: codog sessions rename OLD_ID NEW_ID")
@@ -34639,6 +34653,100 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 		}, format)
 	}
 	return renderCLIError(out, err, format)
+}
+
+type sessionForkRequest struct {
+	SourceID   string
+	BranchName string
+	Format     string
+}
+
+type sessionForkReport struct {
+	Kind            string                  `json:"kind"`
+	Action          string                  `json:"action"`
+	Status          string                  `json:"status"`
+	SessionID       string                  `json:"session_id"`
+	ParentSessionID string                  `json:"parent_session_id"`
+	BranchName      string                  `json:"branch_name,omitempty"`
+	Path            string                  `json:"path"`
+	MessageCount    int                     `json:"message_count"`
+	Identity        session.SessionIdentity `json:"identity,omitempty"`
+}
+
+func parseSessionForkArgs(command string, args []string, defaultSourceID string, defaultFormat string) (sessionForkRequest, error) {
+	req := sessionForkRequest{SourceID: strings.TrimSpace(defaultSourceID), Format: defaultFormat}
+	if req.Format == "" {
+		req.Format = "text"
+	}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", command)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Command: command,
+				Option:  arg,
+				Usage:   command + " ID [branch-name] [--json|--output-format text|json]",
+			}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if defaultSourceID == "" {
+		if len(positionals) == 0 {
+			return req, fmt.Errorf("usage: %s ID [branch-name] [--json|--output-format text|json]", command)
+		}
+		req.SourceID = positionals[0]
+		positionals = positionals[1:]
+	}
+	req.BranchName = strings.TrimSpace(strings.Join(positionals, " "))
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown %s output format %q", command, req.Format)
+	}
+	return req, nil
+}
+
+func (a *App) forkSessionWithReport(sourceID string, branchName string) (sessionForkReport, *session.Session, error) {
+	forked, err := a.Sessions.Fork(sourceID, branchName)
+	if err != nil {
+		return sessionForkReport{}, nil, err
+	}
+	report := sessionForkReport{
+		Kind:            "session_fork",
+		Action:          "fork",
+		Status:          "ok",
+		SessionID:       forked.ID,
+		ParentSessionID: strings.TrimSpace(sourceID),
+		BranchName:      strings.TrimSpace(branchName),
+		Path:            forked.Path,
+		MessageCount:    len(forked.Messages),
+		Identity:        forked.Identity,
+	}
+	return report, forked, nil
+}
+
+func renderSessionForkText(out io.Writer, report sessionForkReport) {
+	fmt.Fprintln(out, "Session forked")
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Parent           %s\n", report.ParentSessionID)
+	if report.BranchName != "" {
+		fmt.Fprintf(out, "  Branch           %s\n", report.BranchName)
+	}
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  File             %s\n", report.Path)
 }
 
 type sessionDeleteReport struct {

@@ -5058,28 +5058,33 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.SessionsCommand([]string{"fork", "source", "branch"}))
-	require.Contains(t, out.String(), `"ID":`)
-	require.Contains(t, out.String(), "hello session")
-	var forked session.Session
-	require.NoError(t, json.Unmarshal(out.Bytes(), &forked))
-	require.NotEmpty(t, forked.ID)
+	var forkReport sessionForkReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &forkReport))
+	require.Equal(t, "session_fork", forkReport.Kind)
+	require.Equal(t, "fork", forkReport.Action)
+	require.Equal(t, "ok", forkReport.Status)
+	require.Equal(t, "source", forkReport.ParentSessionID)
+	require.Equal(t, "branch", forkReport.BranchName)
+	require.NotEmpty(t, forkReport.SessionID)
+	require.Equal(t, 1, forkReport.MessageCount)
+	require.NotEmpty(t, forkReport.Path)
 	out.Reset()
 
-	err := app.SessionsCommand([]string{"delete", forked.ID})
+	err := app.SessionsCommand([]string{"delete", forkReport.SessionID})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "confirmation required")
-	ok, err := store.Exists(forked.ID)
+	ok, err := store.Exists(forkReport.SessionID)
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	require.NoError(t, app.SessionsCommand([]string{"delete", forked.ID, "--force"}))
+	require.NoError(t, app.SessionsCommand([]string{"delete", forkReport.SessionID, "--force"}))
 	var deleteReport sessionDeleteReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &deleteReport))
 	require.Equal(t, "session_delete", deleteReport.Kind)
 	require.Equal(t, "delete", deleteReport.Action)
 	require.Equal(t, "ok", deleteReport.Status)
 	require.True(t, deleteReport.Deleted)
-	require.Equal(t, forked.ID, deleteReport.SessionID)
+	require.Equal(t, forkReport.SessionID, deleteReport.SessionID)
 	require.NotEmpty(t, deleteReport.Path)
 }
 
@@ -5374,7 +5379,7 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/session fork branch", sess))
 	require.NotEqual(t, "source", sess.ID)
-	require.Contains(t, errOut.String(), "session forked:")
+	require.Contains(t, errOut.String(), "Session forked")
 	forkedID := sess.ID
 	errOut.Reset()
 
@@ -5400,6 +5405,28 @@ func TestSessionSlashSwitchAndFork(t *testing.T) {
 	ok, err = store.Exists("source")
 	require.NoError(t, err)
 	require.True(t, ok)
+}
+
+func TestSessionSlashForkJSONReportsNewSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello slash")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/session fork incident --json", sess))
+	require.Empty(t, errOut.String())
+	var report sessionForkReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_fork", report.Kind)
+	require.Equal(t, "source", report.ParentSessionID)
+	require.Equal(t, "incident", report.BranchName)
+	require.Equal(t, sess.ID, report.SessionID)
+	require.Equal(t, 1, report.MessageCount)
+	require.NotEmpty(t, report.Path)
+	require.NotEqual(t, "source", sess.ID)
 }
 
 func TestRenameSessionCommandAndSlash(t *testing.T) {
