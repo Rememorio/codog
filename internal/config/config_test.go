@@ -665,6 +665,22 @@ func TestLoadAnthropicSmallFastModelAlias(t *testing.T) {
 	require.Equal(t, "claude-sonnet-advisor", cfg.AdvisorModel)
 }
 
+func TestLoadAnthropicReasoningEffortAlias(t *testing.T) {
+	unsetEnv(t, "CODOG_REASONING_EFFORT", "ANTHROPIC_REASONING_EFFORT")
+	t.Setenv("ANTHROPIC_REASONING_EFFORT", "high")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "high", cfg.ReasoningEffort)
+
+	t.Setenv("CODOG_REASONING_EFFORT", "low")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, "low", cfg.ReasoningEffort)
+}
+
 func TestLoadClaudeConfigHomeAliases(t *testing.T) {
 	codogHome := filepath.Join(t.TempDir(), "codog-home")
 	claudeHome := filepath.Join(t.TempDir(), "claude-home")
@@ -832,6 +848,19 @@ func TestLoadTemperatureConfigEnvAndFlags(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Temperature)
 	require.InDelta(t, 0.2, *cfg.Temperature, 0.0001)
+
+	t.Setenv("CODOG_TEMPERATURE", "")
+	t.Setenv("ANTHROPIC_TEMPERATURE", "0.3")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Temperature)
+	require.InDelta(t, 0.3, *cfg.Temperature, 0.0001)
+
+	t.Setenv("CODOG_TEMPERATURE", "0.25")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Temperature)
+	require.InDelta(t, 0.25, *cfg.Temperature, 0.0001)
 
 	override := 0.1
 	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath, Temperature: &override})

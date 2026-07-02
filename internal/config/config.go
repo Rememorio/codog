@@ -2059,13 +2059,13 @@ func applyEnv(cfg *Config) {
 	if value := lookup("CODOG_DEFAULT_SHELL"); value != "" {
 		cfg.DefaultShell = value
 	}
-	if value := lookup("CODOG_REASONING_EFFORT"); value != "" {
+	if value, _ := lookupFirstEnv(lookup, "CODOG_REASONING_EFFORT", "ANTHROPIC_REASONING_EFFORT"); value != "" {
 		cfg.ReasoningEffort = value
 	}
 	if value := lookup("CODOG_OAUTH_PROFILE"); value != "" {
 		cfg.OAuthProfile = value
 	}
-	if value := lookup("CODOG_TEMPERATURE"); value != "" {
+	if value, _ := lookupFirstEnv(lookup, "CODOG_TEMPERATURE", "ANTHROPIC_TEMPERATURE"); value != "" {
 		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
 			cfg.Temperature = &parsed
 		}
