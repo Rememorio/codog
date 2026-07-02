@@ -7584,6 +7584,37 @@ func TestSessionSlashListJSONMarksActiveSession(t *testing.T) {
 	require.True(t, report.SessionDetails[0].Active)
 }
 
+func TestSessionsListHonorsGlobalJSONOutputFormat(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello sessions")))
+	t.Chdir(workspace)
+
+	for _, command := range []string{"sessions", "session"} {
+		out, err := captureStdout(t, func() error {
+			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command, "list"}, config.FlagOverrides{})
+		})
+		require.NoError(t, err)
+		require.NotContains(t, out, "\t")
+
+		var report sessionListReport
+		require.NoError(t, json.Unmarshal([]byte(out), &report))
+		require.Equal(t, "sessions", report.Kind)
+		require.Equal(t, "list", report.Action)
+		require.Equal(t, "ok", report.Status)
+		require.Equal(t, workspace, report.Workspace)
+		require.Equal(t, []string{"source"}, report.Sessions)
+		require.Len(t, report.SessionDetails, 1)
+		require.Equal(t, "source", report.SessionDetails[0].ID)
+		require.Equal(t, 1, report.SessionDetails[0].MessageCount)
+	}
+}
+
 func TestSessionSlashExistsJSONMarksActiveSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))

@@ -44728,7 +44728,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
-		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
+		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
 		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
