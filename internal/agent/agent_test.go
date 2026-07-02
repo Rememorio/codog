@@ -10424,9 +10424,33 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), `"input_schema"`)
 	out.Reset()
 
+	require.NoError(t, app.MCP(context.Background(), []string{"tools"}))
+	var aggregateTools mcpAggregateRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregateTools))
+	require.Equal(t, "mcp", aggregateTools.Kind)
+	require.Equal(t, "tools", aggregateTools.Action)
+	require.Equal(t, "ok", aggregateTools.Status)
+	require.Equal(t, 1, aggregateTools.ServerCount)
+	require.Equal(t, 1, aggregateTools.Total)
+	require.Len(t, aggregateTools.Tools, 1)
+	require.Equal(t, "test", aggregateTools.Tools[0].Server)
+	require.Equal(t, "echo", aggregateTools.Tools[0].Tools[0].Name)
+	out.Reset()
+
 	require.NoError(t, app.MCP(context.Background(), []string{"auth", "test"}))
 	require.Contains(t, out.String(), `"status": "ok"`)
 	require.Contains(t, out.String(), `"tool_count": 1`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"auth"}))
+	var aggregateAuth mcpAggregateRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregateAuth))
+	require.Equal(t, "auth", aggregateAuth.Action)
+	require.Equal(t, "ok", aggregateAuth.Status)
+	require.Equal(t, 1, aggregateAuth.ServerCount)
+	require.Len(t, aggregateAuth.AuthStatuses, 1)
+	require.Equal(t, "test", aggregateAuth.AuthStatuses[0].Server)
+	require.Equal(t, "ok", aggregateAuth.AuthStatuses[0].Status)
 	out.Reset()
 
 	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"--json"}))
@@ -10460,8 +10484,28 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "codog://note")
 	out.Reset()
 
+	require.NoError(t, app.MCP(context.Background(), []string{"resources"}))
+	var aggregateResources mcpAggregateRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregateResources))
+	require.Equal(t, "resources", aggregateResources.Action)
+	require.Equal(t, "ok", aggregateResources.Status)
+	require.Equal(t, 1, aggregateResources.Total)
+	require.Len(t, aggregateResources.Resources, 1)
+	require.Contains(t, string(aggregateResources.Resources[0].Resources), "codog://note")
+	out.Reset()
+
 	require.NoError(t, app.MCP(context.Background(), []string{"resource-templates", "test"}))
 	require.Contains(t, out.String(), "codog://notes/{name}")
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"resource-templates"}))
+	var aggregateTemplates mcpAggregateRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregateTemplates))
+	require.Equal(t, "resource-templates", aggregateTemplates.Action)
+	require.Equal(t, "ok", aggregateTemplates.Status)
+	require.Equal(t, 1, aggregateTemplates.Total)
+	require.Len(t, aggregateTemplates.ResourceTemplates, 1)
+	require.Contains(t, string(aggregateTemplates.ResourceTemplates[0].Templates), "codog://notes/{name}")
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"read", "test", "codog://note"}))
@@ -10470,6 +10514,23 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 
 	require.NoError(t, app.MCP(context.Background(), []string{"prompts", "test"}))
 	require.Contains(t, out.String(), `"name": "review"`)
+	out.Reset()
+
+	require.NoError(t, app.MCP(context.Background(), []string{"prompts"}))
+	var aggregatePrompts mcpAggregateRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregatePrompts))
+	require.Equal(t, "prompts", aggregatePrompts.Action)
+	require.Equal(t, "ok", aggregatePrompts.Status)
+	require.Equal(t, 1, aggregatePrompts.Total)
+	require.Len(t, aggregatePrompts.Prompts, 1)
+	var promptsPayload struct {
+		Prompts []struct {
+			Name string `json:"name"`
+		} `json:"prompts"`
+	}
+	require.NoError(t, json.Unmarshal(aggregatePrompts.Prompts[0].Prompts, &promptsPayload))
+	require.Len(t, promptsPayload.Prompts, 1)
+	require.Equal(t, "review", promptsPayload.Prompts[0].Name)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"prompt", "test", "review", `{"topic":"hooks"}`}))
@@ -10556,14 +10617,14 @@ func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {
 	require.Equal(t, "no_servers_configured", report.ErrorKind)
 	require.Equal(t, "tools demo", report.RequestedAction)
 	require.Contains(t, report.Hint, "codog mcp add")
-	require.Equal(t, "codog mcp tools SERVER", report.Usage.DirectCLI)
+	require.Equal(t, "codog mcp tools [SERVER]", report.Usage.DirectCLI)
 	out.Reset()
 
 	require.ErrorContains(t, app.MCP(context.Background(), []string{"tools", "demo"}), "no_servers_configured")
 	require.Contains(t, out.String(), "MCP")
 	require.Contains(t, out.String(), "Action           tools")
 	require.Contains(t, out.String(), "Error            no_servers_configured")
-	require.Contains(t, out.String(), "Usage            codog mcp tools SERVER")
+	require.Contains(t, out.String(), "Usage            codog mcp tools [SERVER]")
 	out.Reset()
 
 	app.Config.MCPServers = map[string]config.MCPServerConfig{"configured": {Command: "demo-server"}}
@@ -10573,7 +10634,7 @@ func TestMCPRemoteActionErrorsAreStructured(t *testing.T) {
 	require.Equal(t, "server_not_found", report.ErrorKind)
 	require.Equal(t, "missing", report.ServerName)
 	require.Equal(t, []string{"configured"}, report.AvailableServers)
-	require.Equal(t, "codog mcp resources SERVER", report.Usage.DirectCLI)
+	require.Equal(t, "codog mcp resources [SERVER]", report.Usage.DirectCLI)
 	out.Reset()
 
 	require.ErrorContains(t, app.MCP(context.Background(), []string{"call", "configured", "--json"}), "missing_argument")
@@ -10606,8 +10667,12 @@ func TestMCPHelpCommand(t *testing.T) {
 	require.Equal(t, "ok", report.Status)
 	require.True(t, report.OK)
 	require.Nil(t, report.ErrorKind)
-	require.Equal(t, "/mcp [list|show|info|describe <server>|help]", report.Usage.SlashCommand)
-	require.Equal(t, "codog mcp [list|show|info|describe <server>|help]", report.Usage.DirectCLI)
+	require.Contains(t, report.Usage.SlashCommand, "tools [SERVER]")
+	require.Contains(t, report.Usage.SlashCommand, "resources [SERVER]")
+	require.Contains(t, report.Usage.SlashCommand, "prompts [SERVER]")
+	require.Contains(t, report.Usage.DirectCLI, "tools [SERVER]")
+	require.Contains(t, report.Usage.DirectCLI, "resources [SERVER]")
+	require.Contains(t, report.Usage.DirectCLI, "prompts [SERVER]")
 	require.Contains(t, report.Usage.Sources, ".codog.json")
 	out.Reset()
 
@@ -10623,7 +10688,7 @@ func TestMCPHelpCommand(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/mcp help", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Usage")
-	require.Contains(t, out.String(), "/mcp [list|show|info|describe <server>|help]")
+	require.Contains(t, out.String(), "tools [SERVER]")
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"info", "missing", "--json"}))
