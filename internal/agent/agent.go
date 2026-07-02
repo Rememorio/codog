@@ -5459,6 +5459,26 @@ type agentRunsReport struct {
 	Run    *agentRunStatus  `json:"run,omitempty"`
 }
 
+type agentRunBoardEntry struct {
+	Run       agentruns.Run             `json:"run"`
+	Task      *background.Task          `json:"task,omitempty"`
+	Status    string                    `json:"status"`
+	Freshness background.LaneFreshness  `json:"freshness"`
+	Heartbeat *background.LaneHeartbeat `json:"heartbeat,omitempty"`
+	Error     string                    `json:"error,omitempty"`
+}
+
+type agentRunBoardReport struct {
+	Kind        string               `json:"kind"`
+	Action      string               `json:"action"`
+	Status      string               `json:"status"`
+	GeneratedAt time.Time            `json:"generated_at"`
+	Active      []agentRunBoardEntry `json:"active"`
+	Blocked     []agentRunBoardEntry `json:"blocked"`
+	Finished    []agentRunBoardEntry `json:"finished"`
+	Orphaned    []agentRunBoardEntry `json:"orphaned,omitempty"`
+}
+
 type agentRunActionReport struct {
 	Kind    string          `json:"kind"`
 	Action  string          `json:"action"`
@@ -5467,6 +5487,15 @@ type agentRunActionReport struct {
 	Task    background.Task `json:"task"`
 	Message string          `json:"message,omitempty"`
 	Output  string          `json:"output,omitempty"`
+}
+
+type agentRunPruneReport struct {
+	Kind         string   `json:"kind"`
+	Action       string   `json:"action"`
+	Status       string   `json:"status"`
+	Removed      []string `json:"removed"`
+	RemovedCount int      `json:"removed_count"`
+	Kept         int      `json:"kept"`
 }
 
 func (a *App) listAgents(format string, filter string) error {
@@ -5661,6 +5690,21 @@ func (a *App) listAgentRuns(format string, filter string) error {
 	return renderAgentRunsReport(a.Out, report, format)
 }
 
+func (a *App) boardAgentRuns(stalledAfter time.Duration, format string) error {
+	runs, err := agentruns.NewStore(a.Config.ConfigHome).List()
+	if err != nil {
+		return err
+	}
+	report := buildAgentRunBoardReport(background.NewStore(a.Config.ConfigHome), runs, time.Now().UTC(), stalledAfter)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderAgentRunBoardReport(a.Out, report)
+	return nil
+}
+
 func (a *App) showAgentRun(id string, format string) error {
 	run, err := agentruns.NewStore(a.Config.ConfigHome).Get(id)
 	if err != nil {
@@ -5682,6 +5726,29 @@ func (a *App) showAgentRun(id string, format string) error {
 		Run:    &status,
 	}
 	return renderAgentRunsReport(a.Out, report, format)
+}
+
+func (a *App) heartbeatAgentRun(id string, heartbeat background.LaneHeartbeat, format string) error {
+	runStore := agentruns.NewStore(a.Config.ConfigHome)
+	run, err := runStore.Get(id)
+	if err != nil {
+		return renderAgentRunNotFound(a.Out, "heartbeat", id, format)
+	}
+	task, err := background.NewStore(a.Config.ConfigHome).UpdateHeartbeat(run.TaskID, heartbeat)
+	if err != nil {
+		return err
+	}
+	run, err = runStore.Touch(run.ID)
+	if err != nil {
+		return err
+	}
+	return renderAgentRunActionReport(a.Out, agentRunActionReport{
+		Kind:   "agents",
+		Action: "heartbeat",
+		Status: "ok",
+		Run:    run,
+		Task:   task,
+	}, format)
 }
 
 func (a *App) removeAgentRun(id string, format string) error {
@@ -5718,6 +5785,59 @@ func (a *App) removeAgentRun(id string, format string) error {
 	}
 	fmt.Fprintln(a.Out, "Agent Run Removed")
 	fmt.Fprintf(a.Out, "  ID               %s\n", id)
+	return nil
+}
+
+func (a *App) pruneAgentRuns(options background.PruneOptions, format string) error {
+	runStore := agentruns.NewStore(a.Config.ConfigHome)
+	taskStore := background.NewStore(a.Config.ConfigHome)
+	runs, err := runStore.List()
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		return agentRunRetentionTime(runs[i]).After(agentRunRetentionTime(runs[j]))
+	})
+	cutoff := time.Time{}
+	if options.OlderThan > 0 {
+		cutoff = time.Now().UTC().Add(-options.OlderThan)
+	}
+	seenNonRunning := 0
+	report := agentRunPruneReport{Kind: "agents", Action: "prune", Status: "ok"}
+	for _, run := range runs {
+		task, taskErr := taskStore.Status(run.TaskID)
+		if taskErr == nil && strings.EqualFold(task.Status, "running") {
+			report.Kept++
+			continue
+		}
+		if taskErr == nil {
+			seenNonRunning++
+			if options.Keep > 0 && seenNonRunning <= options.Keep {
+				report.Kept++
+				continue
+			}
+			if !cutoff.IsZero() && agentRunRetentionTime(run).After(cutoff) {
+				report.Kept++
+				continue
+			}
+		}
+		if err := runStore.Remove(run.ID); err != nil {
+			return err
+		}
+		report.Removed = append(report.Removed, run.ID)
+	}
+	report.RemovedCount = len(report.Removed)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	fmt.Fprintln(a.Out, "Agent Runs Pruned")
+	fmt.Fprintf(a.Out, "  Removed          %d\n", report.RemovedCount)
+	fmt.Fprintf(a.Out, "  Kept             %d\n", report.Kept)
+	if len(report.Removed) > 0 {
+		fmt.Fprintf(a.Out, "  Removed IDs      %s\n", strings.Join(report.Removed, ", "))
+	}
 	return nil
 }
 
@@ -5832,6 +5952,110 @@ func renderAgentRunActionReport(out io.Writer, report agentRunActionReport, form
 		fmt.Fprintf(out, "  Output bytes     %d\n", len(report.Output))
 	}
 	return nil
+}
+
+func buildAgentRunBoardReport(store background.Store, runs []agentruns.Run, now time.Time, stalledAfter time.Duration) agentRunBoardReport {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if stalledAfter <= 0 {
+		stalledAfter = 30 * time.Second
+	}
+	report := agentRunBoardReport{
+		Kind:        "agents",
+		Action:      "board",
+		Status:      "ok",
+		GeneratedAt: now.UTC(),
+		Active:      []agentRunBoardEntry{},
+		Blocked:     []agentRunBoardEntry{},
+		Finished:    []agentRunBoardEntry{},
+		Orphaned:    []agentRunBoardEntry{},
+	}
+	for _, run := range runs {
+		entry := agentRunBoardEntry{Run: run, Status: "unknown", Freshness: background.LaneFreshnessUnknown}
+		task, err := store.Status(run.TaskID)
+		if err != nil {
+			entry.Error = err.Error()
+			report.Orphaned = append(report.Orphaned, entry)
+			continue
+		}
+		entry.Task = &task
+		entry.Status = firstNonEmpty(task.Status, "unknown")
+		entry.Heartbeat = task.Heartbeat
+		entry.Freshness = agentRunFreshness(task.Heartbeat, report.GeneratedAt, stalledAfter)
+		switch agentRunLaneBucket(task.Status) {
+		case "active":
+			report.Active = append(report.Active, entry)
+		case "blocked":
+			report.Blocked = append(report.Blocked, entry)
+		default:
+			report.Finished = append(report.Finished, entry)
+		}
+	}
+	return report
+}
+
+func renderAgentRunBoardReport(out io.Writer, report agentRunBoardReport) {
+	fmt.Fprintln(out, "Agent Run Board")
+	fmt.Fprintf(out, "  Active           %d\n", len(report.Active))
+	fmt.Fprintf(out, "  Blocked          %d\n", len(report.Blocked))
+	fmt.Fprintf(out, "  Finished         %d\n", len(report.Finished))
+	if len(report.Orphaned) > 0 {
+		fmt.Fprintf(out, "  Orphaned         %d\n", len(report.Orphaned))
+	}
+	for _, group := range []struct {
+		name    string
+		entries []agentRunBoardEntry
+	}{
+		{"Active", report.Active},
+		{"Blocked", report.Blocked},
+		{"Finished", report.Finished},
+		{"Orphaned", report.Orphaned},
+	} {
+		for _, entry := range group.entries {
+			fmt.Fprintf(out, "  - %s %s\n", group.name, entry.Run.ID)
+			fmt.Fprintf(out, "    Agent          %s\n", entry.Run.Agent)
+			fmt.Fprintf(out, "    Status         %s\n", entry.Status)
+			fmt.Fprintf(out, "    Freshness      %s\n", entry.Freshness)
+			if entry.Error != "" {
+				fmt.Fprintf(out, "    Error          %s\n", entry.Error)
+			}
+		}
+	}
+}
+
+func agentRunFreshness(heartbeat *background.LaneHeartbeat, now time.Time, stalledAfter time.Duration) background.LaneFreshness {
+	if heartbeat == nil || heartbeat.ObservedAt.IsZero() {
+		return background.LaneFreshnessUnknown
+	}
+	if !heartbeat.TransportAlive {
+		return background.LaneFreshnessTransportDead
+	}
+	if stalledAfter <= 0 {
+		stalledAfter = 30 * time.Second
+	}
+	if now.Sub(heartbeat.ObservedAt) > stalledAfter {
+		return background.LaneFreshnessStalled
+	}
+	return background.LaneFreshnessHealthy
+}
+
+func agentRunLaneBucket(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "created", "starting", "pending":
+		return "active"
+	case "blocked", "waiting":
+		return "blocked"
+	default:
+		return "finished"
+	}
+}
+
+func agentRunRetentionTime(run agentruns.Run) time.Time {
+	if !run.UpdatedAt.IsZero() {
+		return run.UpdatedAt
+	}
+	return run.CreatedAt
 }
 
 func filterAgentRuns(runs []agentruns.Run, filter string) []agentruns.Run {
@@ -5972,6 +6196,13 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		return a.listAgentRuns(format, filter)
 	}
+	if args[0] == "board" || args[0] == "lane-board" || args[0] == "lanes" {
+		stalledAfter, err := parseBackgroundBoardArgs(args[1:])
+		if err != nil {
+			return renderCLIError(a.Out, err, format)
+		}
+		return a.boardAgentRuns(stalledAfter, format)
+	}
 	if args[0] == "status" || args[0] == "run-status" {
 		if len(args) < 2 {
 			return renderActionError(a.Out, actionErrorReport{
@@ -5991,6 +6222,13 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			}, format)
 		}
 		return a.showAgentRun(args[1], format)
+	}
+	if args[0] == "heartbeat" {
+		id, heartbeat, err := parseAgentRunHeartbeatArgs(args[1:])
+		if err != nil {
+			return renderCLIError(a.Out, err, format)
+		}
+		return a.heartbeatAgentRun(id, heartbeat, format)
 	}
 	if args[0] == "stop" {
 		if len(args) < 2 {
@@ -6049,6 +6287,13 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 		}
 		return a.outputAgentRun(id, limit, format)
 	}
+	if args[0] == "prune" {
+		options, err := parseBackgroundPruneArgs(args[1:])
+		if err != nil {
+			return renderCLIError(a.Out, err, format)
+		}
+		return a.pruneAgentRuns(options, format)
+	}
 	if args[0] == "run-remove" || args[0] == "run-rm" {
 		if len(args) < 2 {
 			return renderActionError(a.Out, actionErrorReport{
@@ -6103,7 +6348,7 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 			Status:    "error",
 			ErrorKind: "unknown_agents_subcommand",
 			Message:   fmt.Sprintf("unknown agents command %q", args[0]),
-			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, `codog agents runs`, `codog agents status RUN_ID`, or `codog agents worktrees`.",
+			Hint:      "Use `codog agents list`, `codog agents show|info|describe NAME`, `codog agents create NAME`, `codog agents run NAME PROMPT`, `codog agents runs`, `codog agents board`, `codog agents status RUN_ID`, or `codog agents worktrees`.",
 		}, format)
 	}
 	req, err := parseAgentRunArgs(args[1:])
@@ -6236,6 +6481,18 @@ func parseAgentRunOutputArgs(args []string) (string, int64, error) {
 	}
 	_, limit, err := parseBackgroundLogsArgs(append([]string{id}, args[1:]...))
 	return id, limit, err
+}
+
+func parseAgentRunHeartbeatArgs(args []string) (string, background.LaneHeartbeat, error) {
+	if len(args) == 0 {
+		return "", background.LaneHeartbeat{}, errors.New("usage: codog agents heartbeat RUN_ID [--status STATUS] [--transport-alive true|false] [--observed-at RFC3339]")
+	}
+	id := strings.TrimSpace(args[0])
+	if id == "" {
+		return "", background.LaneHeartbeat{}, errors.New("agent run id is required")
+	}
+	_, heartbeat, err := parseBackgroundHeartbeatArgs(append([]string{id}, args[1:]...))
+	return id, heartbeat, err
 }
 
 func buildAgentCommand(exe string, def agentdefs.Definition, prompt string) string {
@@ -23426,7 +23683,7 @@ func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverride
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "worktrees", "runs", "tasks", "status", "run-status", "stop", "update", "message", "output", "logs":
+	case "", "list", "show", "info", "describe", "worktrees", "runs", "tasks", "board", "lane-board", "lanes", "status", "run-status", "heartbeat", "stop", "update", "message", "output", "logs", "prune":
 		return a.AgentsWithOverrides(args, overrides)
 	default:
 		command := "/agents"
@@ -42809,7 +43066,7 @@ Usage:
   %s tasks|bashes list|board|heartbeat|status|stop|restart|logs|watch ID [--json|--output-format text|json]
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
-  %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents status RUN_ID | agents stop RUN_ID | agents update RUN_ID MESSAGE | agents output RUN_ID [bytes] | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
+  %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents board [seconds] | agents status RUN_ID | agents heartbeat RUN_ID [FLAGS] | agents stop RUN_ID | agents update RUN_ID MESSAGE | agents output RUN_ID [bytes] | agents prune [days] [keep] | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]

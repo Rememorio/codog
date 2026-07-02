@@ -14090,6 +14090,38 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.Contains(t, outputReport.Output, "agent-output")
 	out.Reset()
 
+	observedAt := time.Now().UTC().Format(time.RFC3339)
+	require.NoError(t, app.AgentsWithOverrides([]string{"heartbeat", outputRun.ID, "--status", "working", "--observed-at", observedAt, "--json"}, config.FlagOverrides{}))
+	var heartbeatReport agentRunActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &heartbeatReport))
+	require.Equal(t, "heartbeat", heartbeatReport.Action)
+	require.NotNil(t, heartbeatReport.Task.Heartbeat)
+	require.Equal(t, "working", heartbeatReport.Task.Heartbeat.Status)
+	out.Reset()
+
+	require.NoError(t, app.AgentsWithOverrides([]string{"board", "60", "--json"}, config.FlagOverrides{}))
+	var boardReport agentRunBoardReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &boardReport))
+	require.Equal(t, "board", boardReport.Action)
+	require.True(t, agentRunBoardContains(boardReport, outputRun.ID))
+	out.Reset()
+
+	orphanRun, err := agentruns.NewStore(configHome).Save(agentruns.Run{
+		ID:        "run-orphan",
+		Agent:     "reviewer",
+		Workspace: workspace,
+		SessionID: "session-1",
+		TaskID:    "missing-task",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.NoError(t, app.AgentsWithOverrides([]string{"prune", "--json"}, config.FlagOverrides{}))
+	var pruneReport agentRunPruneReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &pruneReport))
+	require.Contains(t, pruneReport.Removed, orphanRun.ID)
+	out.Reset()
+
 	longTask, err := background.NewStore(configHome).RunWithOptions("sleep 5", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-1"})
 	require.NoError(t, err)
 	longRun, err := agentruns.NewStore(configHome).Save(agentruns.Run{
@@ -14120,6 +14152,17 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.NoError(t, app.AgentsWithOverrides([]string{"runs", "--json"}, config.FlagOverrides{}))
 	require.NoError(t, json.Unmarshal(out.Bytes(), &runsReport))
 	require.Zero(t, runsReport.Count)
+}
+
+func agentRunBoardContains(report agentRunBoardReport, id string) bool {
+	for _, entries := range [][]agentRunBoardEntry{report.Active, report.Blocked, report.Finished, report.Orphaned} {
+		for _, entry := range entries {
+			if entry.Run.ID == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func initGitRepo(t *testing.T) string {
