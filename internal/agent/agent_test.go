@@ -40,6 +40,7 @@ import (
 	"github.com/Rememorio/codog/internal/focus"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
+	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/mcp"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -1945,6 +1946,12 @@ func risky(value any) {
 		"permission_rules": map[string]any{
 			"allow": []string{"read_file"},
 		},
+		"hooks": map[string]any{
+			"pre_tool_use": []map[string]any{{
+				"matcher": "read_*",
+				"command": "echo hook-ok",
+			}},
+		},
 		"temperature": 0.4,
 		"rate_limit": map[string]any{
 			"max_retries": 4,
@@ -3285,6 +3292,19 @@ func risky(value any) {
 	require.Equal(t, "pre_tool_use", resumedHooksHealth.Event)
 	require.Equal(t, "read_file", resumedHooksHealth.MatcherTarget)
 
+	out, err = runResumedJSON("/hooks", "run", "pre", "--tool", "read_file", "--input", `{"path":"README.md"}`)
+	require.NoError(t, err)
+	var resumedHooksRun hooks.RunReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHooksRun))
+	require.Equal(t, "hooks", resumedHooksRun.Kind)
+	require.Equal(t, "pre_tool_use", resumedHooksRun.Event)
+	require.Equal(t, "read_file", resumedHooksRun.Tool)
+	require.Equal(t, "ok", resumedHooksRun.Status)
+	require.Equal(t, 1, resumedHooksRun.Count)
+	require.Len(t, resumedHooksRun.Results, 1)
+	require.True(t, resumedHooksRun.Results[0].Success)
+	require.Contains(t, resumedHooksRun.Results[0].Stdout, "hook-ok")
+
 	out, err = runResumedJSON("/agents", "list")
 	require.NoError(t, err)
 	var resumedAgents agentsListReport
@@ -4347,7 +4367,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
-		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
