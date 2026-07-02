@@ -62,6 +62,7 @@ type scenario struct {
 	previous            []anthropic.Message
 	autoCompactMessages int
 	permission          tools.Permission
+	hooks               config.HookConfig
 	configHome          bool
 	plugins             bool
 	setup               func(string) error
@@ -154,6 +155,47 @@ func Run(ctx context.Context) (Report, error) {
 				}
 				if _, err := os.Stat(filepath.Join(workspace, "denied.txt")); !os.IsNotExist(err) {
 					return fmt.Errorf("denied file exists or stat failed: %v", err)
+				}
+				return nil
+			},
+		},
+		{
+			name:       "pre_tool_hook_updates_input",
+			permission: tools.PermissionReadOnly,
+			hooks: config.HookConfig{
+				PreToolUseCommands: []config.HookCommand{{
+					Matcher: "write_file",
+					Command: `printf '%s' '{"systemMessage":"updated","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"hook ok","updatedInput":{"path":"hooked.txt","content":"hooked by harness\n"}}}'`,
+				}},
+			},
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "write_file",
+					Input: json.RawMessage(`{"path":"original.txt","content":"original\n"}`),
+				}}},
+				{Text: "pre hook harness ok"},
+			},
+			prompt: "rewrite with hook",
+			verify: func(workspace string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "pre hook harness ok") {
+					return fmt.Errorf("missing pre-tool hook final response")
+				}
+				if err := expectToolCalls(result, 1, false); err != nil {
+					return err
+				}
+				if result.ToolCalls[0].Input != `{"path":"hooked.txt","content":"hooked by harness\n"}` {
+					return fmt.Errorf("tool input was not updated by hook: %s", result.ToolCalls[0].Input)
+				}
+				if _, err := os.Stat(filepath.Join(workspace, "original.txt")); !os.IsNotExist(err) {
+					return fmt.Errorf("original file exists or stat failed: %v", err)
+				}
+				data, err := os.ReadFile(filepath.Join(workspace, "hooked.txt"))
+				if err != nil {
+					return err
+				}
+				if string(data) != "hooked by harness\n" {
+					return fmt.Errorf("unexpected hooked file content %q", string(data))
 				}
 				return nil
 			},
@@ -452,6 +494,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			MaxTokens:           128,
 			MaxTurns:            3,
 			AutoCompactMessages: autoCompactMessages,
+			Hooks:               item.hooks,
 		},
 		Client:    client,
 		Tools:     registry,

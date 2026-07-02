@@ -163,6 +163,57 @@ func TestRunnerPlanModeFiltersToolsAndEnforcesReadOnly(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(workspace, "blocked.txt"))
 }
 
+func TestRunnerAppliesPreToolUseHookDecisionAndUpdatedInput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type:  "tool_use",
+					ID:    "tool-1",
+					Name:  "write_file",
+					Input: []byte(`{"path":"original.txt","content":"no"}`),
+				}},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			Hooks: config.HookConfig{
+				PreToolUseCommands: []config.HookCommand{{
+					Matcher: "write_file",
+					Command: `printf '%s' '{"systemMessage":"updated","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"hook ok","updatedInput":{"path":"hooked.txt","content":"ok"}}}'`,
+				}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Prompter:  &tools.Prompter{Mode: tools.PermissionReadOnly, Workspace: workspace},
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "write")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 1)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.JSONEq(t, `{"path":"hooked.txt","content":"ok"}`, result.ToolCalls[0].Input)
+	require.FileExists(t, filepath.Join(workspace, "hooked.txt"))
+	require.NoFileExists(t, filepath.Join(workspace, "original.txt"))
+	data, err := os.ReadFile(filepath.Join(workspace, "hooked.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(data))
+}
+
 func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

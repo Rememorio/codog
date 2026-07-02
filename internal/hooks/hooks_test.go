@@ -172,6 +172,30 @@ func TestSessionStartOutputFromReportParsesHookSpecificOutput(t *testing.T) {
 	require.Equal(t, []string{"/tmp/a", "/tmp/b"}, output.WatchPaths)
 }
 
+func TestPreToolUseOutputFromReportParsesHookSpecificOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, output, err := Runner{Workspace: t.TempDir()}.PreToolUseReport(context.Background(), "bash", []byte(`{"command":"pwd"}`))
+	require.NoError(t, err)
+	require.Equal(t, "pre_tool_use", report.Event)
+	require.Empty(t, output.PermissionDecision)
+
+	report, err = Runner{Workspace: t.TempDir()}.RunPayload(context.Background(), []string{`printf '%s' '{"systemMessage":"updated","hookSpecificOutput":{"additionalContext":"ctx","permissionDecision":"allow","permissionDecisionReason":"hook ok","updatedInput":{"command":"git status"}}}'`}, Payload{
+		Event: "pre_tool_use",
+		Tool:  "bash",
+		Input: `{"command":"pwd"}`,
+	})
+	require.NoError(t, err)
+	output = PreToolUseOutputFromReport(report)
+	require.Equal(t, 1, report.Count)
+	require.Equal(t, []string{"updated", "ctx"}, output.Messages)
+	require.Equal(t, "allow", output.PermissionDecision)
+	require.Equal(t, "hook ok", output.PermissionReason)
+	require.True(t, output.UpdatedInputProvided)
+	require.JSONEq(t, `{"command":"git status"}`, string(output.UpdatedInput))
+}
+
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	t.Setenv("HOOK_TOKEN", "secret-token")
 	t.Setenv("HOOK_IGNORED", "ignored")

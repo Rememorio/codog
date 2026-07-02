@@ -156,15 +156,32 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		}
 
 		for _, block := range blocks {
+			effectiveInput := append(json.RawMessage(nil), block.Input...)
 			call := ToolCall{
 				ID:    block.ID,
 				Name:  block.Name,
-				Input: string(block.Input),
+				Input: string(effectiveInput),
 			}
-			if err := hookRunner.PreToolUse(ctx, block.Name, block.Input); err != nil {
+			_, preToolOutput, err := hookRunner.PreToolUseReport(ctx, block.Name, effectiveInput)
+			if err != nil {
 				call.Output = err.Error()
 				call.IsError = true
-				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
+				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
+					call.Output = failureErr.Error()
+				}
+				toolCalls = append(toolCalls, call)
+				r.emitToolUse(call)
+				messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, true))
+				continue
+			}
+			if preToolOutput.UpdatedInputProvided {
+				effectiveInput = append(json.RawMessage(nil), preToolOutput.UpdatedInput...)
+				call.Input = string(effectiveInput)
+			}
+			if preToolOutput.Denied {
+				call.Output = preToolUseDeniedMessage(block.Name, preToolOutput)
+				call.IsError = true
+				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
 				}
 				toolCalls = append(toolCalls, call)
@@ -174,15 +191,15 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 
 			canonicalTool := tools.CanonicalToolName(block.Name)
-			execPrompter := r.Prompter
+			execPrompter := prompterWithPreToolDecision(r.Prompter, preToolOutput.PermissionDecision)
 			if r.Config.PlanMode {
 				if info, ok := r.Tools.Info(block.Name); ok && !tools.ToolAllowedInPlanMode(info.Name, info.Permission) {
 					call.Output = fmt.Sprintf("plan mode blocked tool %s because it requires %s permission", info.Name, info.Permission)
 					call.IsError = true
-					if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, call.Output, call.IsError); hookErr != nil {
+					if hookErr := hookRunner.PostToolUse(ctx, block.Name, effectiveInput, call.Output, call.IsError); hookErr != nil {
 						call.Output = hookErr.Error()
 					}
-					if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
+					if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 						call.Output = failureErr.Error()
 					}
 					toolCalls = append(toolCalls, call)
@@ -198,7 +215,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 					oldCWD = cwd
 				}
 			}
-			output, err := r.Tools.Execute(toolCtx, block.Name, block.Input, execPrompter)
+			output, err := r.Tools.Execute(toolCtx, block.Name, effectiveInput, execPrompter)
 			if err != nil {
 				call.Output = err.Error()
 				call.IsError = true
@@ -207,19 +224,19 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 			if oldCWD != "" {
 				if newCWD, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil && newCWD != oldCWD {
-					if hookErr := hookRunner.CwdChanged(ctx, oldCWD, newCWD, string(block.Input)); hookErr != nil && !call.IsError {
+					if hookErr := hookRunner.CwdChanged(ctx, oldCWD, newCWD, string(effectiveInput)); hookErr != nil && !call.IsError {
 						call.Output = hookErr.Error()
 						call.IsError = true
 					}
 				}
 			}
-			if hookErr := hookRunner.PostToolUse(ctx, block.Name, block.Input, call.Output, call.IsError); hookErr != nil && !call.IsError {
+			if hookErr := hookRunner.PostToolUse(ctx, block.Name, effectiveInput, call.Output, call.IsError); hookErr != nil && !call.IsError {
 				call.Output = hookErr.Error()
 				call.IsError = true
 			}
 			if !call.IsError {
-				for _, change := range fileChangesForTool(block.Name, block.Input) {
-					if hookErr := hookRunner.FileChanged(ctx, change.Path, change.Operation, block.Input); hookErr != nil {
+				for _, change := range fileChangesForTool(block.Name, effectiveInput) {
+					if hookErr := hookRunner.FileChanged(ctx, change.Path, change.Operation, effectiveInput); hookErr != nil {
 						call.Output = hookErr.Error()
 						call.IsError = true
 						break
@@ -227,7 +244,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 				}
 			}
 			if call.IsError {
-				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, block.Input, call.Output); failureErr != nil {
+				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
 				}
 			}
@@ -304,6 +321,35 @@ func hasHookConfig(cfg config.HookConfig) bool {
 		len(cfg.TaskCompletedCommands) != 0 ||
 		len(cfg.InstructionsLoadedCommands) != 0 ||
 		len(cfg.FileChangedCommands) != 0
+}
+
+func prompterWithPreToolDecision(base *tools.Prompter, decision string) *tools.Prompter {
+	decision = strings.ToLower(strings.TrimSpace(decision))
+	if decision == "" {
+		return base
+	}
+	next := &tools.Prompter{}
+	if base != nil {
+		*next = *base
+	}
+	switch decision {
+	case "allow":
+		next.Mode = tools.PermissionAllow
+	case "ask":
+		next.Mode = tools.PermissionPrompt
+	}
+	return next
+}
+
+func preToolUseDeniedMessage(toolName string, output hooks.PreToolUseOutput) string {
+	reason := strings.TrimSpace(output.PermissionReason)
+	if reason == "" && len(output.Messages) > 0 {
+		reason = strings.Join(output.Messages, "\n")
+	}
+	if reason == "" {
+		return fmt.Sprintf("pre_tool_use hook denied tool %s", toolName)
+	}
+	return fmt.Sprintf("pre_tool_use hook denied tool %s: %s", toolName, reason)
 }
 
 type fileChange struct {

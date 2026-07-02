@@ -105,13 +105,32 @@ type SessionStartOutput struct {
 	WatchPaths         []string `json:"watch_paths,omitempty"`
 }
 
+// PreToolUseOutput is the Claude-compatible structured stdout emitted by
+// PreToolUse hooks after all successful hooks have been merged.
+type PreToolUseOutput struct {
+	Messages             []string        `json:"messages,omitempty"`
+	Denied               bool            `json:"denied,omitempty"`
+	PermissionDecision   string          `json:"permission_decision,omitempty"`
+	PermissionReason     string          `json:"permission_reason,omitempty"`
+	UpdatedInput         json.RawMessage `json:"updated_input,omitempty"`
+	UpdatedInputProvided bool            `json:"-"`
+}
+
 func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error {
+	_, _, err := r.PreToolUseReport(ctx, tool, input)
+	return err
+}
+
+// PreToolUseReport runs PreToolUse hooks and returns both the raw hook report
+// and parsed hookSpecificOutput fields such as permissionDecision and updatedInput.
+func (r Runner) PreToolUseReport(ctx context.Context, tool string, input []byte) (RunReport, PreToolUseOutput, error) {
 	payload := Payload{
 		Event: "pre_tool_use",
 		Tool:  tool,
 		Input: string(input),
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	report, err := r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
+	return report, PreToolUseOutputFromReport(report), err
 }
 
 func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, output string, isError bool) error {
@@ -511,6 +530,100 @@ func SessionStartOutputFromReport(report RunReport) SessionStartOutput {
 	out.InitialMessages = compactStrings(out.InitialMessages)
 	out.WatchPaths = compactStrings(out.WatchPaths)
 	return out
+}
+
+// PreToolUseOutputFromReport extracts structured PreToolUse hook stdout from a
+// report while preserving the last permission decision and updated input.
+func PreToolUseOutputFromReport(report RunReport) PreToolUseOutput {
+	var out PreToolUseOutput
+	for _, result := range report.Results {
+		if !result.Success {
+			continue
+		}
+		parsed, ok := parsePreToolUseStdout(result.Stdout)
+		if !ok {
+			continue
+		}
+		out.Messages = append(out.Messages, parsed.Messages...)
+		if parsed.Denied {
+			out.Denied = true
+		}
+		if parsed.PermissionDecision != "" {
+			out.PermissionDecision = parsed.PermissionDecision
+		}
+		if parsed.PermissionReason != "" {
+			out.PermissionReason = parsed.PermissionReason
+		}
+		if parsed.UpdatedInputProvided {
+			out.UpdatedInput = append(out.UpdatedInput[:0], parsed.UpdatedInput...)
+			out.UpdatedInputProvided = true
+		}
+	}
+	out.Messages = compactStrings(out.Messages)
+	return out
+}
+
+func parsePreToolUseStdout(stdout string) (PreToolUseOutput, bool) {
+	stdout = strings.TrimSpace(stdout)
+	if stdout == "" {
+		return PreToolUseOutput{}, false
+	}
+	if !strings.HasPrefix(stdout, "{") {
+		return PreToolUseOutput{Messages: []string{stdout}}, true
+	}
+	var raw struct {
+		SystemMessage      string          `json:"systemMessage"`
+		Reason             string          `json:"reason"`
+		Continue           *bool           `json:"continue"`
+		Decision           string          `json:"decision"`
+		HookSpecificOutput *hookSpecific   `json:"hookSpecificOutput"`
+		UpdatedInput       json.RawMessage `json:"updatedInput"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		return PreToolUseOutput{Messages: []string{stdout}}, true
+	}
+	output := PreToolUseOutput{
+		Messages: []string{raw.SystemMessage, raw.Reason},
+	}
+	if raw.Continue != nil && !*raw.Continue {
+		output.Denied = true
+	}
+	if strings.EqualFold(strings.TrimSpace(raw.Decision), "block") {
+		output.Denied = true
+	}
+	if len(raw.UpdatedInput) != 0 {
+		output.UpdatedInput = append(json.RawMessage(nil), raw.UpdatedInput...)
+		output.UpdatedInputProvided = true
+	}
+	if raw.HookSpecificOutput != nil {
+		output.Messages = append(output.Messages, raw.HookSpecificOutput.AdditionalContext)
+		decision := strings.ToLower(strings.TrimSpace(raw.HookSpecificOutput.PermissionDecision))
+		switch decision {
+		case "allow", "ask", "deny":
+			output.PermissionDecision = decision
+			if decision == "deny" {
+				output.Denied = true
+			}
+		}
+		output.PermissionReason = strings.TrimSpace(raw.HookSpecificOutput.PermissionDecisionReason)
+		if len(raw.HookSpecificOutput.UpdatedInput) != 0 {
+			output.UpdatedInput = append(json.RawMessage(nil), raw.HookSpecificOutput.UpdatedInput...)
+			output.UpdatedInputProvided = true
+		}
+	}
+	output.Messages = compactStrings(output.Messages)
+	if len(output.Messages) == 0 && !output.Denied && output.PermissionDecision == "" && !output.UpdatedInputProvided {
+		output.Messages = []string{stdout}
+	}
+	return output, true
+}
+
+type hookSpecific struct {
+	HookEventName            string          `json:"hookEventName"`
+	AdditionalContext        string          `json:"additionalContext"`
+	PermissionDecision       string          `json:"permissionDecision"`
+	PermissionDecisionReason string          `json:"permissionDecisionReason"`
+	UpdatedInput             json.RawMessage `json:"updatedInput"`
 }
 
 func parseSessionStartStdout(stdout string) (SessionStartOutput, bool) {
