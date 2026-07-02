@@ -185,6 +185,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 	}
 	if command == "config" || command == "settings" {
+		if command == "settings" && positionalHelpSubcommand(rest) {
+			return renderCommandHelpTopic(os.Stdout, "settings", argsWithoutHelpSubcommand(rest), requestedOutputFormat(originalArgs))
+		}
 		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
 			return err
 		}
@@ -27757,6 +27760,16 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 	if len(args) == 0 {
 		return renderConfigInspectionPayload(out, req.Format, map[string]any{"config": cfg, "paths": paths})
 	}
+	if strings.EqualFold(args[0], "help") {
+		if len(args) > 1 {
+			return renderCLIError(out, unexpectedExtraArgsError{
+				Command: "config help",
+				Args:    append([]string(nil), args[1:]...),
+				Usage:   "codog config help [--json|--output-format text|json]",
+			}, req.Format)
+		}
+		return renderConfigInspectionPayload(out, req.Format, buildConfigHelpReport())
+	}
 	if strings.EqualFold(args[0], "reset") {
 		report, err := resetConfigFileCommand(args, paths)
 		if err != nil {
@@ -27802,6 +27815,34 @@ func renderConfigInspection(out io.Writer, cfg config.Config, paths []string, ar
 		return err
 	}
 	return renderConfigInspectionPayload(out, req.Format, payload)
+}
+
+type configHelpReport struct {
+	Kind              string   `json:"kind"`
+	Action            string   `json:"action"`
+	Status            string   `json:"status"`
+	Section           string   `json:"section"`
+	AvailableSections []string `json:"available_sections"`
+	Message           string   `json:"message"`
+	Hint              string   `json:"hint"`
+}
+
+func buildConfigHelpReport() configHelpReport {
+	return configHelpReport{
+		Kind:              "config",
+		Action:            "show",
+		Status:            "ok",
+		Section:           "help",
+		AvailableSections: availableConfigSections(),
+		Message:           "Configuration sections available for `codog config get SECTION`.",
+		Hint:              "Use `codog config get SECTION` to inspect one section, or `codog config paths` to inspect config files.",
+	}
+}
+
+func availableConfigSections() []string {
+	sections := []string{"auth", "hooks", "interface", "mcp", "model", "permissions", "privacy", "skills"}
+	sort.Strings(sections)
+	return sections
 }
 
 type configValidationRequest struct {
@@ -38673,6 +38714,54 @@ func renderCommandHelpRequest(out io.Writer, command string, args []string, fall
 		return false, nil
 	}
 	return true, renderCommandHelpTopic(out, command, commandHelpArgsWithoutHelp(args), fallbackFormat)
+}
+
+func positionalHelpSubcommand(args []string) bool {
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			continue
+		case arg == "--output-format" || arg == "-o":
+			index++
+			continue
+		case strings.HasPrefix(arg, "--output-format="):
+			continue
+		default:
+			return strings.EqualFold(arg, "help")
+		}
+	}
+	return false
+}
+
+func argsWithoutHelpSubcommand(args []string) []string {
+	out := make([]string, 0, len(args))
+	removed := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if !removed {
+			switch {
+			case arg == "--json":
+				out = append(out, arg)
+				continue
+			case arg == "--output-format" || arg == "-o":
+				out = append(out, arg)
+				if index+1 < len(args) {
+					index++
+					out = append(out, args[index])
+				}
+				continue
+			case strings.HasPrefix(arg, "--output-format="):
+				out = append(out, arg)
+				continue
+			case strings.EqualFold(arg, "help"):
+				removed = true
+				continue
+			}
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func commandHelpArgsWithoutHelp(args []string) []string {

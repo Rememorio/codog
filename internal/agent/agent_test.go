@@ -3929,6 +3929,37 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 	}
 }
 
+func TestConfigAndSettingsHelpJSONContracts(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "config", "help"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var configHelp configHelpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &configHelp))
+	require.Equal(t, "config", configHelp.Kind)
+	require.Equal(t, "ok", configHelp.Status)
+	require.Equal(t, "help", configHelp.Section)
+	require.NotEmpty(t, configHelp.AvailableSections)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "settings", "help", "--output-format", "json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NotContains(t, out, "unknown config section")
+	var settingsHelp helpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &settingsHelp))
+	require.Equal(t, "help", settingsHelp.Kind)
+	require.Equal(t, "ok", settingsHelp.Status)
+	require.Equal(t, "settings", settingsHelp.Topic)
+	require.Equal(t, "config", settingsHelp.Command)
+}
+
 func TestLocalExtraArgumentErrorContracts(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
