@@ -18247,6 +18247,26 @@ func TestBTWUsesForkedSideSession(t *testing.T) {
 	require.Len(t, side.Messages, sourceMessages+2)
 	require.Equal(t, "answer a side question", side.Messages[sourceMessages].Content[0].Text)
 	require.Contains(t, side.Messages[sourceMessages+1].Content[0].Text, "side done")
+
+	out.Reset()
+	errOut.Reset()
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/btw", []string{"answer resumed side question"}, config.FlagOverrides{Resume: "main-session"}, "json"))
+	var report btwReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "btw", report.Kind)
+	require.Equal(t, "run", report.Action)
+	require.Equal(t, "completed", report.Status)
+	require.Equal(t, "main-session", report.SourceSessionID)
+	require.Equal(t, "answer resumed side question", report.Question)
+	require.Contains(t, report.Output, "side done")
+	require.NotEmpty(t, report.SessionID)
+	require.Empty(t, errOut.String())
+
+	resumedSide, err := app.Sessions.Open(report.SessionID)
+	require.NoError(t, err)
+	require.Len(t, resumedSide.Messages, sourceMessages+2)
+	require.Equal(t, "answer resumed side question", resumedSide.Messages[sourceMessages].Content[0].Text)
+	require.Contains(t, resumedSide.Messages[sourceMessages+1].Content[0].Text, "side done")
 }
 
 func extractLineValue(text string, prefix string) string {

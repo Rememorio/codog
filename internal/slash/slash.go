@@ -273,6 +273,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/brief":              true,
 	"/bridge":             true,
 	"/bridge-kick":        true,
+	"/btw":                true,
 	"/build":              true,
 	"/budget":             true,
 	"/bug":                true,

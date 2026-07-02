@@ -24864,6 +24864,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.PRComments(ctx, resumeSlashArgs("pr-comments", args, format))
 	case "/brief":
 		return a.Brief(resumeSlashArgs("brief", args, format))
+	case "/btw":
+		return a.BTW(ctx, resumeSlashArgs("btw", args, format), resumed, nil)
 	case "/install-github-app":
 		return a.InstallGitHubApp(resumeSlashArgs("install-github-app", args, format))
 	case "/upgrade":
@@ -28580,6 +28582,17 @@ func (w promptStreamJSONWriter) Event(event string, payload any) error {
 type btwRequest struct {
 	Question  string
 	SessionID string
+	Format    string
+}
+
+type btwReport struct {
+	Kind            string `json:"kind"`
+	Action          string `json:"action"`
+	Status          string `json:"status"`
+	SessionID       string `json:"session_id"`
+	SourceSessionID string `json:"source_session_id,omitempty"`
+	Question        string `json:"question"`
+	Output          string `json:"output,omitempty"`
 }
 
 func (a *App) BTW(ctx context.Context, args []string, overrides config.FlagOverrides, active *session.Session) error {
@@ -28607,8 +28620,31 @@ func (a *App) BTW(ctx context.Context, args []string, overrides config.FlagOverr
 	if err := a.ensureSessionIdentity(side, "btw", req.Question); err != nil {
 		return err
 	}
-	if err := a.runSessionTurn(ctx, "btw", side, req.Question, "completed"); err != nil {
+	turnOut := a.Out
+	var bufferedTurnOut bytes.Buffer
+	if req.Format == "json" {
+		turnOut = &bufferedTurnOut
+	}
+	if err := a.runSessionTurnWithOptions(ctx, "btw", side, req.Question, "completed", turnOptions{Out: turnOut}); err != nil {
 		return err
+	}
+	if req.Format == "json" {
+		sourceID := ""
+		if source != nil {
+			sourceID = source.ID
+		}
+		report := btwReport{
+			Kind:            "btw",
+			Action:          "run",
+			Status:          "completed",
+			SessionID:       side.ID,
+			SourceSessionID: sourceID,
+			Question:        req.Question,
+			Output:          strings.TrimSpace(bufferedTurnOut.String()),
+		}
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
 	}
 	fmt.Fprintf(a.Err, "\n\nbtw session: %s\n", side.ID)
 	if source != nil && strings.TrimSpace(source.ID) != "" {
@@ -28618,7 +28654,7 @@ func (a *App) BTW(ctx context.Context, args []string, overrides config.FlagOverr
 }
 
 func parseBTWArgs(args []string, overrides config.FlagOverrides) (btwRequest, error) {
-	req := btwRequest{SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID)}
+	req := btwRequest{SessionID: firstNonEmpty(overrides.Resume, overrides.SessionID), Format: "text"}
 	questionParts := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -28626,6 +28662,16 @@ func parseBTWArgs(args []string, overrides config.FlagOverrides) (btwRequest, er
 		case arg == "--":
 			questionParts = append(questionParts, args[index+1:]...)
 			index = len(args)
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("btw output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case len(questionParts) == 0 && arg == "--session":
 			index++
 			if index >= len(args) {
@@ -28655,6 +28701,11 @@ func parseBTWArgs(args []string, overrides config.FlagOverrides) (btwRequest, er
 	if req.SessionID == "true" {
 		req.SessionID = "latest"
 	}
+	format, err := normalizeOutputFormat("btw", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = format
 	return req, nil
 }
 
