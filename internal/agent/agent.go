@@ -25252,9 +25252,69 @@ func (a *App) runResumedRemoteEnvSlash(args []string, format string) error {
 
 func (a *App) runResumedRemoteSlash(args []string, overrides config.FlagOverrides, format string) error {
 	if len(routeMeaningfulArgs(args)) > 0 && strings.EqualFold(strings.TrimSpace(routeMeaningfulArgs(args)[0]), "serve") {
-		return renderUnsupportedResumedSlashCommand(a.Out, "/remote serve", format)
+		serveArgs, err := resumedRemoteServeArgs(args)
+		if err != nil {
+			return err
+		}
+		return a.startResumedServerTask("remote", serveArgs, "remote", "Remote control server started", overrides)
 	}
 	return a.runResumedRemoteSetupSlash(args, overrides, format)
+}
+
+func resumedRemoteServeArgs(args []string) ([]string, error) {
+	const usage = "codog remote serve [ADDR] [--addr ADDR] [--json|--output-format text|json]"
+	addr := ""
+	actionSeen := false
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case strings.EqualFold(arg, "serve"):
+			if actionSeen {
+				return nil, unexpectedExtraArgsError{Command: "remote serve", Args: []string{arg}, Usage: usage}
+			}
+			actionSeen = true
+		case arg == "--json":
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if missingFlagValueAt(args, index) {
+				return nil, missingFlagValueError{Command: "remote serve", Flag: arg, Usage: usage}
+			}
+			if _, err := normalizeOutputFormat("remote serve", args[index], []string{"text", "json"}); err != nil {
+				return nil, err
+			}
+		case strings.HasPrefix(arg, "--output-format="):
+			if _, err := normalizeOutputFormat("remote serve", strings.TrimPrefix(arg, "--output-format="), []string{"text", "json"}); err != nil {
+				return nil, err
+			}
+		case arg == "--addr":
+			index++
+			if missingFlagValueAt(args, index) {
+				return nil, missingFlagValueError{Command: "remote serve", Flag: arg, Usage: usage}
+			}
+			if strings.TrimSpace(addr) != "" {
+				return nil, unexpectedExtraArgsError{Command: "remote serve", Args: []string{args[index]}, Usage: usage}
+			}
+			addr = args[index]
+		case strings.HasPrefix(arg, "--addr="):
+			if strings.TrimSpace(addr) != "" {
+				return nil, unexpectedExtraArgsError{Command: "remote serve", Args: []string{arg}, Usage: usage}
+			}
+			addr = strings.TrimPrefix(arg, "--addr=")
+		case strings.HasPrefix(arg, "-"):
+			return nil, unknownOptionError{Command: "remote serve", Option: arg, Usage: usage}
+		default:
+			if strings.TrimSpace(addr) != "" {
+				return nil, unexpectedExtraArgsError{Command: "remote serve", Args: []string{arg}, Usage: usage}
+			}
+			addr = arg
+		}
+	}
+	out := []string{"serve"}
+	if strings.TrimSpace(addr) != "" {
+		out = append(out, strings.TrimSpace(addr))
+	}
+	return out, nil
 }
 
 func (a *App) runResumedRemoteSetupSlash(args []string, overrides config.FlagOverrides, format string) error {

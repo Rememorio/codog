@@ -13867,15 +13867,23 @@ func TestRemoteCommandReportsAndPersistsSetup(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8802", resumedStatus.RemoteURL)
 	out.Reset()
 
-	err = app.runResumedRemoteSlash([]string{"serve", "--json"}, config.FlagOverrides{Resume: "resumed-session"}, "json")
-	require.Error(t, err)
-	var exitErr *ExitError
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	var slashReport slashErrorReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &slashReport))
-	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
-	require.Equal(t, "/remote serve", slashReport.Command)
+	executableShim := filepath.Join(t.TempDir(), "codog-shim")
+	require.NoError(t, os.WriteFile(executableShim, []byte("#!/bin/sh\necho remote-shim \"$@\"\n"), 0o755))
+	app.Executable = executableShim
+	require.NoError(t, app.runResumedRemoteSlash([]string{"serve", "--addr", "127.0.0.1:0", "--json"}, config.FlagOverrides{Resume: "resumed-session"}, "json"))
+	var remoteTask backgroundCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &remoteTask))
+	require.Equal(t, "background", remoteTask.Kind)
+	require.Equal(t, "run", remoteTask.Action)
+	require.Equal(t, "ok", remoteTask.Status)
+	require.Equal(t, "resumed-session", remoteTask.SessionID)
+	require.NotEmpty(t, remoteTask.TaskID)
+	require.NotNil(t, remoteTask.Task)
+	require.Equal(t, "remote", remoteTask.Task.Kind)
+	require.Equal(t, "resumed-session", remoteTask.Task.SessionID)
+	require.Contains(t, remoteTask.Task.Command, "remote serve 127.0.0.1:0")
+	require.NotContains(t, remoteTask.Task.Command, "--json")
+	require.NotContains(t, remoteTask.Task.Command, "--output-format")
 }
 
 func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
