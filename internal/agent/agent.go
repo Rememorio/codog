@@ -24292,7 +24292,7 @@ func (a *App) runResumedFocusSlash(args []string, format string) error {
 		return err
 	}
 	if len(paths) != 0 {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/focus", "add"), format)
+		return a.Focus(args)
 	}
 	return a.Focus(args)
 }
@@ -24303,20 +24303,13 @@ func (a *App) runResumedUnfocusSlash(args []string, format string) error {
 		return err
 	}
 	if len(paths) != 0 {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/unfocus", resumedUnfocusAction(paths)), format)
+		return a.Unfocus(args)
 	}
 	report, err := focus.BuildReport(a.Workspace)
 	if err != nil {
 		return err
 	}
 	return a.renderFocusReport(format, report)
-}
-
-func resumedUnfocusAction(paths []string) string {
-	if containsFold(paths, "--all") || containsFold(paths, "all") {
-		return "all"
-	}
-	return "remove"
 }
 
 func (a *App) runResumedAddDirSlash(args []string, format string) error {

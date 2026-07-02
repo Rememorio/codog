@@ -3255,6 +3255,37 @@ func risky(value any) {
 	require.Equal(t, 1, resumedUnfocus.Total)
 	require.Equal(t, "main.go", resumedUnfocus.Entries[0].Path)
 
+	out, err = runResumedJSON("/focus", "main.go")
+	require.NoError(t, err)
+	var resumedFocusAdd focus.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFocusAdd))
+	require.Equal(t, "focus", resumedFocusAdd.Kind)
+	require.Equal(t, "add", resumedFocusAdd.Action)
+	require.Equal(t, 1, resumedFocusAdd.Total)
+	require.Equal(t, "main.go", resumedFocusAdd.Entries[0].Path)
+
+	out, err = runResumedJSON("/unfocus", "main.go")
+	require.NoError(t, err)
+	var resumedUnfocusRemove focus.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUnfocusRemove))
+	require.Equal(t, "focus", resumedUnfocusRemove.Kind)
+	require.Equal(t, "remove", resumedUnfocusRemove.Action)
+	require.Equal(t, 0, resumedUnfocusRemove.Total)
+
+	out, err = runResumedJSON("/focus", "main.go")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFocusAdd))
+	require.Equal(t, "add", resumedFocusAdd.Action)
+	require.Equal(t, 1, resumedFocusAdd.Total)
+
+	out, err = runResumedJSON("/unfocus", "--all")
+	require.NoError(t, err)
+	var resumedUnfocusClear focus.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUnfocusClear))
+	require.Equal(t, "focus", resumedUnfocusClear.Kind)
+	require.Equal(t, "clear", resumedUnfocusClear.Action)
+	require.Equal(t, 0, resumedUnfocusClear.Total)
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
@@ -3353,9 +3384,6 @@ func risky(value any) {
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
-		{Command: "/focus", Args: []string{"main.go"}, Report: "/focus add"},
-		{Command: "/unfocus", Args: []string{"main.go"}, Report: "/unfocus remove"},
-		{Command: "/unfocus", Args: []string{"--all"}, Report: "/unfocus all"},
 		{Command: "/add-dir", Args: []string{workspace}, Report: "/add-dir add"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/ant-trace", Args: []string{"--no-request", "--write"}, Report: "/ant-trace write"},
