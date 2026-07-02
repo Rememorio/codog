@@ -218,6 +218,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if handled, err := renderCommandHelpRequest(os.Stdout, helpCommand, rest, requestedOutputFormat(originalArgs)); handled {
 		return err
 	}
+	if handled, err := renderGlobalResumeArgumentGuard(os.Stdout, command, rest, overrides, requestedOutputFormat(originalArgs)); handled {
+		return err
+	}
 	if handled, err := renderLocalRouteGuard(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
 		return err
 	}
@@ -19811,6 +19814,20 @@ func (e unexpectedExtraArgsError) Error() string {
 	return fmt.Sprintf("unexpected_extra_args: %s got unexpected arguments: %s", e.Command, strings.Join(e.Args, " "))
 }
 
+type invalidResumeArgumentError struct {
+	Command string
+	Args    []string
+	Resume  string
+}
+
+func (e invalidResumeArgumentError) Error() string {
+	command := strings.TrimSpace(e.Command)
+	if command == "" {
+		command = "command"
+	}
+	return fmt.Sprintf("invalid_resume_argument: %s cannot be used as a trailing --resume command without a leading slash", command)
+}
+
 type broadCWDGuardReport struct {
 	Kind      string `json:"kind"`
 	ErrorKind string `json:"error_kind"`
@@ -20123,6 +20140,25 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Args:      args,
 			Message:   fmt.Sprintf("%s does not accept extra arguments: %s", command, strings.Join(args, " ")),
 			Hint:      "Usage: " + usage,
+		}
+	}
+	var resumeArgErr invalidResumeArgumentError
+	if errors.As(err, &resumeArgErr) {
+		command := strings.TrimSpace(resumeArgErr.Command)
+		args := append([]string(nil), resumeArgErr.Args...)
+		resume := strings.TrimSpace(resumeArgErr.Resume)
+		if resume == "" {
+			resume = "latest"
+		}
+		slashCommand := "/" + strings.TrimPrefix(command, "/")
+		return cliErrorReport{
+			Kind:      "invalid_resume_argument",
+			ErrorKind: "invalid_resume_argument",
+			Status:    "error",
+			Command:   command,
+			Args:      args,
+			Message:   fmt.Sprintf("%s cannot be used after --resume without a leading slash", command),
+			Hint:      fmt.Sprintf("Use `codog --resume %s %s` for a resume slash command, or `codog --resume %s prompt \"...\"` to continue the session with a prompt. Local commands that support sessions accept command-specific `--session` or `--resume` flags after the command.", shellQuote(resume), slashCommand, shellQuote(resume)),
 		}
 	}
 	if rest, ok := strings.CutPrefix(message, "invalid_permission_mode:"); ok {
@@ -21565,6 +21601,27 @@ func renderInteractiveOnlyWithHint(out io.Writer, command string, message string
 		return &ExitError{Code: 1, Err: err, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: err}
+}
+
+func renderGlobalResumeArgumentGuard(out io.Writer, command string, args []string, overrides config.FlagOverrides, format string) (bool, error) {
+	if strings.TrimSpace(overrides.Resume) == "" {
+		return false, nil
+	}
+	name := strings.TrimSpace(command)
+	if name == "" || strings.HasPrefix(name, "/") {
+		return false, nil
+	}
+	switch strings.ToLower(name) {
+	case "prompt", "repl":
+		return false, nil
+	default:
+		err := invalidResumeArgumentError{
+			Command: name,
+			Args:    routeMeaningfulArgs(args),
+			Resume:  overrides.Resume,
+		}
+		return true, renderCLIError(out, err, format)
+	}
 }
 
 func renderLocalRouteGuard(out io.Writer, command string, args []string, format string) (bool, error) {

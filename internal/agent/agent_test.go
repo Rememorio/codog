@@ -3750,6 +3750,38 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 	require.NotContains(t, out, "missing_credentials")
 }
 
+func TestGlobalResumeNonSlashTrailingArgumentContract(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	cases := []struct {
+		command string
+		slash   string
+	}{
+		{command: "compact", slash: "/compact"},
+		{command: "status", slash: "/status"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.command, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--resume", "latest", tc.command}, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "invalid_resume_argument", report.ErrorKind)
+			require.Equal(t, tc.command, report.Command)
+			require.Contains(t, report.Hint, tc.slash)
+			require.Contains(t, report.Hint, "prompt")
+			require.NotContains(t, out, "config_parse_error")
+			require.NotContains(t, out, "missing_credentials")
+		})
+	}
+}
+
 func TestBuildCLIErrorReportMissingCredentials(t *testing.T) {
 	report := buildCLIErrorReport(anthropic.MissingCredentialsError{
 		Provider: "Anthropic",
