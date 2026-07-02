@@ -565,7 +565,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "hooks":
-		return app.Hooks(ctx, rest)
+		if err := app.Hooks(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "mcp":
 		return app.MCP(ctx, rest)
 	case "capabilities":
@@ -710,9 +713,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "tasks", "bashes":
 		return app.BackgroundWithOverrides(rest, overrides)
 	case "cron":
-		return app.Cron(rest)
+		if err := app.Cron(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "team":
-		return app.Team(rest)
+		if err := app.Team(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "agents":
 		return app.AgentsWithOverrides(rest, overrides)
 	case "subagent":
@@ -4260,7 +4269,15 @@ func parseCronArgs(args []string) (cronRequest, error) {
 	switch req.Action {
 	case "list":
 		if len(positionals) != 0 {
-			return req, errors.New("usage: codog cron list [--json|--output-format text|json]")
+			command := "cron list"
+			if !actionSet {
+				command = "cron"
+			}
+			return req, unexpectedExtraArgsError{
+				Command: command,
+				Args:    append([]string(nil), positionals...),
+				Usage:   "codog cron [list|create|delete|due|mark-run|run-due] [ARGS...] [--json|--output-format text|json]",
+			}
 		}
 	case "create":
 		if len(positionals) < 2 {
@@ -4281,7 +4298,11 @@ func parseCronArgs(args []string) (cronRequest, error) {
 			return req, fmt.Errorf("usage: codog cron %s [--now RFC3339] [--json|--output-format text|json]", req.Action)
 		}
 	default:
-		return req, fmt.Errorf("unknown cron command %q", req.Action)
+		return req, unexpectedExtraArgsError{
+			Command: "cron",
+			Args:    []string{req.Action},
+			Usage:   "codog cron [list|create|delete|due|mark-run|run-due] [ARGS...] [--json|--output-format text|json]",
+		}
 	}
 	return req, nil
 }
@@ -4643,7 +4664,15 @@ func parseTeamArgs(args []string) (teamRequest, error) {
 	switch req.Action {
 	case "list":
 		if len(positionals) != 0 {
-			return req, errors.New("usage: codog team list [--status STATUS] [--json|--output-format text|json]")
+			command := "team list"
+			if !actionSet {
+				command = "team"
+			}
+			return req, unexpectedExtraArgsError{
+				Command: command,
+				Args:    append([]string(nil), positionals...),
+				Usage:   "codog team [list|get|status|logs|watch|create|delete] [ARGS...] [--json|--output-format text|json]",
+			}
 		}
 	case "get", "status", "logs", "watch", "delete":
 		if len(positionals) != 1 {
@@ -4662,7 +4691,11 @@ func parseTeamArgs(args []string) (teamRequest, error) {
 			return req, errors.New("team create requires at least one task prompt")
 		}
 	default:
-		return req, fmt.Errorf("unknown team command %q", req.Action)
+		return req, unexpectedExtraArgsError{
+			Command: "team",
+			Args:    []string{req.Action},
+			Usage:   "codog team [list|get|status|logs|watch|create|delete] [ARGS...] [--json|--output-format text|json]",
+		}
 	}
 	return req, nil
 }
@@ -11799,7 +11832,11 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		}
 		return runErr
 	default:
-		return fmt.Errorf("unknown hooks action %q", req.Action)
+		return unexpectedExtraArgsError{
+			Command: "hooks",
+			Args:    []string{req.Action},
+			Usage:   "codog hooks [list|health|run|watch-paths] [ARGS...] [--json|--output-format text|json]",
+		}
 	}
 }
 
@@ -12325,7 +12362,11 @@ func parseHooksArgs(args []string) (hooksRequest, error) {
 			req.SessionID = positionals[2]
 		}
 	default:
-		return req, fmt.Errorf("unknown hooks action %q", positionals[0])
+		return req, unexpectedExtraArgsError{
+			Command: "hooks",
+			Args:    []string{positionals[0]},
+			Usage:   "codog hooks [list|health|run|watch-paths] [ARGS...] [--json|--output-format text|json]",
+		}
 	}
 	if !toolSet && (req.Event == "user_prompt_submit" || req.Event == "session_start" || req.Event == "stop" || req.Event == "pre_compact" || req.Event == "post_compact" || req.Event == "notification" || req.Event == "subagent_start" || req.Event == "subagent_stop" || req.Event == "file_changed" || req.Event == "instructions_loaded") {
 		req.Tool = ""

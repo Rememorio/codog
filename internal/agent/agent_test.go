@@ -18509,6 +18509,37 @@ func TestTeamCommandAndSlash(t *testing.T) {
 	require.Len(t, deleted.StoppedTasks, 2)
 }
 
+func TestManagementCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		command  string
+		expected string
+	}{
+		{name: "hooks unknown action", args: []string{"hooks", "bogus"}, command: "hooks", expected: `"bogus"`},
+		{name: "cron unknown action", args: []string{"cron", "bogus"}, command: "cron", expected: `"bogus"`},
+		{name: "cron list extra", args: []string{"cron", "list", "bogus"}, command: "cron list", expected: `"bogus"`},
+		{name: "team unknown action", args: []string{"team", "bogus"}, command: "team", expected: `"bogus"`},
+		{name: "team list extra", args: []string{"team", "list", "bogus"}, command: "team list", expected: `"bogus"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), "unexpected_extra_args", "unexpected_extra_args")
+			require.Contains(t, out, fmt.Sprintf(`"command": "%s"`, tc.command))
+			require.Contains(t, out, tc.expected)
+		})
+	}
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)
