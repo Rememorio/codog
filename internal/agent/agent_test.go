@@ -3626,6 +3626,28 @@ func TestParseFlagsSupportsPrintAliases(t *testing.T) {
 	require.False(t, overrides.SkipPermissions)
 }
 
+func TestParseFlagsSupportsCompactPromptMode(t *testing.T) {
+	_, command, rest, err := parseFlags([]string{"--compact", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello", "--compact"}, rest)
+
+	_, command, rest, err = parseFlags([]string{"--output-format", "json", "--compact", "prompt", "hello"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"hello", "--output-format", "json", "--compact"}, rest)
+
+	_, _, _, err = parseFlags([]string{"--compact"}, config.FlagOverrides{})
+	require.ErrorIs(t, err, errCompactPromptMissingArgument)
+
+	_, _, _, err = parseFlags([]string{"--compact", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	var flagErr invalidFlagValueError
+	require.ErrorAs(t, err, &flagErr)
+	require.Equal(t, "--compact", flagErr.Flag)
+	require.Equal(t, "status", flagErr.Value)
+}
+
 func TestParseFlagsSupportsToolRuleOverrides(t *testing.T) {
 	overrides, command, rest, err := parseFlags([]string{
 		"--allowed-tools", "read_file,grep",
@@ -4451,6 +4473,12 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.Empty(t, req.Prompt)
 	require.Equal(t, "json", req.Format)
 	require.False(t, req.PromptProvided)
+
+	req, err = parsePromptArgs([]string{"hello", "--compact"})
+	require.NoError(t, err)
+	require.Equal(t, "hello", req.Prompt)
+	require.True(t, req.Compact)
+	require.True(t, req.PromptProvided)
 }
 
 func TestPromptMissingPromptOutputContract(t *testing.T) {
@@ -4494,6 +4522,79 @@ func TestPromptMissingPromptOutputContract(t *testing.T) {
 	require.True(t, exitErr.Silent)
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "missing_prompt", report.ErrorKind)
+}
+
+func TestCompactFlagMissingArgumentOutputContract(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--compact"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report promptErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "prompt", report.Kind)
+	require.Equal(t, "abort", report.Action)
+	require.Equal(t, "missing_argument", report.ErrorKind)
+	require.Equal(t, "prompt or subcommand", report.Argument)
+	require.Contains(t, report.Hint, "--compact")
+}
+
+func TestCompactFlagShorthandStaysOnPromptPath(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("XAI_API_KEY", "")
+	t.Setenv("DASHSCOPE_API_KEY", "")
+
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--compact", "hello"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "missing_credentials", report.ErrorKind)
+	require.NotEqual(t, "command_not_found", report.ErrorKind)
+	require.NotEqual(t, "config_load_failed", report.ErrorKind)
+}
+
+func TestCompactFlagRejectsKnownNonPromptCommand(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--compact", "status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "invalid_flag_value", report.ErrorKind)
+	require.Equal(t, "--compact", report.Option)
+	require.Equal(t, "status", report.Value)
+	require.Contains(t, report.Hint, "codog --compact")
 }
 
 func TestExplicitEmptyTopLevelPromptOutputContract(t *testing.T) {

@@ -164,6 +164,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
+		if errors.Is(err, errCompactPromptMissingArgument) {
+			return renderCompactPromptMissingArgument(os.Stdout, requestedOutputFormat(originalArgs))
+		}
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	if command == "" && hasExplicitEmptyPositional(originalArgs) {
@@ -19817,6 +19820,25 @@ func (e missingFlagValueError) Error() string {
 	return fmt.Sprintf("missing_flag_value: %s requires a value", flag)
 }
 
+type invalidFlagValueError struct {
+	Flag    string
+	Value   string
+	Message string
+	Usage   string
+}
+
+func (e invalidFlagValueError) Error() string {
+	message := strings.TrimSpace(e.Message)
+	if message == "" {
+		flag := strings.TrimSpace(e.Flag)
+		if flag == "" {
+			flag = "flag"
+		}
+		message = flag + " has an invalid value"
+	}
+	return "invalid_flag_value: " + message
+}
+
 type toolNameError struct {
 	Argument  string
 	ToolName  string
@@ -20001,6 +20023,7 @@ type promptErrorReport struct {
 	Action    string `json:"action"`
 	ErrorKind string `json:"error_kind"`
 	Status    string `json:"status"`
+	Argument  string `json:"argument,omitempty"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint"`
 }
@@ -20033,6 +20056,29 @@ func renderEmptyPrompt(out io.Writer, format string) error {
 		Status:    "error",
 		Message:   "empty prompt",
 		Hint:      "Provide a prompt with `codog prompt \"...\"`, run a local command such as `codog status`, or start the REPL with no positional argument.",
+	}
+	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "json", "stream-json":
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return &ExitError{Code: 1, Err: err, Silent: true}
+	default:
+		return &ExitError{Code: 1, Err: err}
+	}
+}
+
+var errCompactPromptMissingArgument = errors.New("compact requires a prompt or subcommand")
+
+func renderCompactPromptMissingArgument(out io.Writer, format string) error {
+	report := promptErrorReport{
+		Kind:      "prompt",
+		Action:    "abort",
+		ErrorKind: "missing_argument",
+		Status:    "error",
+		Argument:  "prompt or subcommand",
+		Message:   "--compact requires a prompt or subcommand",
+		Hint:      "Pass a prompt after `--compact`, for example `codog --compact \"summarize this\"`, or run `codog compact --session latest` to compact a saved session.",
 	}
 	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
 	switch strings.ToLower(strings.TrimSpace(format)) {
@@ -20203,6 +20249,32 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Message:   message,
 			Hint:      "Provide the required flag value.",
+		}
+	}
+	var invalidFlagErr invalidFlagValueError
+	if errors.As(err, &invalidFlagErr) {
+		flag := strings.TrimSpace(invalidFlagErr.Flag)
+		value := strings.TrimSpace(invalidFlagErr.Value)
+		message := strings.TrimSpace(invalidFlagErr.Message)
+		if message == "" {
+			if flag == "" {
+				flag = "flag"
+			}
+			message = flag + " has an invalid value"
+		}
+		usage := strings.TrimSpace(invalidFlagErr.Usage)
+		hint := "Use a supported flag value."
+		if usage != "" {
+			hint = "Usage: " + usage
+		}
+		return cliErrorReport{
+			Kind:      "invalid_flag_value",
+			ErrorKind: "invalid_flag_value",
+			Status:    "error",
+			Option:    flag,
+			Value:     value,
+			Message:   message,
+			Hint:      hint,
 		}
 	}
 	var toolErr toolNameError
@@ -23924,6 +23996,9 @@ func (a *App) PromptWithOutput(ctx context.Context, input string, overrides conf
 		return endErr
 	}
 	if runErr != nil {
+		if format == "json" {
+			return renderCLIError(a.Out, runErr, format)
+		}
 		return runErr
 	}
 	if format == "json" || format == "stream-json" {
@@ -24156,6 +24231,7 @@ type promptCLIRequest struct {
 	Prompt         string
 	Format         string
 	PromptProvided bool
+	Compact        bool
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
@@ -24180,6 +24256,8 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--compact":
+			req.Compact = true
 		default:
 			req.PromptProvided = true
 			parts = append(parts, arg)
@@ -38386,6 +38464,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	printMode := false
+	compactPromptMode := false
 	jsonOutput := false
 	outputFormat := ""
 	allowedTools := stringListFlag(base.AllowedTools)
@@ -38399,6 +38478,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.StringVar(&base.Resume, "resume", base.Resume, "resume session id or latest")
 	flags.BoolVar(&printMode, "p", false, "run a one-shot prompt")
 	flags.BoolVar(&printMode, "print", false, "run a one-shot prompt")
+	flags.BoolVar(&compactPromptMode, "compact", false, "run a compact one-shot prompt")
 	flags.BoolVar(&jsonOutput, "json", false, "alias for --output-format json for local commands")
 	flags.StringVar(&outputFormat, "output-format", "", "text or json output for local commands")
 	flags.StringVar(&outputFormat, "o", "", "text or json output for local commands")
@@ -38419,7 +38499,18 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
 	rest := flags.Args()
-	if printMode {
+	if compactPromptMode && len(rest) == 0 {
+		return base, "", nil, errCompactPromptMissingArgument
+	}
+	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
+		return base, "", nil, invalidFlagValueError{
+			Flag:    "--compact",
+			Value:   rest[0],
+			Message: "--compact is only supported with prompt mode",
+			Usage:   "codog --compact \"<prompt>\" or echo \"<prompt>\" | codog --compact",
+		}
+	}
+	if printMode || compactPromptMode {
 		if len(rest) > 0 && rest[0] == "prompt" {
 			rest = rest[1:]
 		}
@@ -38430,6 +38521,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		}
 		outputFormat = normalized
 		rest = injectGlobalOutputFormat("prompt", rest, outputFormat)
+		if compactPromptMode {
+			rest = append(rest, "--compact")
+		}
 		return base, "prompt", rest, nil
 	}
 	if len(rest) == 0 {
@@ -38483,6 +38577,23 @@ func globalFlagTakesValue(arg string) bool {
 	default:
 		return false
 	}
+}
+
+func isKnownNonPromptCommand(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	value = strings.TrimPrefix(value, "/")
+	if strings.EqualFold(value, "prompt") {
+		return false
+	}
+	for _, command := range builtInCommandNames() {
+		if strings.EqualFold(value, command) {
+			return true
+		}
+	}
+	return false
 }
 
 func missingToolFlagArgument(args []string) (missingArgumentError, bool) {
