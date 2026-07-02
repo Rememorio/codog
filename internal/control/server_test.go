@@ -51,6 +51,10 @@ func TestRouteSpecsDescribeServedRemoteAPI(t *testing.T) {
 	require.Equal(t, []string{http.MethodPost}, byPath["/file/write"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/notebook/read"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/notebook/edit"].Methods)
+	require.Equal(t, []string{http.MethodGet}, byPath["/lsp/actions"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/lsp/start"].Methods)
+	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/lsp/status"].Methods)
+	require.Equal(t, []string{http.MethodPost}, byPath["/lsp/query"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/mcp/list"].Methods)
 	require.Equal(t, []string{http.MethodPost}, byPath["/mcp/call"].Methods)
 	require.Equal(t, []string{http.MethodGet, http.MethodPost}, byPath["/mcp/read"].Methods)
@@ -1057,6 +1061,104 @@ func TestControlMCPEndpoints(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "missing")
+}
+
+func TestControlLSPEndpoints(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sleep")
+	}
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	server := httptest.NewServer(Server{
+		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
+		ConfigHome: filepath.Join(root, "home"),
+		Workspace:  workspace,
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/lsp/actions")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"lsp_actions"`)
+	require.Contains(t, string(body), `"name":"hover"`)
+
+	resp, err = http.Get(server.URL + "/lsp/discover")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"lsp_discover"`)
+	require.Contains(t, string(body), `"language":"go"`)
+
+	resp, err = http.Post(server.URL+"/lsp/start", "application/json", bytes.NewBufferString(`{"language":"go","command_args":["sleep","30"]}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"lsp_start"`)
+	require.Contains(t, string(body), `"status":"ok"`)
+	require.Contains(t, string(body), `"language":"go"`)
+	t.Cleanup(func() {
+		_, _ = http.Post(server.URL+"/lsp/stop", "application/json", bytes.NewBufferString(`{"language":"go"}`))
+	})
+
+	resp, err = http.Get(server.URL + "/lsp/list")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"lsp_list"`)
+	require.Contains(t, string(body), `"count":1`)
+	require.Contains(t, string(body), `"status":"running"`)
+
+	resp, err = http.Get(server.URL + "/lsp/status?language=go")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"lsp_status"`)
+	require.Contains(t, string(body), `"language":"go"`)
+
+	resp, err = http.Post(server.URL+"/lsp/query", "application/json", bytes.NewBufferString(`{"language":"go","action":"hover","line":-1}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "line must be non-negative")
+
+	resp, err = http.Post(server.URL+"/lsp/stop", "application/json", bytes.NewBufferString(`{"language":"go"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"kind":"lsp_stop"`)
+	require.Contains(t, string(body), `"status":"stopped"`)
+}
+
+func TestControlLSPRequiresConfigHome(t *testing.T) {
+	server := httptest.NewServer(Server{
+		Sessions:  &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")},
+		Workspace: t.TempDir(),
+	}.Handler())
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/lsp/list")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "config home is required")
 }
 
 func writeControlMCP(t *testing.T, w http.ResponseWriter, id any, result map[string]any) {

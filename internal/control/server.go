@@ -92,6 +92,13 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/code/format", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Format a Go file."},
 		{Path: "/notebook/read", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read a Jupyter notebook through code intelligence."},
 		{Path: "/notebook/edit", Methods: []string{http.MethodPost}, Description: "Replace, insert, or delete a Jupyter notebook cell."},
+		{Path: "/lsp/actions", Methods: []string{http.MethodGet}, Description: "List supported LSP query actions."},
+		{Path: "/lsp/discover", Methods: []string{http.MethodGet}, Description: "Discover common language server commands."},
+		{Path: "/lsp/list", Methods: []string{http.MethodGet}, Description: "List managed LSP servers."},
+		{Path: "/lsp/start", Methods: []string{http.MethodPost}, Description: "Start a managed LSP server."},
+		{Path: "/lsp/status", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read one managed LSP server status."},
+		{Path: "/lsp/stop", Methods: []string{http.MethodPost}, Description: "Stop one managed LSP server."},
+		{Path: "/lsp/query", Methods: []string{http.MethodPost}, Description: "Run a one-shot LSP query through a managed server."},
 		{Path: "/mcp/list", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List configured MCP servers."},
 		{Path: "/mcp/show", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Describe and preflight one MCP server."},
 		{Path: "/mcp/auth", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Inspect MCP authentication and capability readiness."},
@@ -216,6 +223,13 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("/code/format", s.codeFormat)
 	mux.HandleFunc("/notebook/read", s.notebookRead)
 	mux.HandleFunc("/notebook/edit", s.notebookEdit)
+	mux.HandleFunc("/lsp/actions", s.lspActions)
+	mux.HandleFunc("/lsp/discover", s.lspDiscover)
+	mux.HandleFunc("/lsp/list", s.lspList)
+	mux.HandleFunc("/lsp/start", s.lspStart)
+	mux.HandleFunc("/lsp/status", s.lspStatus)
+	mux.HandleFunc("/lsp/stop", s.lspStop)
+	mux.HandleFunc("/lsp/query", s.lspQuery)
 	mux.HandleFunc("/mcp/list", s.mcpList)
 	mux.HandleFunc("/mcp/show", s.mcpShow)
 	mux.HandleFunc("/mcp/auth", s.mcpAuth)
@@ -1821,6 +1835,196 @@ func (s Server) notebookEdit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+func (s Server) lspActions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	actions := codeintel.SupportedLSPActions()
+	writeJSON(w, map[string]any{
+		"kind":    "lsp_actions",
+		"action":  "actions",
+		"status":  "ok",
+		"count":   len(actions),
+		"actions": actions,
+	})
+}
+
+func (s Server) lspDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	candidates := codeintel.DefaultLSPCandidates()
+	writeJSON(w, map[string]any{
+		"kind":       "lsp_discover",
+		"candidates": candidates,
+		"count":      len(candidates),
+	})
+}
+
+func (s Server) lspList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	statuses, err := store.List()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"kind":    "lsp_list",
+		"count":   len(statuses),
+		"servers": statuses,
+	})
+}
+
+func (s Server) lspStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Language    string          `json:"language"`
+		Command     json.RawMessage `json:"command"`
+		CommandArgs []string        `json:"command_args"`
+		Args        []string        `json:"args"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	commandArgs, err := lspCommandArgs(payload.Command, payload.CommandArgs, payload.Args)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	status, err := store.Start(payload.Language, commandArgs)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "lsp_start", "status": "ok", "server": status})
+}
+
+func (s Server) lspStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Language string `json:"language"`
+	}
+	if err := decodeOptionalJSONPayload(r, &payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodGet {
+		payload.Language = r.URL.Query().Get("language")
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	status, err := store.Status(payload.Language)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "lsp_status", "server": status})
+}
+
+func (s Server) lspStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Language string `json:"language"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	status, err := store.Stop(payload.Language)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"kind": "lsp_stop", "status": "ok", "server": status})
+}
+
+func (s Server) lspQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Language  string `json:"language"`
+		Action    string `json:"action"`
+		Path      string `json:"path"`
+		FilePath  string `json:"file_path"`
+		Line      int    `json:"line"`
+		Character int    `json:"character"`
+		TimeoutMS int    `json:"timeout_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if payload.Line < 0 {
+		writeError(w, errors.New("line must be non-negative"), http.StatusBadRequest)
+		return
+	}
+	if payload.Character < 0 {
+		writeError(w, errors.New("character must be non-negative"), http.StatusBadRequest)
+		return
+	}
+	if payload.TimeoutMS < 0 {
+		writeError(w, errors.New("timeout_ms must be non-negative"), http.StatusBadRequest)
+		return
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	ctx := context.Background()
+	if payload.TimeoutMS > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(payload.TimeoutMS)*time.Millisecond)
+		defer cancel()
+	}
+	result, err := store.Query(ctx, payload.Language, codeintel.LSPQueryRequest{
+		Action:    payload.Action,
+		Path:      firstNonEmpty(payload.Path, payload.FilePath),
+		Line:      payload.Line,
+		Character: payload.Character,
+	})
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
 func (s Server) mcpList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -2372,6 +2576,42 @@ func (s Server) mcpServerNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func (s Server) lspStore() (codeintel.LSPStore, error) {
+	if strings.TrimSpace(s.ConfigHome) == "" {
+		return codeintel.LSPStore{}, errors.New("config home is required")
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return codeintel.LSPStore{}, err
+	}
+	return codeintel.NewLSPStore(s.ConfigHome, workspace), nil
+}
+
+func lspCommandArgs(command json.RawMessage, commandArgs []string, args []string) ([]string, error) {
+	if len(commandArgs) > 0 {
+		return append([]string(nil), commandArgs...), nil
+	}
+	if len(args) > 0 {
+		return append([]string(nil), args...), nil
+	}
+	if len(command) == 0 || string(command) == "null" {
+		return nil, nil
+	}
+	var list []string
+	if err := json.Unmarshal(command, &list); err == nil {
+		return list, nil
+	}
+	var raw string
+	if err := json.Unmarshal(command, &raw); err != nil {
+		return nil, errors.New("command must be a string or string array")
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	return []string{"sh", "-lc", raw}, nil
 }
 
 func (s Server) workspaceOps() workspaceops.Service {
