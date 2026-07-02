@@ -527,6 +527,10 @@ type Config struct {
 	Future                     FutureConfig               `json:"future,omitempty"`
 }
 
+type nestedMCPConfig struct {
+	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
+}
+
 func (c *Config) UnmarshalJSON(data []byte) error {
 	type plain Config
 	var parsed plain
@@ -537,6 +541,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		PermissionModeCamel string                     `json:"permissionMode,omitempty"`
 		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
 		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aliases); err != nil {
@@ -555,9 +560,14 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 			parsed.PlanMode = planMode
 		}
 	}
-	if len(aliases.MCPServers) != 0 {
+	if len(aliases.MCP.Servers) != 0 || len(aliases.MCPServers) != 0 {
 		if parsed.MCPServers == nil {
 			parsed.MCPServers = map[string]MCPServerConfig{}
+		}
+		for name, server := range aliases.MCP.Servers {
+			if _, exists := parsed.MCPServers[name]; !exists {
+				parsed.MCPServers[name] = server
+			}
 		}
 		for name, server := range aliases.MCPServers {
 			parsed.MCPServers[name] = server
@@ -816,6 +826,7 @@ func applyProjectMCPJSON(cfg *Config, path string) error {
 	var parsed struct {
 		MCPServersSnake         map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
 		MCPServersCamel         map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+		MCP                     nestedMCPConfig            `json:"mcp,omitempty"`
 		EnableAllProjectServers *bool                      `json:"enableAllProjectMcpServers,omitempty"`
 		EnabledMCPJSONServers   []string                   `json:"enabledMcpjsonServers,omitempty"`
 		DisabledMCPJSONServers  []string                   `json:"disabledMcpjsonServers,omitempty"`
@@ -824,6 +835,9 @@ func applyProjectMCPJSON(cfg *Config, path string) error {
 		return &FileError{Path: path, Err: err}
 	}
 	servers := map[string]MCPServerConfig{}
+	for name, server := range parsed.MCP.Servers {
+		servers[name] = server
+	}
 	for name, server := range parsed.MCPServersSnake {
 		servers[name] = server
 	}

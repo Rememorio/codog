@@ -748,6 +748,25 @@ func TestLoadMCPServersCamelAliasAndEnvObject(t *testing.T) {
 	require.Equal(t, []string{"A=b", "TOKEN=secret"}, cfg.MCPServers["demo"].Env)
 }
 
+func TestLoadNestedMCPServersAlias(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"mcp": {
+			"servers": {
+				"demo": {"command": "demo-mcp", "args": ["--stdio"], "env": {"TOKEN": "secret"}}
+			}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "demo-mcp", cfg.MCPServers["demo"].Command)
+	require.Equal(t, []string{"--stdio"}, cfg.MCPServers["demo"].Args)
+	require.Equal(t, []string{"TOKEN=secret"}, cfg.MCPServers["demo"].Env)
+}
+
 func TestLoadProjectMCPJSONRespectsTrustSettings(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
@@ -804,6 +823,35 @@ func TestLoadProjectMCPJSONRequiresExplicitEnablement(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "allowed-mcp", cfg.MCPServers["allowed"].Command)
+	require.NotContains(t, cfg.MCPServers, "ignored")
+}
+
+func TestLoadProjectMCPJSONAcceptsNestedMCPServers(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{
+		"enabledMcpjsonServers": ["allowed"]
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".mcp.json"), []byte(`{
+		"mcp": {
+			"servers": {
+				"allowed": {"command": "allowed-mcp", "args": ["--stdio"]},
+				"ignored": {"command": "ignored-mcp"}
+			}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "allowed-mcp", cfg.MCPServers["allowed"].Command)
+	require.Equal(t, []string{"--stdio"}, cfg.MCPServers["allowed"].Args)
 	require.NotContains(t, cfg.MCPServers, "ignored")
 }
 

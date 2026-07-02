@@ -122,6 +122,7 @@ var topLevelFields = []fieldSpec{
 	{"enabled_skills", FieldStringArray},
 	{"enabledPlugins", FieldObject},
 	{"hooks", FieldObject},
+	{"mcp", FieldObject},
 	{"mcp_servers", FieldObject},
 	{"mcpServers", FieldObject},
 	{"future", FieldObject},
@@ -240,6 +241,10 @@ var mcpServerFields = []fieldSpec{
 	{"tool_call_timeout_ms", FieldNumber},
 	{"toolCallTimeoutMs", FieldNumber},
 	{"required", FieldBool},
+}
+
+var mcpFields = []fieldSpec{
+	{"servers", FieldObject},
 }
 
 var futureFields = []fieldSpec{
@@ -455,6 +460,12 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "hooks"); ok {
 		validateObject(result, nested, hookFields, "hooks", source, path)
+	}
+	if nested, ok := objectAt(object, "mcp"); ok {
+		validateObject(result, nested, mcpFields, "mcp", source, path)
+		if servers, ok := objectAt(nested, "servers"); ok {
+			validateMCPServers(result, servers, source, path, "mcp.servers")
+		}
 	}
 	if nested, ok := objectAt(object, "mcp_servers"); ok {
 		validateMCPServers(result, nested, source, path, "mcp_servers")

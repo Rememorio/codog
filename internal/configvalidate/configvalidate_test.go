@@ -253,6 +253,37 @@ func TestValidateBytesAcceptsMCPEnvObject(t *testing.T) {
 	require.Empty(t, result.Errors)
 }
 
+func TestValidateBytesAcceptsNestedMCPServers(t *testing.T) {
+	result := ValidateBytes([]byte(`{"mcp":{"servers":{"demo":{"command":"demo-mcp","env":{"TOKEN":"secret"}}}}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
+func TestValidateBytesValidatesNestedMCPServers(t *testing.T) {
+	source := []byte(`{"mcp":{"servers":{"demo":{"command":"demo-mcp","args":[42],"extra":true}}}}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "mcp.servers.demo.args", result.Errors[0].Field)
+	require.Equal(t, "an array of strings", result.Errors[0].Expected)
+	require.Len(t, result.Warnings, 1)
+	require.Equal(t, "mcp.servers.demo.extra", result.Warnings[0].Field)
+}
+
+func TestValidateBytesReportsUnknownNestedMCPKey(t *testing.T) {
+	result := ValidateBytes([]byte(`{"mcp":{"serverz":{}}}`), "config.json")
+
+	require.Equal(t, "warning", result.Status)
+	require.Empty(t, result.Errors)
+	require.Len(t, result.Warnings, 1)
+	require.Equal(t, "mcp.serverz", result.Warnings[0].Field)
+	require.Equal(t, "servers", result.Warnings[0].Suggestion)
+}
+
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
 	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true,"extra":true}}}`)
 

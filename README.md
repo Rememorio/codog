@@ -134,6 +134,10 @@ Keep credentials in environment variables or local-only config. Do not commit
 API keys, generated sessions, caches, private prompts, or machine-specific
 paths.
 
+MCP servers can be declared with Codog's `mcp_servers` key, Claude-style
+`mcpServers`, or VS Code-style `mcp.servers`; all three are normalized into the
+same runtime server list.
+
 ## Safety Model
 
 Codog separates assistant intent from host execution.
