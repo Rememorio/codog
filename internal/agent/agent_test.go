@@ -1538,6 +1538,169 @@ func TestBudgetCommandSetsShowsAndResetsConfig(t *testing.T) {
 	require.NotContains(t, string(stored), `"max_turns"`)
 }
 
+func TestRuntimePreferenceCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "model missing output format",
+			args:      []string{"model", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "model"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "model invalid output format",
+			args:      []string{"model", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "models unknown option",
+			args:      []string{"models", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "models"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "api missing addr",
+			args:      []string{"api", "--addr", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "api"`, `"option": "--addr"`},
+		},
+		{
+			name:      "api unknown command",
+			args:      []string{"api", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "api"`, `"bogus"`},
+		},
+		{
+			name:      "api-key missing key flag value",
+			args:      []string{"api-key", "--key", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "api-key"`, `"option": "--key"`},
+		},
+		{
+			name:      "api-key set missing key",
+			args:      []string{"api-key", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "api-key set"`, `"argument": "KEY"`},
+		},
+		{
+			name:      "advisor missing path",
+			args:      []string{"advisor", "--path", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "advisor"`, `"option": "--path"`},
+		},
+		{
+			name:      "advisor set missing model",
+			args:      []string{"advisor", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "advisor set"`, `"argument": "MODEL"`},
+		},
+		{
+			name:      "budget missing max tokens",
+			args:      []string{"budget", "--max-tokens", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "budget"`, `"option": "--max-tokens"`},
+		},
+		{
+			name:      "budget set missing value",
+			args:      []string{"budget", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "budget set"`, `"argument": "VALUE"`},
+		},
+		{
+			name:      "budget set unknown field",
+			args:      []string{"budget", "set", "nope", "3"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "budget set"`, `"option": "nope"`},
+		},
+		{
+			name:      "max tokens invalid count",
+			args:      []string{"max-tokens", "0"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "COUNT"`, `"value": "0"`},
+		},
+		{
+			name:      "max turns invalid count",
+			args:      []string{"max-turns", "one"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "COUNT"`, `"value": "one"`},
+		},
+		{
+			name:      "temperature set missing value",
+			args:      []string{"temperature", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "temperature set"`, `"argument": "VALUE"`},
+		},
+		{
+			name:      "temperature invalid value",
+			args:      []string{"temperature", "2"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "temperature"`, `"value": "2"`},
+		},
+		{
+			name:      "reset missing target",
+			args:      []string{"reset", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "reset"`, `"option": "--target"`},
+		},
+		{
+			name:      "reset unknown section",
+			args:      []string{"reset", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "section"`, `"value": "bogus"`},
+		},
+		{
+			name:      "reset status extra",
+			args:      []string{"reset", "status", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "reset status"`, `"extra"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
 func TestUnknownCommandOutputContract(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

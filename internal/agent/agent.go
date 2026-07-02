@@ -503,25 +503,55 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "reset":
-		return app.Reset(rest)
+		if err := app.Reset(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "model":
-		return app.Model(rest)
+		if err := app.Model(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "models":
-		return app.Models(rest)
+		if err := app.Models(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "api":
-		return app.API(rest)
+		if err := app.API(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "api-key":
-		return app.APIKey(rest)
+		if err := app.APIKey(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "advisor":
-		return app.Advisor(rest)
+		if err := app.Advisor(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "budget":
-		return app.Budget(rest)
+		if err := app.Budget(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "max-tokens":
-		return app.MaxTokens(rest)
+		if err := app.MaxTokens(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "temperature":
-		return app.Temperature(rest)
+		if err := app.Temperature(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "max-turns":
-		return app.MaxTurns(rest)
+		if err := app.MaxTurns(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "permissions":
 		if err := app.Permissions(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -1472,6 +1502,8 @@ func (a *App) API(args []string) error {
 	return nil
 }
 
+const apiUsage = "codog api [routes|status] [--addr ADDR] [--output-format text|json]"
+
 func parseAPIArgs(args []string) (apiRequest, error) {
 	req := apiRequest{Action: "routes", Format: "text", Addr: "127.0.0.1:8791"}
 	actionSet := false
@@ -1483,24 +1515,24 @@ func parseAPIArgs(args []string) (apiRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("api output format is required")
+				return req, missingFlagValueError{Command: "api", Flag: arg, Usage: apiUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--addr":
 			index++
-			if index >= len(args) {
-				return req, errors.New("api addr is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "api", Flag: arg, Usage: apiUsage}
 			}
 			req.Addr = args[index]
 		case strings.HasPrefix(arg, "--addr="):
 			req.Addr = strings.TrimPrefix(arg, "--addr=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown api flag %q", arg)
+			return req, unknownOptionError{Command: "api", Option: arg, Usage: apiUsage}
 		default:
 			if actionSet {
-				return req, fmt.Errorf("unexpected api argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "api " + req.Action, Args: []string{arg}, Usage: apiUsage}
 			}
 			switch strings.ToLower(arg) {
 			case "routes", "list", "show":
@@ -1508,14 +1540,16 @@ func parseAPIArgs(args []string) (apiRequest, error) {
 			case "status":
 				req.Action = "status"
 			default:
-				return req, fmt.Errorf("unknown api command %q", arg)
+				return req, unexpectedExtraArgsError{Command: "api", Args: []string{arg}, Usage: apiUsage}
 			}
 			actionSet = true
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "api"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("api", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -27346,6 +27380,19 @@ func parsePositiveInt(value string, label string) (int, error) {
 	return parsed, nil
 }
 
+func parsePositiveIntOption(value string, option string, usage string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || parsed <= 0 {
+		return 0, invalidFlagValueError{
+			Flag:    option,
+			Value:   value,
+			Message: strings.TrimLeft(option, "-") + " must be a positive integer",
+			Usage:   usage,
+		}
+	}
+	return parsed, nil
+}
+
 func (a *App) CodeIntel(args []string) error {
 	if len(args) == 0 || strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
 		return a.Symbols(args)
@@ -29819,6 +29866,11 @@ func (a *App) ResumedModel(args []string) error {
 	return renderModelReport(a.Out, report, req.Format)
 }
 
+const (
+	modelUsage  = "codog model [MODEL] [--output-format text|json]"
+	modelsUsage = "codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]"
+)
+
 func parseModelArgs(args []string) (modelRequest, error) {
 	req := modelRequest{Format: "text"}
 	positionals := []string{}
@@ -29830,20 +29882,22 @@ func parseModelArgs(args []string) (modelRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("model output format is required")
+				return req, missingFlagValueError{Command: "model", Flag: arg, Usage: modelUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown model flag %q", arg)
+			return req, unknownOptionError{Command: "model", Option: arg, Usage: modelUsage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "model"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("model", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	req.Model = strings.TrimSpace(strings.Join(positionals, " "))
 	return req, nil
 }
@@ -29859,20 +29913,22 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("models output format is required")
+				return req, missingFlagValueError{Command: "models", Flag: arg, Usage: modelsUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown models flag %q", arg)
+			return req, unknownOptionError{Command: "models", Option: arg, Usage: modelsUsage}
 		default:
 			positionals = append(positionals, strings.TrimSpace(arg))
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "models"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("models", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) == 0 {
 		return req, nil
 	}
@@ -29895,7 +29951,7 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 				return req, unexpectedExtraArgsError{
 					Command: "models current",
 					Args:    append([]string(nil), positionals[1:]...),
-					Usage:   "codog models current [--output-format text|json]",
+					Usage:   modelsUsage,
 				}
 			}
 			return req, nil
@@ -29907,7 +29963,7 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		return req, unexpectedExtraArgsError{
 			Command: "models " + req.Action,
 			Args:    append([]string(nil), positionals[1:]...),
-			Usage:   "codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]",
+			Usage:   modelsUsage,
 		}
 	}
 	return req, nil
@@ -30316,6 +30372,7 @@ func (a *App) APIKey(args []string) error {
 
 func parseAPIKeyArgs(args []string) (apiKeyRequest, error) {
 	req := apiKeyRequest{Action: "status", Format: "text", Target: "user"}
+	const usage = "codog api-key [status|set|clear] [KEY] [--key KEY] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -30325,91 +30382,93 @@ func parseAPIKeyArgs(args []string) (apiKeyRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("api-key output format is required")
+				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("api-key target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("api-key config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--key":
 			index++
-			if index >= len(args) {
-				return req, errors.New("api key is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "api-key", Flag: arg, Usage: usage}
 			}
 			req.Key = strings.TrimSpace(args[index])
 		case strings.HasPrefix(arg, "--key="):
 			req.Key = strings.TrimSpace(strings.TrimPrefix(arg, "--key="))
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return req, fmt.Errorf("unknown api-key flag %q", arg)
+				return req, unknownOptionError{Command: "api-key", Option: arg, Usage: usage}
 			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "api-key"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("api-key", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		if req.Key != "" {
 			req.Action = "set"
 		}
-		return validateAPIKeyRequest(req)
+		return validateAPIKeyRequest(req, usage)
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
 		req.Action = "status"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "api-key " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 	case "set":
 		req.Action = "set"
 		if req.Key == "" {
 			if len(rest) != 2 {
-				return req, errors.New("usage: codog api-key set KEY [--target user|project|local|--path PATH]")
+				return req, requiredArgumentError{Command: "api-key set", Argument: "KEY", Usage: usage}
 			}
 			req.Key = strings.TrimSpace(rest[1])
 		} else if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "api-key set", Args: rest[1:], Usage: usage}
 		}
 	case "clear", "unset", "reset", "remove":
 		req.Action = "clear"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "api-key " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 	default:
 		req.Action = "set"
 		if req.Key != "" {
-			return req, fmt.Errorf("unexpected api-key argument %q", rest[0])
+			return req, unexpectedExtraArgsError{Command: "api-key", Args: rest, Usage: usage}
 		}
 		if len(rest) != 1 {
-			return req, fmt.Errorf("unexpected api-key argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "api-key", Args: rest[1:], Usage: usage}
 		}
 		req.Key = strings.TrimSpace(rest[0])
 	}
-	return validateAPIKeyRequest(req)
+	return validateAPIKeyRequest(req, usage)
 }
 
-func validateAPIKeyRequest(req apiKeyRequest) (apiKeyRequest, error) {
+func validateAPIKeyRequest(req apiKeyRequest, usage string) (apiKeyRequest, error) {
 	if req.Action == "set" && strings.TrimSpace(req.Key) == "" {
-		return req, errors.New("api key is required")
+		return req, requiredArgumentError{Command: "api-key set", Argument: "KEY", Usage: usage}
 	}
 	if req.Action != "set" && strings.TrimSpace(req.Key) != "" {
-		return req, fmt.Errorf("api key cannot be provided with %s", req.Action)
+		return req, unexpectedExtraArgsError{Command: "api-key " + req.Action, Args: []string{"KEY"}, Usage: usage}
 	}
 	return req, nil
 }
@@ -30548,6 +30607,7 @@ func (a *App) Advisor(args []string) error {
 
 func parseAdvisorArgs(args []string) (advisorRequest, error) {
 	req := advisorRequest{Action: "show", Format: "text", Target: "user"}
+	const usage = "codog advisor [show|set|clear] [MODEL] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -30557,34 +30617,39 @@ func parseAdvisorArgs(args []string) (advisorRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("advisor output format is required")
+				return req, missingFlagValueError{Command: "advisor", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("advisor target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "advisor", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("advisor config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "advisor", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "advisor", Option: arg, Usage: usage}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "advisor"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("advisor", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -30592,17 +30657,17 @@ func parseAdvisorArgs(args []string) (advisorRequest, error) {
 	case "show", "status":
 		req.Action = "show"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected advisor argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "advisor " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 	case "unset", "off", "disable", "disabled", "clear", "reset":
 		req.Action = "clear"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected advisor argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "advisor " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 	case "set":
 		req.Action = "set"
 		if len(rest) < 2 {
-			return req, errors.New("advisor model is required")
+			return req, requiredArgumentError{Command: "advisor set", Argument: "MODEL", Usage: usage}
 		}
 		req.Model = strings.TrimSpace(strings.Join(rest[1:], " "))
 	default:
@@ -30610,7 +30675,7 @@ func parseAdvisorArgs(args []string) (advisorRequest, error) {
 		req.Model = strings.TrimSpace(strings.Join(rest, " "))
 	}
 	if req.Action == "set" && req.Model == "" {
-		return req, errors.New("advisor model is required")
+		return req, requiredArgumentError{Command: "advisor set", Argument: "MODEL", Usage: usage}
 	}
 	return req, nil
 }
@@ -30684,7 +30749,7 @@ func (a *App) Budget(args []string) error {
 	case "show":
 	case "set":
 		if !req.hasSetValues() {
-			return errors.New("budget set requires at least one value")
+			return requiredArgumentError{Command: "budget set", Argument: "VALUE", Usage: budgetUsage}
 		}
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
@@ -30734,6 +30799,8 @@ func (a *App) Budget(args []string) error {
 	return nil
 }
 
+const budgetUsage = "codog budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (req budgetRequest) hasSetValues() bool {
 	return req.MaxTokens != nil || req.MaxTurns != nil
 }
@@ -30749,80 +30816,82 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("budget output format is required")
+				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("budget target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("budget config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--max-tokens" || arg == "--tokens":
 			index++
-			if index >= len(args) {
-				return req, errors.New("budget max tokens is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
 			}
-			value, err := parsePositiveInt(args[index], "budget max tokens")
+			value, err := parsePositiveIntOption(args[index], arg, budgetUsage)
 			if err != nil {
 				return req, err
 			}
 			req.MaxTokens = &value
 		case strings.HasPrefix(arg, "--max-tokens="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-tokens="), "budget max tokens")
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--max-tokens="), "--max-tokens", budgetUsage)
 			if err != nil {
 				return req, err
 			}
 			req.MaxTokens = &value
 		case strings.HasPrefix(arg, "--tokens="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--tokens="), "budget max tokens")
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--tokens="), "--tokens", budgetUsage)
 			if err != nil {
 				return req, err
 			}
 			req.MaxTokens = &value
 		case arg == "--max-turns" || arg == "--turns":
 			index++
-			if index >= len(args) {
-				return req, errors.New("budget max turns is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "budget", Flag: arg, Usage: budgetUsage}
 			}
-			value, err := parsePositiveInt(args[index], "budget max turns")
+			value, err := parsePositiveIntOption(args[index], arg, budgetUsage)
 			if err != nil {
 				return req, err
 			}
 			req.MaxTurns = &value
 		case strings.HasPrefix(arg, "--max-turns="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-turns="), "budget max turns")
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--max-turns="), "--max-turns", budgetUsage)
 			if err != nil {
 				return req, err
 			}
 			req.MaxTurns = &value
 		case strings.HasPrefix(arg, "--turns="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--turns="), "budget max turns")
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--turns="), "--turns", budgetUsage)
 			if err != nil {
 				return req, err
 			}
 			req.MaxTurns = &value
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown budget flag %q", arg)
+			return req, unknownOptionError{Command: "budget", Option: arg, Usage: budgetUsage}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "budget"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("budget", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		if req.hasSetValues() {
 			req.Action = "set"
@@ -30832,10 +30901,10 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 	switch strings.ToLower(strings.TrimSpace(rest[0])) {
 	case "status", "show", "list":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected budget argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: rest[1:], Usage: budgetUsage}
 		}
 		if req.hasSetValues() {
-			return req, errors.New("budget status does not accept set values")
+			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: budgetSetValueArgs(req), Usage: budgetUsage}
 		}
 		req.Action = "show"
 	case "set":
@@ -30845,22 +30914,22 @@ func parseBudgetArgs(args []string) (budgetRequest, error) {
 		}
 	case "reset", "clear", "default":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected budget argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: rest[1:], Usage: budgetUsage}
 		}
 		if req.hasSetValues() {
-			return req, errors.New("budget reset does not accept set values")
+			return req, unexpectedExtraArgsError{Command: "budget " + strings.ToLower(rest[0]), Args: budgetSetValueArgs(req), Usage: budgetUsage}
 		}
 		req.Action = "reset"
 	default:
 		if len(rest) == 1 {
-			value, err := parsePositiveInt(rest[0], "budget max tokens")
+			value, err := parsePositiveIntOption(rest[0], "max-tokens", budgetUsage)
 			if err == nil {
 				req.Action = "set"
 				req.MaxTokens = &value
 				return req, nil
 			}
 		}
-		return req, fmt.Errorf("unknown budget action %q", rest[0])
+		return req, unexpectedExtraArgsError{Command: "budget", Args: []string{rest[0]}, Usage: budgetUsage}
 	}
 	return req, nil
 }
@@ -30870,7 +30939,7 @@ func parseBudgetSetArgs(req *budgetRequest, args []string) error {
 		return nil
 	}
 	if len(args) == 1 {
-		value, err := parsePositiveInt(args[0], "budget max tokens")
+		value, err := parsePositiveIntOption(args[0], "max-tokens", budgetUsage)
 		if err != nil {
 			return err
 		}
@@ -30879,7 +30948,7 @@ func parseBudgetSetArgs(req *budgetRequest, args []string) error {
 	}
 	for index := 0; index < len(args); index += 2 {
 		if index+1 >= len(args) {
-			return fmt.Errorf("budget value is required for %q", args[index])
+			return missingFlagValueError{Command: "budget set", Flag: args[index], Usage: budgetUsage}
 		}
 		if err := assignBudgetSetValue(req, args[index], args[index+1]); err != nil {
 			return err
@@ -30892,21 +30961,32 @@ func assignBudgetSetValue(req *budgetRequest, key string, raw string) error {
 	normalized := strings.ToLower(strings.TrimSpace(strings.TrimLeft(key, "-")))
 	switch normalized {
 	case "max-tokens", "tokens":
-		value, err := parsePositiveInt(raw, "budget max tokens")
+		value, err := parsePositiveIntOption(raw, key, budgetUsage)
 		if err != nil {
 			return err
 		}
 		req.MaxTokens = &value
 	case "max-turns", "turns":
-		value, err := parsePositiveInt(raw, "budget max turns")
+		value, err := parsePositiveIntOption(raw, key, budgetUsage)
 		if err != nil {
 			return err
 		}
 		req.MaxTurns = &value
 	default:
-		return fmt.Errorf("unknown budget set field %q", key)
+		return unknownOptionError{Command: "budget set", Option: key, Usage: budgetUsage}
 	}
 	return nil
+}
+
+func budgetSetValueArgs(req budgetRequest) []string {
+	args := []string{}
+	if req.MaxTokens != nil {
+		args = append(args, "--max-tokens")
+	}
+	if req.MaxTurns != nil {
+		args = append(args, "--max-turns")
+	}
+	return args
 }
 
 func buildBudgetReport(req budgetRequest, previous *budgetSnapshot, cfg config.Config) budgetReport {
@@ -31018,6 +31098,7 @@ func (a *App) ResumedMaxTokens(args []string) error {
 
 func parseMaxTokensArgs(args []string) (maxTokensRequest, error) {
 	req := maxTokensRequest{Format: "text"}
+	const usage = "codog max-tokens [COUNT] [--output-format text|json]"
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -31027,25 +31108,27 @@ func parseMaxTokensArgs(args []string) (maxTokensRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("max-tokens output format is required")
+				return req, missingFlagValueError{Command: "max-tokens", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown max-tokens flag %q", arg)
+			return req, unknownOptionError{Command: "max-tokens", Option: arg, Usage: usage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "max-tokens"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("max-tokens", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) > 1 {
-		return req, errors.New("usage: codog max-tokens [count] [--output-format text|json]")
+		return req, unexpectedExtraArgsError{Command: "max-tokens", Args: positionals[1:], Usage: usage}
 	}
 	if len(positionals) == 1 {
-		value, err := parsePositiveInt(positionals[0], "max_tokens")
+		value, err := parsePositiveIntOption(positionals[0], "COUNT", usage)
 		if err != nil {
 			return req, err
 		}
@@ -31146,6 +31229,7 @@ func (a *App) Temperature(args []string) error {
 
 func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	req := temperatureRequest{Action: "status", Format: "text", Target: "user"}
+	const usage = "codog temperature [status|set|clear] [VALUE] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -31155,37 +31239,39 @@ func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("temperature output format is required")
+				return req, missingFlagValueError{Command: "temperature", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("temperature target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "temperature", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("temperature config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "temperature", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return req, fmt.Errorf("unknown temperature flag %q", arg)
+				return req, unknownOptionError{Command: "temperature", Option: arg, Usage: usage}
 			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "temperature"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("temperature", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -31193,19 +31279,22 @@ func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	case "status", "show":
 		req.Action = "status"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected temperature argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "temperature " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 	case "clear", "unset", "reset", "default":
 		req.Action = "clear"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected temperature argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "temperature " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 	case "set":
 		req.Action = "set"
 		if len(rest) != 2 {
-			return req, errors.New("usage: codog temperature set VALUE [--target user|project|local|--path PATH]")
+			if len(rest) < 2 {
+				return req, requiredArgumentError{Command: "temperature set", Argument: "VALUE", Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "temperature set", Args: rest[2:], Usage: usage}
 		}
-		value, err := parseTemperatureValue(rest[1])
+		value, err := parseTemperatureValue(rest[1], usage)
 		if err != nil {
 			return req, err
 		}
@@ -31213,9 +31302,9 @@ func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	default:
 		req.Action = "set"
 		if len(rest) != 1 {
-			return req, fmt.Errorf("unexpected temperature argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "temperature", Args: rest[1:], Usage: usage}
 		}
-		value, err := parseTemperatureValue(rest[0])
+		value, err := parseTemperatureValue(rest[0], usage)
 		if err != nil {
 			return req, err
 		}
@@ -31224,13 +31313,23 @@ func parseTemperatureArgs(args []string) (temperatureRequest, error) {
 	return req, nil
 }
 
-func parseTemperatureValue(raw string) (float64, error) {
+func parseTemperatureValue(raw string, usage string) (float64, error) {
 	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
-		return 0, errors.New("temperature must be a number between 0 and 1")
+		return 0, invalidFlagValueError{
+			Flag:    "temperature",
+			Value:   raw,
+			Message: "temperature must be a number between 0 and 1",
+			Usage:   usage,
+		}
 	}
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1 {
-		return 0, errors.New("temperature must be between 0 and 1")
+		return 0, invalidFlagValueError{
+			Flag:    "temperature",
+			Value:   raw,
+			Message: "temperature must be between 0 and 1",
+			Usage:   usage,
+		}
 	}
 	return value, nil
 }
@@ -31329,6 +31428,7 @@ func (a *App) ResumedMaxTurns(args []string) error {
 
 func parseMaxTurnsArgs(args []string) (maxTurnsRequest, error) {
 	req := maxTurnsRequest{Format: "text"}
+	const usage = "codog max-turns [COUNT] [--output-format text|json]"
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -31338,25 +31438,27 @@ func parseMaxTurnsArgs(args []string) (maxTurnsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("max-turns output format is required")
+				return req, missingFlagValueError{Command: "max-turns", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown max-turns flag %q", arg)
+			return req, unknownOptionError{Command: "max-turns", Option: arg, Usage: usage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "max-turns"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("max-turns", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) > 1 {
-		return req, errors.New("usage: codog max-turns [count] [--output-format text|json]")
+		return req, unexpectedExtraArgsError{Command: "max-turns", Args: positionals[1:], Usage: usage}
 	}
 	if len(positionals) == 1 {
-		value, err := parsePositiveInt(positionals[0], "max_turns")
+		value, err := parsePositiveIntOption(positionals[0], "COUNT", usage)
 		if err != nil {
 			return req, err
 		}
@@ -32642,6 +32744,7 @@ func (a *App) Reset(args []string) error {
 
 func parseResetArgs(args []string) (resetRequest, error) {
 	req := resetRequest{Action: "status", Section: "all", Format: "text", Target: "user"}
+	const usage = "codog reset [status|SECTION] [--confirm] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -32651,23 +32754,23 @@ func parseResetArgs(args []string) (resetRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("reset output format is required")
+				return req, missingFlagValueError{Command: "reset", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("reset target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "reset", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("reset config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "reset", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -32676,14 +32779,16 @@ func parseResetArgs(args []string) (resetRequest, error) {
 			req.Confirm = true
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return req, fmt.Errorf("unknown reset flag %q", arg)
+				return req, unknownOptionError{Command: "reset", Option: arg, Usage: usage}
 			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "reset"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("reset", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		if req.Confirm {
 			req.Action = "reset"
@@ -32693,12 +32798,12 @@ func parseResetArgs(args []string) (resetRequest, error) {
 	switch strings.ToLower(rest[0]) {
 	case "status", "show", "list":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected reset argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "reset " + strings.ToLower(rest[0]), Args: rest[1:], Usage: usage}
 		}
 		req.Action = "status"
 	default:
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected reset argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "reset", Args: rest[1:], Usage: usage}
 		}
 		req.Action = "reset"
 		req.Section = rest[0]
@@ -32759,7 +32864,12 @@ func resolveResetSection(section string) (string, []string, error) {
 	}
 	canonical, ok := resetSectionAliases[normalized]
 	if !ok {
-		return "", nil, fmt.Errorf("unknown reset section %q", section)
+		return "", nil, invalidFlagValueError{
+			Flag:    "section",
+			Value:   section,
+			Message: "reset section is not recognized",
+			Usage:   "codog reset [status|SECTION] [--confirm] [--target user|project|local] [--path PATH] [--output-format text|json]",
+		}
 	}
 	if canonical == "all" {
 		return canonical, nil, nil
