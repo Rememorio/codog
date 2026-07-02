@@ -2202,6 +2202,16 @@ func risky(value any) {
 	require.True(t, resumedAPIKey.Configured)
 	require.NotContains(t, out, "test-key")
 
+	out, err = runResumedJSON("/api-key", "set", "secret")
+	require.NoError(t, err)
+	var resumedAPIKeySet apiKeyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAPIKeySet))
+	require.Equal(t, "api_key", resumedAPIKeySet.Kind)
+	require.Equal(t, "set", resumedAPIKeySet.Action)
+	require.True(t, resumedAPIKeySet.Configured)
+	require.NotEmpty(t, resumedAPIKeySet.Path)
+	require.NotContains(t, out, "secret")
+
 	out, err = runResumedJSON("/providers")
 	require.NoError(t, err)
 	var resumedProviders providersReport
@@ -2209,6 +2219,18 @@ func risky(value any) {
 	require.Equal(t, "providers", resumedProviders.Kind)
 	require.Equal(t, "status", resumedProviders.Action)
 	require.Equal(t, "claude-test", resumedProviders.Active.Model)
+
+	out, err = runResumedJSON("/providers", "set", "anthropic")
+	require.NoError(t, err)
+	var resumedProviderSet providerSetReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedProviderSet))
+	require.Equal(t, "provider", resumedProviderSet.Kind)
+	require.Equal(t, "set", resumedProviderSet.Action)
+	require.Equal(t, "anthropic", resumedProviderSet.Provider)
+	require.Equal(t, config.DefaultBaseURL, resumedProviderSet.BaseURL)
+	require.Equal(t, config.DefaultModel, resumedProviderSet.Model)
+	require.NotEmpty(t, resumedProviderSet.Path)
+	require.NotEmpty(t, resumedProviderSet.Changes)
 
 	out, err = runResumedJSON("/oauth")
 	require.NoError(t, err)
@@ -2265,6 +2287,18 @@ func risky(value any) {
 	require.Equal(t, 1000, resumedBudget.MaxTokens)
 	require.Equal(t, 3, resumedBudget.MaxTurns)
 
+	out, err = runResumedJSON("/budget", "set", "--max-tokens", "2000")
+	require.NoError(t, err)
+	var resumedBudgetSet budgetReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBudgetSet))
+	require.Equal(t, "budget", resumedBudgetSet.Kind)
+	require.Equal(t, "set", resumedBudgetSet.Action)
+	require.Equal(t, 2000, resumedBudgetSet.MaxTokens)
+	require.Equal(t, 3, resumedBudgetSet.MaxTurns)
+	require.NotNil(t, resumedBudgetSet.Previous)
+	require.Equal(t, 1000, resumedBudgetSet.Previous.MaxTokens)
+	require.NotEmpty(t, resumedBudgetSet.Path)
+
 	out, err = runResumedJSON("/max-tokens")
 	require.NoError(t, err)
 	var resumedMaxTokens maxTokensReport
@@ -2299,6 +2333,17 @@ func risky(value any) {
 	require.Equal(t, "status", resumedTemperature.Action)
 	require.True(t, resumedTemperature.Configured)
 
+	out, err = runResumedJSON("/temperature", "set", "0.2")
+	require.NoError(t, err)
+	var resumedTemperatureSet temperatureReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTemperatureSet))
+	require.Equal(t, "temperature", resumedTemperatureSet.Kind)
+	require.Equal(t, "set", resumedTemperatureSet.Action)
+	require.True(t, resumedTemperatureSet.Configured)
+	require.NotNil(t, resumedTemperatureSet.Temperature)
+	require.InDelta(t, 0.2, *resumedTemperatureSet.Temperature, 0.0001)
+	require.NotEmpty(t, resumedTemperatureSet.Path)
+
 	out, err = runResumedJSON("/rate-limit")
 	require.NoError(t, err)
 	var resumedRateLimit rateLimitReport
@@ -2306,6 +2351,17 @@ func risky(value any) {
 	require.Equal(t, "rate_limit", resumedRateLimit.Kind)
 	require.Equal(t, "show", resumedRateLimit.Action)
 	require.Equal(t, 4, resumedRateLimit.MaxRetries)
+
+	out, err = runResumedJSON("/rate-limit", "set", "--max-retries", "2")
+	require.NoError(t, err)
+	var resumedRateLimitSet rateLimitReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRateLimitSet))
+	require.Equal(t, "rate_limit", resumedRateLimitSet.Kind)
+	require.Equal(t, "set", resumedRateLimitSet.Action)
+	require.Equal(t, 2, resumedRateLimitSet.MaxRetries)
+	require.NotNil(t, resumedRateLimitSet.Previous)
+	require.Equal(t, 4, resumedRateLimitSet.Previous.MaxRetries)
+	require.NotEmpty(t, resumedRateLimitSet.Path)
 
 	out, err = runResumedJSON("/rate-limit-options")
 	require.NoError(t, err)
@@ -2323,6 +2379,16 @@ func risky(value any) {
 	require.Equal(t, "workspace-write", resumedPermissions.PermissionMode)
 	require.Equal(t, []string{"read_file"}, resumedPermissions.PermissionRules.Allow)
 
+	out, err = runResumedJSON("/permissions", "read-only")
+	require.NoError(t, err)
+	var resumedPermissionsSet permissionsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPermissionsSet))
+	require.Equal(t, "permissions", resumedPermissionsSet.Kind)
+	require.Equal(t, "set", resumedPermissionsSet.Action)
+	require.Equal(t, "read-only", resumedPermissionsSet.PermissionMode)
+	require.Equal(t, "workspace-write", resumedPermissionsSet.PreviousMode)
+	require.NotEmpty(t, resumedPermissionsSet.Path)
+
 	out, err = runResumedJSON("/allowed-tools")
 	require.NoError(t, err)
 	var resumedAllowedTools allowedToolsReport
@@ -2330,6 +2396,16 @@ func risky(value any) {
 	require.Equal(t, "allowed_tools", resumedAllowedTools.Kind)
 	require.Equal(t, "list", resumedAllowedTools.Action)
 	require.Equal(t, []string{"read_file"}, resumedAllowedTools.Rules)
+
+	out, err = runResumedJSON("/allowed-tools", "add", "bash")
+	require.NoError(t, err)
+	var resumedAllowedToolsAdd allowedToolsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAllowedToolsAdd))
+	require.Equal(t, "allowed_tools", resumedAllowedToolsAdd.Kind)
+	require.Equal(t, "add", resumedAllowedToolsAdd.Action)
+	require.Equal(t, []string{"read_file", "bash"}, resumedAllowedToolsAdd.Rules)
+	require.Equal(t, 2, resumedAllowedToolsAdd.Count)
+	require.NotEmpty(t, resumedAllowedToolsAdd.Path)
 
 	out, err = runResumedJSON("/output-style")
 	require.NoError(t, err)
@@ -3434,14 +3510,7 @@ func risky(value any) {
 		Args    []string
 		Report  string
 	}{
-		{Command: "/api-key", Args: []string{"set", "secret"}, Report: "/api-key set"},
-		{Command: "/providers", Args: []string{"set", "anthropic"}, Report: "/providers set"},
 		{Command: "/profile", Args: []string{"set", "work"}, Report: "/profile set"},
-		{Command: "/budget", Args: []string{"set", "--max-tokens", "2000"}, Report: "/budget set"},
-		{Command: "/temperature", Args: []string{"set", "0.2"}, Report: "/temperature set"},
-		{Command: "/rate-limit", Args: []string{"set", "--max-retries", "2"}, Report: "/rate-limit set"},
-		{Command: "/permissions", Args: []string{"read-only"}, Report: "/permissions set"},
-		{Command: "/allowed-tools", Args: []string{"add", "bash"}, Report: "/allowed-tools add"},
 		{Command: "/oauth", Args: []string{"pkce"}, Report: "/oauth pkce"},
 		{Command: "/oauth", Args: []string{"discover", "https://example.test"}, Report: "/oauth discover"},
 		{Command: "/oauth", Args: []string{"provider", "save", "work", "https://example.test", "client"}, Report: "/oauth provider save"},

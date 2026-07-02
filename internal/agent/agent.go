@@ -24537,24 +24537,10 @@ func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedAPIKeySlash(args []string, format string) error {
-	req, err := parseAPIKeyArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/api-key", req.Action), format)
-	}
 	return a.APIKey(args)
 }
 
 func (a *App) runResumedProvidersSlash(args []string, format string) error {
-	req, err := parseProviderCommandArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action == "set" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/providers", req.Action), format)
-	}
 	return a.Providers(args)
 }
 
@@ -24615,13 +24601,6 @@ func (a *App) runResumedProfileSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedBudgetSlash(args []string, format string) error {
-	req, err := parseBudgetArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "show" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/budget", req.Action), format)
-	}
 	return a.Budget(args)
 }
 
@@ -24695,49 +24674,19 @@ func (a *App) runResumedKeybindingsSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedTemperatureSlash(args []string, format string) error {
-	req, err := parseTemperatureArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/temperature", req.Action), format)
-	}
 	return a.Temperature(args)
 }
 
 func (a *App) runResumedRateLimitSlash(args []string, format string) error {
-	req, err := parseRateLimitArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "show" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/rate-limit", req.Action), format)
-	}
 	return a.RateLimit(args)
 }
 
 func (a *App) runResumedPermissionsSlash(args []string, format string) error {
-	req, err := parsePermissionsArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "show" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/permissions", req.Action), format)
-	}
 	return a.Permissions(args)
 }
 
 func (a *App) runResumedAllowedToolsSlash(args []string, format string) error {
-	req, err := parseAllowedToolsArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "list", "show":
-		return a.AllowedTools(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/allowed-tools", req.Action), format)
-	}
+	return a.AllowedTools(args)
 }
 
 func resumedSlashCommandLabel(base string, action string) string {
@@ -30907,6 +30856,8 @@ type allowedToolsRequest struct {
 	Action string
 	Format string
 	Tools  []string
+	Target string
+	Path   string
 }
 
 type allowedToolsReport struct {
@@ -30915,6 +30866,8 @@ type allowedToolsReport struct {
 	Status string   `json:"status"`
 	Count  int      `json:"count"`
 	Rules  []string `json:"rules"`
+	Target string   `json:"target,omitempty"`
+	Path   string   `json:"path,omitempty"`
 }
 
 func (a *App) AllowedTools(args []string) error {
@@ -30936,18 +30889,35 @@ func (a *App) AllowedTools(args []string) error {
 	default:
 		return fmt.Errorf("unknown allowed-tools action: %s", req.Action)
 	}
+	path := ""
+	if req.Action == "add" || req.Action == "remove" || req.Action == "clear" {
+		var err error
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if len(a.Config.PermissionRules.Allow) == 0 {
+			if _, err := config.UnsetFileValue(path, "permission_rules.allow"); err != nil {
+				return err
+			}
+		} else if _, err := config.SetFileValue(path, "permission_rules.allow", a.Config.PermissionRules.Allow); err != nil {
+			return err
+		}
+	}
 	report := allowedToolsReport{
 		Kind:   "allowed_tools",
 		Action: req.Action,
 		Status: "ok",
 		Count:  len(a.Config.PermissionRules.Allow),
 		Rules:  append([]string(nil), a.Config.PermissionRules.Allow...),
+		Target: req.Target,
+		Path:   path,
 	}
 	return renderAllowedToolsReport(a.Out, report, req.Format)
 }
 
 func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
-	req := allowedToolsRequest{Action: "list", Format: "text"}
+	req := allowedToolsRequest{Action: "list", Format: "text", Target: "user"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -30962,6 +30932,22 @@ func parseAllowedToolsArgs(args []string) (allowedToolsRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("allowed-tools target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("allowed-tools config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown allowed-tools flag %q", arg)
 		default:
