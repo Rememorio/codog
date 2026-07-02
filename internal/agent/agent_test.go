@@ -311,9 +311,9 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, resumeLine, "/capabilities")
 	require.Contains(t, resumeLine, "/commit")
 	require.Contains(t, resumeLine, "/listen")
+	require.Contains(t, resumeLine, "/new")
 	require.Contains(t, resumeLine, "/notebook-edit")
 	require.Contains(t, resumeLine, "/ultraplan")
-	require.NotContains(t, resumeLine, "/new")
 	require.NotContains(t, resumeLine, "/approve")
 	require.NotContains(t, resumeLine, "/quit")
 	out.Reset()
@@ -2355,7 +2355,18 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
-	for _, command := range []string{"/new", "/quit"} {
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/new"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "interactive_only", slashReport.ErrorKind)
+	require.Equal(t, "/new", slashReport.Command)
+	require.Contains(t, slashReport.Hint, "--resume")
+
+	for _, command := range []string{"/quit"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
@@ -5597,6 +5608,20 @@ func risky(value any) {
 	opened, err = store.Open("resume-slash")
 	require.NoError(t, err)
 	require.Len(t, opened.Messages, 3)
+
+	require.NoError(t, store.Append("resume-new", anthropic.TextMessage("user", "new one")))
+	require.NoError(t, store.Append("resume-new", anthropic.TextMessage("assistant", "new two")))
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-new", "--output-format", "json", "/new", "--confirm"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var newReport clearResumedReport
+	require.NoError(t, json.Unmarshal([]byte(out), &newReport))
+	require.Equal(t, "clear", newReport.Kind)
+	require.Equal(t, "clear_session", newReport.Action)
+	require.Equal(t, "resume-new", newReport.SessionID)
+	require.Equal(t, 2, newReport.RemovedMessages)
+	require.FileExists(t, newReport.Backup)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/clear", "--confirm"}, config.FlagOverrides{})

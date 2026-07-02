@@ -321,6 +321,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/exit_plan_mode")
 	require.Contains(t, names, "/hooks")
 	require.Contains(t, names, "/models")
+	require.Contains(t, names, "/new")
 	require.Contains(t, names, "/node")
 	require.Contains(t, names, "/python")
 	require.Contains(t, names, "/run")

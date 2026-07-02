@@ -25004,7 +25004,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedTagSlash(resumeSlashArgs("tag", args, format), format)
 	case "/stash":
 		return a.runResumedStashSlash(resumeSlashArgs("stash", args, format), format)
-	case "/clear":
+	case "/clear", "/new":
 		return a.ClearResumedSession(resumeSlashArgs("clear", args, format), resumed)
 	case "/compact":
 		return a.Compact(resumeSlashArgs("compact", args, format), resumed)
@@ -26122,7 +26122,7 @@ func bareApprovalSlashName(command string) string {
 
 func directSlashResumeSafe(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/clear", "/compact", "/conversation", "/resume":
+	case "/clear", "/new", "/compact", "/conversation", "/resume":
 		return true
 	default:
 		return false

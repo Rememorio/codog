@@ -355,6 +355,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/model":              true,
 	"/models":             true,
 	"/notifications":      true,
+	"/new":                true,
 	"/notebook-edit":      true,
 	"/notebook-read":      true,
 	"/node":               true,
