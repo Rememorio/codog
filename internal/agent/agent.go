@@ -105,6 +105,7 @@ import (
 
 const version = "0.1.0"
 const maxSystemGitStatusChars = 2000
+const maxDynamicSkillContextPaths = 64
 
 type App struct {
 	Config     config.Config
@@ -120,6 +121,7 @@ type App struct {
 	ConfigLoadError     string
 	ConfigLoadErrorKind string
 	mcpToolsLoaded      bool
+	dynamicSkillPaths   []string
 }
 
 func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrides) error {
@@ -23993,7 +23995,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		SessionID:        sess.ID,
 		Out:              firstWriter(opts.Out, a.Out),
 		System:           a.systemPromptForInput(input),
-		OnToolUse:        a.auditToolUse(sess.ID),
+		OnToolUse:        a.onToolUse(sess.ID),
 	}
 	result, err := runner.Run(ctx, sess.Messages, modelInput)
 	if err != nil {
@@ -25063,6 +25065,7 @@ func (a *App) handleClearSlash(ctx context.Context, args []string, sess *session
 		return
 	}
 	*sess = *next
+	a.dynamicSkillPaths = nil
 	a.writeWorkerState("repl", "idle", sess, "")
 	fmt.Fprintf(a.Err, "session cleared: %s\n", sess.ID)
 }
@@ -25094,6 +25097,7 @@ func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *sessio
 		return
 	}
 	*sess = *next
+	a.dynamicSkillPaths = nil
 	a.writeWorkerState("repl", "idle", sess, "")
 	fmt.Fprintf(a.Err, "session resumed: %s\n", sess.ID)
 }
@@ -27001,7 +27005,7 @@ func (a *App) DebugToolCall(ctx context.Context, args []string, overrides config
 	if execErr != nil {
 		report.Error = execErr.Error()
 	}
-	a.auditToolUse(req.SessionID)(runloop.ToolCall{
+	a.onToolUse(req.SessionID)(runloop.ToolCall{
 		Name:    info.Name,
 		Input:   string(req.Input),
 		Output:  output,
@@ -37458,6 +37462,103 @@ func (a *App) planModeActive() bool {
 	return err == nil && state.Active
 }
 
+func (a *App) onToolUse(sessionID string) func(runloop.ToolCall) {
+	audit := a.auditToolUse(sessionID)
+	return func(call runloop.ToolCall) {
+		a.recordToolContextPaths(call)
+		if audit != nil {
+			audit(call)
+		}
+	}
+}
+
+func (a *App) recordToolContextPaths(call runloop.ToolCall) {
+	if a == nil || call.IsError {
+		return
+	}
+	for _, path := range toolContextPaths(call) {
+		a.dynamicSkillPaths = appendRecentUniquePath(a.dynamicSkillPaths, path, maxDynamicSkillContextPaths)
+	}
+}
+
+func toolContextPaths(call runloop.ToolCall) []string {
+	if strings.TrimSpace(call.Input) == "" {
+		return nil
+	}
+	var payload struct {
+		Path         string `json:"path"`
+		FilePath     string `json:"file_path"`
+		NotebookPath string `json:"notebook_path"`
+		Pattern      string `json:"pattern"`
+	}
+	if err := json.Unmarshal([]byte(call.Input), &payload); err != nil {
+		return nil
+	}
+	switch tools.CanonicalToolName(call.Name) {
+	case "read_file", "write_file", "edit_file", "multi_edit":
+		return compactPathValues(firstNonEmpty(payload.Path, payload.FilePath))
+	case "notebook_read", "notebook_edit":
+		return compactPathValues(payload.NotebookPath)
+	case "ls":
+		return compactPathValues(firstNonEmpty(payload.Path, "."))
+	case "glob":
+		return compactPathValues(firstNonEmpty(payload.Path, globContextPath(payload.Pattern)))
+	default:
+		return nil
+	}
+}
+
+func globContextPath(pattern string) string {
+	pattern = strings.TrimSpace(strings.ReplaceAll(pattern, "\\", "/"))
+	if pattern == "" || strings.HasPrefix(pattern, "/") {
+		return ""
+	}
+	parts := strings.Split(pattern, "/")
+	fixed := []string{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." || strings.ContainsAny(part, "*?[{") {
+			break
+		}
+		fixed = append(fixed, part)
+	}
+	return strings.Join(fixed, "/")
+}
+
+func compactPathValues(values ...string) []string {
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func appendRecentUniquePath(values []string, value string, limit int) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	out := make([]string, 0, len(values)+1)
+	for _, existing := range values {
+		if strings.EqualFold(existing, value) {
+			continue
+		}
+		out = append(out, existing)
+	}
+	out = append(out, value)
+	if limit > 0 && len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out
+}
+
 func (a *App) auditToolUse(sessionID string) func(runloop.ToolCall) {
 	store := audit.NewStore(a.Config.ConfigHome)
 	return func(call runloop.ToolCall) {
@@ -37642,6 +37743,7 @@ func (a *App) pathMatchedSkills(input string) []skills.Skill {
 func (a *App) skillContextPaths(input string) []string {
 	paths := []string{}
 	paths = append(paths, promptrefs.References(input)...)
+	paths = append(paths, a.dynamicSkillPaths...)
 	if state, err := focus.Load(a.Workspace); err == nil {
 		for _, entry := range state.Entries {
 			paths = append(paths, entry.Path)

@@ -51,6 +51,7 @@ import (
 	"github.com/Rememorio/codog/internal/perfissue"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/sessionname"
@@ -4805,15 +4806,19 @@ func TestClearAndResumeSlashSwitchSessionState(t *testing.T) {
 		Err:       &errOut,
 	}
 
+	app.dynamicSkillPaths = []string{"src/app/main.go"}
 	require.True(t, app.handleSlash(context.Background(), "/clear", sess))
 	require.NotEqual(t, "source", sess.ID)
 	require.Empty(t, sess.Messages)
+	require.Empty(t, app.dynamicSkillPaths)
 	require.Contains(t, errOut.String(), "session cleared:")
 	errOut.Reset()
 
+	app.dynamicSkillPaths = []string{"src/app/main.go"}
 	require.True(t, app.handleSlash(context.Background(), "/resume source", sess))
 	require.Equal(t, "source", sess.ID)
 	require.Len(t, sess.Messages, 1)
+	require.Empty(t, app.dynamicSkillPaths)
 	require.Contains(t, errOut.String(), "session resumed: source")
 }
 
@@ -11782,6 +11787,36 @@ Nested app review body.
 
 	prompt = app.systemPromptForInput("inspect @other/main.go")
 	require.NotContains(t, prompt, "Nested app review body.")
+}
+
+func TestSystemPromptDiscoversNestedSkillsAfterToolContextPaths(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "app", ".claude", "skills", "local-review"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "app"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "app", "main.go"), []byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "app", ".claude", "skills", "local-review", "SKILL.md"), []byte("Tool-discovered skill body."), 0o644))
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+	}
+
+	require.NotContains(t, app.systemPromptForInput("continue"), "Tool-discovered skill body.")
+
+	app.recordToolContextPaths(runloop.ToolCall{Name: "read_file", Input: `{"path":"src/app/main.go"}`})
+	require.Contains(t, app.systemPromptForInput("continue"), "Tool-discovered skill body.")
+
+	app.recordToolContextPaths(runloop.ToolCall{Name: "read_file", Input: `{"path":"other/main.go"}`, IsError: true})
+	require.NotContains(t, app.dynamicSkillPaths, "other/main.go")
+}
+
+func TestToolContextPathsExtractsFilesystemToolInputs(t *testing.T) {
+	require.Equal(t, []string{"src/app/main.go"}, toolContextPaths(runloop.ToolCall{Name: "Read", Input: `{"file_path":"src/app/main.go"}`}))
+	require.Equal(t, []string{"notebooks/demo.ipynb"}, toolContextPaths(runloop.ToolCall{Name: "notebook_read", Input: `{"notebook_path":"notebooks/demo.ipynb"}`}))
+	require.Equal(t, []string{"src/app"}, toolContextPaths(runloop.ToolCall{Name: "glob", Input: `{"pattern":"src/app/**/*.go"}`}))
+	require.Equal(t, []string{"."}, toolContextPaths(runloop.ToolCall{Name: "ls", Input: `{}`}))
+	require.Nil(t, toolContextPaths(runloop.ToolCall{Name: "bash", Input: `{"command":"cat src/app/main.go"}`}))
+	require.Nil(t, toolContextPaths(runloop.ToolCall{Name: "read_file", Input: `{`}))
 }
 
 func TestSkillFrontmatterControlsInvocationAndSystemPrompt(t *testing.T) {
