@@ -260,7 +260,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			if err != nil {
 				return nil
 			}
-			return runSetupHookPayload(ctx, hooks.Runner{Config: cfg.Hooks, Workspace: workspace, ConfigHome: cfg.ConfigHome, Disabled: cfg.EffectiveDisableAllHooks()}, workspace, "init", report.Status)
+			return runSetupHookPayload(ctx, hooks.Runner{
+				Config:                 cfg.Hooks,
+				Workspace:              workspace,
+				ConfigHome:             cfg.ConfigHome,
+				Disabled:               cfg.EffectiveDisableAllHooks(),
+				AllowedHTTPHookURLs:    cfg.AllowedHTTPHookURLs,
+				HTTPHookAllowedEnvVars: cfg.HTTPHookAllowedEnvVars,
+			}, workspace, "init", report.Status)
 		})
 	}
 	if command == "state" {
@@ -11644,12 +11651,14 @@ func (a *App) Hooks(ctx context.Context, args []string) error {
 		hookList := hooks.HooksForPayload(a.Config.Hooks, payload)
 		timeout := time.Duration(req.TimeoutMS) * time.Millisecond
 		runner := hooks.Runner{
-			Config:       a.Config.Hooks,
-			Workspace:    a.Workspace,
-			ConfigHome:   a.Config.ConfigHome,
-			Timeout:      timeout,
-			Disabled:     a.Config.EffectiveDisableAllHooks(),
-			PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
+			Config:                 a.Config.Hooks,
+			Workspace:              a.Workspace,
+			ConfigHome:             a.Config.ConfigHome,
+			Timeout:                timeout,
+			Disabled:               a.Config.EffectiveDisableAllHooks(),
+			AllowedHTTPHookURLs:    a.Config.AllowedHTTPHookURLs,
+			HTTPHookAllowedEnvVars: a.Config.HTTPHookAllowedEnvVars,
+			PromptRunner:           a.hookPromptRunner(a.effectiveConfig()),
 		}
 		report, runErr := runner.RunHooks(ctx, hookList, payload)
 		if req.Format == "json" {
@@ -42630,11 +42639,13 @@ func sessionStartSource(overrides config.FlagOverrides) string {
 func (a *App) lifecycleHookRunner() hooks.Runner {
 	cfg := a.effectiveConfig()
 	return hooks.Runner{
-		Config:       cfg.Hooks,
-		Workspace:    a.Workspace,
-		ConfigHome:   cfg.ConfigHome,
-		Disabled:     cfg.EffectiveDisableAllHooks(),
-		PromptRunner: a.hookPromptRunner(cfg),
+		Config:                 cfg.Hooks,
+		Workspace:              a.Workspace,
+		ConfigHome:             cfg.ConfigHome,
+		Disabled:               cfg.EffectiveDisableAllHooks(),
+		AllowedHTTPHookURLs:    cfg.AllowedHTTPHookURLs,
+		HTTPHookAllowedEnvVars: cfg.HTTPHookAllowedEnvVars,
+		PromptRunner:           a.hookPromptRunner(cfg),
 	}
 }
 
@@ -43033,13 +43044,15 @@ func (a *App) checkSessionWatchPaths(ctx context.Context, req hooksRequest, watc
 	}
 	report.Status = "changed"
 	runner := hooks.Runner{
-		Config:       a.Config.Hooks,
-		Workspace:    a.Workspace,
-		ConfigHome:   a.Config.ConfigHome,
-		SessionID:    watched.SessionID,
-		Timeout:      time.Duration(req.TimeoutMS) * time.Millisecond,
-		Disabled:     a.Config.EffectiveDisableAllHooks(),
-		PromptRunner: a.hookPromptRunner(a.effectiveConfig()),
+		Config:                 a.Config.Hooks,
+		Workspace:              a.Workspace,
+		ConfigHome:             a.Config.ConfigHome,
+		SessionID:              watched.SessionID,
+		Timeout:                time.Duration(req.TimeoutMS) * time.Millisecond,
+		Disabled:               a.Config.EffectiveDisableAllHooks(),
+		AllowedHTTPHookURLs:    a.Config.AllowedHTTPHookURLs,
+		HTTPHookAllowedEnvVars: a.Config.HTTPHookAllowedEnvVars,
+		PromptRunner:           a.hookPromptRunner(a.effectiveConfig()),
 	}
 	var firstErr error
 	for _, change := range report.Changes {

@@ -102,6 +102,8 @@ var topLevelFields = []fieldSpec{
 	{"cleanupPeriodDays", FieldNumber},
 	{"respectGitignore", FieldBool},
 	{"disableAllHooks", FieldBool},
+	{"allowedHttpHookUrls", FieldStringArray},
+	{"httpHookAllowedEnvVars", FieldStringArray},
 	{"statusLine", FieldObject},
 	{"worktree", FieldObject},
 	{"enableAllProjectMcpServers", FieldBool},

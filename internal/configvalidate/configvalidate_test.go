@@ -160,6 +160,19 @@ func TestValidateBytesValidatesDisableAllHooksType(t *testing.T) {
 	require.Equal(t, "a boolean", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesHTTPHookPolicyTypes(t *testing.T) {
+	result := ValidateBytes([]byte(`{"allowedHttpHookUrls":"https://hooks.example.test","httpHookAllowedEnvVars":[42]}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 2)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "an array of strings", errorsByField["allowedHttpHookUrls"])
+	require.Equal(t, "an array of strings", errorsByField["httpHookAllowedEnvVars"])
+}
+
 func TestValidateBytesValidatesStatusLineTypes(t *testing.T) {
 	result := ValidateBytes([]byte(`{"statusLine":{"type":42,"command":true,"padding":"2"}}`), "config.json")
 

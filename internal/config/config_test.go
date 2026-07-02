@@ -306,6 +306,32 @@ func TestLoadMergesTrustedRootsByConfigPrecedence(t *testing.T) {
 	require.Equal(t, []string{"/repo/user", "/repo/shared", "/repo/project", "/repo/local"}, cfg.TrustedRoots)
 }
 
+func TestLoadMergesHTTPHookPolicyByConfigPrecedence(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{
+		"allowedHttpHookUrls":["https://hooks.example.test/*","https://shared.example.test/hook"],
+		"httpHookAllowedEnvVars":["HOOK_TOKEN","SHARED_TOKEN"]
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{
+		"allowedHttpHookUrls":["https://shared.example.test/hook","https://project.example.test/hook"],
+		"httpHookAllowedEnvVars":["PROJECT_TOKEN","HOOK_TOKEN"]
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.AllowedHTTPHookURLs)
+	require.NotNil(t, cfg.HTTPHookAllowedEnvVars)
+	require.Equal(t, []string{"https://hooks.example.test/*", "https://shared.example.test/hook", "https://project.example.test/hook"}, *cfg.AllowedHTTPHookURLs)
+	require.Equal(t, []string{"HOOK_TOKEN", "SHARED_TOKEN", "PROJECT_TOKEN"}, *cfg.HTTPHookAllowedEnvVars)
+}
+
 func TestLoadCleanupPeriodDaysDistinguishesUnsetAndZero(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

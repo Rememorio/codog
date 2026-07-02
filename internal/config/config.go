@@ -502,6 +502,8 @@ type Config struct {
 	CleanupPeriodDays          *int                       `json:"cleanupPeriodDays,omitempty"`
 	RespectGitignore           *bool                      `json:"respectGitignore,omitempty"`
 	DisableAllHooks            *bool                      `json:"disableAllHooks,omitempty"`
+	AllowedHTTPHookURLs        *[]string                  `json:"allowedHttpHookUrls,omitempty"`
+	HTTPHookAllowedEnvVars     *[]string                  `json:"httpHookAllowedEnvVars,omitempty"`
 	StatusLine                 *StatusLineConfig          `json:"statusLine,omitempty"`
 	Worktree                   WorktreeConfig             `json:"worktree,omitempty"`
 	EnableAllProjectMCPServers *bool                      `json:"enableAllProjectMcpServers,omitempty"`
@@ -1391,6 +1393,14 @@ func merge(dst *Config, src Config) {
 		disabled := *src.DisableAllHooks
 		dst.DisableAllHooks = &disabled
 	}
+	if src.AllowedHTTPHookURLs != nil {
+		allowed := mergeStringLists(stringListPointerValue(dst.AllowedHTTPHookURLs), *src.AllowedHTTPHookURLs)
+		dst.AllowedHTTPHookURLs = &allowed
+	}
+	if src.HTTPHookAllowedEnvVars != nil {
+		allowed := mergeStringLists(stringListPointerValue(dst.HTTPHookAllowedEnvVars), *src.HTTPHookAllowedEnvVars)
+		dst.HTTPHookAllowedEnvVars = &allowed
+	}
 	if src.StatusLine != nil {
 		dst.StatusLine = cloneStatusLineConfig(src.StatusLine)
 	}
@@ -1696,6 +1706,13 @@ func mergeStringLists(base []string, overlay []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func stringListPointerValue(values *[]string) []string {
+	if values == nil {
+		return nil
+	}
+	return *values
 }
 
 func stringListContains(values []string, needle string) bool {

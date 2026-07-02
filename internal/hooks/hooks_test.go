@@ -207,6 +207,57 @@ func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	require.Equal(t, "done", gotPayload.Output)
 }
 
+func TestRunHooksBlocksHTTPPayloadOutsideAllowedURLs(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	allowed := []string{"https://allowed.example.test/*"}
+
+	report, err := Runner{Workspace: t.TempDir(), AllowedHTTPHookURLs: &allowed}.RunHooks(context.Background(), []config.HookCommand{{
+		Type: "http",
+		URL:  server.URL,
+	}}, Payload{Event: "post_tool_use", Tool: "bash"})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "http hook URL is not allowed")
+	require.False(t, called)
+	require.Len(t, report.Results, 1)
+	require.False(t, report.Results[0].Success)
+	require.Equal(t, -1, report.Results[0].ExitCode)
+	require.Equal(t, server.URL, report.Results[0].URL)
+}
+
+func TestRunHooksIntersectsHTTPHeaderEnvWithGlobalAllowlist(t *testing.T) {
+	t.Setenv("HOOK_TOKEN", "secret-token")
+	t.Setenv("SHARED_TOKEN", "shared-token")
+	var gotAllowed string
+	var gotShared string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAllowed = r.Header.Get("X-Allowed")
+		gotShared = r.Header.Get("X-Shared")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(server.Close)
+	allowedURLs := []string{server.URL + "/*"}
+	allowedEnv := []string{"HOOK_TOKEN"}
+
+	report, err := Runner{Workspace: t.TempDir(), AllowedHTTPHookURLs: &allowedURLs, HTTPHookAllowedEnvVars: &allowedEnv}.RunHooks(context.Background(), []config.HookCommand{{
+		Type:           "http",
+		URL:            server.URL + "/hook",
+		Headers:        map[string]string{"X-Allowed": "$HOOK_TOKEN", "X-Shared": "$SHARED_TOKEN"},
+		AllowedEnvVars: []string{"HOOK_TOKEN", "SHARED_TOKEN"},
+	}}, Payload{Event: "post_tool_use", Tool: "bash"})
+
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.True(t, report.Results[0].Success)
+	require.Equal(t, "secret-token", gotAllowed)
+	require.Empty(t, gotShared)
+}
+
 func TestRunHooksExecutesPromptHookWithRenderedArguments(t *testing.T) {
 	var got PromptRequest
 	report, err := Runner{

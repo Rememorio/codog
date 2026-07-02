@@ -21,13 +21,15 @@ import (
 )
 
 type Runner struct {
-	Config       config.HookConfig
-	Workspace    string
-	ConfigHome   string
-	SessionID    string
-	Timeout      time.Duration
-	Disabled     bool
-	PromptRunner PromptRunner
+	Config                 config.HookConfig
+	Workspace              string
+	ConfigHome             string
+	SessionID              string
+	Timeout                time.Duration
+	Disabled               bool
+	AllowedHTTPHookURLs    *[]string
+	HTTPHookAllowedEnvVars *[]string
+	PromptRunner           PromptRunner
 }
 
 type PromptRunner func(context.Context, PromptRequest) (string, error)
@@ -733,6 +735,11 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 
 func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
 	url := strings.TrimSpace(hook.URL)
+	if !httpHookURLAllowed(url, r.AllowedHTTPHookURLs) {
+		err := fmt.Errorf("http hook URL is not allowed: %s", url)
+		result := CommandResult{Type: "http", URL: url, Command: config.HookCommandDisplay(hook), ExitCode: -1, Success: false, Error: err.Error()}
+		return result, err
+	}
 	hookCtx, cancel := context.WithTimeout(ctx, hookTimeout(hook, defaultTimeout))
 	defer cancel()
 	req, err := http.NewRequestWithContext(hookCtx, http.MethodPost, url, bytes.NewReader(data))
@@ -746,7 +753,7 @@ func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, data [
 		if key == "" {
 			continue
 		}
-		req.Header.Set(key, expandAllowedEnv(value, hook.AllowedEnvVars))
+		req.Header.Set(key, expandAllowedEnv(value, r.effectiveHTTPHookAllowedEnvVars(hook)))
 	}
 	started := time.Now()
 	resp, err := http.DefaultClient.Do(req)
@@ -816,6 +823,92 @@ func hookType(hook config.HookCommand) string {
 		return "command"
 	}
 	return value
+}
+
+func (r Runner) effectiveHTTPHookAllowedEnvVars(hook config.HookCommand) []string {
+	if r.HTTPHookAllowedEnvVars == nil {
+		return hook.AllowedEnvVars
+	}
+	return intersectStringLists(hook.AllowedEnvVars, *r.HTTPHookAllowedEnvVars)
+}
+
+func httpHookURLAllowed(rawURL string, allowed *[]string) bool {
+	if allowed == nil {
+		return true
+	}
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return false
+	}
+	for _, pattern := range *allowed {
+		if wildcardMatch(strings.TrimSpace(pattern), rawURL) {
+			return true
+		}
+	}
+	return false
+}
+
+func wildcardMatch(pattern string, value string) bool {
+	if pattern == "" {
+		return false
+	}
+	if pattern == "*" || pattern == value {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == value
+	}
+	position := 0
+	if parts[0] != "" {
+		if !strings.HasPrefix(value, parts[0]) {
+			return false
+		}
+		position = len(parts[0])
+	}
+	for i := 1; i < len(parts); i++ {
+		part := parts[i]
+		if part == "" {
+			continue
+		}
+		index := strings.Index(value[position:], part)
+		if index < 0 {
+			return false
+		}
+		position += index + len(part)
+	}
+	last := parts[len(parts)-1]
+	return last == "" || strings.HasSuffix(value, last)
+}
+
+func intersectStringLists(base []string, allowed []string) []string {
+	if len(base) == 0 || len(allowed) == 0 {
+		return nil
+	}
+	allow := map[string]struct{}{}
+	for _, value := range allowed {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			allow[value] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(base))
+	seen := map[string]struct{}{}
+	for _, value := range base {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := allow[value]; !ok {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func hookExitCode(err error) int {
