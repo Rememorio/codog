@@ -127,6 +127,9 @@ func nextActions(report Report, requestedProfile string) []NextAction {
 		add("oauth_login", "Complete browser OAuth login", "codog oauth browser login "+profile)
 		add("oauth_device_login", "Complete device OAuth login", "codog oauth device login "+profile)
 	case status.Expired && status.CanRefresh:
+		if server != "" {
+			add("mcp_auth_refresh", "Refresh OAuth token and retry MCP auth", "codog mcp auth --refresh "+server)
+		}
 		add("oauth_refresh", "Refresh the saved OAuth token", "codog oauth token refresh "+profile)
 	case status.Expired:
 		add("oauth_login", "Renew OAuth login", "codog oauth browser login "+profile)

@@ -16848,6 +16848,63 @@ func actionCommandsFromMCPReport(actions []mcpauthdiag.NextAction) []string {
 	return commands
 }
 
+func TestMCPAuthRefreshCommand(t *testing.T) {
+	server := oauthRefreshTestServer(t)
+	defer server.Close()
+	configHome := t.TempDir()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", nil)
+	require.NoError(t, err)
+	saveExpiredToken := func() {
+		t.Helper()
+		_, err := oauth.SaveToken(configHome, oauth.Token{
+			AccessToken:  "old-access",
+			RefreshToken: "refresh-1",
+			ExpiresAt:    time.Now().UTC().Add(-time.Hour),
+		})
+		require.NoError(t, err)
+	}
+	saveExpiredToken()
+	mcpServer := config.MCPServerConfig{
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
+	}
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome, MCPServers: map[string]config.MCPServerConfig{"test": mcpServer}},
+		Out:    &out,
+		Err:    io.Discard,
+	}
+
+	require.NoError(t, app.MCP(context.Background(), []string{"auth", "--refresh", "test"}))
+	var report mcpauthdiag.Report
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "test", report.Server)
+	require.True(t, report.Refreshed)
+	require.Empty(t, report.RefreshError)
+	require.NotNil(t, report.Token)
+	require.Equal(t, "refr...cess", report.Token.AccessToken)
+	loaded, err := oauth.LoadToken(configHome)
+	require.NoError(t, err)
+	require.Equal(t, "refreshed-access", loaded.AccessToken)
+	require.Equal(t, "refresh-2", loaded.RefreshToken)
+	out.Reset()
+
+	saveExpiredToken()
+	require.NoError(t, app.MCP(context.Background(), []string{"auth", "refresh"}))
+	var aggregate mcpAggregateRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aggregate))
+	require.Equal(t, "mcp", aggregate.Kind)
+	require.Equal(t, "auth", aggregate.Action)
+	require.Equal(t, "ok", aggregate.Status)
+	require.Len(t, aggregate.AuthStatuses, 1)
+	require.True(t, aggregate.AuthStatuses[0].Refreshed)
+	loaded, err = oauth.LoadToken(configHome)
+	require.NoError(t, err)
+	require.Equal(t, "refreshed-access", loaded.AccessToken)
+}
+
 func TestMCPAddCommandCompatibility(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")

@@ -40336,6 +40336,46 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 			Usage:           mcpRemoteUsage(args[0]),
 		})
 	}
+	if args[0] == "auth" {
+		req, err := parseMCPAuthArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if req.Server == "" {
+			payload := buildMCPAggregateAuthReport(ctx, a.Config.MCPServers, a.Config.ConfigHome, a.Config.OAuthProfile, now, req.Refresh)
+			data, _ := json.MarshalIndent(payload, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		serverName := req.Server
+		server, ok := a.Config.MCPServers[serverName]
+		if !ok {
+			return renderMCPRemoteActionError(a.Out, format, mcpRemoteActionErrorReport{
+				Kind:             "mcp",
+				Action:           args[0],
+				OK:               false,
+				Status:           "error",
+				ErrorKind:        "server_not_found",
+				RequestedAction:  strings.Join(args, " "),
+				ServerName:       serverName,
+				AvailableServers: sortedMCPServerNames(a.Config.MCPServers),
+				Message:          fmt.Sprintf("MCP server %q is not configured.", serverName),
+				Hint:             "Run `codog mcp list` to see configured servers.",
+				Usage:            mcpRemoteUsage(args[0]),
+			})
+		}
+		result := mcp.InspectAuth(ctx, serverName, server)
+		var payload mcpauthdiag.Report
+		if req.Refresh {
+			payload = mcpauthdiag.Refresh(ctx, result, a.Config.ConfigHome, a.Config.OAuthProfile, now)
+		} else {
+			payload = mcpauthdiag.Build(result, a.Config.ConfigHome, a.Config.OAuthProfile, now)
+		}
+		data, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
 	if len(args) == 1 && mcpAggregateRemoteAction(args[0]) {
 		payload := buildMCPAggregateRemoteReport(ctx, canonicalMCPAggregateAction(args[0]), a.Config.MCPServers, a.Config.ConfigHome, a.Config.OAuthProfile)
 		data, _ := json.MarshalIndent(payload, "", "  ")
@@ -40366,8 +40406,6 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "tools", "list-tools":
 		payload = mcp.ListTools(ctx, serverName, server)
-	case "auth":
-		payload = mcpauthdiag.Build(mcp.InspectAuth(ctx, serverName, server), a.Config.ConfigHome, a.Config.OAuthProfile, time.Now().UTC())
 	case "call":
 		if len(args) < 3 {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "tool"))
@@ -40413,6 +40451,46 @@ func mcpRemoteAction(action string) bool {
 	}
 }
 
+type mcpAuthRequest struct {
+	Server  string
+	Refresh bool
+}
+
+func parseMCPAuthArgs(args []string) (mcpAuthRequest, error) {
+	req := mcpAuthRequest{}
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--refresh":
+			req.Refresh = true
+		case arg == "--status":
+			req.Refresh = false
+		case strings.HasPrefix(arg, "-"):
+			return req, fmt.Errorf("unknown mcp auth flag %q", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) > 0 {
+		first := strings.ToLower(strings.TrimSpace(positionals[0]))
+		if first == "refresh" {
+			req.Refresh = true
+			positionals = positionals[1:]
+		} else if first == "status" {
+			positionals = positionals[1:]
+		}
+	}
+	if len(positionals) > 1 {
+		return req, errors.New("usage: codog mcp auth [--refresh|refresh] [SERVER]")
+	}
+	if len(positionals) == 1 {
+		req.Server = positionals[0]
+	}
+	return req, nil
+}
+
 func mcpAggregateRemoteAction(action string) bool {
 	switch canonicalMCPAggregateAction(action) {
 	case "tools", "auth", "resources", "resource-templates", "prompts":
@@ -40445,6 +40523,33 @@ type mcpAggregateRemoteReport struct {
 	Resources         []mcp.ResourceListResult         `json:"resources,omitempty"`
 	ResourceTemplates []mcp.ResourceTemplateListResult `json:"resource_templates,omitempty"`
 	Prompts           []mcp.PromptListResult           `json:"prompts,omitempty"`
+}
+
+func buildMCPAggregateAuthReport(ctx context.Context, servers map[string]config.MCPServerConfig, configHome string, oauthProfile string, now time.Time, refresh bool) mcpAggregateRemoteReport {
+	report := mcpAggregateRemoteReport{
+		Kind:        "mcp",
+		Action:      "auth",
+		Status:      "ok",
+		ServerCount: len(servers),
+	}
+	for _, name := range sortedMCPServerNames(servers) {
+		server := servers[name]
+		result := mcp.InspectAuth(ctx, name, server)
+		var status mcpauthdiag.Report
+		if refresh {
+			status = mcpauthdiag.Refresh(ctx, result, configHome, oauthProfile, now)
+		} else {
+			status = mcpauthdiag.Build(result, configHome, oauthProfile, now)
+		}
+		report.AuthStatuses = append(report.AuthStatuses, status)
+		if status.Error != "" || status.RefreshError != "" {
+			report.ErrorCount++
+		}
+	}
+	if report.ErrorCount > 0 {
+		report.Status = "degraded"
+	}
+	return report
 }
 
 func buildMCPAggregateRemoteReport(ctx context.Context, action string, servers map[string]config.MCPServerConfig, configHome string, oauthProfile string) mcpAggregateRemoteReport {
@@ -40684,7 +40789,7 @@ func mcpRemoteUsage(action string) mcpUsageBlock {
 	case "tools", "list-tools":
 		direct = "codog mcp tools [SERVER]"
 	case "auth":
-		direct = "codog mcp auth [SERVER]"
+		direct = "codog mcp auth [--refresh|refresh] [SERVER]"
 	case "call":
 		direct = "codog mcp call SERVER TOOL JSON"
 	case "resources":
@@ -40737,8 +40842,8 @@ func buildMCPUnsupportedActionReport(requestedAction string, hint string) mcpUns
 		RequestedAction: strings.TrimSpace(requestedAction),
 		Hint:            strings.TrimSpace(hint),
 		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|show SERVER|tools [SERVER]|auth [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			DirectCLI:    "codog mcp [list|show SERVER|tools [SERVER]|auth [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			SlashCommand: "/mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			DirectCLI:    "codog mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 	}
@@ -40771,7 +40876,7 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ok = false
 		value := "unknown_mcp_action"
 		errorKind = &value
-		hintValue := "Use: list, show SERVER, tools [SERVER], auth [SERVER], resources [SERVER], resource-templates [SERVER], prompts [SERVER], or help"
+		hintValue := "Use: list, show SERVER, tools [SERVER], auth [--refresh|refresh] [SERVER], resources [SERVER], resource-templates [SERVER], prompts [SERVER], or help"
 		hint = &hintValue
 		unexpectedValue = &unexpected
 	}
@@ -40783,8 +40888,8 @@ func buildMCPUsageReport(unexpected string) mcpUsageReport {
 		ErrorKind: errorKind,
 		Hint:      hint,
 		Usage: mcpUsageBlock{
-			SlashCommand: "/mcp [list|show SERVER|tools [SERVER]|auth [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
-			DirectCLI:    "codog mcp [list|show SERVER|tools [SERVER]|auth [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			SlashCommand: "/mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
+			DirectCLI:    "codog mcp [list|show SERVER|tools [SERVER]|auth [--refresh|refresh] [SERVER]|resources [SERVER]|resource-templates [SERVER]|prompts [SERVER]|help]",
 			Sources:      []string{".codog.json", ".codog.local.json", "user config"},
 		},
 		Unexpected: unexpectedValue,
@@ -41012,7 +41117,7 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required] | add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required] | add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required] | remove SERVER | tools [SERVER] | auth [--refresh|refresh] [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
 
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
@@ -47604,8 +47709,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"mcp",
 			"mcp",
-			"codog mcp [list|serve|self|show|info|describe|add|remove|tools [SERVER]|auth [SERVER]|call|resources [SERVER]|resource-templates [SERVER]|read|prompts [SERVER]|prompt]",
-			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|auth|resources|resource-templates|prompts [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, and prompts. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
+			"codog mcp [list|serve|self|show|info|describe|add|remove|tools [SERVER]|auth [--refresh|refresh] [SERVER]|call|resources [SERVER]|resource-templates [SERVER]|read|prompts [SERVER]|prompt]",
+			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|resources|resource-templates|prompts [SERVER]\n  codog mcp auth [--refresh|refresh] [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, prompts, and OAuth readiness. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,
@@ -47975,7 +48080,7 @@ Usage:
   %s [flags] permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
   %s [flags] brief [MESSAGE] [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
-  %s [flags] mcp [list|serve|self|show|add|remove|tools|call|resources|resource-templates|read|prompts|prompt]
+  %s [flags] mcp [list|serve|self|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] capabilities [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
