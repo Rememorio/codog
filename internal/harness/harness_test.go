@@ -12,7 +12,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
-	require.GreaterOrEqual(t, report.Total, 12)
+	require.GreaterOrEqual(t, report.Total, 13)
 	require.Equal(t, "actual", report.UsageSummary.Source)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 	require.Greater(t, report.EstimatedCost, 0.0)
@@ -46,6 +46,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
 	require.Contains(t, pluginTool.Output, "plugin harness ok")
+
+	remoteTrigger := findScenario(t, report, "remote_trigger_roundtrip")
+	require.True(t, remoteTrigger.OK)
+	require.Equal(t, 1, remoteTrigger.ToolCalls)
+	require.Contains(t, remoteTrigger.Output, "remote trigger harness ok")
 
 	autoCompact := findScenario(t, report, "auto_compact_triggered")
 	require.True(t, autoCompact.OK)

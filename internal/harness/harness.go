@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -60,6 +61,7 @@ type scenario struct {
 	permission          tools.Permission
 	plugins             bool
 	setup               func(string) error
+	prepare             func(string) ([]mockanthropic.Turn, func(), error)
 	verify              func(string, runloop.TurnResult, string) error
 	verifyRequests      func([]anthropic.Request) error
 }
@@ -304,6 +306,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		remoteTriggerScenario(),
 		{
 			name: "auto_compact_triggered",
 			turns: []mockanthropic.Turn{
@@ -389,10 +392,21 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
 		}
 	}
+	turns := item.turns
+	if item.prepare != nil {
+		preparedTurns, cleanup, err := item.prepare(workspace)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+		}
+		turns = preparedTurns
+	}
 
 	var requests []anthropic.Request
 	mockServer := mockanthropic.Server{
-		Turns: item.turns,
+		Turns: turns,
 		OnRequest: func(raw json.RawMessage) {
 			var request anthropic.Request
 			if err := json.Unmarshal(raw, &request); err == nil {
@@ -459,6 +473,66 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport.OK = true
 	return scenarioReport
+}
+
+func remoteTriggerScenario() scenario {
+	var receivedMethod string
+	var receivedPath string
+	var receivedHeader string
+	var receivedBody string
+	return scenario{
+		name:       "remote_trigger_roundtrip",
+		permission: tools.PermissionAllow,
+		prompt:     "trigger remote webhook",
+		prepare: func(_ string) ([]mockanthropic.Turn, func(), error) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedMethod = r.Method
+				receivedPath = r.URL.Path
+				receivedHeader = r.Header.Get("x-harness")
+				data, _ := io.ReadAll(r.Body)
+				receivedBody = string(data)
+				w.Header().Set("x-harness-result", "ok")
+				fmt.Fprint(w, "abcdef")
+			}))
+			input, err := json.Marshal(map[string]any{
+				"url":       server.URL + "/hook",
+				"method":    "POST",
+				"headers":   map[string]string{"x-harness": "token"},
+				"body":      "payload",
+				"max_bytes": 4,
+			})
+			if err != nil {
+				server.Close()
+				return nil, nil, err
+			}
+			return []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "remote_trigger",
+					Input: input,
+				}}},
+				{Text: "remote trigger harness ok"},
+			}, server.Close, nil
+		},
+		verify: func(_ string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "remote trigger harness ok") {
+				return fmt.Errorf("missing remote trigger final response")
+			}
+			if err := expectToolCalls(result, 1, false); err != nil {
+				return err
+			}
+			if receivedMethod != http.MethodPost || receivedPath != "/hook" || receivedHeader != "token" || receivedBody != "payload" {
+				return fmt.Errorf("unexpected remote trigger request method=%q path=%q header=%q body=%q", receivedMethod, receivedPath, receivedHeader, receivedBody)
+			}
+			toolOutput := result.ToolCalls[0].Output
+			for _, expected := range []string{`"status_code": 200`, `"body": "abcd"`, `"truncated": true`, `"X-Harness-Result": [`} {
+				if !strings.Contains(toolOutput, expected) {
+					return fmt.Errorf("remote trigger output missing %s: %s", expected, toolOutput)
+				}
+			}
+			return nil
+		},
+	}
 }
 
 func usageSummaryForResult(result runloop.TurnResult) usage.Summary {
