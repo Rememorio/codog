@@ -35,7 +35,7 @@ func (s *Store) Export(id string, format string) ([]byte, *Session, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	sess, err := s.Open(id)
+	sess, err := s.OpenExisting(id)
 	if err != nil {
 		return nil, nil, err
 	}

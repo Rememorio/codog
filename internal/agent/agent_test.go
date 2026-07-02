@@ -12887,6 +12887,39 @@ func TestExportCommandWritesFormats(t *testing.T) {
 	require.Contains(t, string(data), "export me")
 }
 
+func TestExportMissingSessionReportsTypedJSON(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	t.Chdir(workspace)
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "export", "--session", "does-not-exist"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	require.NotContains(t, out, "# Conversation Export")
+
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "session_not_found", report.Kind)
+	require.Equal(t, "session_not_found", report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, "abort", report.Action)
+	require.Equal(t, `session "does-not-exist" was not found`, report.Message)
+	require.Contains(t, report.Hint, "codog sessions list")
+
+	store := session.NewWorkspaceStore(configHome, workspace)
+	_, statErr := os.Stat(filepath.Join(store.Dir, "does-not-exist.jsonl"))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
 func TestExportSlashWritesCurrentSession(t *testing.T) {
 	workspace := t.TempDir()
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)

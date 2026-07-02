@@ -544,3 +544,20 @@ func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {
 	require.Equal(t, "summarize-this-repo.md", DefaultExportFilename(sess))
 	require.Equal(t, "summarize-this-repo.html", DefaultExportFilenameForFormat(sess, "html"))
 }
+
+func TestExportRequiresExistingSession(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "hello export")))
+
+	data, sess, err := store.Export("missing-session", "markdown")
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	require.Nil(t, data)
+	require.Nil(t, sess)
+	_, statErr := os.Stat(filepath.Join(store.Dir, "missing-session.jsonl"))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+
+	sessions, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	require.Equal(t, "export-session", sessions[0].ID)
+}

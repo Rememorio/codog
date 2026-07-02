@@ -19669,6 +19669,7 @@ type cliErrorReport struct {
 	Kind        string            `json:"kind"`
 	ErrorKind   string            `json:"error_kind"`
 	Status      string            `json:"status"`
+	Action      string            `json:"action,omitempty"`
 	Command     string            `json:"command,omitempty"`
 	Args        []string          `json:"args,omitempty"`
 	Option      string            `json:"option,omitempty"`
@@ -19756,6 +19757,20 @@ func buildSessionRestoreErrorReport(action string, requested string, err error) 
 		report.Hint = "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl session path."
 	}
 	return report
+}
+
+func sessionNotFoundMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" || message == session.ErrSessionNotFound.Error() {
+		return "session was not found"
+	}
+	if requested, ok := strings.CutPrefix(message, session.ErrSessionNotFound.Error()+":"); ok {
+		requested = strings.TrimSpace(requested)
+		if requested != "" {
+			return fmt.Sprintf("session %q was not found", requested)
+		}
+	}
+	return message
 }
 
 type outputFormatError struct {
@@ -20052,6 +20067,37 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Hint:      "Use `--output-format json` or `--output-format text`.",
 			Value:     formatErr.Value,
 			Expected:  expected,
+		}
+	}
+	var directoryErr session.PathIsDirectoryError
+	if errors.As(err, &directoryErr) {
+		return cliErrorReport{
+			Kind:      "session_path_is_directory",
+			ErrorKind: "session_path_is_directory",
+			Status:    "error",
+			Action:    "abort",
+			Message:   fmt.Sprintf("session path is a directory: %s", directoryErr.Path),
+			Hint:      "Pass a readable .jsonl session file or a managed session id from `codog sessions list`.",
+		}
+	}
+	if errors.Is(err, session.ErrNoSessions) {
+		return cliErrorReport{
+			Kind:      "no_managed_sessions",
+			ErrorKind: "no_managed_sessions",
+			Status:    "error",
+			Action:    "abort",
+			Message:   "no managed sessions found",
+			Hint:      "Run `codog prompt <text>` to create a session, or pass an existing .jsonl session path.",
+		}
+	}
+	if errors.Is(err, session.ErrSessionNotFound) {
+		return cliErrorReport{
+			Kind:      "session_not_found",
+			ErrorKind: "session_not_found",
+			Status:    "error",
+			Action:    "abort",
+			Message:   sessionNotFoundMessage(message),
+			Hint:      "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl session path.",
 		}
 	}
 	var credentialsErr anthropic.MissingCredentialsError
