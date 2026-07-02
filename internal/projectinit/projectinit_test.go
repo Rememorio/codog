@@ -67,6 +67,10 @@ func TestInitializeIsIdempotentAndPreservesFiles(t *testing.T) {
 	require.Contains(t, report.Skipped, ".codog/instructions.md")
 	require.Contains(t, report.Skipped, ".codog.json")
 	require.Contains(t, report.Skipped, ".gitignore")
+	require.Equal(t, "already_exists", artifactByName(t, report, ".codog/").SkipReason)
+	require.Equal(t, "already_exists", artifactByName(t, report, ".codog/instructions.md").SkipReason)
+	require.Equal(t, "already_exists", artifactByName(t, report, ".codog.json").SkipReason)
+	require.Equal(t, "already_configured", artifactByName(t, report, ".gitignore").SkipReason)
 
 	instructions, err := os.ReadFile(filepath.Join(workspace, ".codog", "instructions.md"))
 	require.NoError(t, err)
@@ -117,4 +121,15 @@ func TestRenderText(t *testing.T) {
 	require.Contains(t, rendered, ".codog/")
 	require.Contains(t, rendered, "created")
 	require.Contains(t, rendered, NextStep)
+}
+
+func artifactByName(t *testing.T, report Report, name string) Artifact {
+	t.Helper()
+	for _, artifact := range report.Artifacts {
+		if artifact.Name == name {
+			return artifact
+		}
+	}
+	require.Failf(t, "artifact missing", "artifact %q not found in %#v", name, report.Artifacts)
+	return Artifact{}
 }

@@ -27,8 +27,9 @@ const gitignoreComment = "# Codog local artifacts"
 var gitignoreEntries = []string{".codog.local.json", ".codog/worker-state.json", ".codog/focus.json", ".codog/output-style.json", ".codog/todos.json"}
 
 type Artifact struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 type Report struct {
@@ -142,6 +143,7 @@ func RenderInstructions(workspace string) string {
 }
 
 func newReport(projectPath string, artifacts []Artifact) Report {
+	artifacts = normalizeArtifacts(artifacts)
 	report := Report{
 		Kind:        "init",
 		Action:      "init",
@@ -173,6 +175,26 @@ func newReport(projectPath string, artifacts []Artifact) Report {
 		report.Hint = "Review and tailor .codog/instructions.md, then run `codog doctor` to verify the workspace."
 	}
 	return report
+}
+
+func normalizeArtifacts(artifacts []Artifact) []Artifact {
+	normalized := make([]Artifact, len(artifacts))
+	for i, artifact := range artifacts {
+		if artifact.Status == StatusSkipped && artifact.SkipReason == "" {
+			artifact.SkipReason = defaultSkipReason(artifact.Name)
+		}
+		normalized[i] = artifact
+	}
+	return normalized
+}
+
+func defaultSkipReason(name string) string {
+	switch name {
+	case ".gitignore":
+		return "already_configured"
+	default:
+		return "already_exists"
+	}
 }
 
 func ensureDir(path string) (string, error) {
