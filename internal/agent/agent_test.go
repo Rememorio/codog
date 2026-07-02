@@ -1831,6 +1831,8 @@ func risky(value any) {
 	require.NoError(t, err)
 	_, err = planmode.Enter(workspace, "inspect before editing")
 	require.NoError(t, err)
+	_, err = focus.Add(workspace, []string{"main.go"})
+	require.NoError(t, err)
 	terminalProfilePath := filepath.Join(workspace, ".zshrc")
 	pluginDir := filepath.Join(workspace, ".codog", "plugins", "resume-demo")
 	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
@@ -3000,6 +3002,15 @@ func risky(value any) {
 	require.True(t, resumedPlan.State.Active)
 	require.Equal(t, "inspect before editing", resumedPlan.State.Plan)
 
+	out, err = runResumedJSON("/unfocus")
+	require.NoError(t, err)
+	var resumedUnfocus focus.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUnfocus))
+	require.Equal(t, "focus", resumedUnfocus.Kind)
+	require.Equal(t, "list", resumedUnfocus.Action)
+	require.Equal(t, 1, resumedUnfocus.Total)
+	require.Equal(t, "main.go", resumedUnfocus.Entries[0].Path)
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
@@ -3099,6 +3110,8 @@ func risky(value any) {
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
 		{Command: "/focus", Args: []string{"main.go"}, Report: "/focus add"},
+		{Command: "/unfocus", Args: []string{"main.go"}, Report: "/unfocus remove"},
+		{Command: "/unfocus", Args: []string{"--all"}, Report: "/unfocus all"},
 		{Command: "/add-dir", Args: []string{workspace}, Report: "/add-dir add"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/ant-trace", Args: []string{"--no-request", "--write"}, Report: "/ant-trace write"},

@@ -22851,6 +22851,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedWorkspaceSlash(resumeSlashArgs("workspace", args, format), format)
 	case "/focus":
 		return a.runResumedFocusSlash(resumeSlashArgs("focus", args, format), format)
+	case "/unfocus":
+		return a.runResumedUnfocusSlash(resumeSlashArgs("unfocus", args, format), format)
 	case "/add-dir":
 		return a.runResumedAddDirSlash(resumeSlashArgs("add-dir", args, format), format)
 	case "/validation":
@@ -23367,6 +23369,28 @@ func (a *App) runResumedFocusSlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/focus", "add"), format)
 	}
 	return a.Focus(args)
+}
+
+func (a *App) runResumedUnfocusSlash(args []string, format string) error {
+	_, paths, err := parseFocusArgs("unfocus", args)
+	if err != nil {
+		return err
+	}
+	if len(paths) != 0 {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/unfocus", resumedUnfocusAction(paths)), format)
+	}
+	report, err := focus.BuildReport(a.Workspace)
+	if err != nil {
+		return err
+	}
+	return a.renderFocusReport(format, report)
+}
+
+func resumedUnfocusAction(paths []string) string {
+	if containsFold(paths, "--all") || containsFold(paths, "all") {
+		return "all"
+	}
+	return "remove"
 }
 
 func (a *App) runResumedAddDirSlash(args []string, format string) error {

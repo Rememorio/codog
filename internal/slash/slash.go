@@ -391,6 +391,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/tokens":             true,
 	"/trust":              true,
 	"/ultrareview":        true,
+	"/unfocus":            true,
 	"/usage":              true,
 	"/validation":         true,
 	"/version":            true,
