@@ -1488,6 +1488,20 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
 	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
 	require.Equal(t, "/statuz", slashReport.Command)
+	require.Contains(t, slashReport.Suggestions, "/status")
+	require.Contains(t, slashReport.Suggestions, "/stats")
+	require.Empty(t, slashReport.CompatibilityNote)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/oh-my-claudecode:hud"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
+	require.Equal(t, "unknown_slash_command", slashReport.ErrorKind)
+	require.Equal(t, "/oh-my-claudecode:hud", slashReport.Command)
+	require.Contains(t, slashReport.CompatibilityNote, "plugin slash commands")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/approve"}, config.FlagOverrides{})
@@ -6238,6 +6252,22 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/doctor", sess))
 	require.Contains(t, out.String(), "Doctor")
 	require.NotContains(t, errOut.String(), "unknown slash command")
+}
+
+func TestUnknownSlashInREPLShowsSuggestions(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/statuz", &session.Session{ID: "session"}))
+	require.Contains(t, errOut.String(), "unknown slash command: /statuz")
+	require.Contains(t, errOut.String(), "Did you mean:")
+	require.Contains(t, errOut.String(), "/status")
 }
 
 func TestDoctorReportsConfigValidationChecks(t *testing.T) {

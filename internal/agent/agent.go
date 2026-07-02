@@ -19614,12 +19614,14 @@ type commandNotFoundReport struct {
 }
 
 type slashErrorReport struct {
-	Kind      string `json:"kind"`
-	ErrorKind string `json:"error_kind"`
-	Status    string `json:"status"`
-	Command   string `json:"command"`
-	Message   string `json:"message"`
-	Hint      string `json:"hint"`
+	Kind              string   `json:"kind"`
+	ErrorKind         string   `json:"error_kind"`
+	Status            string   `json:"status"`
+	Command           string   `json:"command"`
+	Message           string   `json:"message"`
+	Hint              string   `json:"hint"`
+	Suggestions       []string `json:"suggestions,omitempty"`
+	CompatibilityNote string   `json:"compatibility_note,omitempty"`
 }
 
 type cliErrorReport struct {
@@ -21439,21 +21441,64 @@ func directSlashResumeSafe(name string) bool {
 }
 
 func renderUnknownSlashCommand(out io.Writer, command string, format string) error {
-	report := slashErrorReport{
-		Kind:      "unknown_slash_command",
-		ErrorKind: "unknown_slash_command",
-		Status:    "error",
-		Command:   command,
-		Message:   fmt.Sprintf("unknown slash command %q", command),
-		Hint:      "Run `codog repl` and use `/help` to list interactive slash commands.",
-	}
-	err := fmt.Errorf("%s: %s\n%s", report.ErrorKind, report.Message, report.Hint)
+	report := unknownSlashCommandReport(command)
+	err := errors.New(renderUnknownSlashCommandError(report))
 	if strings.EqualFold(format, "json") {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(out, string(data))
 		return &ExitError{Code: 1, Err: err, Silent: true}
 	}
 	return &ExitError{Code: 1, Err: err}
+}
+
+func unknownSlashCommandReport(command string) slashErrorReport {
+	command = strings.TrimSpace(command)
+	return slashErrorReport{
+		Kind:              "unknown_slash_command",
+		ErrorKind:         "unknown_slash_command",
+		Status:            "error",
+		Command:           command,
+		Message:           fmt.Sprintf("unknown slash command %q", command),
+		Hint:              "Run `codog repl` and use `/help` to list interactive slash commands.",
+		Suggestions:       slash.Suggest(command, 3),
+		CompatibilityNote: unknownSlashCompatibilityNote(command),
+	}
+}
+
+func unknownSlashCompatibilityNote(command string) string {
+	name := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(command), "/"))
+	if strings.HasPrefix(name, "oh-my-claudecode:") {
+		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog does not yet load plugin slash commands from that namespace, Claude statusline stdin, or OMC session hooks."
+	}
+	return ""
+}
+
+func renderUnknownSlashCommandError(report slashErrorReport) string {
+	lines := []string{fmt.Sprintf("%s: %s", report.ErrorKind, report.Message)}
+	if len(report.Suggestions) > 0 {
+		lines = append(lines, "Did you mean: "+strings.Join(report.Suggestions, ", "))
+	}
+	if strings.TrimSpace(report.CompatibilityNote) != "" {
+		lines = append(lines, report.CompatibilityNote)
+	}
+	if strings.TrimSpace(report.Hint) != "" {
+		lines = append(lines, report.Hint)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func writeUnknownSlashCommand(out io.Writer, command string) {
+	report := unknownSlashCommandReport(command)
+	fmt.Fprintf(out, "unknown slash command: %s\n", report.Command)
+	if len(report.Suggestions) > 0 {
+		fmt.Fprintf(out, "Did you mean: %s\n", strings.Join(report.Suggestions, ", "))
+	}
+	if strings.TrimSpace(report.CompatibilityNote) != "" {
+		fmt.Fprintln(out, report.CompatibilityNote)
+	}
+	if strings.TrimSpace(report.Hint) != "" {
+		fmt.Fprintln(out, report.Hint)
+	}
 }
 
 func renderInteractiveOnly(out io.Writer, command string, format string) error {
@@ -24936,7 +24981,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 			return true
 		}
 		if _, ok := slash.Lookup(fields[0]); !ok {
-			fmt.Fprintf(a.Err, "unknown slash command: %s\n", fields[0])
+			writeUnknownSlashCommand(a.Err, fields[0])
 		}
 	}
 	return true

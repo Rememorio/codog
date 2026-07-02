@@ -427,6 +427,105 @@ func Lookup(name string) (Spec, bool) {
 	return Spec{}, false
 }
 
+func Suggest(input string, limit int) []string {
+	query := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(input), "/"))
+	if query == "" || limit <= 0 {
+		return nil
+	}
+	type rankedSuggestion struct {
+		prefixRank int
+		distance   int
+		length     int
+		name       string
+	}
+	ranked := []rankedSuggestion{}
+	for _, spec := range Specs() {
+		if spec.Hidden || spec.Disabled {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimPrefix(spec.Name, "/"))
+		prefixRank := 2
+		switch {
+		case strings.HasPrefix(candidate, query) || strings.HasPrefix(query, candidate):
+			prefixRank = 0
+		case strings.Contains(candidate, query) || strings.Contains(query, candidate):
+			prefixRank = 1
+		}
+		distance := levenshteinDistance(candidate, query)
+		if prefixRank <= 1 || distance <= 2 {
+			ranked = append(ranked, rankedSuggestion{
+				prefixRank: prefixRank,
+				distance:   distance,
+				length:     len(spec.Name),
+				name:       spec.Name,
+			})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		left, right := ranked[i], ranked[j]
+		if left.prefixRank != right.prefixRank {
+			return left.prefixRank < right.prefixRank
+		}
+		if left.distance != right.distance {
+			return left.distance < right.distance
+		}
+		if left.length != right.length {
+			return left.length < right.length
+		}
+		return left.name < right.name
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	suggestions := make([]string, 0, len(ranked))
+	for _, candidate := range ranked {
+		suggestions = append(suggestions, candidate.name)
+	}
+	return suggestions
+}
+
+func levenshteinDistance(left string, right string) int {
+	leftRunes := []rune(left)
+	rightRunes := []rune(right)
+	if len(leftRunes) == 0 {
+		return len(rightRunes)
+	}
+	if len(rightRunes) == 0 {
+		return len(leftRunes)
+	}
+	previous := make([]int, len(rightRunes)+1)
+	current := make([]int, len(rightRunes)+1)
+	for i := range previous {
+		previous[i] = i
+	}
+	for leftIndex, leftRune := range leftRunes {
+		current[0] = leftIndex + 1
+		for rightIndex, rightRune := range rightRunes {
+			substitutionCost := 0
+			if leftRune != rightRune {
+				substitutionCost = 1
+			}
+			current[rightIndex+1] = minInt(
+				previous[rightIndex+1]+1,
+				current[rightIndex]+1,
+				previous[rightIndex]+substitutionCost,
+			)
+		}
+		previous, current = current, previous
+	}
+	return previous[len(rightRunes)]
+}
+
+func minInt(values ...int) int {
+	best := values[0]
+	for _, value := range values[1:] {
+		if value < best {
+			best = value
+		}
+	}
+	return best
+}
+
 func Candidates(prefix string) []string {
 	return CandidatesWithOptions(prefix, CandidateOptions{})
 }

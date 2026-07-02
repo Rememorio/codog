@@ -374,3 +374,17 @@ func TestCandidatesWithOptionsIncludeExtraCandidates(t *testing.T) {
 	candidates := CandidatesWithOptions("/team/", CandidateOptions{Extra: []string{"/team/review ", "/team/audit "}})
 	require.Equal(t, []string{"/team/audit ", "/team/review "}, candidates)
 }
+
+func TestSuggestReturnsNearbySlashCommands(t *testing.T) {
+	suggestions := Suggest("/statuz", 3)
+	require.Contains(t, suggestions, "/status")
+	require.Contains(t, suggestions, "/stats")
+	require.LessOrEqual(t, len(suggestions), 3)
+
+	pluginSuggestions := Suggest("plugns", 3)
+	require.Contains(t, pluginSuggestions, "/plugin")
+	require.Contains(t, pluginSuggestions, "/plugins")
+
+	require.Empty(t, Suggest("zzz", 3))
+	require.Empty(t, Suggest("/status", 0))
+}
