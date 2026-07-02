@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	// Register image decoders for read_image and notebook image outputs.
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -7369,14 +7370,14 @@ func (TaskStatusTool) Permission() Permission { return PermissionReadOnly }
 
 func (t TaskStatusTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		ID     string `json:"id"`
-		TaskID string `json:"task_id"`
-		TaskId string `json:"taskId"`
+		ID          string `json:"id"`
+		TaskID      string `json:"task_id"`
+		TaskIDAlias string `json:"taskId"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId)
+	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskIDAlias)
 	if id == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -7413,14 +7414,14 @@ func (TaskGetTool) Permission() Permission { return PermissionReadOnly }
 
 func (t TaskGetTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		TaskID string `json:"task_id"`
-		TaskId string `json:"taskId"`
-		ID     string `json:"id"`
+		TaskID      string `json:"task_id"`
+		TaskIDAlias string `json:"taskId"`
+		ID          string `json:"id"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := firstNonEmpty(payload.TaskID, payload.TaskId, payload.ID)
+	id := firstNonEmpty(payload.TaskID, payload.TaskIDAlias, payload.ID)
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -7459,15 +7460,15 @@ func (TaskUpdateTool) Permission() Permission { return PermissionDanger }
 
 func (t TaskUpdateTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		TaskID  string `json:"task_id"`
-		TaskId  string `json:"taskId"`
-		ID      string `json:"id"`
-		Message string `json:"message"`
+		TaskID      string `json:"task_id"`
+		TaskIDAlias string `json:"taskId"`
+		ID          string `json:"id"`
+		Message     string `json:"message"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := firstNonEmpty(payload.TaskID, payload.TaskId, payload.ID)
+	id := firstNonEmpty(payload.TaskID, payload.TaskIDAlias, payload.ID)
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -7519,7 +7520,7 @@ func (TaskHeartbeatTool) Permission() Permission { return PermissionDanger }
 func (t TaskHeartbeatTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
 		TaskID         string     `json:"task_id"`
-		TaskId         string     `json:"taskId"`
+		TaskIDAlias    string     `json:"taskId"`
 		ID             string     `json:"id"`
 		Status         string     `json:"status"`
 		TransportAlive *bool      `json:"transport_alive"`
@@ -7528,7 +7529,7 @@ func (t TaskHeartbeatTool) Execute(_ context.Context, input json.RawMessage) (st
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := firstNonEmpty(payload.TaskID, payload.TaskId, payload.ID)
+	id := firstNonEmpty(payload.TaskID, payload.TaskIDAlias, payload.ID)
 	if strings.TrimSpace(id) == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -7633,15 +7634,15 @@ func (TaskStopTool) Permission() Permission { return PermissionWorkspace }
 
 func (t TaskStopTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		ID      string `json:"id"`
-		TaskID  string `json:"task_id"`
-		TaskId  string `json:"taskId"`
-		ShellID string `json:"shell_id"`
+		ID          string `json:"id"`
+		TaskID      string `json:"task_id"`
+		TaskIDAlias string `json:"taskId"`
+		ShellID     string `json:"shell_id"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
 	}
-	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId, payload.ShellID)
+	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskIDAlias, payload.ShellID)
 	if id == "" {
 		return "", errors.New("task_id is required")
 	}
@@ -7686,15 +7687,15 @@ func (TaskOutputTool) Permission() Permission { return PermissionReadOnly }
 
 func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
 	var payload struct {
-		ID         string `json:"id"`
-		TaskID     string `json:"task_id"`
-		TaskId     string `json:"taskId"`
-		LimitBytes int64  `json:"limit_bytes"`
-		Limit      int64  `json:"limit"`
-		Offset     *int64 `json:"offset"`
-		Block      bool   `json:"block"`
-		Timeout    int    `json:"timeout"`
-		TimeoutMS  int    `json:"timeout_ms"`
+		ID          string `json:"id"`
+		TaskID      string `json:"task_id"`
+		TaskIDAlias string `json:"taskId"`
+		LimitBytes  int64  `json:"limit_bytes"`
+		Limit       int64  `json:"limit"`
+		Offset      *int64 `json:"offset"`
+		Block       bool   `json:"block"`
+		Timeout     int    `json:"timeout"`
+		TimeoutMS   int    `json:"timeout_ms"`
 	}
 	if err := json.Unmarshal(input, &payload); err != nil {
 		return "", err
@@ -7707,7 +7708,7 @@ func (t TaskOutputTool) Execute(_ context.Context, input json.RawMessage) (strin
 		limitBytes = 64 * 1024
 	}
 	store := taskStore(t.ConfigHome, t.Workspace)
-	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskId)
+	id := firstNonEmpty(payload.ID, payload.TaskID, payload.TaskIDAlias)
 	if id == "" {
 		return "", errors.New("task_id is required")
 	}

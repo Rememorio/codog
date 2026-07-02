@@ -3643,7 +3643,7 @@ func toolDetailAliases(canonical string) []string {
 
 func (a *App) Upgrade(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog upgrade [check|verify|download|install|rollback] ARGS...")
+		return errors.New("usage: codog upgrade [check|verify|download|install|rollback] [args]")
 	}
 	switch args[0] {
 	case "check", "verify", "download", "install", "rollback":
@@ -32101,16 +32101,16 @@ func parseGreenContractArgs(args []string) (greenContractRequest, error) {
 	if len(positionals) > 0 {
 		return req, errors.New("usage: codog green-contract [check] [--merge-ready] [--required-level LEVEL] [--observed-level LEVEL] [--test-command COMMAND] [--test-result COMMAND=EXIT] [--base-branch-fresh] [--recovery-context] [--blocking-flake NAME] [--json|--output-format text|json]")
 	}
-	if level, err := greencontract.NormalizeLevel(req.RequiredLevel); err != nil {
+	level, err := greencontract.NormalizeLevel(req.RequiredLevel)
+	if err != nil {
 		return req, err
-	} else {
-		req.RequiredLevel = level
 	}
-	if level, err := greencontract.NormalizeLevel(req.ObservedLevel); err != nil {
+	req.RequiredLevel = level
+	level, err = greencontract.NormalizeLevel(req.ObservedLevel)
+	if err != nil {
 		return req, err
-	} else {
-		req.ObservedLevel = level
 	}
+	req.ObservedLevel = level
 	return req, nil
 }
 
