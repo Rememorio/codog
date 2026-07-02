@@ -1,10 +1,14 @@
 package bridge
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +52,13 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"code/format"`)
 	require.Contains(t, out.String(), `"notebook/read"`)
 	require.Contains(t, out.String(), `"notebook/edit"`)
+	require.Contains(t, out.String(), `"lsp/actions"`)
+	require.Contains(t, out.String(), `"lsp/discover"`)
+	require.Contains(t, out.String(), `"lsp/list"`)
+	require.Contains(t, out.String(), `"lsp/start"`)
+	require.Contains(t, out.String(), `"lsp/status"`)
+	require.Contains(t, out.String(), `"lsp/stop"`)
+	require.Contains(t, out.String(), `"lsp/query"`)
 	require.Contains(t, out.String(), `"background/list"`)
 	require.Contains(t, out.String(), `"background/run"`)
 	require.Contains(t, out.String(), `"background/logs"`)
@@ -278,6 +289,176 @@ func TestBridgeNotebookRejectsInvalidInputs(t *testing.T) {
 	require.Contains(t, out.String(), "notebook path must point to a .ipynb file")
 	require.Contains(t, out.String(), "escapes workspace")
 	require.Contains(t, out.String(), "new_source is required for insert and replace edits")
+}
+
+func TestBridgeLSPLifecycleAndQuery(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte(strings.Join([]string{
+		"package main",
+		"",
+		"func main() {",
+		"\tprintln(\"hi\")",
+		"}",
+		"",
+	}, "\n")), 0o644))
+	fakeCommand := "CODOG_BRIDGE_FAKE_LSP=1 " + bridgeShellQuote(os.Args[0]) + " -test.run '^TestBridgeFakeLSPServer$'"
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"lsp/actions"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"lsp/discover"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"lsp/start","params":{"language":"go","command":"` + jsonEscape(fakeCommand) + `"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":2,"character":5}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"lsp/query","params":{"language":"go","action":"diagnostics","file_path":"main.go","timeout_ms":1000}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"lsp/status","params":{"language":"go"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"lsp/list"}`,
+		`{"jsonrpc":"2.0","id":8,"method":"lsp/stop","params":{"language":"go"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"lsp_actions"`)
+	require.Contains(t, out.String(), `"method":"textDocument/definition"`)
+	require.Contains(t, out.String(), `"kind":"lsp_discover"`)
+	require.Contains(t, out.String(), `"command":"gopls"`)
+	require.Contains(t, out.String(), `"kind":"lsp_start"`)
+	require.Contains(t, out.String(), `"language":"go"`)
+	require.Contains(t, out.String(), `"kind":"lsp_query"`)
+	require.Contains(t, out.String(), `"action":"hover"`)
+	require.Contains(t, out.String(), `"value":"bridge fake hover"`)
+	require.Contains(t, out.String(), `"action":"diagnostics"`)
+	require.Contains(t, out.String(), `"message":"bridge fake diagnostic"`)
+	require.Contains(t, out.String(), `"kind":"lsp_status"`)
+	require.Contains(t, out.String(), `"kind":"lsp_list"`)
+	require.Contains(t, out.String(), `"kind":"lsp_stop"`)
+}
+
+func TestBridgeLSPRejectsInvalidInputs(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"lsp/start","params":{"language":"bad/language"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"lsp/query","params":{"language":"go","action":"hover","path":"main.go","line":-1}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"lsp/start","params":{"language":"go","command":123}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "language must be a single safe name")
+	require.Contains(t, out.String(), "line must be non-negative")
+	require.Contains(t, out.String(), "command must be a string or string array")
+}
+
+func TestBridgeFakeLSPServer(t *testing.T) {
+	if os.Getenv("CODOG_BRIDGE_FAKE_LSP") != "1" {
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		raw, err := readBridgeTestLSPMessage(reader)
+		if err != nil {
+			return
+		}
+		var msg struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      any             `json:"id,omitempty"`
+			Method  string          `json:"method,omitempty"`
+			Params  json.RawMessage `json:"params,omitempty"`
+		}
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return
+		}
+		switch msg.Method {
+		case "initialize":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"capabilities": map[string]any{}}})
+		case "textDocument/didOpen":
+			uri := bridgeTestLSPDocumentURI(msg.Params)
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "textDocument/publishDiagnostics",
+				"params": map[string]any{
+					"uri": uri,
+					"diagnostics": []map[string]any{{
+						"range": map[string]any{
+							"start": map[string]any{"line": 2, "character": 0},
+							"end":   map[string]any{"line": 2, "character": 4},
+						},
+						"severity": 2,
+						"source":   "bridge-fake-lsp",
+						"message":  "bridge fake diagnostic",
+					}},
+				},
+			})
+		case "textDocument/hover":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"contents": map[string]any{"kind": "markdown", "value": "bridge fake hover"}}})
+		case "shutdown":
+			_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
+			return
+		default:
+			if msg.ID != nil {
+				_ = writeBridgeTestLSPMessage(os.Stdout, map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": nil})
+			}
+		}
+	}
+}
+
+func readBridgeTestLSPMessage(reader *bufio.Reader) (json.RawMessage, error) {
+	contentLength := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "Content-Length") {
+			continue
+		}
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return nil, err
+		}
+		contentLength = parsed
+	}
+	if contentLength <= 0 {
+		return nil, io.ErrUnexpectedEOF
+	}
+	data := make([]byte, contentLength)
+	_, err := io.ReadFull(reader, data)
+	return data, err
+}
+
+func writeBridgeTestLSPMessage(writer io.Writer, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(data)); err != nil {
+		return err
+	}
+	_, err = writer.Write(data)
+	return err
+}
+
+func bridgeTestLSPDocumentURI(params json.RawMessage) string {
+	var payload struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	_ = json.Unmarshal(params, &payload)
+	return payload.TextDocument.URI
+}
+
+func jsonEscape(value string) string {
+	data, _ := json.Marshal(value)
+	return strings.Trim(string(data), `"`)
 }
 
 func TestBridgeEditorIdentifyOpenSelectionState(t *testing.T) {

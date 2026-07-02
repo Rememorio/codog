@@ -116,6 +116,13 @@ func (s Server) handle(req Request) (any, *Error) {
 				"code/format",
 				"notebook/read",
 				"notebook/edit",
+				"lsp/actions",
+				"lsp/discover",
+				"lsp/list",
+				"lsp/start",
+				"lsp/status",
+				"lsp/stop",
+				"lsp/query",
 				"background/list",
 				"background/run",
 				"background/get",
@@ -323,6 +330,40 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "notebook/edit":
 		result, err := s.notebookEdit(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "lsp/actions":
+		return s.lspActions(), nil
+	case "lsp/discover":
+		return s.lspDiscover(), nil
+	case "lsp/list":
+		result, err := s.lspList()
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "lsp/start":
+		result, err := s.lspStart(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "lsp/status":
+		result, err := s.lspStatus(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "lsp/stop":
+		result, err := s.lspStop(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "lsp/query":
+		result, err := s.lspQuery(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -643,6 +684,143 @@ func (s Server) notebookEdit(params json.RawMessage) (any, error) {
 	}
 	result.Path = relPath
 	return result, nil
+}
+
+func (s Server) lspActions() any {
+	actions := codeintel.SupportedLSPActions()
+	return map[string]any{
+		"kind":    "lsp_actions",
+		"action":  "actions",
+		"status":  "ok",
+		"count":   len(actions),
+		"actions": actions,
+	}
+}
+
+func (s Server) lspDiscover() any {
+	candidates := codeintel.DefaultLSPCandidates()
+	return map[string]any{
+		"kind":       "lsp_discover",
+		"candidates": candidates,
+		"count":      len(candidates),
+	}
+}
+
+func (s Server) lspList() (any, error) {
+	store, err := s.lspStore()
+	if err != nil {
+		return nil, err
+	}
+	statuses, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"kind":    "lsp_list",
+		"count":   len(statuses),
+		"servers": statuses,
+	}, nil
+}
+
+func (s Server) lspStart(params json.RawMessage) (any, error) {
+	var payload struct {
+		Language    string          `json:"language"`
+		Command     json.RawMessage `json:"command"`
+		CommandArgs []string        `json:"command_args"`
+		Args        []string        `json:"args"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	commandArgs, err := bridgeLSPCommandArgs(payload.Command, payload.CommandArgs, payload.Args)
+	if err != nil {
+		return nil, err
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		return nil, err
+	}
+	status, err := store.Start(payload.Language, commandArgs)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "lsp_start", "status": "ok", "server": status}, nil
+}
+
+func (s Server) lspStatus(params json.RawMessage) (any, error) {
+	var payload struct {
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		return nil, err
+	}
+	status, err := store.Status(payload.Language)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "lsp_status", "server": status}, nil
+}
+
+func (s Server) lspStop(params json.RawMessage) (any, error) {
+	var payload struct {
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		return nil, err
+	}
+	status, err := store.Stop(payload.Language)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"kind": "lsp_stop", "status": "ok", "server": status}, nil
+}
+
+func (s Server) lspQuery(params json.RawMessage) (any, error) {
+	var payload struct {
+		Language  string `json:"language"`
+		Action    string `json:"action"`
+		Path      string `json:"path"`
+		FilePath  string `json:"file_path"`
+		Line      int    `json:"line"`
+		Character int    `json:"character"`
+		TimeoutMS int    `json:"timeout_ms"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	if payload.Line < 0 {
+		return nil, errors.New("line must be non-negative")
+	}
+	if payload.Character < 0 {
+		return nil, errors.New("character must be non-negative")
+	}
+	if payload.TimeoutMS < 0 {
+		return nil, errors.New("timeout_ms must be non-negative")
+	}
+	store, err := s.lspStore()
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	if payload.TimeoutMS > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(payload.TimeoutMS)*time.Millisecond)
+		defer cancel()
+	}
+	return store.Query(ctx, payload.Language, codeintel.LSPQueryRequest{
+		Action:    payload.Action,
+		Path:      firstNonEmpty(payload.Path, payload.FilePath),
+		Line:      payload.Line,
+		Character: payload.Character,
+	})
 }
 
 func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (any, *Error) {
@@ -1223,6 +1401,17 @@ func (s Server) backgroundStore() (background.Store, error) {
 	return background.NewStore(s.ConfigHome), nil
 }
 
+func (s Server) lspStore() (codeintel.LSPStore, error) {
+	if strings.TrimSpace(s.ConfigHome) == "" {
+		return codeintel.LSPStore{}, errors.New("config home is required")
+	}
+	workspace, err := s.workspace()
+	if err != nil {
+		return codeintel.LSPStore{}, err
+	}
+	return codeintel.NewLSPStore(s.ConfigHome, workspace), nil
+}
+
 func parseBridgeBackgroundID(params json.RawMessage) (string, error) {
 	var payload struct {
 		ID string `json:"id"`
@@ -1235,6 +1424,31 @@ func parseBridgeBackgroundID(params json.RawMessage) (string, error) {
 		return "", errors.New("id is required")
 	}
 	return id, nil
+}
+
+func bridgeLSPCommandArgs(command json.RawMessage, commandArgs []string, args []string) ([]string, error) {
+	if len(commandArgs) > 0 {
+		return append([]string(nil), commandArgs...), nil
+	}
+	if len(args) > 0 {
+		return append([]string(nil), args...), nil
+	}
+	if len(command) == 0 || string(command) == "null" {
+		return nil, nil
+	}
+	var list []string
+	if err := json.Unmarshal(command, &list); err == nil {
+		return list, nil
+	}
+	var raw string
+	if err := json.Unmarshal(command, &raw); err != nil {
+		return nil, errors.New("command must be a string or string array")
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	return []string{"sh", "-lc", raw}, nil
 }
 
 func firstNonEmpty(values ...string) string {
