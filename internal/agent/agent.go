@@ -44985,8 +44985,28 @@ func (a *App) runInstructionsLoadedHooks(ctx context.Context, sessionID string, 
 		return err
 	}
 	loadReason = firstNonEmpty(loadReason, "session_start")
+	messages := []string{}
 	for _, file := range files {
-		if err := runner.InstructionsLoaded(ctx, file.Path, instructionsMemoryType(file), loadReason, nil, "", ""); err != nil {
+		report, err := runner.InstructionsLoadedReport(ctx, file.Path, instructionsMemoryType(file), loadReason, nil, "", "")
+		if err != nil {
+			return err
+		}
+		if report.Denied {
+			if detail := strings.TrimSpace(strings.Join(hooks.MessagesFromReport(report), "\n")); detail != "" {
+				return fmt.Errorf("instructions_loaded hook denied: %s", detail)
+			}
+			return errors.New("instructions_loaded hook denied")
+		}
+		messages = append(messages, hooks.MessagesFromReport(report)...)
+	}
+	messages = compactHookSessionMessages(messages)
+	if len(messages) > 0 {
+		sess, err := a.Sessions.OpenExisting(sessionID)
+		if err != nil {
+			return err
+		}
+		text := "InstructionsLoaded hook feedback:\n\n" + strings.Join(messages, "\n\n")
+		if err := a.appendHookSessionMessage(sess, anthropic.TextMessage("user", text)); err != nil {
 			return err
 		}
 	}
@@ -44995,6 +45015,23 @@ func (a *App) runInstructionsLoadedHooks(ctx context.Context, sessionID string, 
 
 func instructionsMemoryType(file memory.File) string {
 	return "Project"
+}
+
+func compactHookSessionMessages(messages []string) []string {
+	out := make([]string, 0, len(messages))
+	seen := map[string]struct{}{}
+	for _, message := range messages {
+		message = strings.TrimSpace(message)
+		if message == "" {
+			continue
+		}
+		if _, ok := seen[message]; ok {
+			continue
+		}
+		seen[message] = struct{}{}
+		out = append(out, message)
+	}
+	return out
 }
 
 func (a *App) runSetupHook(ctx context.Context, source string, status string) error {

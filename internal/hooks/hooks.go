@@ -423,6 +423,17 @@ func (r Runner) FileChangedReport(ctx context.Context, filePath string, operatio
 }
 
 func (r Runner) InstructionsLoaded(ctx context.Context, filePath string, memoryType string, loadReason string, globs []string, triggerFilePath string, parentFilePath string) error {
+	report, err := r.InstructionsLoadedReport(ctx, filePath, memoryType, loadReason, globs, triggerFilePath, parentFilePath)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+func (r Runner) InstructionsLoadedReport(ctx context.Context, filePath string, memoryType string, loadReason string, globs []string, triggerFilePath string, parentFilePath string) (RunReport, error) {
 	payload := Payload{
 		Event:           "instructions_loaded",
 		Tool:            loadReason,
@@ -442,10 +453,10 @@ func (r Runner) InstructionsLoaded(ctx context.Context, filePath string, memoryT
 		"parent_file_path":  payload.ParentFilePath,
 	})
 	if err != nil {
-		return err
+		return RunReport{}, err
 	}
 	payload.Input = string(data)
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func CommandsForEvent(cfg config.HookConfig, event string, tool string) []string {

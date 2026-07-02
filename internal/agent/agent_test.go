@@ -14150,7 +14150,7 @@ func TestInstructionsLoadedHookRunsBeforePrompt(t *testing.T) {
 			PermissionMode:      "workspace-write",
 			MCPServers:          map[string]config.MCPServerConfig{},
 			Hooks: config.HookConfig{
-				InstructionsLoadedCommands: []config.HookCommand{{Matcher: "session_start", Command: "cat > " + shellQuote(hookPath)}},
+				InstructionsLoadedCommands: []config.HookCommand{{Matcher: "session_start", Command: "cat > " + shellQuote(hookPath) + "; printf '%s' " + shellQuote(`{"systemMessage":"instructions hook note","hookSpecificOutput":{"additionalContext":"memory hook context"}}`)}},
 			},
 		},
 		Client:    anthropic.New(server.URL, "test-key", ""),
@@ -14180,6 +14180,13 @@ func TestInstructionsLoadedHookRunsBeforePrompt(t *testing.T) {
 	require.Equal(t, "Project", payload.MemoryType)
 	require.Equal(t, "session_start", payload.LoadReason)
 	require.Contains(t, out.String(), "done")
+	loaded, err := app.Sessions.OpenExisting("instructions-session")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(loaded.Messages), 3)
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "InstructionsLoaded hook feedback")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "instructions hook note")
+	require.Contains(t, loaded.Messages[0].Content[0].Text, "memory hook context")
+	require.Equal(t, "hello", loaded.Messages[1].Content[0].Text)
 }
 
 func TestTodosCommandAndSlash(t *testing.T) {
