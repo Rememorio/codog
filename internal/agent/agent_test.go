@@ -3637,8 +3637,10 @@ func TestParseFlagsSupportsCompactPromptMode(t *testing.T) {
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello", "--output-format", "json", "--compact"}, rest)
 
-	_, _, _, err = parseFlags([]string{"--compact"}, config.FlagOverrides{})
-	require.ErrorIs(t, err, errCompactPromptMissingArgument)
+	_, command, rest, err = parseFlags([]string{"--compact"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"--compact"}, rest)
 
 	_, _, _, err = parseFlags([]string{"--compact", "status"}, config.FlagOverrides{})
 	require.Error(t, err)
@@ -4531,6 +4533,17 @@ func TestCompactFlagMissingArgumentOutputContract(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
+	emptyStdin := filepath.Join(t.TempDir(), "stdin.txt")
+	require.NoError(t, os.WriteFile(emptyStdin, nil, 0o644))
+	stdinFile, err := os.Open(emptyStdin)
+	require.NoError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, stdinFile.Close())
+	}()
+
 	out, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--compact"}, config.FlagOverrides{})
 	})
@@ -4546,6 +4559,46 @@ func TestCompactFlagMissingArgumentOutputContract(t *testing.T) {
 	require.Equal(t, "missing_argument", report.ErrorKind)
 	require.Equal(t, "prompt or subcommand", report.Argument)
 	require.Contains(t, report.Hint, "--compact")
+}
+
+func TestCompactFlagReadsPromptFromStdin(t *testing.T) {
+	server := httptest.NewServer(mockanthropic.Server{Text: "stdin done"}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	require.NoError(t, os.WriteFile(stdinPath, []byte("prompt from stdin\n"), 0o644))
+	stdinFile, err := os.Open(stdinPath)
+	require.NoError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, stdinFile.Close())
+	}()
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--compact"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report promptCompactReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.True(t, report.Compact)
+	require.Equal(t, "stdin done", report.Message)
+	require.Equal(t, "mock", report.Model)
+	require.Equal(t, 10, report.Usage.InputTokens)
+	require.Equal(t, 5, report.Usage.OutputTokens)
 }
 
 func TestCompactFlagShorthandStaysOnPromptPath(t *testing.T) {

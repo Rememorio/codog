@@ -164,9 +164,6 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	}
 	overrides, command, rest, err := parseFlags(args, baseOverrides)
 	if err != nil {
-		if errors.Is(err, errCompactPromptMissingArgument) {
-			return renderCompactPromptMissingArgument(os.Stdout, requestedOutputFormat(originalArgs))
-		}
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
 	if command == "" && hasExplicitEmptyPositional(originalArgs) {
@@ -387,6 +384,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			input = string(data)
 		}
 		if strings.TrimSpace(input) == "" {
+			if req.Compact {
+				return renderCompactPromptMissingArgument(app.Out, req.Format)
+			}
 			return renderMissingPrompt(app.Out, req.Format)
 		}
 		return app.promptWithOutput(ctx, input, overrides, req.Format, req.Compact)
@@ -20068,8 +20068,6 @@ func renderEmptyPrompt(out io.Writer, format string) error {
 	}
 }
 
-var errCompactPromptMissingArgument = errors.New("compact requires a prompt or subcommand")
-
 func renderCompactPromptMissingArgument(out io.Writer, format string) error {
 	report := promptErrorReport{
 		Kind:      "prompt",
@@ -38587,9 +38585,6 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	base.AllowedTools = []string(allowedTools)
 	base.DisallowedTools = []string(disallowedTools)
 	rest := flags.Args()
-	if compactPromptMode && len(rest) == 0 {
-		return base, "", nil, errCompactPromptMissingArgument
-	}
 	if compactPromptMode && len(rest) > 0 && !strings.EqualFold(rest[0], "prompt") && isKnownNonPromptCommand(rest[0]) {
 		return base, "", nil, invalidFlagValueError{
 			Flag:    "--compact",
