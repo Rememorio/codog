@@ -2338,6 +2338,16 @@ func risky(value any) {
 	require.Equal(t, "output_style", resumedOutputStyle.Kind)
 	require.Equal(t, "list", resumedOutputStyle.Action)
 
+	out, err = runResumedJSON("/output-style", "set", "concise")
+	require.NoError(t, err)
+	var resumedOutputStyleSet outputstyle.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOutputStyleSet))
+	require.Equal(t, "output_style", resumedOutputStyleSet.Kind)
+	require.Equal(t, "set", resumedOutputStyleSet.Action)
+	require.Equal(t, "concise", resumedOutputStyleSet.Active)
+	require.NotNil(t, resumedOutputStyleSet.Style)
+	require.Equal(t, "concise", resumedOutputStyleSet.Style.Name)
+
 	out, err = runResumedJSON("/theme")
 	require.NoError(t, err)
 	var resumedTheme themeReport
@@ -3348,7 +3358,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
 		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
-		{Command: "/output-style", Args: []string{"set", "concise"}, Report: "/output-style set"},
 		{Command: "/theme", Args: []string{"light"}, Report: "/theme set"},
 		{Command: "/language", Args: []string{"French"}, Report: "/language set"},
 		{Command: "/effort", Args: []string{"low"}, Report: "/effort set"},

@@ -24626,16 +24626,7 @@ func (a *App) runResumedBudgetSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedOutputStyleSlash(args []string, format string) error {
-	req, err := parseOutputStyleArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "list", "show":
-		return a.OutputStyle(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/output-style", req.Action), format)
-	}
+	return a.OutputStyle(args)
 }
 
 func (a *App) runResumedThemeSlash(args []string, format string) error {
