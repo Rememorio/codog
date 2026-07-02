@@ -11581,6 +11581,111 @@ func TestAntTraceCommandAndSlash(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("ant-trace"))
 }
 
+func TestAntTraceErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "unknown option",
+			args:      []string{"ant-trace", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "missing output format",
+			args:      []string{"ant-trace", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"ant-trace", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing message",
+			args:      []string{"ant-trace", "--message"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--message"`},
+		},
+		{
+			name:      "missing timeout",
+			args:      []string{"ant-trace", "--timeout-ms"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--timeout-ms"`},
+		},
+		{
+			name:      "invalid timeout",
+			args:      []string{"ant-trace", "--timeout-ms", "soon"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--timeout-ms"`, `"value": "soon"`},
+		},
+		{
+			name:      "negative timeout",
+			args:      []string{"ant-trace", "--timeout-ms", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--timeout-ms"`, `"value": "-1"`},
+		},
+		{
+			name:      "missing model",
+			args:      []string{"ant-trace", "--model"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--model"`},
+		},
+		{
+			name:      "missing base url",
+			args:      []string{"ant-trace", "--base-url"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--base-url"`},
+		},
+		{
+			name:      "missing provider",
+			args:      []string{"ant-trace", "--provider"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--provider"`},
+		},
+		{
+			name:      "missing output",
+			args:      []string{"ant-trace", "--output"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "ant-trace"`, `"option": "--output"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestResetLimitsCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(configHome, "config.json")

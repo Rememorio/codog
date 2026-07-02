@@ -619,7 +619,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "reset-limits":
 		return app.ResetLimits(rest)
 	case "ant-trace":
-		return app.AntTrace(ctx, rest)
+		if err := app.AntTrace(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "mock-limits":
 		if err := app.MockLimits(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -42448,6 +42451,8 @@ func antTraceAuthConfigured(cfg config.Config, client *anthropic.Client) bool {
 	return strings.TrimSpace(client.APIKey) != "" || strings.TrimSpace(client.AuthToken) != ""
 }
 
+const antTraceUsage = "codog ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--output-format text|json]"
+
 func parseAntTraceArgs(args []string) (antTraceRequest, error) {
 	req := antTraceRequest{Format: "text", TimeoutMS: 15000}
 	messageParts := []string{}
@@ -42459,7 +42464,11 @@ func parseAntTraceArgs(args []string) (antTraceRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("ant-trace output format is required")
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -42470,73 +42479,125 @@ func parseAntTraceArgs(args []string) (antTraceRequest, error) {
 			req.Write = true
 		case arg == "--message":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ant-trace message is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
 			req.Message = args[index]
 		case strings.HasPrefix(arg, "--message="):
 			req.Message = strings.TrimPrefix(arg, "--message=")
 		case arg == "--timeout-ms":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ant-trace timeout is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
-			value, err := parsePositiveInt(args[index], "ant-trace timeout")
+			value, err := parseAntTraceTimeoutMS(args[index])
 			if err != nil {
 				return req, err
 			}
 			req.TimeoutMS = value
 		case strings.HasPrefix(arg, "--timeout-ms="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--timeout-ms="), "ant-trace timeout")
+			value, err := parseAntTraceTimeoutMS(strings.TrimPrefix(arg, "--timeout-ms="))
 			if err != nil {
 				return req, err
 			}
 			req.TimeoutMS = value
 		case arg == "--model":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ant-trace model is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
 			req.Model = args[index]
 		case strings.HasPrefix(arg, "--model="):
 			req.Model = strings.TrimPrefix(arg, "--model=")
 		case arg == "--base-url":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ant-trace base URL is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
 			req.BaseURL = args[index]
 		case strings.HasPrefix(arg, "--base-url="):
 			req.BaseURL = strings.TrimPrefix(arg, "--base-url=")
 		case arg == "--provider":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ant-trace provider is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
 			req.Provider = args[index]
 		case strings.HasPrefix(arg, "--provider="):
 			req.Provider = strings.TrimPrefix(arg, "--provider=")
 		case arg == "--output":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ant-trace output path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "ant-trace",
+					Flag:    arg,
+					Usage:   antTraceUsage,
+				}
 			}
 			req.Output = args[index]
 		case strings.HasPrefix(arg, "--output="):
 			req.Output = strings.TrimPrefix(arg, "--output=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown ant-trace argument %q", arg)
+			return req, unknownOptionError{
+				Command: "ant-trace",
+				Option:  arg,
+				Usage:   antTraceUsage,
+			}
 		default:
 			messageParts = append(messageParts, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "ant-trace"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("ant-trace", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if strings.TrimSpace(req.Message) == "" && len(messageParts) > 0 {
 		req.Message = strings.Join(messageParts, " ")
 	}
 	return req, nil
+}
+
+func parseAntTraceTimeoutMS(raw string) (int, error) {
+	value := strings.TrimSpace(raw)
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, invalidFlagValueError{
+			Flag:    "--timeout-ms",
+			Value:   raw,
+			Message: "ant-trace timeout must be a positive integer",
+			Usage:   antTraceUsage,
+		}
+	}
+	if parsed <= 0 {
+		return 0, invalidFlagValueError{
+			Flag:    "--timeout-ms",
+			Value:   raw,
+			Message: "ant-trace timeout must be positive",
+			Usage:   antTraceUsage,
+		}
+	}
+	return parsed, nil
 }
 
 func (a *App) antTraceOutputPath(output string, createdAt time.Time) string {
