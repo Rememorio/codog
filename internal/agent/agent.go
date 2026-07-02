@@ -305,7 +305,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return renderMemoryCommand(os.Stdout, workspace, rest)
 	}
 	if command == "enterprise" && len(rest) > 0 && rest[0] == "verify" {
-		return enterpriseVerify(os.Stdout, rest)
+		if err := enterpriseVerify(os.Stdout, rest); err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	}
 
 	cfg, err := config.Load(overrides)
@@ -3669,7 +3672,11 @@ func (a *App) enterpriseAuditReport(limit int) (enterpriseAuditReport, error) {
 
 func enterpriseVerify(out io.Writer, args []string) error {
 	if len(args) < 3 {
-		return errors.New("usage: codog enterprise verify POLICY PUBLIC_KEY")
+		return requiredArgumentError{
+			Command:  "enterprise verify",
+			Argument: "POLICY PUBLIC_KEY",
+			Usage:    "codog enterprise verify POLICY PUBLIC_KEY",
+		}
 	}
 	policy, err := config.VerifyManagedPolicyFile(args[1], args[2])
 	if err != nil {

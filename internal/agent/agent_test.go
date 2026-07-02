@@ -159,6 +159,15 @@ func TestEnterpriseVerifyCommand(t *testing.T) {
 	require.NotContains(t, out.String(), policy.Signature)
 }
 
+func TestEnterpriseVerifyErrorsHonorGlobalJSONFormat(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "enterprise", "verify"}, config.FlagOverrides{})
+	})
+	requireStructuredCLIError(t, err, []byte(out), "missing_argument", "missing_argument")
+	require.Contains(t, out, `"command": "enterprise verify"`)
+	require.Contains(t, out, `"argument": "POLICY PUBLIC_KEY"`)
+}
+
 func TestEnterpriseAuditReportsManagedPolicyStatus(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
