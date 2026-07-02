@@ -2749,6 +2749,28 @@ func risky(value any) {
 	require.Equal(t, "snippet", resumedSetupTerminal.Terminal.Action)
 	require.Contains(t, resumedSetupTerminal.Terminal.Snippet, "codog_statusline")
 
+	out, err = runResumedJSON("/setup", "init")
+	require.NoError(t, err)
+	var resumedSetupInit setupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSetupInit))
+	require.Equal(t, "setup", resumedSetupInit.Kind)
+	require.Equal(t, "init", resumedSetupInit.Action)
+	require.NotNil(t, resumedSetupInit.Project)
+	require.Equal(t, "init", resumedSetupInit.Project.Action)
+	require.FileExists(t, filepath.Join(workspace, ".codog", "instructions.md"))
+	require.FileExists(t, filepath.Join(workspace, ".codog.json"))
+
+	out, err = runResumedJSON("/setup", "all", "--shell", "zsh", "--path", terminalProfilePath)
+	require.NoError(t, err)
+	var resumedSetupAll setupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSetupAll))
+	require.Equal(t, "setup", resumedSetupAll.Kind)
+	require.Equal(t, "all", resumedSetupAll.Action)
+	require.NotNil(t, resumedSetupAll.Project)
+	require.NotNil(t, resumedSetupAll.Terminal)
+	require.Equal(t, "status", resumedSetupAll.Terminal.Action)
+	require.Equal(t, terminalProfilePath, resumedSetupAll.Terminal.Path)
+
 	out, err = runResumedJSON("/setup", "terminal", "install", "--shell", "zsh", "--path", terminalProfilePath)
 	require.NoError(t, err)
 	var resumedSetupTerminalInstall setupReport
@@ -3690,6 +3712,71 @@ func risky(value any) {
 	require.True(t, resumedPlan.State.Active)
 	require.Equal(t, "inspect before editing", resumedPlan.State.Plan)
 
+	out, err = runResumedJSON("/plan", "inspect", "more")
+	require.NoError(t, err)
+	var resumedPlanEnterText planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlanEnterText))
+	require.Equal(t, "plan", resumedPlanEnterText.Kind)
+	require.Equal(t, "enter", resumedPlanEnterText.Action)
+	require.Equal(t, "active", resumedPlanEnterText.Status)
+	require.True(t, resumedPlanEnterText.State.Active)
+	require.Equal(t, "inspect more", resumedPlanEnterText.State.Plan)
+	require.NotEmpty(t, resumedPlanEnterText.Path)
+
+	out, err = runResumedJSON("/plan", "enter", "inspect")
+	require.NoError(t, err)
+	var resumedPlanEnter planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlanEnter))
+	require.Equal(t, "plan", resumedPlanEnter.Kind)
+	require.Equal(t, "enter", resumedPlanEnter.Action)
+	require.Equal(t, "inspect", resumedPlanEnter.State.Plan)
+
+	out, err = runResumedJSON("/plan", "set", "ship")
+	require.NoError(t, err)
+	var resumedPlanSet planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlanSet))
+	require.Equal(t, "plan", resumedPlanSet.Kind)
+	require.Equal(t, "set", resumedPlanSet.Action)
+	require.True(t, resumedPlanSet.State.Active)
+	require.Equal(t, "ship", resumedPlanSet.State.Plan)
+
+	out, err = runResumedJSON("/plan", "exit")
+	require.NoError(t, err)
+	var resumedPlanExit planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlanExit))
+	require.Equal(t, "plan", resumedPlanExit.Kind)
+	require.Equal(t, "exit", resumedPlanExit.Action)
+	require.Equal(t, "inactive", resumedPlanExit.Status)
+	require.False(t, resumedPlanExit.State.Active)
+	require.Equal(t, "ship", resumedPlanExit.State.Plan)
+
+	out, err = runResumedJSON("/ultraplan", "inspect")
+	require.NoError(t, err)
+	var resumedUltraPlan planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUltraPlan))
+	require.Equal(t, "plan", resumedUltraPlan.Kind)
+	require.Equal(t, "enter", resumedUltraPlan.Action)
+	require.True(t, resumedUltraPlan.State.Active)
+	require.Equal(t, "inspect", resumedUltraPlan.State.Plan)
+
+	out, err = runResumedJSON("/exit-plan")
+	require.NoError(t, err)
+	var resumedExitPlan planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedExitPlan))
+	require.Equal(t, "plan", resumedExitPlan.Kind)
+	require.Equal(t, "exit", resumedExitPlan.Action)
+	require.False(t, resumedExitPlan.State.Active)
+
+	out, err = runResumedJSON("/plan", "clear")
+	require.NoError(t, err)
+	var resumedPlanClear planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPlanClear))
+	require.Equal(t, "plan", resumedPlanClear.Kind)
+	require.Equal(t, "clear", resumedPlanClear.Action)
+	require.Equal(t, "inactive", resumedPlanClear.Status)
+	require.False(t, resumedPlanClear.State.Active)
+	require.NoFileExists(t, planmode.Path(workspace))
+
 	out, err = runResumedJSON("/unfocus")
 	require.NoError(t, err)
 	var resumedUnfocus focus.Report
@@ -3803,18 +3890,9 @@ func risky(value any) {
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
-		{Command: "/setup", Args: []string{"init"}, Report: "/setup init"},
-		{Command: "/setup", Args: []string{"all"}, Report: "/setup all"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/reset", Args: []string{"model"}, Report: "/reset model"},
 		{Command: "/reset", Args: []string{"all", "--confirm"}, Report: "/reset all"},
-		{Command: "/plan", Args: []string{"inspect", "more"}, Report: "/plan enter"},
-		{Command: "/plan", Args: []string{"enter", "inspect"}, Report: "/plan enter"},
-		{Command: "/plan", Args: []string{"set", "ship"}, Report: "/plan set"},
-		{Command: "/plan", Args: []string{"exit"}, Report: "/plan exit"},
-		{Command: "/plan", Args: []string{"clear"}, Report: "/plan clear"},
-		{Command: "/ultraplan", Args: []string{"inspect"}, Report: "/ultraplan"},
-		{Command: "/exit-plan", Args: nil, Report: "/exit-plan"},
 		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
 		{Command: "/think-back", Args: []string{"--year", "2026"}, Report: "/think-back default-output"},
 		{Command: "/thinkback", Args: nil, Report: "/thinkback default-output"},
