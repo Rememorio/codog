@@ -1048,6 +1048,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	modelsSlash, ok := capabilityReportSlash(report, "/models")
 	require.True(t, ok)
 	require.True(t, modelsSlash.ResumeSupported)
+	subagentSlash, ok := capabilityReportSlash(report, "/subagent")
+	require.True(t, ok)
+	require.True(t, subagentSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/generateSessionName"))
 	generateSessionNameSlash, ok := capabilityReportSlash(report, "/generateSessionName")
 	require.True(t, ok)
@@ -2709,6 +2712,13 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedAgentRuns))
 	require.Equal(t, "agents", resumedAgentRuns.Kind)
 	require.Equal(t, "runs", resumedAgentRuns.Action)
+
+	out, err = runResumedJSON("/subagent", "list")
+	require.NoError(t, err)
+	var resumedSubagentRuns agentRunsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSubagentRuns))
+	require.Equal(t, "agents", resumedSubagentRuns.Kind)
+	require.Equal(t, "runs", resumedSubagentRuns.Action)
 
 	out, err = runResumedJSON("/plugins", "list")
 	require.NoError(t, err)
@@ -15347,6 +15357,14 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.NotEmpty(t, runsReport.Runs[0].CurrentStatus)
 	out.Reset()
 
+	require.NoError(t, app.Subagent([]string{"list", "--json"}, config.FlagOverrides{}))
+	var subagentListReport agentRunsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &subagentListReport))
+	require.Equal(t, "agents", subagentListReport.Kind)
+	require.Equal(t, "runs", subagentListReport.Action)
+	require.Equal(t, runReport.RunID, subagentListReport.Runs[0].Run.ID)
+	out.Reset()
+
 	require.NoError(t, app.AgentsWithOverrides([]string{"status", runReport.RunID, "--json"}, config.FlagOverrides{}))
 	var statusReport agentRunsReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
@@ -15363,6 +15381,21 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.Equal(t, "more context", updateReport.Message)
 	require.Len(t, updateReport.Task.Messages, 1)
 	require.Equal(t, "more context", updateReport.Task.Messages[0].Message)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/subagent steer "+runReport.RunID+" slash context --json", &session.Session{ID: "session-1"}))
+	var slashSteerReport agentRunActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &slashSteerReport))
+	require.Equal(t, "update", slashSteerReport.Action)
+	require.Equal(t, "slash context", slashSteerReport.Message)
+	out.Reset()
+
+	require.NoError(t, app.RunResumedSlash(context.Background(), "/subagent", []string{"status", runReport.RunID}, config.FlagOverrides{Resume: "session-1"}, "json"))
+	var resumedSubagentStatus agentRunsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &resumedSubagentStatus))
+	require.Equal(t, "agents", resumedSubagentStatus.Kind)
+	require.Equal(t, "status", resumedSubagentStatus.Action)
+	require.Equal(t, runReport.RunID, resumedSubagentStatus.Run.Run.ID)
 	out.Reset()
 
 	outputTask, err := background.NewStore(configHome).RunWithOptions("printf agent-output", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer", SessionID: "session-1"})
@@ -15387,6 +15420,13 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &outputReport))
 	require.Equal(t, "output", outputReport.Action)
 	require.Contains(t, outputReport.Output, "agent-output")
+	out.Reset()
+
+	require.NoError(t, app.Subagent([]string{"logs", outputRun.ID, "--bytes", "4096", "--json"}, config.FlagOverrides{}))
+	var subagentLogsReport agentRunActionReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &subagentLogsReport))
+	require.Equal(t, "output", subagentLogsReport.Action)
+	require.Contains(t, subagentLogsReport.Output, "agent-output")
 	out.Reset()
 
 	observedAt := time.Now().UTC().Format(time.RFC3339)
@@ -15433,7 +15473,7 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 		UpdatedAt: longTask.StartedAt,
 	})
 	require.NoError(t, err)
-	require.NoError(t, app.AgentsWithOverrides([]string{"stop", longRun.ID, "--json"}, config.FlagOverrides{}))
+	require.NoError(t, app.Subagent([]string{"kill", longRun.ID, "--json"}, config.FlagOverrides{}))
 	var stopReport agentRunActionReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &stopReport))
 	require.Equal(t, "stop", stopReport.Action)
@@ -15517,6 +15557,33 @@ func TestParseAgentRunArgs(t *testing.T) {
 
 	_, err = parseAgentRunArgs([]string{"--worktree", "reviewer"})
 	require.Error(t, err)
+}
+
+func TestNormalizeSubagentArgs(t *testing.T) {
+	require.True(t, commandAcceptsGlobalOutputFormat("subagent"))
+
+	args, err := normalizeSubagentArgs([]string{"--json"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"runs", "--output-format", "json"}, args)
+
+	args, err = normalizeSubagentArgs([]string{"steer", "run-1", "check", "auth", "--output-format", "json"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"update", "run-1", "check", "auth", "--output-format", "json"}, args)
+
+	args, err = normalizeSubagentArgs([]string{"kill", "run-1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"stop", "run-1", "--output-format", "text"}, args)
+
+	args, err = normalizeSubagentArgs([]string{"status", "run-1"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"status", "run-1", "--output-format", "text"}, args)
+
+	args, err = normalizeSubagentArgs([]string{"logs", "run-1", "--bytes", "2048"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"output", "run-1", "--bytes", "2048", "--output-format", "text"}, args)
+
+	_, err = normalizeSubagentArgs([]string{"steer", "run-1"})
+	require.ErrorContains(t, err, "requires a run id and message")
 }
 
 func TestBackgroundWatchCommandOutputsJSONLEvents(t *testing.T) {

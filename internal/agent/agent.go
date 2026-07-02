@@ -668,6 +668,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Team(rest)
 	case "agents":
 		return app.AgentsWithOverrides(rest, overrides)
+	case "subagent":
+		return app.Subagent(rest, overrides)
 	case "reload-plugins":
 		return app.ReloadPlugins(rest)
 	case "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow", "PluginTrustWarning", "UnifiedInstalledCell", "parseArgs", "pluginDetailsHelpers", "usePagination":
@@ -6538,6 +6540,74 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	a.runTaskCreatedHook(context.Background(), task)
 	a.runSubagentStartHook(context.Background(), task.ID, selected.Name)
 	return nil
+}
+
+// Subagent maps Claude-style subagent run controls onto Codog agent runs.
+func (a *App) Subagent(args []string, overrides config.FlagOverrides) error {
+	agentsArgs, err := normalizeSubagentArgs(args)
+	if err != nil {
+		clean, format, stripErr := stripJSONOnlyOutputFormat("subagent", args)
+		if stripErr != nil {
+			return stripErr
+		}
+		action := "list"
+		if len(clean) > 0 {
+			action = strings.ToLower(strings.TrimSpace(clean[0]))
+		}
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "subagent",
+			Action:    action,
+			Status:    "error",
+			ErrorKind: "invalid_subagent_command",
+			Message:   err.Error(),
+			Hint:      "Usage: codog subagent [list [AGENT]|steer RUN_ID MESSAGE|kill RUN_ID|status RUN_ID|logs RUN_ID] [--output-format text|json].",
+		}, format)
+	}
+	return a.AgentsWithOverrides(agentsArgs, overrides)
+}
+
+func normalizeSubagentArgs(args []string) ([]string, error) {
+	clean, format, err := stripJSONOnlyOutputFormat("subagent", args)
+	if err != nil {
+		return nil, err
+	}
+	action := "list"
+	rest := clean
+	if len(rest) > 0 {
+		action = strings.ToLower(strings.TrimSpace(rest[0]))
+		rest = rest[1:]
+	}
+	var mapped []string
+	switch action {
+	case "", "list", "ls":
+		mapped = append([]string{"runs"}, rest...)
+	case "steer", "message", "update":
+		if len(rest) < 2 {
+			return nil, errors.New("subagent steer requires a run id and message")
+		}
+		mapped = append([]string{"update"}, rest...)
+	case "kill", "stop":
+		if len(rest) != 1 {
+			return nil, errors.New("subagent kill requires exactly one run id")
+		}
+		mapped = append([]string{"stop"}, rest...)
+	case "status", "show":
+		if len(rest) != 1 {
+			return nil, errors.New("subagent status requires exactly one run id")
+		}
+		mapped = append([]string{"status"}, rest...)
+	case "logs", "output":
+		if len(rest) < 1 {
+			return nil, errors.New("subagent logs requires a run id")
+		}
+		mapped = append([]string{"output"}, rest...)
+	default:
+		return nil, fmt.Errorf("unknown subagent command %q", action)
+	}
+	if format != "" {
+		mapped = append(mapped, "--output-format", format)
+	}
+	return mapped, nil
 }
 
 type agentRunRequest struct {
@@ -22055,6 +22125,7 @@ func builtInCommandNames() []string {
 		"add-dir",
 		"advisor",
 		"agents",
+		"subagent",
 		"allowed-tools",
 		"android",
 		"ant-trace",
@@ -23222,6 +23293,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedHooksSlash(ctx, resumeSlashArgs("hooks", args, format), format)
 	case "/agents":
 		return a.runResumedAgentsSlash(resumeSlashArgs("agents", args, format), resumed, format)
+	case "/subagent":
+		return a.Subagent(resumeSlashArgs("subagent", args, format), resumed)
 	case "/plugin", "/plugins", "/marketplace":
 		return a.runResumedMarketplaceSlash(resumeSlashArgs("plugins", args, format), format)
 	case "/reload-plugins":
@@ -28162,6 +28235,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/agents":
 		if err := a.AgentsWithOverrides(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/subagent":
+		if err := a.Subagent(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/background":
@@ -43880,7 +43957,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
@@ -45366,6 +45443,7 @@ Usage:
   %s cron list|create|delete|due|mark-run|run-due [ARGS...] [--json|--output-format text|json]
   %s team list|create|get|status|logs|watch|delete [ARGS...] [--json|--output-format text|json]
   %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents board [seconds] | agents status RUN_ID | agents heartbeat RUN_ID [FLAGS] | agents stop RUN_ID | agents update RUN_ID MESSAGE | agents output RUN_ID [bytes] | agents prune [days] [keep] | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
+  %s subagent list [AGENT] | subagent steer RUN_ID MESSAGE | subagent kill RUN_ID | subagent status RUN_ID | subagent logs RUN_ID [bytes] [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
   %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]

@@ -313,6 +313,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/models")
 	require.Contains(t, names, "/skill")
 	require.Contains(t, names, "/skills")
+	require.Contains(t, names, "/subagent")
 	require.Contains(t, names, "/system-prompt")
 	require.Contains(t, names, "/team")
 	require.Contains(t, names, "/terminal-setup")
