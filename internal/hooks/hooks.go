@@ -77,16 +77,17 @@ type Payload struct {
 }
 
 type CommandResult struct {
-	Command    string `json:"command"`
-	Type       string `json:"type,omitempty"`
-	URL        string `json:"url,omitempty"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	ExitCode   int    `json:"exit_code"`
-	DurationMS int64  `json:"duration_ms"`
-	Success    bool   `json:"success"`
-	Error      string `json:"error,omitempty"`
+	Command    string   `json:"command"`
+	Type       string   `json:"type,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	StatusCode int      `json:"status_code,omitempty"`
+	Stdout     string   `json:"stdout,omitempty"`
+	Stderr     string   `json:"stderr,omitempty"`
+	Messages   []string `json:"messages,omitempty"`
+	ExitCode   int      `json:"exit_code"`
+	DurationMS int64    `json:"duration_ms"`
+	Success    bool     `json:"success"`
+	Error      string   `json:"error,omitempty"`
 }
 
 type RunReport struct {
@@ -540,7 +541,7 @@ func SessionStartOutputFromReport(report RunReport) SessionStartOutput {
 func PreToolUseOutputFromReport(report RunReport) PreToolUseOutput {
 	var out PreToolUseOutput
 	for _, result := range report.Results {
-		parsed, ok := parsePreToolUseStdout(report.Event, report.Tool, result.Command, result.Stdout, result.Stderr)
+		parsed, ok := parseHookStdout(report.Event, report.Tool, result.Command, result.Stdout, result.Stderr)
 		if !ok {
 			continue
 		}
@@ -563,7 +564,7 @@ func PreToolUseOutputFromReport(report RunReport) PreToolUseOutput {
 	return out
 }
 
-func parsePreToolUseStdout(event string, tool string, command string, stdout string, stderr string) (PreToolUseOutput, bool) {
+func parseHookStdout(event string, tool string, command string, stdout string, stderr string) (PreToolUseOutput, bool) {
 	stdout = strings.TrimSpace(stdout)
 	if stdout == "" {
 		return PreToolUseOutput{}, false
@@ -623,6 +624,14 @@ func parsePreToolUseStdout(event string, tool string, command string, stdout str
 		output.Messages = []string{stdout}
 	}
 	return output, true
+}
+
+func hookMessagesFromStdout(payload Payload, command string, stdout string, stderr string) []string {
+	parsed, ok := parseHookStdout(payload.Event, firstNonEmpty(payload.ToolName, payload.Tool), command, stdout, stderr)
+	if !ok {
+		return nil
+	}
+	return parsed.Messages
 }
 
 func formatInvalidHookOutput(event string, tool string, command string, detail string, stdout string, stderr string) string {
@@ -833,7 +842,7 @@ func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, hookInd
 	case "command":
 		return r.runCommandHook(ctx, hook, hookIndex, payload, data, defaultTimeout)
 	case "http":
-		return r.runHTTPHook(ctx, hook, data, defaultTimeout)
+		return r.runHTTPHook(ctx, hook, payload, data, defaultTimeout)
 	case "prompt", "agent":
 		return r.runPromptHook(ctx, hook, payload, data, defaultTimeout)
 	default:
@@ -874,6 +883,7 @@ func (r Runner) runPromptHook(ctx context.Context, hook config.HookCommand, payl
 	})
 	result.DurationMS = time.Since(started).Milliseconds()
 	result.Stdout = output
+	result.Messages = hookMessagesFromStdout(payload, result.Command, result.Stdout, "")
 	if hookCtx.Err() == context.DeadlineExceeded {
 		result.Success = false
 		result.ExitCode = -1
@@ -952,6 +962,7 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		Type:       "command",
 		Stdout:     stdout.String(),
 		Stderr:     stderr.String(),
+		Messages:   hookMessagesFromStdout(payload, command, stdout.String(), stderr.String()),
 		ExitCode:   0,
 		DurationMS: duration,
 		Success:    true,
@@ -990,7 +1001,7 @@ func invalidHookOutputDiagnostic(payload Payload, command string, stdout string,
 	return ""
 }
 
-func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
+func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
 	url := strings.TrimSpace(hook.URL)
 	if !httpHookURLAllowed(url, r.AllowedHTTPHookURLs) {
 		err := fmt.Errorf("http hook URL is not allowed: %s", url)
@@ -1045,6 +1056,7 @@ func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, data [
 		return result, readErr
 	}
 	result.Stdout = string(body)
+	result.Messages = hookMessagesFromStdout(payload, result.Command, result.Stdout, "")
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		result.Success = false
 		result.ExitCode = resp.StatusCode

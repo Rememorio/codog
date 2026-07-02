@@ -241,6 +241,7 @@ func TestPreToolUseOutputFromReportParsesHookSpecificOutput(t *testing.T) {
 	require.Equal(t, "hook ok", output.PermissionReason)
 	require.True(t, output.UpdatedInputProvided)
 	require.JSONEq(t, `{"command":"git status"}`, string(output.UpdatedInput))
+	require.Equal(t, []string{"updated", "ctx"}, report.Results[0].Messages)
 }
 
 func TestPreToolUseMalformedJSONReportsDiagnostic(t *testing.T) {
@@ -264,6 +265,22 @@ func TestPreToolUseMalformedJSONReportsDiagnostic(t *testing.T) {
 	require.Contains(t, rendered, `stdout_preview={not-json\nsecond line`)
 	require.Contains(t, rendered, "stderr_preview=stderr warning")
 	require.Equal(t, rendered, report.Results[0].Error)
+	require.Equal(t, []string{rendered}, report.Results[0].Messages)
+}
+
+func TestRunPayloadParsesMessagesForNonPreToolHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{Workspace: t.TempDir()}.RunPayload(context.Background(), []string{`printf '%s' '{"systemMessage":"post note","reason":"because","hookSpecificOutput":{"additionalContext":"ctx"}}'`}, Payload{
+		Event:  "post_tool_use",
+		Tool:   "bash",
+		Input:  `{"command":"git status"}`,
+		Output: "done",
+	})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, []string{"post note", "because", "ctx"}, report.Results[0].Messages)
 }
 
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
