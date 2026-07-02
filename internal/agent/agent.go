@@ -659,27 +659,57 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "mcp":
 		return app.MCP(ctx, rest)
 	case "capabilities":
-		return app.Capabilities(rest)
+		if err := app.Capabilities(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "cost", "tokens":
 		return app.ShowCost(overrides)
 	case "cache", "caches":
-		return app.Cache(rest, overrides)
+		if err := app.Cache(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "break-cache":
-		return app.BreakCache(rest, overrides)
+		if err := app.BreakCache(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "usage":
-		return app.Usage(rest, overrides)
+		if err := app.Usage(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "stats":
-		return app.Usage(rest, overrides)
+		if err := app.Usage(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "bookmarks":
-		return app.Bookmarks(rest, overrides)
+		if err := app.Bookmarks(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "metrics":
-		return app.Metrics(rest, overrides)
+		if err := app.Metrics(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "perf-issue":
-		return app.PerfIssue(rest)
+		if err := app.PerfIssue(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "insights":
-		return app.Insights(rest)
+		if err := app.Insights(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "think-back", "thinkback", "thinkback-play":
-		return app.ThinkBack(rest)
+		if err := app.ThinkBack(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "compact":
 		if err := app.Compact(rest, overrides); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -691,11 +721,20 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "extra-usage":
-		return app.ExtraUsage(rest)
+		if err := app.ExtraUsage(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "extra-usage-core":
-		return app.ExtraUsage(rest)
+		if err := app.ExtraUsage(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "extra-usage-noninteractive":
-		return app.ExtraUsage(appendExtraUsageNoOpen(rest))
+		if err := app.ExtraUsage(appendExtraUsageNoOpen(rest)); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "rate-limit":
 		if err := app.RateLimit(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -19945,6 +19984,7 @@ func (a *App) ExtraUsage(args []string) error {
 
 func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
 	req := extraUsageRequest{Format: "text", Target: "user", Open: true, Mode: "personal"}
+	const usage = "codog extra-usage [personal|admin] [--open|--no-open] [--target user|project|local] [--path PATH] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -19953,23 +19993,23 @@ func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("extra-usage output format is required")
+				return req, missingFlagValueError{Command: "extra-usage", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("extra-usage target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "extra-usage", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("extra-usage config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "extra-usage", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -19987,12 +20027,17 @@ func parseExtraUsageArgs(args []string) (extraUsageRequest, error) {
 		case arg == "personal" || arg == "user" || arg == "individual":
 			req.Mode = "personal"
 		default:
-			return req, fmt.Errorf("unknown extra-usage option %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "extra-usage", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "extra-usage", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "extra-usage"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("extra-usage", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -38169,6 +38214,7 @@ func (a *App) Bookmarks(args []string, overrides config.FlagOverrides) error {
 
 func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmarksRequest, error) {
 	req := bookmarksRequest{Action: "list", Format: "text", SessionID: "latest", MessageIndex: -1}
+	const usage = "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--json|--output-format text|json]"
 	if strings.TrimSpace(overrides.Resume) != "" {
 		req.SessionID = overrides.Resume
 	}
@@ -38186,7 +38232,7 @@ func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmark
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("bookmarks output format is required")
+				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -38195,8 +38241,8 @@ func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmark
 			req.All = true
 		case arg == "--session" || arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("bookmarks session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -38205,30 +38251,30 @@ func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmark
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case arg == "--message" || arg == "--message-index":
 			index++
-			if index >= len(args) {
-				return req, errors.New("bookmarks message index is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
 			}
-			messageIndex, err := parseBookmarkMessageIndex(args[index])
+			messageIndex, err := parseBookmarkMessageIndex(args[index], arg, usage)
 			if err != nil {
 				return req, err
 			}
 			req.MessageIndex = messageIndex
 		case strings.HasPrefix(arg, "--message="):
-			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message="))
+			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message="), "--message", usage)
 			if err != nil {
 				return req, err
 			}
 			req.MessageIndex = messageIndex
 		case strings.HasPrefix(arg, "--message-index="):
-			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message-index="))
+			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message-index="), "--message-index", usage)
 			if err != nil {
 				return req, err
 			}
 			req.MessageIndex = messageIndex
 		case arg == "--note":
 			index++
-			if index >= len(args) {
-				return req, errors.New("bookmarks note is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "bookmarks", Flag: arg, Usage: usage}
 			}
 			req.Note = args[index]
 		case strings.HasPrefix(arg, "--note="):
@@ -38237,7 +38283,7 @@ func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmark
 			return req, unknownOptionError{
 				Command: "bookmarks",
 				Option:  arg,
-				Usage:   "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--json|--output-format text|json]",
+				Usage:   usage,
 			}
 		default:
 			if !actionSet && isBookmarksAction(arg) {
@@ -38248,26 +38294,31 @@ func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmark
 			positionals = append(positionals, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "bookmarks"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("bookmarks", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	switch req.Action {
 	case "list", "clear":
 		if len(positionals) != 0 {
-			return req, fmt.Errorf("unexpected bookmarks argument %q", positionals[0])
+			return req, unexpectedExtraArgsError{Command: "bookmarks " + req.Action, Args: positionals, Usage: usage}
 		}
 	case "add":
 		if len(positionals) == 0 {
-			return req, errors.New("usage: codog bookmarks add NAME [--session ID] [--message N|last] [--note TEXT]")
+			return req, requiredArgumentError{Command: "bookmarks add", Argument: "NAME", Usage: usage}
 		}
 		req.Name = strings.Join(positionals, " ")
 	case "show", "delete":
 		if len(positionals) != 1 {
-			return req, fmt.Errorf("usage: codog bookmarks %s ID_OR_NAME [--json|--output-format text|json]", req.Action)
+			if len(positionals) == 0 {
+				return req, requiredArgumentError{Command: "bookmarks " + req.Action, Argument: "ID_OR_NAME", Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "bookmarks " + req.Action, Args: positionals[1:], Usage: usage}
 		}
 		req.Ref = positionals[0]
 	default:
-		return req, fmt.Errorf("unknown bookmarks action %q", req.Action)
+		return req, unexpectedExtraArgsError{Command: "bookmarks", Args: []string{req.Action}, Usage: usage}
 	}
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = "latest"
@@ -38301,7 +38352,7 @@ func normalizeBookmarksAction(value string) string {
 	}
 }
 
-func parseBookmarkMessageIndex(value string) (int, error) {
+func parseBookmarkMessageIndex(value string, option string, usage string) (int, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	switch value {
 	case "", "last", "latest":
@@ -38309,7 +38360,12 @@ func parseBookmarkMessageIndex(value string) (int, error) {
 	}
 	index, err := strconv.Atoi(value)
 	if err != nil || index <= 0 {
-		return 0, fmt.Errorf("bookmarks message index must be a positive integer or last, got %q", value)
+		return 0, invalidFlagValueError{
+			Flag:    option,
+			Value:   value,
+			Message: "bookmarks message index must be a positive integer or last",
+			Usage:   usage,
+		}
 	}
 	return index - 1, nil
 }
@@ -41734,6 +41790,7 @@ func (a *App) Cache(args []string, overrides config.FlagOverrides) error {
 
 func parseCacheArgs(args []string, overrides config.FlagOverrides) (string, config.FlagOverrides, error) {
 	format := "text"
+	const usage = "codog cache [--session ID|--resume ID] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -41742,35 +41799,39 @@ func parseCacheArgs(args []string, overrides config.FlagOverrides) (string, conf
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return "", overrides, errors.New("cache output format is required")
+				return "", overrides, missingFlagValueError{Command: "cache", Flag: arg, Usage: usage}
 			}
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return "", overrides, errors.New("cache session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return "", overrides, missingFlagValueError{Command: "cache", Flag: arg, Usage: usage}
 			}
 			overrides.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			overrides.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return "", overrides, errors.New("cache resume session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return "", overrides, missingFlagValueError{Command: "cache", Flag: arg, Usage: usage}
 			}
 			overrides.Resume = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			overrides.Resume = strings.TrimPrefix(arg, "--resume=")
 		default:
-			return "", overrides, fmt.Errorf("unknown cache argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return "", overrides, unknownOptionError{Command: "cache", Option: arg, Usage: usage}
+			}
+			return "", overrides, unexpectedExtraArgsError{Command: "cache", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(format, "cache"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("cache", format, []string{"text", "json"})
+	if err != nil {
 		return "", overrides, err
 	}
-	return format, overrides, nil
+	return normalizedFormat, overrides, nil
 }
 
 func (a *App) buildCacheReport(overrides config.FlagOverrides) (cacheReport, error) {
@@ -41910,6 +41971,7 @@ func (a *App) BreakCache(args []string, overrides config.FlagOverrides) error {
 
 func parseBreakCacheArgs(args []string, overrides config.FlagOverrides) (breakCacheRequest, error) {
 	req := breakCacheRequest{Format: "text"}
+	const usage = "codog break-cache [MESSAGE] [--session ID|--resume ID] [--message TEXT] [--output-format text|json]"
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
 		if req.SessionID == "true" {
@@ -41927,49 +41989,51 @@ func parseBreakCacheArgs(args []string, overrides config.FlagOverrides) (breakCa
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("break-cache output format is required")
+				return req, missingFlagValueError{Command: "break-cache", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("break-cache session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "break-cache", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("break-cache resume id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "break-cache", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case arg == "--message":
 			index++
-			if index >= len(args) {
-				return req, errors.New("break-cache message is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "break-cache", Flag: arg, Usage: usage}
 			}
 			req.Message = args[index]
 		case strings.HasPrefix(arg, "--message="):
 			req.Message = strings.TrimPrefix(arg, "--message=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown break-cache flag %q", arg)
+			return req, unknownOptionError{Command: "break-cache", Option: arg, Usage: usage}
 		default:
 			if req.Message == "" {
 				req.Message = strings.Join(args[index:], " ")
 				index = len(args)
 				continue
 			}
-			return req, fmt.Errorf("unexpected break-cache argument %q", arg)
+			return req, unexpectedExtraArgsError{Command: "break-cache", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "break-cache"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("break-cache", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = "latest"
 	}
@@ -42117,6 +42181,7 @@ func (a *App) Metrics(args []string, overrides config.FlagOverrides) error {
 
 func parseMetricsArgs(args []string, overrides config.FlagOverrides) (metricsRequest, error) {
 	req := metricsRequest{Format: "text", Limit: 5, Overrides: overrides}
+	const usage = "codog metrics [--session ID|--resume ID] [--limit N] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -42125,50 +42190,55 @@ func parseMetricsArgs(args []string, overrides config.FlagOverrides) (metricsReq
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("metrics output format is required")
+				return req, missingFlagValueError{Command: "metrics", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--session":
 			index++
-			if index >= len(args) {
-				return req, errors.New("metrics session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "metrics", Flag: arg, Usage: usage}
 			}
 			req.Overrides.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
 			req.Overrides.SessionID = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
 			index++
-			if index >= len(args) {
-				return req, errors.New("metrics resume session id is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "metrics", Flag: arg, Usage: usage}
 			}
 			req.Overrides.Resume = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.Overrides.Resume = strings.TrimPrefix(arg, "--resume=")
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return req, errors.New("metrics limit is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "metrics", Flag: arg, Usage: usage}
 			}
-			limit, err := parsePositiveInt(args[index], "metrics limit")
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "metrics limit")
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		default:
-			return req, fmt.Errorf("unknown metrics argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "metrics", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "metrics", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "metrics"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("metrics", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -42416,6 +42486,7 @@ func (a *App) Insights(args []string) error {
 
 func parseInsightsArgs(args []string) (insightsRequest, error) {
 	req := insightsRequest{Format: "text", Limit: 5}
+	const usage = "codog insights [--limit N] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -42424,34 +42495,39 @@ func parseInsightsArgs(args []string) (insightsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("insights output format is required")
+				return req, missingFlagValueError{Command: "insights", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return req, errors.New("insights limit is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "insights", Flag: arg, Usage: usage}
 			}
-			limit, err := parsePositiveInt(args[index], "insights limit")
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "insights limit")
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		default:
-			return req, fmt.Errorf("unknown insights argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "insights", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "insights", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "insights"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("insights", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -42497,6 +42573,7 @@ func (a *App) PerfIssue(args []string) error {
 
 func parsePerfIssueArgs(args []string) (perfIssueRequest, error) {
 	req := perfIssueRequest{Format: "text", Limit: 5}
+	const usage = "codog perf-issue [--limit N] [--token-threshold N] [--tool-threshold N] [--output PATH] [--write] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -42505,63 +42582,63 @@ func parsePerfIssueArgs(args []string) (perfIssueRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("perf-issue output format is required")
+				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return req, errors.New("perf-issue limit is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
 			}
-			limit, err := parsePositiveInt(args[index], "perf-issue limit")
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "perf-issue limit")
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case arg == "--token-threshold":
 			index++
-			if index >= len(args) {
-				return req, errors.New("perf-issue token threshold is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
 			}
-			value, err := parsePositiveInt(args[index], "perf-issue token threshold")
+			value, err := parsePositiveIntOption(args[index], "--token-threshold", usage)
 			if err != nil {
 				return req, err
 			}
 			req.TokenThreshold = value
 		case strings.HasPrefix(arg, "--token-threshold="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--token-threshold="), "perf-issue token threshold")
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--token-threshold="), "--token-threshold", usage)
 			if err != nil {
 				return req, err
 			}
 			req.TokenThreshold = value
 		case arg == "--tool-threshold":
 			index++
-			if index >= len(args) {
-				return req, errors.New("perf-issue tool threshold is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
 			}
-			value, err := parsePositiveInt(args[index], "perf-issue tool threshold")
+			value, err := parsePositiveIntOption(args[index], "--tool-threshold", usage)
 			if err != nil {
 				return req, err
 			}
 			req.ToolThreshold = value
 		case strings.HasPrefix(arg, "--tool-threshold="):
-			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--tool-threshold="), "perf-issue tool threshold")
+			value, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--tool-threshold="), "--tool-threshold", usage)
 			if err != nil {
 				return req, err
 			}
 			req.ToolThreshold = value
 		case arg == "--output":
 			index++
-			if index >= len(args) {
-				return req, errors.New("perf-issue output path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "perf-issue", Flag: arg, Usage: usage}
 			}
 			req.Output = args[index]
 		case strings.HasPrefix(arg, "--output="):
@@ -42569,12 +42646,17 @@ func parsePerfIssueArgs(args []string) (perfIssueRequest, error) {
 		case arg == "--write":
 			req.Write = true
 		default:
-			return req, fmt.Errorf("unknown perf-issue argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "perf-issue", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "perf-issue", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "perf-issue"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("perf-issue", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -42623,6 +42705,7 @@ func (a *App) ThinkBack(args []string) error {
 
 func parseThinkBackArgs(args []string) (thinkBackRequest, error) {
 	req := thinkBackRequest{Format: "text", Limit: 8}
+	const usage = "codog think-back [--year YYYY] [--limit N] [--output PATH] [--output-format text|json]"
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -42631,65 +42714,75 @@ func parseThinkBackArgs(args []string) (thinkBackRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("think-back output format is required")
+				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--year":
 			index++
-			if index >= len(args) {
-				return req, errors.New("think-back year is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
 			}
-			year, err := parseThinkBackYear(args[index])
+			year, err := parseThinkBackYear(args[index], usage)
 			if err != nil {
 				return req, err
 			}
 			req.Year = year
 		case strings.HasPrefix(arg, "--year="):
-			year, err := parseThinkBackYear(strings.TrimPrefix(arg, "--year="))
+			year, err := parseThinkBackYear(strings.TrimPrefix(arg, "--year="), usage)
 			if err != nil {
 				return req, err
 			}
 			req.Year = year
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return req, errors.New("think-back limit is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
 			}
-			limit, err := parsePositiveInt(args[index], "think-back limit")
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parsePositiveInt(strings.TrimPrefix(arg, "--limit="), "think-back limit")
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case arg == "--output":
 			index++
-			if index >= len(args) {
-				return req, errors.New("think-back output path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{Command: "think-back", Flag: arg, Usage: usage}
 			}
 			req.Output = args[index]
 		case strings.HasPrefix(arg, "--output="):
 			req.Output = strings.TrimPrefix(arg, "--output=")
 		default:
-			return req, fmt.Errorf("unknown think-back argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "think-back", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "think-back", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "think-back"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("think-back", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
-func parseThinkBackYear(value string) (int, error) {
+func parseThinkBackYear(value string, usage string) (int, error) {
 	year, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || year < 2000 || year > 9999 {
-		return 0, errors.New("think-back year must be a four digit year")
+		return 0, invalidFlagValueError{
+			Flag:    "--year",
+			Value:   value,
+			Message: "think-back year must be a four digit year",
+			Usage:   usage,
+		}
 	}
 	return year, nil
 }

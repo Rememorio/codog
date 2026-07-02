@@ -1701,6 +1701,162 @@ func TestRuntimePreferenceCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
 }
 
+func TestManagementSurfaceErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "capabilities unknown option",
+			args:      []string{"capabilities", "bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "capabilities"`, `"option": "bogus"`},
+		},
+		{
+			name:      "cache missing output format",
+			args:      []string{"cache", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "cache"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "cache missing session",
+			args:      []string{"cache", "--session", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "cache"`, `"option": "--session"`},
+		},
+		{
+			name:      "cache unknown option",
+			args:      []string{"cache", "--since"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "cache"`, `"option": "--since"`},
+		},
+		{
+			name:      "break-cache missing output format",
+			args:      []string{"break-cache", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "break-cache"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "break-cache missing message",
+			args:      []string{"break-cache", "--message", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "break-cache"`, `"option": "--message"`},
+		},
+		{
+			name:      "bookmarks missing output format",
+			args:      []string{"bookmarks", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "bookmarks"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "bookmarks add missing name",
+			args:      []string{"bookmarks", "add"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "bookmarks add"`, `"argument": "NAME"`},
+		},
+		{
+			name:      "bookmarks invalid message index",
+			args:      []string{"bookmarks", "--message", "nope", "add", "demo"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--message"`, `"value": "nope"`},
+		},
+		{
+			name:      "metrics missing limit",
+			args:      []string{"metrics", "--limit", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "metrics"`, `"option": "--limit"`},
+		},
+		{
+			name:      "metrics invalid limit",
+			args:      []string{"metrics", "--limit", "nope"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--limit"`, `"value": "nope"`},
+		},
+		{
+			name:      "perf issue missing output",
+			args:      []string{"perf-issue", "--output", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "perf-issue"`, `"option": "--output"`},
+		},
+		{
+			name:      "perf issue invalid threshold",
+			args:      []string{"perf-issue", "--token-threshold", "nope"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--token-threshold"`, `"value": "nope"`},
+		},
+		{
+			name:      "insights missing limit",
+			args:      []string{"insights", "--limit", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "insights"`, `"option": "--limit"`},
+		},
+		{
+			name:      "think-back invalid year",
+			args:      []string{"think-back", "--year", "nope"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--year"`, `"value": "nope"`},
+		},
+		{
+			name:      "think-back missing output",
+			args:      []string{"think-back", "--output", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "think-back"`, `"option": "--output"`},
+		},
+		{
+			name:      "extra usage missing output format",
+			args:      []string{"extra-usage", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "extra-usage"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "extra usage unknown argument",
+			args:      []string{"extra-usage", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "extra-usage"`, `"bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
 func TestUnknownCommandOutputContract(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
