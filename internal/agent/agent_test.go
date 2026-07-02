@@ -13797,6 +13797,38 @@ func TestSkillsInstallMissingSourceReportsTypedJSON(t *testing.T) {
 	}
 }
 
+func TestSkillsUninstallMissingNameReportsTypedJSON(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := [][]string{
+		{"--config", configPath, "--output-format", "json", "skills", "uninstall"},
+		{"--config", configPath, "skills", "uninstall", "--json"},
+	}
+	for _, args := range cases {
+		out, err := captureStdout(t, func() error {
+			return RunCLI(context.Background(), args, config.FlagOverrides{})
+		})
+		require.Error(t, err)
+		var exitErr *ExitError
+		require.ErrorAs(t, err, &exitErr)
+		require.Equal(t, 1, exitErr.Code)
+		require.True(t, exitErr.Silent)
+
+		var report actionErrorReport
+		require.NoError(t, json.Unmarshal([]byte(out), &report))
+		require.Equal(t, "skills", report.Kind)
+		require.Equal(t, "uninstall", report.Action)
+		require.Equal(t, "error", report.Status)
+		require.Equal(t, "missing_argument", report.ErrorKind)
+		require.Equal(t, "skill_name", report.Argument)
+		require.Contains(t, report.Hint, "skills uninstall")
+	}
+}
+
 func TestSkillsInfoAndDescribeAliasShow(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

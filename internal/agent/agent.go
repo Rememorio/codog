@@ -36160,6 +36160,9 @@ func (a *App) Skills(args []string) error {
 	case "uninstall", "remove", "delete":
 		req, err := parseSkillUninstallArgs(rest)
 		if err != nil {
+			if errors.Is(err, errSkillUninstallMissingName) {
+				return renderMissingActionArgument(a.Out, "skills", "uninstall", "skill_name", "skills uninstall requires a skill name", "Usage: codog skills uninstall NAME [--project|--user|--claude] [--json|--output-format text|json]. Run `codog skills list` to see installed skills.", req.Format)
+			}
 			return err
 		}
 		roots := a.skillUninstallRoots(req.Target)
@@ -36278,7 +36281,10 @@ type skillActivationRequest struct {
 	Names  []string
 }
 
-var errSkillInstallMissingSource = errors.New("skills install source is required")
+var (
+	errSkillInstallMissingSource = errors.New("skills install source is required")
+	errSkillUninstallMissingName = errors.New("skills uninstall name is required")
+)
 
 type skillActivationReport struct {
 	Kind                string   `json:"kind"`
@@ -36703,6 +36709,9 @@ func parseSkillUninstallArgs(args []string) (skillUninstallRequest, error) {
 	}
 	if req.Format != "text" && req.Format != "json" {
 		return req, fmt.Errorf("unknown skills uninstall output format %q", req.Format)
+	}
+	if len(positionals) == 0 {
+		return req, errSkillUninstallMissingName
 	}
 	if len(positionals) != 1 {
 		return req, errors.New("usage: codog skills uninstall NAME [--project|--user|--claude] [--json]")
