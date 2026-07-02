@@ -22846,9 +22846,11 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	require.NoError(t, os.MkdirAll(demoDir, 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "commands"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "skills", "review"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "agents"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(demoDir, "hooks"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "commands", "fix.md"), []byte("# Fix\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "skills", "review", "SKILL.md"), []byte("# Review\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "agents", "review.json"), []byte(`{"id":"review","prompt":"review it"}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "hooks", "post.sh"), []byte("#!/bin/sh\n"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(demoDir, "plugin.json"), []byte(`{
 		"id":"demo",
@@ -22858,6 +22860,7 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 		"tools":[{"name":"demo_tool","command":"echo ok","permission":"workspace-write"}],
 		"commands":["commands/fix.md"],
 		"skills":["skills/review/SKILL.md"],
+		"agents":["agents/review.json"],
 		"hooks":["hooks/post.sh"],
 		"mcp_servers":{"demo":{"command":"demo-mcp","args":["--stdio"],"env":["DEMO_TOKEN=secret"]}}
 	}`), 0o644))
@@ -22878,7 +22881,16 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	require.Equal(t, "trust_warning", trust.Action)
 	require.Equal(t, "warn", trust.Status)
 	require.GreaterOrEqual(t, trust.Summary.TrustItems, 1)
+	require.Equal(t, 2, trust.Summary.Tools)
+	require.Equal(t, 1, trust.Summary.Commands)
+	require.Equal(t, 1, trust.Summary.Skills)
+	require.Equal(t, 1, trust.Summary.Agents)
+	require.Equal(t, 1, trust.Summary.Hooks)
+	require.Equal(t, 1, trust.Summary.MCPServers)
 	require.NotEmpty(t, trust.TrustWarnings)
+	demoItem := selectPluginCompatibilityItem(trust.Plugins, "demo")
+	require.NotNil(t, demoItem)
+	require.Equal(t, []string{"tools", "commands", "skills", "agents", "hooks", "mcp_servers"}, demoItem.Surfaces)
 	out.Reset()
 
 	require.NoError(t, app.PluginCompatibility("PluginErrors", []string{"--json"}))
@@ -22956,14 +22968,23 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	require.True(t, detailsReport.PluginDetails.Commands[0].Exists)
 	require.Len(t, detailsReport.PluginDetails.Skills, 1)
 	require.True(t, detailsReport.PluginDetails.Skills[0].Exists)
+	require.Len(t, detailsReport.PluginDetails.Agents, 1)
+	require.True(t, detailsReport.PluginDetails.Agents[0].Exists)
 	require.Len(t, detailsReport.PluginDetails.Hooks, 1)
 	require.True(t, detailsReport.PluginDetails.Hooks[0].Exists)
 	require.Len(t, detailsReport.PluginDetails.MCPServers, 1)
 	require.Equal(t, "demo", detailsReport.PluginDetails.MCPServers[0].Name)
 	require.Equal(t, []string{"--stdio"}, detailsReport.PluginDetails.MCPServers[0].Args)
 	require.Equal(t, []string{"DEMO_TOKEN"}, detailsReport.PluginDetails.MCPServers[0].EnvKeys)
+	require.Equal(t, []string{"tools", "commands", "skills", "agents", "hooks", "mcp_servers"}, detailsReport.PluginDetails.Surfaces)
 	require.NotNil(t, detailsReport.PluginDetails.Validation)
 	require.True(t, detailsReport.PluginDetails.Validation.Success)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("UnifiedInstalledCell", []string{"--limit", "1"}))
+	require.Contains(t, out.String(), "Surfaces")
+	require.Contains(t, out.String(), "Plugin           bad")
+	require.Contains(t, out.String(), "surfaces=tools")
 	out.Reset()
 
 	require.NoError(t, app.PluginCompatibility("pluginDetailsHelpers", []string{"missing", "--json"}))

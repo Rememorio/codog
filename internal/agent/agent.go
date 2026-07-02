@@ -7562,6 +7562,12 @@ type pluginCompatibilitySummary struct {
 	Errors     int `json:"errors"`
 	Warnings   int `json:"warnings"`
 	TrustItems int `json:"trust_items"`
+	Tools      int `json:"tools"`
+	Commands   int `json:"commands"`
+	Skills     int `json:"skills"`
+	Agents     int `json:"agents"`
+	Hooks      int `json:"hooks"`
+	MCPServers int `json:"mcp_servers"`
 }
 
 type pluginCompatibilityItem struct {
@@ -7577,6 +7583,7 @@ type pluginCompatibilityItem struct {
 	Agents      int      `json:"agents"`
 	Hooks       int      `json:"hooks"`
 	MCPServers  int      `json:"mcp_servers"`
+	Surfaces    []string `json:"surfaces,omitempty"`
 	Risks       []string `json:"risks,omitempty"`
 }
 
@@ -7653,6 +7660,7 @@ type pluginCompatibilityDetails struct {
 	Agents       []pluginCompatibilityPathDetail      `json:"agents,omitempty"`
 	Hooks        []pluginCompatibilityPathDetail      `json:"hooks,omitempty"`
 	MCPServers   []pluginCompatibilityMCPServerDetail `json:"mcp_servers,omitempty"`
+	Surfaces     []string                             `json:"surfaces,omitempty"`
 	Risks        []string                             `json:"risks,omitempty"`
 	Validation   *pluginCompatibilityValidation       `json:"validation,omitempty"`
 }
@@ -7788,6 +7796,12 @@ func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibi
 		} else {
 			report.Summary.Disabled++
 		}
+		report.Summary.Tools += item.Tools
+		report.Summary.Commands += item.Commands
+		report.Summary.Skills += item.Skills
+		report.Summary.Agents += item.Agents
+		report.Summary.Hooks += item.Hooks
+		report.Summary.MCPServers += item.MCPServers
 	}
 	for _, item := range validation {
 		report.Summary.Errors += len(item.Errors)
@@ -7828,7 +7842,7 @@ func (a *App) buildPluginCompatibilityReport(command string, req pluginCompatibi
 	case "PluginTrustWarning":
 		report.Message = "Plugins can register executable tools, hooks, commands, agents, skills, and MCP servers; review trust warnings before enabling unknown plugins."
 	case "UnifiedInstalledCell":
-		report.Message = "Installed plugins are summarized in a compact compatibility view."
+		report.Message = "Installed plugin capability surfaces are summarized for review."
 	case "parseArgs":
 		report.Message = "Plugin command arguments were parsed into a normalized action and remaining arguments."
 	case "pluginDetailsHelpers":
@@ -8075,6 +8089,7 @@ func pluginCompatibilityItems(manifests []plugins.Manifest) []pluginCompatibilit
 			Agents:      len(manifest.Agents),
 			Hooks:       len(manifest.Hooks),
 			MCPServers:  len(manifest.MCPServers),
+			Surfaces:    pluginManifestSurfaces(manifest),
 			Risks:       pluginManifestRisks(manifest),
 		})
 	}
@@ -8097,6 +8112,7 @@ func pluginCompatibilityDetailsForManifest(manifest plugins.Manifest) pluginComp
 		Agents:       pluginPathDetails(manifest.Root, manifest.Agents),
 		Hooks:        pluginPathDetails(manifest.Root, manifest.Hooks),
 		MCPServers:   pluginMCPServerDetails(manifest.MCPServers),
+		Surfaces:     pluginManifestSurfaces(manifest),
 		Risks:        pluginManifestRisks(manifest),
 	}
 	validation := pluginCompatibilityValidationForSource(manifest.ID, manifest.Root)
@@ -8129,6 +8145,29 @@ func pluginToolRisks(tool plugins.ToolManifest) []string {
 		risks = append(risks, fmt.Sprintf("tool %s requests %s permission", tool.Name, tool.Permission))
 	}
 	return risks
+}
+
+func pluginManifestSurfaces(manifest plugins.Manifest) []string {
+	surfaces := []string{}
+	if len(manifest.Tools) > 0 {
+		surfaces = append(surfaces, "tools")
+	}
+	if len(manifest.Commands) > 0 {
+		surfaces = append(surfaces, "commands")
+	}
+	if len(manifest.Skills) > 0 {
+		surfaces = append(surfaces, "skills")
+	}
+	if len(manifest.Agents) > 0 {
+		surfaces = append(surfaces, "agents")
+	}
+	if len(manifest.Hooks) > 0 {
+		surfaces = append(surfaces, "hooks")
+	}
+	if len(manifest.MCPServers) > 0 {
+		surfaces = append(surfaces, "mcp_servers")
+	}
+	return surfaces
 }
 
 func pluginManifestRisks(manifest plugins.Manifest) []string {
@@ -8360,6 +8399,14 @@ func renderPluginCompatibilityReport(out io.Writer, report pluginCompatibilityRe
 	fmt.Fprintf(out, "  Installed        %d\n", report.Summary.Total)
 	fmt.Fprintf(out, "  Enabled          %d\n", report.Summary.Enabled)
 	fmt.Fprintf(out, "  Disabled         %d\n", report.Summary.Disabled)
+	fmt.Fprintf(out, "  Surfaces         tools=%d commands=%d skills=%d agents=%d hooks=%d mcp=%d\n",
+		report.Summary.Tools,
+		report.Summary.Commands,
+		report.Summary.Skills,
+		report.Summary.Agents,
+		report.Summary.Hooks,
+		report.Summary.MCPServers,
+	)
 	if report.Message != "" {
 		fmt.Fprintf(out, "  Message          %s\n", report.Message)
 	}
@@ -8375,6 +8422,9 @@ func renderPluginCompatibilityReport(out io.Writer, report pluginCompatibilityRe
 	if report.PluginDetails != nil {
 		details := report.PluginDetails
 		fmt.Fprintf(out, "  Detail plugin    %s enabled=%t\n", details.ID, details.Enabled)
+		if len(details.Surfaces) > 0 {
+			fmt.Fprintf(out, "  Detail surfaces  %s\n", strings.Join(details.Surfaces, ", "))
+		}
 		fmt.Fprintf(out, "  Manifest file    %s\n", details.ManifestFile)
 		fmt.Fprintf(out, "  Data dir         %s\n", details.DataDir)
 		for _, tool := range details.Tools {
@@ -8397,7 +8447,11 @@ func renderPluginCompatibilityReport(out io.Writer, report pluginCompatibilityRe
 		}
 	}
 	for _, item := range report.Plugins {
-		fmt.Fprintf(out, "  Plugin           %s enabled=%t tools=%d commands=%d skills=%d\n", item.ID, item.Enabled, item.Tools, item.Commands, item.Skills)
+		surfaceText := "none"
+		if len(item.Surfaces) > 0 {
+			surfaceText = strings.Join(item.Surfaces, ",")
+		}
+		fmt.Fprintf(out, "  Plugin           %s enabled=%t surfaces=%s tools=%d commands=%d skills=%d\n", item.ID, item.Enabled, surfaceText, item.Tools, item.Commands, item.Skills)
 	}
 	for _, warning := range report.TrustWarnings {
 		fmt.Fprintf(out, "  Trust warning    %s\n", warning)
