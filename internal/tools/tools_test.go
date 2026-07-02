@@ -1149,6 +1149,8 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutput"))
 	require.Equal(t, "bash_output", CanonicalToolName("BashOutputTool"))
 	require.Equal(t, "retrieve_context", CanonicalToolName("RetrieveContextTool"))
+	require.Equal(t, "enter_plan_mode", CanonicalToolName("EnterPlanMode"))
+	require.Equal(t, "exit_plan_mode", CanonicalToolName("ExitPlanMode"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
 
 	aliases := ClaudeToolAliases()
@@ -1156,6 +1158,8 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "retrieve_context", aliases["RetrieveContextTool"])
 	require.Equal(t, "read_file", aliases["FileReadTool"])
 	require.Equal(t, "apply_patch", aliases["ApplyPatchTool"])
+	require.Equal(t, "enter_plan_mode", aliases["EnterPlanMode"])
+	require.Equal(t, "exit_plan_mode", aliases["ExitPlanMode"])
 	aliases["WebFetch"] = "changed"
 	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
 }
@@ -1170,8 +1174,10 @@ func TestClaudeToolAliasesCoverArchivedToolEntries(t *testing.T) {
 		"CronCreateTool",
 		"CronDeleteTool",
 		"CronListTool",
+		"EnterPlanMode",
 		"EnterPlanModeTool",
 		"EnterWorktreeTool",
+		"ExitPlanMode",
 		"ExitPlanModeV2Tool",
 		"ExitWorktreeTool",
 		"FileEditTool",
@@ -1784,9 +1790,11 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"CronDeleteTool":               "cron_delete",
 		"CronList":                     "cron_list",
 		"CronListTool":                 "cron_list",
+		"EnterPlanMode":                "enter_plan_mode",
 		"EnterPlanModeTool":            "enter_plan_mode",
 		"EnterWorktree":                "enter_worktree",
 		"EnterWorktreeTool":            "enter_worktree",
+		"ExitPlanMode":                 "exit_plan_mode",
 		"ExitPlanModeTool":             "exit_plan_mode",
 		"ExitPlanModeV2Tool":           "exit_plan_mode",
 		"ExitWorktree":                 "exit_worktree",
