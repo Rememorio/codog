@@ -24160,7 +24160,7 @@ func (a *App) replScanner(ctx context.Context, sess *session.Session) error {
 			return nil
 		}
 		if line == "/help" {
-			slash.RenderHelp(a.Err)
+			a.renderSlashHelp(a.Err)
 			continue
 		}
 		if a.handleSlash(ctx, line, sess) {
@@ -24197,7 +24197,7 @@ func (a *App) replReadline(ctx context.Context, sess *session.Session, rl *readl
 			return nil
 		}
 		if line == "/help" {
-			slash.RenderHelp(a.Err)
+			a.renderSlashHelp(a.Err)
 			continue
 		}
 		if a.handleSlash(ctx, line, sess) {
@@ -37708,6 +37708,88 @@ func (a *App) customSlashCompletionCandidates() []string {
 		}
 	}
 	return candidates
+}
+
+type runtimeSlashHelpEntry struct {
+	Usage       string
+	Description string
+}
+
+func (a *App) renderSlashHelp(out io.Writer) {
+	slash.RenderHelp(out)
+	entries := a.runtimeSlashHelpEntries()
+	if len(entries) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Runtime slash commands:")
+	for _, entry := range entries {
+		fmt.Fprintf(out, "%-24s %s\n", entry.Usage, entry.Description)
+	}
+}
+
+func (a *App) runtimeSlashHelpEntries() []runtimeSlashHelpEntry {
+	entries := []runtimeSlashHelpEntry{}
+	seen := map[string]bool{}
+	add := func(name string, argumentHint string, description string) {
+		usage := runtimeSlashUsage(name, argumentHint)
+		if usage == "" {
+			return
+		}
+		key := strings.ToLower(strings.Fields(usage)[0])
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if description = strings.TrimSpace(description); description == "" {
+			description = "Run a workspace, user, or plugin slash command."
+		}
+		entries = append(entries, runtimeSlashHelpEntry{Usage: usage, Description: description})
+	}
+	if commands, err := customcommands.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+		for _, command := range commands {
+			if !command.Active {
+				continue
+			}
+			description := command.Description
+			if strings.TrimSpace(description) == "" {
+				description = command.Preview
+			}
+			add(command.Name, command.ArgumentHint, description)
+		}
+	}
+	if loadedSkills, err := skills.Load(a.Config.ConfigHome, a.Workspace); err == nil {
+		for _, skill := range loadedSkills {
+			if !skill.Active || !skill.UserInvocable {
+				continue
+			}
+			description := skill.Description
+			if strings.TrimSpace(description) == "" {
+				description = skill.WhenToUse
+			}
+			add(skill.Name, skill.ArgumentHint, description)
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Usage) < strings.ToLower(entries[j].Usage)
+	})
+	return entries
+}
+
+func runtimeSlashUsage(name string, argumentHint string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	path := "/" + strings.ReplaceAll(strings.TrimPrefix(name, "/"), ":", "/")
+	if _, ok := slash.Lookup(path); ok {
+		return ""
+	}
+	argumentHint = strings.TrimSpace(argumentHint)
+	if argumentHint == "" {
+		return path
+	}
+	return path + " " + argumentHint
 }
 
 type stringListFlag []string

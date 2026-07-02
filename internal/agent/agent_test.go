@@ -6002,6 +6002,48 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	require.Contains(t, candidates, "/team/audit ")
 }
 
+func TestSlashHelpIncludesRuntimeCommands(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "commands", "team"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "team", "review.md"), []byte(`---
+description: Review a target.
+argument-hint: TARGET
+---
+Review $ARGUMENTS`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "commands", "status.md"), []byte(`---
+description: Shadow status.
+---
+Shadow $ARGUMENTS`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog", "plugins", "demo", "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "plugin.json"), []byte(`{"id":"demo","name":"demo","commands":["./commands/deploy.md"]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "plugins", "demo", "commands", "deploy.md"), []byte(`---
+description: Deploy from plugin.
+---
+Deploy $ARGUMENTS`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude", "skills", "team", "audit"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "skills", "team", "audit", "SKILL.md"), []byte(`---
+description: Audit a target.
+argument-hint: SCOPE
+---
+# Audit
+`), 0o644))
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: configHome}, Workspace: workspace}
+
+	app.renderSlashHelp(&out)
+
+	help := out.String()
+	require.Contains(t, help, "Runtime slash commands:")
+	require.Contains(t, help, "/team/review TARGET")
+	require.Contains(t, help, "Review a target.")
+	require.Contains(t, help, "/demo/deploy")
+	require.Contains(t, help, "Deploy from plugin.")
+	require.Contains(t, help, "/team/audit SCOPE")
+	require.Contains(t, help, "Audit a target.")
+	require.NotContains(t, help, "Shadow status.")
+}
+
 func TestSlashCompleterReturnsReadlineSuffixes(t *testing.T) {
 	completer := slashCompleter{candidates: []string{"/model claude-test", "/resume latest"}}
 
