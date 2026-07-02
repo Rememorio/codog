@@ -34562,15 +34562,11 @@ func (a *App) SessionsCommand(args []string) error {
 	}
 	switch args[0] {
 	case "show":
-		if len(args) < 2 {
-			return errors.New("usage: codog sessions show ID")
+		showArgs := args[1:]
+		if !argsHaveOutputFormat(showArgs) {
+			showArgs = append(append([]string(nil), showArgs...), "--json")
 		}
-		sess, err := a.Sessions.Open(args[1])
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(sess, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		return a.SessionShow(showArgs)
 	case "exists":
 		existsArgs := args[1:]
 		if !argsHaveOutputFormat(existsArgs) {
@@ -34664,6 +34660,65 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 		}, format)
 	}
 	return renderCLIError(out, err, format)
+}
+
+type sessionShowReport struct {
+	Kind         string                  `json:"kind"`
+	Action       string                  `json:"action"`
+	Status       string                  `json:"status"`
+	SessionID    string                  `json:"session_id"`
+	Path         string                  `json:"path"`
+	MessageCount int                     `json:"message_count"`
+	Identity     session.SessionIdentity `json:"identity,omitempty"`
+	Messages     []anthropic.Message     `json:"messages"`
+}
+
+func (a *App) SessionShow(args []string) error {
+	format, remaining, err := parseTemplateOutputArgs("sessions show", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 1 {
+		return errors.New("usage: codog sessions show ID [--json|--output-format text|json]")
+	}
+	report, err := a.buildSessionShowReport(remaining[0])
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSessionShowText(a.Out, report)
+	return nil
+}
+
+func (a *App) buildSessionShowReport(id string) (sessionShowReport, error) {
+	sess, err := a.Sessions.OpenExisting(id)
+	if err != nil {
+		return sessionShowReport{}, err
+	}
+	return sessionShowReport{
+		Kind:         "session_show",
+		Action:       "show",
+		Status:       "ok",
+		SessionID:    sess.ID,
+		Path:         sess.Path,
+		MessageCount: len(sess.Messages),
+		Identity:     sess.Identity,
+		Messages:     append([]anthropic.Message(nil), sess.Messages...),
+	}, nil
+}
+
+func renderSessionShowText(out io.Writer, report sessionShowReport) {
+	fmt.Fprintln(out, "Session")
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  File             %s\n", report.Path)
+	if strings.TrimSpace(report.Identity.Title) != "" {
+		fmt.Fprintf(out, "  Title            %s\n", report.Identity.Title)
+	}
 }
 
 type sessionForkRequest struct {

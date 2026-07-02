@@ -5088,6 +5088,25 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.NotEmpty(t, deleteReport.Path)
 }
 
+func TestSessionsShowJSONUsesStableReport(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "hello back")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.SessionsCommand([]string{"show", "source", "--json"}))
+	var report sessionShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_show", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 2, report.MessageCount)
+	require.Len(t, report.Messages, 2)
+	require.NotEmpty(t, report.Path)
+}
+
 func TestSessionsListJSONIncludesDetails(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
@@ -5600,6 +5619,21 @@ func TestResumedSessionForkAndSwitchRequireInteractiveSession(t *testing.T) {
 	sessions, err := store.List()
 	require.NoError(t, err)
 	require.Len(t, sessions, 2)
+}
+
+func TestResumedSessionShowJSONDefaultsToActiveSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.runResumedSessionSlash([]string{"show", "--json"}, config.FlagOverrides{Resume: "active"}))
+	var report sessionShowReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_show", report.Kind)
+	require.Equal(t, "active", report.SessionID)
+	require.Equal(t, 1, report.MessageCount)
+	require.Len(t, report.Messages, 1)
 }
 
 func TestResumedSessionExistsJSONMarksActiveAndRequiresTarget(t *testing.T) {
