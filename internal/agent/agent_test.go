@@ -594,6 +594,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "break-cache",
 		},
 		{
+			name:  "paste local help",
+			args:  []string{"--config", configPath, "paste", "--help", "--output-format", "json"},
+			topic: "paste",
+		},
+		{
 			name:  "extra-usage core local help",
 			args:  []string{"--config", configPath, "extra-usage-core", "--help", "--output-format", "json"},
 			topic: "extra-usage-core",
@@ -969,6 +974,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	passesSlash, ok := capabilityReportSlash(report, "/passes")
 	require.True(t, ok)
 	require.True(t, passesSlash.ResumeSupported)
+	pasteSlash, ok := capabilityReportSlash(report, "/paste")
+	require.True(t, ok)
+	require.True(t, pasteSlash.ResumeSupported)
 	thinkBackSlash, ok := capabilityReportSlash(report, "/think-back")
 	require.True(t, ok)
 	require.True(t, thinkBackSlash.ResumeSupported)
@@ -1985,6 +1993,22 @@ func risky(value any) {
 	require.Equal(t, "resume-slash", copyReport.SessionID)
 	require.Equal(t, "resume-test-clipboard", copyReport.Clipboard)
 	require.Equal(t, "four\n", string(copied))
+
+	previousReadClipboard := readClipboard
+	readClipboard = func(_ context.Context) ([]byte, string, error) {
+		return []byte("resumed paste text\nsecond line"), "resume-read-clipboard", nil
+	}
+	t.Cleanup(func() { readClipboard = previousReadClipboard })
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/paste"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var resumedPaste pasteReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPaste))
+	require.Equal(t, "resume-slash", resumedPaste.SessionID)
+	require.Equal(t, "resume-read-clipboard", resumedPaste.Clipboard)
+	require.Equal(t, 2, resumedPaste.Lines)
+	require.False(t, resumedPaste.Submitted)
 
 	out, err = runResumedJSON("/help", "status")
 	require.NoError(t, err)
@@ -14623,6 +14647,43 @@ func TestCopyCommandAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/copy all", sess))
 	require.Contains(t, string(copied), "# Conversation Export")
 	require.Empty(t, errOut.String())
+}
+
+func TestPasteCommandAndSlashPrint(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	sess, err := store.Open("source")
+	require.NoError(t, err)
+	previousReadClipboard := readClipboard
+	readClipboard = func(_ context.Context) ([]byte, string, error) {
+		return []byte("paste prompt\nsecond line"), "test-read-clipboard", nil
+	}
+	t.Cleanup(func() { readClipboard = previousReadClipboard })
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out, Err: &errOut}
+
+	require.NoError(t, app.Paste(context.Background(), []string{"--json", "--session", "source"}, config.FlagOverrides{}))
+	var report pasteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "paste", report.Kind)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, "test-read-clipboard", report.Clipboard)
+	require.Equal(t, 2, report.Lines)
+	require.False(t, report.Submitted)
+	require.Contains(t, report.Preview, "paste prompt")
+	out.Reset()
+
+	require.NoError(t, app.Paste(context.Background(), nil, config.FlagOverrides{}))
+	require.Equal(t, "paste prompt\nsecond line", out.String())
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/paste --print", sess))
+	require.Equal(t, "paste prompt\nsecond line", out.String())
+	require.Empty(t, errOut.String())
+	out.Reset()
+
+	require.ErrorContains(t, app.Paste(context.Background(), []string{"--max-bytes", "4"}, config.FlagOverrides{}), "over paste max")
 }
 
 func TestBuildAgentCommandQuotesPrompt(t *testing.T) {

@@ -574,6 +574,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Share(rest, overrides)
 	case "copy":
 		return app.Copy(ctx, rest, overrides)
+	case "paste":
+		return app.Paste(ctx, rest, overrides)
 	case "git":
 		if err := app.Git(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -22176,6 +22178,7 @@ func builtInCommandNames() []string {
 		"output-style",
 		"parity",
 		"passes",
+		"paste",
 		"perf-issue",
 		"permissions",
 		"plan",
@@ -23357,6 +23360,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Share(resumeSlashJSONArgs(args, format), resumed)
 	case "/copy":
 		return a.Copy(ctx, resumeSlashJSONArgs(args, format), resumed)
+	case "/paste":
+		return a.Paste(ctx, resumeSlashJSONArgs(args, format), resumed)
 	case "/cost", "/tokens":
 		return a.ShowCost(resumed)
 	case "/usage", "/stats":
@@ -28005,6 +28010,8 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		if err := a.Copy(ctx, fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
+	case "/paste":
+		a.handlePasteSlash(ctx, fields[1:], sess)
 	case "/history", "/prompt-history":
 		a.handleHistorySlash(fields[1:], sess)
 	case "/summary":
@@ -34086,7 +34093,28 @@ type copyReport struct {
 	Clipboard string `json:"clipboard"`
 }
 
+type pasteRequest struct {
+	SessionID string
+	Format    string
+	JSON      bool
+	Print     bool
+	MaxBytes  int
+}
+
+type pasteReport struct {
+	Kind      string `json:"kind"`
+	Action    string `json:"action"`
+	Status    string `json:"status"`
+	SessionID string `json:"session_id,omitempty"`
+	Bytes     int    `json:"bytes"`
+	Lines     int    `json:"lines"`
+	Clipboard string `json:"clipboard"`
+	Submitted bool   `json:"submitted"`
+	Preview   string `json:"preview,omitempty"`
+}
+
 var writeClipboard = writeSystemClipboard
+var readClipboard = readSystemClipboard
 
 func (a *App) GenerateSessionName(args []string, overrides config.FlagOverrides) error {
 	report, format, err := a.generateSessionNameReport(args, overrides)
@@ -34602,6 +34630,81 @@ func (a *App) Copy(ctx context.Context, args []string, overrides config.FlagOver
 	return nil
 }
 
+func (a *App) Paste(ctx context.Context, args []string, overrides config.FlagOverrides) error {
+	req, err := parsePasteArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	data, clipboard, err := pasteClipboardPayload(ctx, req)
+	if err != nil {
+		return err
+	}
+	if req.JSON {
+		report := buildPasteReport(req, data, clipboard, false)
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return nil
+	}
+	_, err = a.Out.Write(data)
+	return err
+}
+
+func (a *App) handlePasteSlash(ctx context.Context, args []string, sess *session.Session) {
+	req, err := parsePasteArgs(args, config.FlagOverrides{SessionID: sess.ID})
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	data, clipboard, err := pasteClipboardPayload(ctx, req)
+	if err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+		return
+	}
+	if req.JSON {
+		report := buildPasteReport(req, data, clipboard, false)
+		encoded, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(encoded))
+		return
+	}
+	if req.Print {
+		if _, err := a.Out.Write(data); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+		return
+	}
+	if err := a.runSessionTurnWithOptions(ctx, "repl", sess, string(data), "idle", turnOptions{}); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
+	}
+}
+
+func pasteClipboardPayload(ctx context.Context, req pasteRequest) ([]byte, string, error) {
+	data, clipboard, err := readClipboard(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > req.MaxBytes {
+		return nil, "", fmt.Errorf("clipboard content is %d bytes, over paste max %d bytes", len(data), req.MaxBytes)
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil, "", errors.New("clipboard is empty")
+	}
+	return data, clipboard, nil
+}
+
+func buildPasteReport(req pasteRequest, data []byte, clipboard string, submitted bool) pasteReport {
+	return pasteReport{
+		Kind:      "paste",
+		Action:    "read",
+		Status:    "ok",
+		SessionID: req.SessionID,
+		Bytes:     len(data),
+		Lines:     countTextLines(string(data)),
+		Clipboard: clipboard,
+		Submitted: submitted,
+		Preview:   truncateForReport(string(data), 240),
+	}
+}
+
 func (a *App) copyPayload(req copyRequest) ([]byte, *session.Session, string, error) {
 	if req.Scope == "all" {
 		format := req.Format
@@ -34698,6 +34801,73 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 	return req, nil
 }
 
+func parsePasteArgs(args []string, overrides config.FlagOverrides) (pasteRequest, error) {
+	req := pasteRequest{SessionID: "latest", Format: "text", MaxBytes: 1024 * 1024}
+	if overrides.Resume != "" {
+		req.SessionID = overrides.Resume
+	}
+	if overrides.SessionID != "" {
+		req.SessionID = overrides.SessionID
+	}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+			req.JSON = true
+		case arg == "--print":
+			req.Print = true
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, errors.New("paste session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("paste resume id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--max-bytes":
+			index++
+			if index >= len(args) {
+				return req, errors.New("paste max bytes is required")
+			}
+			value, err := parsePositiveInt(args[index], "paste max bytes")
+			if err != nil {
+				return req, err
+			}
+			req.MaxBytes = value
+		case strings.HasPrefix(arg, "--max-bytes="):
+			value, err := parsePositiveInt(strings.TrimPrefix(arg, "--max-bytes="), "paste max bytes")
+			if err != nil {
+				return req, err
+			}
+			req.MaxBytes = value
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("paste output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			return req, fmt.Errorf("unknown paste argument %q", arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "paste"); err != nil {
+		return req, err
+	}
+	req.JSON = req.Format == "json"
+	return req, nil
+}
+
 func copyScopeLabel(req copyRequest) string {
 	if req.Scope == "nth" {
 		return fmt.Sprintf("response %d", req.Nth)
@@ -34763,6 +34933,17 @@ func renderMessagePlainText(msg anthropic.Message) string {
 	return text + "\n"
 }
 
+func countTextLines(value string) int {
+	if value == "" {
+		return 0
+	}
+	lines := strings.Count(value, "\n")
+	if !strings.HasSuffix(value, "\n") {
+		lines++
+	}
+	return lines
+}
+
 func writeSystemClipboard(ctx context.Context, data []byte) (string, error) {
 	candidates := clipboardCommands()
 	for _, candidate := range candidates {
@@ -34794,6 +34975,22 @@ func writeSystemClipboard(ctx context.Context, data []byte) (string, error) {
 	return "", errors.New("no clipboard command found")
 }
 
+func readSystemClipboard(ctx context.Context) ([]byte, string, error) {
+	candidates := clipboardReadCommands()
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate[0]); err != nil {
+			continue
+		}
+		cmd := exec.CommandContext(ctx, candidate[0], candidate[1:]...)
+		data, err := cmd.Output()
+		if err != nil {
+			return nil, "", err
+		}
+		return data, candidate[0], nil
+	}
+	return nil, "", errors.New("no clipboard command found")
+}
+
 func clipboardCommands() [][]string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -34802,6 +34999,20 @@ func clipboardCommands() [][]string {
 		return [][]string{{"clip"}}
 	default:
 		return [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}}
+	}
+}
+
+func clipboardReadCommands() [][]string {
+	switch runtime.GOOS {
+	case "darwin":
+		return [][]string{{"pbpaste"}}
+	case "windows":
+		return [][]string{
+			{"powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"},
+			{"pwsh", "-NoProfile", "-Command", "Get-Clipboard -Raw"},
+		}
+	default:
+		return [][]string{{"wl-paste"}, {"xclip", "-selection", "clipboard", "-out"}, {"xsel", "--clipboard", "--output"}}
 	}
 }
 
@@ -42750,7 +42961,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "perf-issue", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
@@ -43096,6 +43307,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"TUI\n\nUsage:\n  codog [flags] tui\n\nStarts the Bubble Tea prompt composer for an interactive provider-backed Codog session.\n",
 			[]string{"session_id", "message", "tool_calls", "usage"},
 			[]string{"ok", "error"},
+		), true
+	case "paste":
+		return localCommandHelpSpec(
+			"paste",
+			"paste",
+			"codog paste [--print|--json] [--session ID] [--max-bytes N]",
+			"Paste\n\nUsage:\n  codog paste [--print|--json] [--session ID] [--max-bytes N]\n  /paste [--print|--json]\n\nReads text from the system clipboard. Top-level `codog paste` prints clipboard text or a JSON report. In the REPL, `/paste` submits clipboard text as the next user message; use `/paste --print` or `/paste --json` to inspect without starting a provider turn.\n",
+			[]string{"bytes", "lines", "clipboard", "submitted", "preview"},
+			[]string{"ok", "error"},
+			false,
 		), true
 	case "status":
 		return localCommandHelpSpec(
@@ -44013,7 +44234,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			Topic:                   "resume",
 			Command:                 "resume",
 			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, or /session. Help is local and does not open a session.\n",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, or /session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -44064,7 +44285,7 @@ Usage:
   %s [flags] summary [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] rewind [N] [--session ID|--resume ID|latest] [--json|--output-format text|json]
   %s [flags] todos [list|add|start|done|pending|clear] [ARGS...] [--json|--output-format text|json]
-  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID]
+  %s [flags] export [PATH] [--session ID] [--output PATH] [--format markdown|json|jsonl|html] | share [DIR] [--session ID] [--format markdown|json|jsonl|html] | copy [last|N|all] [--session ID] | paste [--print|--json] [--session ID]
   %s [flags] skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall]
   %s [flags] commands [list|show|run]
   %s [flags] templates [list|show|apply]
