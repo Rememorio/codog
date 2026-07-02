@@ -33,6 +33,8 @@ func resolvePluginMCPServer(manifest Manifest, server config.MCPServerConfig) co
 	variables := pluginVariables(manifest)
 	server.Command = argsub.SubstituteVariables(server.Command, variables)
 	server.Args = argsub.SubstituteVariablesInList(server.Args, variables)
+	server.URL = argsub.SubstituteVariables(server.URL, variables)
+	server.Headers = substituteStringMapVariables(server.Headers, variables)
 	env := []string{
 		"CLAUDE_PLUGIN_ROOT=" + variables["CLAUDE_PLUGIN_ROOT"],
 		"CLAUDE_PLUGIN_DATA=" + variables["CLAUDE_PLUGIN_DATA"],
@@ -40,6 +42,21 @@ func resolvePluginMCPServer(manifest Manifest, server config.MCPServerConfig) co
 	env = append(env, argsub.SubstituteVariablesInList(server.Env, variables)...)
 	server.Env = compactEnv(env)
 	return server
+}
+
+func substituteStringMapVariables(values map[string]string, variables map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = argsub.SubstituteVariables(value, variables)
+	}
+	return out
 }
 
 func pluginVariables(manifest Manifest) map[string]string {

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +58,80 @@ func TestCallToolAndReadResource(t *testing.T) {
 	require.Contains(t, string(auth.ServerInfo), `"name":"test"`)
 	require.Equal(t, 1, auth.ToolCount)
 	require.Equal(t, 1, auth.ResourceCount)
+}
+
+func TestHTTPMCPTransportListsCallsAndReads(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
+		var req map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "session-1")
+			writeHTTPMCP(t, w, id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+				"serverInfo":      map[string]any{"name": "remote", "version": "1.0.0"},
+			})
+		case "notifications/initialized":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			w.Header().Set("Content-Type", "text/event-stream")
+			response := map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text over HTTP.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}}}
+			data, _ := json.Marshal(response)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
+		case "tools/call":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeHTTPMCP(t, w, id, map[string]any{"content": []map[string]any{{"type": "text", "text": "hi remote"}}})
+		case "resources/read":
+			require.Equal(t, "session-1", r.Header.Get("Mcp-Session-Id"))
+			writeHTTPMCP(t, w, id, map[string]any{"contents": []map[string]any{{"uri": "codog://remote", "text": "remote note"}}})
+		default:
+			writeHTTPMCPError(t, w, id, "unsupported method")
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.MCPServerConfig{URL: server.URL + "/mcp?token=secret", Headers: map[string]string{"Authorization": "Bearer token"}}
+	ready := Preflight(context.Background(), "remote", cfg)
+	require.Equal(t, "ok", ready.Status)
+	require.Contains(t, ready.URL, "token=%5Bredacted%5D")
+	require.NotContains(t, ready.URL, "secret")
+	require.Equal(t, "2024-11-05", ready.ProtocolVersion)
+	require.Contains(t, string(ready.ServerInfo), `"name":"remote"`)
+
+	tools := ListTools(context.Background(), "remote", cfg)
+	require.Empty(t, tools.Error)
+	require.Len(t, tools.Tools, 1)
+	require.Equal(t, "echo", tools.Tools[0].Name)
+	require.Equal(t, "Echo text over HTTP.", tools.Tools[0].Description)
+
+	call := CallTool(context.Background(), "remote", cfg, "echo", json.RawMessage(`{"text":"hi"}`))
+	require.Empty(t, call.Error)
+	require.Contains(t, string(call.Result), "hi remote")
+
+	read := ReadResource(context.Background(), "remote", cfg, "codog://remote")
+	require.Empty(t, read.Error)
+	require.Contains(t, string(read.Result), "remote note")
+
+	description := DescribeServer("remote", cfg)
+	require.True(t, description.Valid)
+	require.Equal(t, "http", description.Transport.ID)
+	require.Equal(t, []string{"Authorization"}, description.Details.HeaderKeys)
+	require.Contains(t, description.Details.URL, "token=%5Bredacted%5D")
+	require.NotContains(t, description.Details.URL, "secret")
+	require.Contains(t, ServerSignature(cfg), "token=%5Bredacted%5D")
+	require.NotContains(t, ServerSignature(cfg), "secret")
+	require.NotContains(t, ServerConfigHash(cfg), "secret")
 }
 
 func TestListToolsIncludesProcessStderr(t *testing.T) {
@@ -249,4 +325,22 @@ func writeMCP(id any, result map[string]any) {
 	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
 	data, _ := json.Marshal(payload)
 	fmt.Println(string(data))
+}
+
+func writeHTTPMCP(t *testing.T, w http.ResponseWriter, id any, result map[string]any) {
+	t.Helper()
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	_, err = w.Write(data)
+	require.NoError(t, err)
+}
+
+func writeHTTPMCPError(t *testing.T, w http.ResponseWriter, id any, message string) {
+	t.Helper()
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]string{"message": message}}
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+	_, err = w.Write(data)
+	require.NoError(t, err)
 }

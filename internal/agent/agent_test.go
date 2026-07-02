@@ -10732,6 +10732,16 @@ func TestMCPAddCommandCompatibility(t *testing.T) {
 	require.Contains(t, string(stored), `"mcp_servers"`)
 	require.Contains(t, string(stored), `"demo"`)
 	require.Contains(t, string(stored), `"A=B"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "add", "remote", "--url", "https://example.test/mcp", "--header", "Authorization=Bearer token"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"name": "remote"`)
+	stored, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"url": "https://example.test/mcp"`)
+	require.Contains(t, string(stored), `"Authorization": "Bearer token"`)
 }
 
 func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {

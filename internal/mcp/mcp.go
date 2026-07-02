@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ type ServerStatus struct {
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
 	Command         string          `json:"command,omitempty"`
+	URL             string          `json:"url,omitempty"`
 	Signature       string          `json:"signature,omitempty"`
 	ConfigHash      string          `json:"config_hash,omitempty"`
 	ResolvedPath    string          `json:"resolved_path,omitempty"`
@@ -113,9 +115,11 @@ type ServerTransport struct {
 }
 
 type ServerDetails struct {
-	Command   string   `json:"command,omitempty"`
-	ArgsCount int      `json:"args_count"`
-	EnvKeys   []string `json:"env_keys,omitempty"`
+	Command    string   `json:"command,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	ArgsCount  int      `json:"args_count"`
+	EnvKeys    []string `json:"env_keys,omitempty"`
+	HeaderKeys []string `json:"header_keys,omitempty"`
 }
 
 type ServerDescriptor struct {
@@ -128,7 +132,7 @@ type ServerDescriptor struct {
 
 type rpcRequest struct {
 	JSONRPC string         `json:"jsonrpc"`
-	ID      int            `json:"id"`
+	ID      int            `json:"id,omitempty"`
 	Method  string         `json:"method"`
 	Params  map[string]any `json:"params,omitempty"`
 }
@@ -186,12 +190,23 @@ func URLServerSignature(rawURL string) string {
 }
 
 func ServerSignature(server config.MCPServerConfig) string {
+	if isHTTPServer(server) {
+		return "url:" + redactedURL(server.URL)
+	}
 	parts := []string{server.Command}
 	parts = append(parts, server.Args...)
 	return "stdio:" + renderCommandSignature(parts)
 }
 
 func ServerConfigHash(server config.MCPServerConfig) string {
+	if isHTTPServer(server) {
+		rendered := fmt.Sprintf(
+			"http|%s|%s|",
+			UnwrapCCRProxyURL(server.URL),
+			renderHeaderSignature(server.Headers),
+		)
+		return stableHexHash("required:false|" + rendered)
+	}
 	rendered := fmt.Sprintf(
 		"stdio|%s|%s|%s|",
 		server.Command,
@@ -202,6 +217,18 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 }
 
 func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor {
+	if isHTTPServer(server) {
+		return ServerDescriptor{
+			Name:      name,
+			Valid:     strings.TrimSpace(server.URL) != "",
+			Transport: ServerTransport{ID: "http", Label: "http"},
+			Summary:   httpServerSummary(server),
+			Details: ServerDetails{
+				URL:        redactedURL(server.URL),
+				HeaderKeys: headerKeys(server.Headers),
+			},
+		}
+	}
 	return ServerDescriptor{
 		Name:      name,
 		Valid:     strings.TrimSpace(server.Command) != "",
@@ -215,6 +242,10 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 	}
 }
 
+func isHTTPServer(server config.MCPServerConfig) bool {
+	return strings.TrimSpace(server.URL) != ""
+}
+
 func stdioServerSummary(server config.MCPServerConfig) string {
 	if strings.TrimSpace(server.Command) == "" {
 		return "missing command"
@@ -223,6 +254,17 @@ func stdioServerSummary(server config.MCPServerConfig) string {
 		return server.Command
 	}
 	return fmt.Sprintf("%s (%d args)", server.Command, len(server.Args))
+}
+
+func httpServerSummary(server config.MCPServerConfig) string {
+	url := redactedURL(server.URL)
+	if url == "" {
+		return "missing url"
+	}
+	if len(server.Headers) == 0 {
+		return url
+	}
+	return fmt.Sprintf("%s (%d header keys)", url, len(server.Headers))
 }
 
 func unwrapCCRProxyURLWithMarker(rawURL string) string {
@@ -245,6 +287,30 @@ func unwrapCCRProxyURLWithMarker(rawURL string) string {
 	return rawURL
 }
 
+func redactedURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(UnwrapCCRProxyURL(rawURL)))
+	if err != nil {
+		return strings.TrimSpace(rawURL)
+	}
+	if parsed.User != nil {
+		parsed.User = url.User("[redacted]")
+	}
+	if parsed.RawQuery != "" {
+		values := parsed.Query()
+		redacted := url.Values{}
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			redacted.Set(key, "[redacted]")
+		}
+		parsed.RawQuery = redacted.Encode()
+	}
+	return parsed.String()
+}
+
 func renderCommandSignature(parts []string) string {
 	escaped := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -255,6 +321,22 @@ func renderCommandSignature(parts []string) string {
 	return "[" + strings.Join(escaped, "|") + "]"
 }
 
+func renderHeaderSignature(headers map[string]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	entries := make([]string, 0, len(headers))
+	for key, value := range headers {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		entries = append(entries, key+"="+stableHexHash(value))
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, ";")
+}
+
 func renderEnvSignature(env []string) string {
 	if len(env) == 0 {
 		return ""
@@ -262,6 +344,21 @@ func renderEnvSignature(env []string) string {
 	entries := append([]string(nil), env...)
 	sort.Strings(entries)
 	return strings.Join(entries, ";")
+}
+
+func headerKeys(headers map[string]string) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func envKeys(env []string) []string {
@@ -352,8 +449,21 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 	status := ServerStatus{
 		Name:       name,
 		Command:    server.Command,
+		URL:        redactedURL(server.URL),
 		Signature:  ServerSignature(server),
 		ConfigHash: ServerConfigHash(server),
+	}
+	if isHTTPServer(server) {
+		initialized := Initialize(ctx, name, server)
+		status.ProtocolVersion = initialized.ProtocolVersion
+		status.ServerInfo = initialized.ServerInfo
+		if initialized.Error != "" {
+			status.Status = "error"
+			status.Error = initialized.Error
+			return status
+		}
+		status.Status = "ok"
+		return status
 	}
 	if strings.TrimSpace(server.Command) == "" {
 		status.Status = "missing_command"
@@ -380,6 +490,10 @@ func Preflight(ctx context.Context, name string, server config.MCPServerConfig) 
 }
 
 func Initialize(ctx context.Context, serverName string, server config.MCPServerConfig) InitializeResult {
+	if isHTTPServer(server) {
+		result, _ := initializeHTTP(ctx, serverName, server)
+		return result
+	}
 	if server.Command == "" {
 		return InitializeResult{Server: serverName, Status: "error", Error: "missing command"}
 	}
@@ -485,6 +599,17 @@ func countJSONArrayField(raw json.RawMessage, field string) int {
 }
 
 func ListTools(ctx context.Context, serverName string, server config.MCPServerConfig) ToolListResult {
+	if isHTTPServer(server) {
+		result, err := requestAfterInitialize(ctx, server, rpcRequest{
+			JSONRPC: "2.0",
+			ID:      2,
+			Method:  "tools/list",
+		})
+		if err != nil {
+			return ToolListResult{Server: serverName, Error: err.Error()}
+		}
+		return decodeToolListResult(serverName, result)
+	}
 	if server.Command == "" {
 		return ToolListResult{Server: serverName, Error: "missing command"}
 	}
@@ -533,10 +658,14 @@ func ListTools(ctx context.Context, serverName string, server config.MCPServerCo
 	if resp.Error != nil {
 		return ToolListResult{Server: serverName, Error: mcpError(errors.New(resp.Error.Message), &stderr).Error()}
 	}
+	return decodeToolListResult(serverName, resp.Result)
+}
+
+func decodeToolListResult(serverName string, result json.RawMessage) ToolListResult {
 	var payload struct {
 		Tools []map[string]json.RawMessage `json:"tools"`
 	}
-	if err := json.Unmarshal(resp.Result, &payload); err != nil {
+	if err := json.Unmarshal(result, &payload); err != nil {
 		return ToolListResult{Server: serverName, Error: err.Error()}
 	}
 	tools := make([]ToolInfo, 0, len(payload.Tools))
@@ -669,6 +798,9 @@ func GetPrompt(ctx context.Context, serverName string, server config.MCPServerCo
 }
 
 func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
+	if isHTTPServer(server) {
+		return requestAfterInitializeHTTP(ctx, server, req)
+	}
 	if server.Command == "" {
 		return nil, fmt.Errorf("missing command")
 	}
@@ -720,6 +852,178 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 		return nil, mcpError(errors.New(resp.Error.Message), &stderr)
 	}
 	return resp.Result, nil
+}
+
+func initializeHTTP(ctx context.Context, serverName string, server config.MCPServerConfig) (InitializeResult, string) {
+	if strings.TrimSpace(server.URL) == "" {
+		return InitializeResult{Server: serverName, Status: "error", Error: "missing url"}, ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	resp, sessionID, err := sendHTTPRPC(ctx, server, rpcRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params: map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "codog", "version": "0.1.0"},
+		},
+	}, "")
+	if err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}, sessionID
+	}
+	if resp.Error != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: resp.Error.Message}, sessionID
+	}
+	var payload struct {
+		ProtocolVersion string          `json:"protocolVersion"`
+		Capabilities    json.RawMessage `json:"capabilities"`
+		ServerInfo      json.RawMessage `json:"serverInfo"`
+	}
+	if err := json.Unmarshal(resp.Result, &payload); err != nil {
+		return InitializeResult{Server: serverName, Status: "error", Error: err.Error()}, sessionID
+	}
+	return InitializeResult{
+		Server:          serverName,
+		Status:          "ok",
+		ProtocolVersion: payload.ProtocolVersion,
+		Capabilities:    payload.Capabilities,
+		ServerInfo:      payload.ServerInfo,
+	}, sessionID
+}
+
+func requestAfterInitializeHTTP(ctx context.Context, server config.MCPServerConfig, req rpcRequest) (json.RawMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	initialized, sessionID := initializeHTTP(ctx, "", server)
+	if initialized.Error != "" {
+		return nil, errors.New(initialized.Error)
+	}
+	_, nextSessionID, err := sendHTTPRPC(ctx, server, rpcRequest{JSONRPC: "2.0", Method: "notifications/initialized"}, sessionID)
+	if err != nil && !errors.Is(err, errHTTPNotificationNoBody) {
+		return nil, err
+	}
+	if nextSessionID != "" {
+		sessionID = nextSessionID
+	}
+	resp, _, err := sendHTTPRPC(ctx, server, req, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, errors.New(resp.Error.Message)
+	}
+	return resp.Result, nil
+}
+
+var errHTTPNotificationNoBody = errors.New("mcp notification returned no body")
+
+func sendHTTPRPC(ctx context.Context, server config.MCPServerConfig, rpc rpcRequest, sessionID string) (rpcResponse, string, error) {
+	endpoint, err := validateHTTPServerURL(server.URL)
+	if err != nil {
+		return rpcResponse{}, "", err
+	}
+	data, err := json.Marshal(rpc)
+	if err != nil {
+		return rpcResponse{}, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return rpcResponse{}, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", "2024-11-05")
+	for key, value := range server.Headers {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	if strings.TrimSpace(sessionID) != "" {
+		req.Header.Set("Mcp-Session-Id", strings.TrimSpace(sessionID))
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return rpcResponse{}, "", err
+	}
+	defer resp.Body.Close()
+	nextSessionID := firstNonEmpty(resp.Header.Get("Mcp-Session-Id"), resp.Header.Get("mcp-session-id"))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return rpcResponse{}, nextSessionID, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return rpcResponse{}, nextSessionID, fmt.Errorf("http mcp request failed with status %d: %s", resp.StatusCode, clipMCPText(strings.TrimSpace(string(body)), 4096))
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		if rpc.ID == 0 {
+			return rpcResponse{}, nextSessionID, errHTTPNotificationNoBody
+		}
+		return rpcResponse{}, nextSessionID, errors.New("http mcp response body is empty")
+	}
+	payload := body
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") || bytes.Contains(body, []byte("data:")) {
+		payload, err = firstSSEData(body)
+		if err != nil {
+			return rpcResponse{}, nextSessionID, err
+		}
+	}
+	var decoded rpcResponse
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return rpcResponse{}, nextSessionID, err
+	}
+	return decoded, nextSessionID, nil
+}
+
+func validateHTTPServerURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(UnwrapCCRProxyURL(rawURL)))
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("mcp url must use http or https")
+	}
+	if parsed.Host == "" {
+		return "", errors.New("mcp url host is required")
+	}
+	return parsed.String(), nil
+}
+
+func firstSSEData(body []byte) ([]byte, error) {
+	events := strings.Split(string(body), "\n\n")
+	for _, event := range events {
+		var builder strings.Builder
+		for _, line := range strings.Split(event, "\n") {
+			line = strings.TrimRight(line, "\r")
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			builder.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+		data := strings.TrimSpace(builder.String())
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		return []byte(data), nil
+	}
+	return nil, errors.New("text/event-stream response contained no JSON data")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func mcpError(err error, stderr *bytes.Buffer) error {

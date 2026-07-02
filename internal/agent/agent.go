@@ -5358,10 +5358,12 @@ type pluginCompatibilityToolDetail struct {
 }
 
 type pluginCompatibilityMCPServerDetail struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
-	EnvKeys []string `json:"env_keys,omitempty"`
+	Name       string   `json:"name"`
+	Command    string   `json:"command,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	EnvKeys    []string `json:"env_keys,omitempty"`
+	HeaderKeys []string `json:"header_keys,omitempty"`
 }
 
 type pluginCompatibilityDetails struct {
@@ -5912,13 +5914,27 @@ func pluginMCPServerDetails(servers map[string]config.MCPServerConfig) []pluginC
 	for _, name := range names {
 		server := servers[name]
 		out = append(out, pluginCompatibilityMCPServerDetail{
-			Name:    name,
-			Command: server.Command,
-			Args:    append([]string(nil), server.Args...),
-			EnvKeys: mcpEnvKeys(server.Env),
+			Name:       name,
+			Command:    server.Command,
+			URL:        server.URL,
+			Args:       append([]string(nil), server.Args...),
+			EnvKeys:    mcpEnvKeys(server.Env),
+			HeaderKeys: mcpHeaderKeys(server.Headers),
 		})
 	}
 	return out
+}
+
+func mcpHeaderKeys(headers map[string]string) []string {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func mcpEnvKeys(env []string) []string {
@@ -18922,12 +18938,12 @@ func buildMCPValidation(servers map[string]config.MCPServerConfig) localstatus.M
 	sort.Strings(names)
 	for _, name := range names {
 		server := servers[name]
-		if strings.TrimSpace(server.Command) == "" {
+		if strings.TrimSpace(server.Command) == "" && strings.TrimSpace(server.URL) == "" {
 			status.InvalidServers = append(status.InvalidServers, localstatus.ValidationIssue{
 				Name:       name,
 				Kind:       "missing_command",
 				ErrorField: "command",
-				Reason:     "missing command",
+				Reason:     "missing command or url",
 				Valid:      false,
 			})
 			continue
@@ -33882,10 +33898,18 @@ func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
 		}
 		fmt.Fprintf(out, "  Name             %s\n", report.Server.Name)
 		fmt.Fprintf(out, "  Transport        %s\n", report.Server.Transport.Label)
-		fmt.Fprintf(out, "  Command          %s\n", report.Server.Details.Command)
-		fmt.Fprintf(out, "  Args count       %d\n", report.Server.Details.ArgsCount)
+		if report.Server.Details.URL != "" {
+			fmt.Fprintf(out, "  URL              %s\n", report.Server.Details.URL)
+		}
+		if report.Server.Details.Command != "" {
+			fmt.Fprintf(out, "  Command          %s\n", report.Server.Details.Command)
+			fmt.Fprintf(out, "  Args count       %d\n", report.Server.Details.ArgsCount)
+		}
 		if len(report.Server.Details.EnvKeys) > 0 {
 			fmt.Fprintf(out, "  Env keys         %s\n", strings.Join(report.Server.Details.EnvKeys, ", "))
+		}
+		if len(report.Server.Details.HeaderKeys) > 0 {
+			fmt.Fprintf(out, "  Header keys      %s\n", strings.Join(report.Server.Details.HeaderKeys, ", "))
 		}
 		fmt.Fprintf(out, "  Signature        %s\n", report.Signature)
 		fmt.Fprintf(out, "  Config hash      %s\n", report.ConfigHash)
@@ -33912,7 +33936,11 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 		} else {
 			fmt.Fprintln(out)
 			for _, server := range report.Servers {
-				fmt.Fprintf(out, "  %-16s %-13s %-7s %s\n", server.Name, "stdio", server.Status, mcpServerStatusSummary(server))
+				transport := "stdio"
+				if strings.TrimSpace(server.URL) != "" {
+					transport = "http"
+				}
+				fmt.Fprintf(out, "  %-16s %-13s %-7s %s\n", server.Name, transport, server.Status, mcpServerStatusSummary(server))
 			}
 		}
 		if len(report.InvalidServers) > 0 {
@@ -33933,6 +33961,9 @@ func mcpServerStatusSummary(server mcp.ServerStatus) string {
 		return "error: " + strings.TrimSpace(server.Error)
 	}
 	command := strings.TrimSpace(server.Command)
+	if command == "" {
+		command = strings.TrimSpace(server.URL)
+	}
 	if command == "" {
 		command = "<unknown>"
 	}
@@ -33956,7 +33987,7 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | add NAME --url URL [--header KEY=VALUE] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
 
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
@@ -34132,7 +34163,7 @@ func (a *App) mcpAdd(args []string) error {
 		return err
 	}
 	path := filepath.Join(a.Config.ConfigHome, "config.json")
-	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env}
+	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers}
 	report, err := config.SetFileValue(path, "mcp_servers."+req.Name, server)
 	if err != nil {
 		return err
@@ -34364,6 +34395,8 @@ type mcpAddRequest struct {
 	Command string
 	Args    []string
 	Env     []string
+	URL     string
+	Headers map[string]string
 }
 
 func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
@@ -34375,6 +34408,32 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		case arg == "--":
 			positionals = append(positionals, args[index+1:]...)
 			index = len(args)
+		case arg == "--url":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mcp add url value is required")
+			}
+			req.URL = args[index]
+		case strings.HasPrefix(arg, "--url="):
+			req.URL = strings.TrimPrefix(arg, "--url=")
+		case arg == "--header" || arg == "-H":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mcp add header value is required")
+			}
+			if req.Headers == nil {
+				req.Headers = map[string]string{}
+			}
+			if err := addMCPHeader(req.Headers, args[index]); err != nil {
+				return req, err
+			}
+		case strings.HasPrefix(arg, "--header="):
+			if req.Headers == nil {
+				req.Headers = map[string]string{}
+			}
+			if err := addMCPHeader(req.Headers, strings.TrimPrefix(arg, "--header=")); err != nil {
+				return req, err
+			}
 		case arg == "--env" || arg == "-e":
 			index++
 			if index >= len(args) {
@@ -34387,15 +34446,28 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 			positionals = append(positionals, arg)
 		}
 	}
-	if len(positionals) < 2 {
-		return req, errors.New("usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE]")
+	if len(positionals) < 1 {
+		return req, errors.New("usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] or codog mcp add NAME --url URL [--header KEY=VALUE]")
 	}
 	req.Name = positionals[0]
 	if err := validateMCPServerName(req.Name); err != nil {
 		return req, err
 	}
-	req.Command = positionals[1]
-	req.Args = append([]string(nil), positionals[2:]...)
+	if strings.TrimSpace(req.URL) != "" {
+		if len(positionals) > 1 {
+			return req, errors.New("mcp add with --url does not accept COMMAND arguments")
+		}
+		if err := validateMCPAddURL(req.URL); err != nil {
+			return req, err
+		}
+		req.URL = strings.TrimSpace(req.URL)
+	} else {
+		if len(positionals) < 2 {
+			return req, errors.New("usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE]")
+		}
+		req.Command = positionals[1]
+		req.Args = append([]string(nil), positionals[2:]...)
+	}
 	req.Env = compactMCPEnv(req.Env)
 	for _, value := range req.Env {
 		if key, _, ok := strings.Cut(value, "="); !ok || strings.TrimSpace(key) == "" {
@@ -34403,6 +34475,29 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+func validateMCPAddURL(rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("mcp url must use http or https")
+	}
+	if parsed.Host == "" {
+		return errors.New("mcp url host is required")
+	}
+	return nil
+}
+
+func addMCPHeader(headers map[string]string, value string) error {
+	key, headerValue, ok := strings.Cut(strings.TrimSpace(value), "=")
+	if !ok || strings.TrimSpace(key) == "" {
+		return fmt.Errorf("mcp header value must use KEY=VALUE: %s", value)
+	}
+	headers[strings.TrimSpace(key)] = headerValue
+	return nil
 }
 
 func compactMCPEnv(values []string) []string {

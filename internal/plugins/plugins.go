@@ -314,8 +314,8 @@ func (r *ValidationResult) validateManifest(manifest Manifest, fields map[string
 			r.addError("mcp_servers", "mcp server name is required", "missing_mcp_server_name")
 			continue
 		}
-		if strings.TrimSpace(server.Command) == "" {
-			r.addWarning(basePath+".command", "mcp server has no command and will not start", "missing_mcp_server_command")
+		if strings.TrimSpace(server.Command) == "" && strings.TrimSpace(server.URL) == "" {
+			r.addWarning(basePath+".command", "mcp server has no command or url and will not start", "missing_mcp_server_command")
 		}
 	}
 	hasContent := len(manifest.Tools) > 0 ||

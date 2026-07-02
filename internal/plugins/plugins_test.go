@@ -52,13 +52,13 @@ func TestLoadMCPServersNamespacesEnabledPluginServers(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "plugin.json"), []byte(`{
 		"id":"demo",
 		"name":"demo",
-		"mcp_servers":{"local":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/mcp","args":["--data","${CLAUDE_PLUGIN_DATA}"],"env":["CONFIG=${CLAUDE_PLUGIN_ROOT}/config.json"]}},
+		"mcp_servers":{"local":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/mcp","args":["--data","${CLAUDE_PLUGIN_DATA}"],"env":["CONFIG=${CLAUDE_PLUGIN_ROOT}/config.json"]},"remote":{"url":"https://example.test/${CLAUDE_PLUGIN_DATA}/mcp","headers":{"Authorization":"Bearer ${CLAUDE_PLUGIN_ROOT}"}}},
 		"mcpServers":{"camel":{"command":"cat"}}
 	}`), 0o644))
 
 	servers, err := LoadMCPServers(workspace)
 	require.NoError(t, err)
-	require.Len(t, servers, 2)
+	require.Len(t, servers, 3)
 	pluginRoot := filepath.ToSlash(root)
 	pluginData := filepath.ToSlash(filepath.Join(workspace, ".codog", "plugin-data", "demo"))
 	require.Equal(t, pluginRoot+"/bin/mcp", servers["plugin:demo:local"].Command)
@@ -68,6 +68,8 @@ func TestLoadMCPServersNamespacesEnabledPluginServers(t *testing.T) {
 		"CLAUDE_PLUGIN_DATA=" + pluginData,
 		"CONFIG=" + pluginRoot + "/config.json",
 	}, servers["plugin:demo:local"].Env)
+	require.Equal(t, "https://example.test/"+pluginData+"/mcp", servers["plugin:demo:remote"].URL)
+	require.Equal(t, map[string]string{"Authorization": "Bearer " + pluginRoot}, servers["plugin:demo:remote"].Headers)
 	require.Equal(t, "cat", servers["plugin:demo:camel"].Command)
 	require.Contains(t, servers["plugin:demo:camel"].Env, "CLAUDE_PLUGIN_ROOT="+pluginRoot)
 	require.Contains(t, servers["plugin:demo:camel"].Env, "CLAUDE_PLUGIN_DATA="+pluginData)
