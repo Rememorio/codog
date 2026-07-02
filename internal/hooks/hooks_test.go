@@ -128,6 +128,53 @@ func TestSessionHooksUseClaudeCompatibleStdin(t *testing.T) {
 	require.Contains(t, report.Results[0].Stdout, `"reason":"resume"`)
 }
 
+func TestToolHooksUseClaudeCompatibleStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	runner := Runner{Workspace: t.TempDir()}
+	report, err := runner.RunPayload(context.Background(), []string{"cat"}, Payload{
+		Event: "pre_tool_use",
+		Tool:  "bash",
+		Input: `{"command":"git status"}`,
+	})
+	require.NoError(t, err)
+	var pre map[string]any
+	require.NoError(t, json.Unmarshal([]byte(report.Results[0].Stdout), &pre))
+	require.Equal(t, "PreToolUse", pre["hook_event_name"])
+	require.Equal(t, "bash", pre["tool_name"])
+	require.Equal(t, `{"command":"git status"}`, pre["tool_input_json"])
+	require.Equal(t, "git status", pre["tool_input"].(map[string]any)["command"])
+	require.Equal(t, false, pre["tool_result_is_error"])
+
+	report, err = runner.RunPayload(context.Background(), []string{"cat"}, Payload{
+		Event:   "post_tool_use_failure",
+		Tool:    "bash",
+		Input:   `{"command":"rm -rf /"}`,
+		Output:  "blocked",
+		IsError: true,
+	})
+	require.NoError(t, err)
+	var failure map[string]any
+	require.NoError(t, json.Unmarshal([]byte(report.Results[0].Stdout), &failure))
+	require.Equal(t, "PostToolUseFailure", failure["hook_event_name"])
+	require.Equal(t, "bash", failure["tool_name"])
+	require.Equal(t, `{"command":"rm -rf /"}`, failure["tool_input_json"])
+	require.Equal(t, "blocked", failure["tool_error"])
+	require.Equal(t, true, failure["tool_result_is_error"])
+
+	report, err = runner.RunPayload(context.Background(), []string{"cat"}, Payload{
+		Event: "pre_tool_use",
+		Tool:  "bash",
+		Input: `not-json`,
+	})
+	require.NoError(t, err)
+	var rawInput map[string]any
+	require.NoError(t, json.Unmarshal([]byte(report.Results[0].Stdout), &rawInput))
+	require.Equal(t, "not-json", rawInput["tool_input_json"])
+	require.Equal(t, "not-json", rawInput["tool_input"].(map[string]any)["raw"])
+}
+
 func TestSessionHooksMatchClaudeSourceAndReason(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

@@ -125,9 +125,10 @@ func (r Runner) PreToolUse(ctx context.Context, tool string, input []byte) error
 // and parsed hookSpecificOutput fields such as permissionDecision and updatedInput.
 func (r Runner) PreToolUseReport(ctx context.Context, tool string, input []byte) (RunReport, PreToolUseOutput, error) {
 	payload := Payload{
-		Event: "pre_tool_use",
-		Tool:  tool,
-		Input: string(input),
+		Event:    "pre_tool_use",
+		Tool:     tool,
+		ToolName: tool,
+		Input:    string(input),
 	}
 	report, err := r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 	return report, PreToolUseOutputFromReport(report), err
@@ -135,22 +136,24 @@ func (r Runner) PreToolUseReport(ctx context.Context, tool string, input []byte)
 
 func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, output string, isError bool) error {
 	payload := Payload{
-		Event:   "post_tool_use",
-		Tool:    tool,
-		Input:   string(input),
-		Output:  output,
-		IsError: isError,
+		Event:    "post_tool_use",
+		Tool:     tool,
+		ToolName: tool,
+		Input:    string(input),
+		Output:   output,
+		IsError:  isError,
 	}
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PostToolUseFailure(ctx context.Context, tool string, input []byte, output string) error {
 	payload := Payload{
-		Event:   "post_tool_use_failure",
-		Tool:    tool,
-		Input:   string(input),
-		Output:  output,
-		IsError: true,
+		Event:    "post_tool_use_failure",
+		Tool:     tool,
+		ToolName: tool,
+		Input:    string(input),
+		Output:   output,
+		IsError:  true,
 	}
 	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
 }
@@ -666,7 +669,7 @@ func parseSessionStartStdout(stdout string) (SessionStartOutput, bool) {
 
 func (r Runner) hookInputData(payload Payload) ([]byte, error) {
 	if payload.Event != "session_start" && payload.Event != "session_end" {
-		return json.Marshal(payload)
+		return toolHookInputData(payload)
 	}
 	expanded := map[string]any{}
 	if strings.TrimSpace(payload.Input) != "" {
@@ -701,6 +704,56 @@ func (r Runner) hookInputData(payload Payload) ([]byte, error) {
 		expanded["cwd"] = strings.TrimSpace(r.Workspace)
 	}
 	return json.Marshal(expanded)
+}
+
+func toolHookInputData(payload Payload) ([]byte, error) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	expanded := map[string]any{}
+	if err := json.Unmarshal(data, &expanded); err != nil {
+		return nil, err
+	}
+	if _, ok := expanded["hook_event_name"]; !ok {
+		expanded["hook_event_name"] = claudeHookEventName(payload.Event)
+	}
+	toolName := firstNonEmpty(payload.ToolName, payload.Tool)
+	if toolName != "" {
+		if _, ok := expanded["tool_name"]; !ok {
+			expanded["tool_name"] = toolName
+		}
+	}
+	inputJSON := strings.TrimSpace(payload.Input)
+	if inputJSON == "" && len(payload.ToolInput) != 0 {
+		inputJSON = string(payload.ToolInput)
+	}
+	if inputJSON != "" {
+		if _, ok := expanded["tool_input_json"]; !ok {
+			expanded["tool_input_json"] = inputJSON
+		}
+		if _, ok := expanded["tool_input"]; !ok {
+			expanded["tool_input"] = parseHookToolInput(inputJSON)
+		}
+	}
+	if payload.Event == "post_tool_use_failure" {
+		expanded["tool_error"] = payload.Output
+		expanded["tool_result_is_error"] = true
+	} else {
+		if payload.Output != "" {
+			expanded["tool_output"] = payload.Output
+		}
+		expanded["tool_result_is_error"] = payload.IsError
+	}
+	return json.Marshal(expanded)
+}
+
+func parseHookToolInput(input string) any {
+	var value any
+	if err := json.Unmarshal([]byte(input), &value); err == nil {
+		return value
+	}
+	return map[string]any{"raw": input}
 }
 
 func (r Runner) runOneHook(ctx context.Context, hook config.HookCommand, hookIndex int, payload Payload, data []byte, defaultTimeout time.Duration) (CommandResult, error) {
