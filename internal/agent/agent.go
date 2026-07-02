@@ -1931,8 +1931,18 @@ func parseOnOffBool(value string) (bool, error) {
 }
 
 func (a *App) Bridge(args []string) error {
-	if len(args) == 0 || args[0] != "serve" {
-		return errors.New("usage: codog bridge serve")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return a.IDE(args)
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	switch action {
+	case "serve":
+	case "status", "show", "state":
+		return a.IDE(append([]string{"status"}, args[1:]...))
+	case "clear", "reset", "disconnect":
+		return a.IDE(append([]string{"clear"}, args[1:]...))
+	default:
+		return fmt.Errorf("unknown bridge action %q", args[0])
 	}
 	executable, _ := os.Executable()
 	return bridge.Server{
@@ -1944,6 +1954,21 @@ func (a *App) Bridge(args []string) error {
 		Executable: executable,
 		MCPServers: a.Config.MCPServers,
 	}.Serve(a.In, a.Out)
+}
+
+func bridgeStatusArgs(args []string) []string {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return append([]string(nil), args...)
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	switch action {
+	case "status", "show", "state":
+		return append([]string{"status"}, args[1:]...)
+	case "clear", "reset", "disconnect":
+		return append([]string{"clear"}, args[1:]...)
+	default:
+		return append([]string(nil), args...)
+	}
 }
 
 type ideRequest struct {
@@ -22890,6 +22915,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedRemoteSlash(resumeSlashArgs("remote", args, format), resumed, format)
 	case "/remote-setup", "/web-setup":
 		return a.runResumedRemoteSetupSlash(resumeSlashArgs("remote-setup", args, format), resumed, format)
+	case "/bridge", "/remote-control", "/rc":
+		return a.runResumedBridgeSlash(name, resumeSlashArgs("bridge", args, format), format)
 	case "/ide":
 		return a.runResumedIDESlash(resumeSlashArgs("ide", args, format), format)
 	case "/bridge-kick":
@@ -23383,6 +23410,21 @@ func (a *App) runResumedIDESlash(args []string, format string) error {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ide", req.Action), format)
 	}
 	return a.IDE(args)
+}
+
+func (a *App) runResumedBridgeSlash(command string, args []string, format string) error {
+	if len(routeMeaningfulArgs(args)) > 0 && strings.EqualFold(strings.TrimSpace(routeMeaningfulArgs(args)[0]), "serve") {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, "serve"), format)
+	}
+	bridgeArgs := bridgeStatusArgs(args)
+	req, err := parseIDEArgs(bridgeArgs)
+	if err != nil {
+		return err
+	}
+	if req.Action != "status" {
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, req.Action), format)
+	}
+	return a.IDE(bridgeArgs)
 }
 
 func (a *App) runResumedACPSlash(ctx context.Context, args []string, format string) error {
@@ -43735,7 +43777,7 @@ Usage:
   %s code-intel notebook-read NOTEBOOK [--cell-index N] [--limit N] [--include-outputs] [--json|--output-format text|json]
   %s code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--json|--output-format text|json]
   %s code-intel lsp query LANGUAGE ACTION PATH [LINE CHARACTER]
-  %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control serve | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
+  %s remote [status|enable|disable|clear|serve] [addr] | bridge|remote-control|rc [status|clear|serve] | bridge-kick [status|clear] | ide [status|clear] | updater check|verify|download|install|rollback
   %s sandbox-toggle [status|on|off|detect|sandbox-exec|bwrap|unshare|restricted-token|clear] [--target user|project|local] [--json|--output-format text|json]
   %s upgrade [check|verify|download|install|rollback] ARGS...
   %s install ARTIFACT [TARGET]

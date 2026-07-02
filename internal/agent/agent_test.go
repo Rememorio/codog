@@ -9774,10 +9774,19 @@ func TestRunCLIRoutesRemoteControlAlias(t *testing.T) {
 	require.NoError(t, os.Chdir(workspace))
 	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
 
-	_, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "remote-control"}, config.FlagOverrides{})
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "remote-control", "--json"}, config.FlagOverrides{})
 	})
-	require.ErrorContains(t, err, "usage: codog bridge serve")
+	require.NoError(t, err)
+	var report ideReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "ide", report.Kind)
+	require.Equal(t, "status", report.Action)
+	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	actualWorkspace, err := filepath.EvalSymlinks(report.Workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedWorkspace, actualWorkspace)
 }
 
 func TestDesktopAndMobileHandoffCommands(t *testing.T) {
@@ -12711,6 +12720,37 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/ide", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "IDE Bridge")
 	require.Contains(t, out.String(), "Trusted editor   none")
+	out.Reset()
+
+	require.NoError(t, app.Bridge([]string{"status", "--json"}))
+	var bridgeStatus ideReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeStatus))
+	require.Equal(t, "ide", bridgeStatus.Kind)
+	require.Equal(t, "status", bridgeStatus.Action)
+	require.Equal(t, "codog bridge serve", bridgeStatus.Bridge.Command)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/bridge status --json", &session.Session{ID: "session"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeStatus))
+	require.Equal(t, "ide", bridgeStatus.Kind)
+	require.Equal(t, "status", bridgeStatus.Action)
+	out.Reset()
+
+	require.NoError(t, app.runResumedBridgeSlash("/bridge", []string{"status", "--json"}, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &bridgeStatus))
+	require.Equal(t, "ide", bridgeStatus.Kind)
+	require.Equal(t, "status", bridgeStatus.Action)
+	out.Reset()
+
+	err = app.runResumedBridgeSlash("/remote-control", []string{"serve", "--json"}, "json")
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var slashReport slashErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &slashReport))
+	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
+	require.Equal(t, "/remote-control serve", slashReport.Command)
 	out.Reset()
 
 	require.NoError(t, app.BridgeKick([]string{"status", "--json"}))
