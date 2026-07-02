@@ -304,6 +304,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/effort":             true,
 	"/env":                true,
 	"/export":             true,
+	"/exit-plan":          true,
 	"/extra-usage":        true,
 	"/fast":               true,
 	"/feedback":           true,
