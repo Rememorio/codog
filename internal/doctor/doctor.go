@@ -38,6 +38,7 @@ type Options struct {
 	APIKey              string
 	AuthToken           string
 	PermissionMode      string
+	PermissionRules     localstatus.PermissionRulesStatus
 	ConfigLoadError     string
 	ConfigLoadErrorKind string
 	ToolCount           int
@@ -121,6 +122,7 @@ func Run(opts Options) Report {
 		checkMemory(opts.MemoryFiles),
 		checkModel(opts.Model),
 		checkPermissions(opts.PermissionMode),
+		checkPermissionRules(opts.PermissionRules),
 		checkTools(opts.ToolCount),
 		checkMCPValidation(opts.MCPValidation),
 		checkMCP(opts.MCPServerStatuses),
@@ -354,6 +356,74 @@ func checkPermissions(mode string) Check {
 	default:
 		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is invalid.", Details: []string{mode}, Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow."}
 	}
+}
+
+func checkPermissionRules(rules localstatus.PermissionRulesStatus) Check {
+	total := len(rules.Allow) + len(rules.Deny) + len(rules.Ask) + len(rules.DeniedTools)
+	details := []string{
+		fmt.Sprintf("Total rules: %d", total),
+		fmt.Sprintf("Unknown tools: %d", rules.UnknownCount),
+	}
+	details = append(details, permissionRuleDetails("allow", rules.Allow)...)
+	details = append(details, permissionRuleDetails("deny", rules.Deny)...)
+	details = append(details, permissionRuleDetails("ask", rules.Ask)...)
+	details = append(details, permissionRuleDetails("denied_tools", rules.DeniedTools)...)
+	data := map[string]any{
+		"allow":         rules.Allow,
+		"deny":          rules.Deny,
+		"ask":           rules.Ask,
+		"denied_tools":  rules.DeniedTools,
+		"unknown_count": rules.UnknownCount,
+	}
+	if rules.UnknownCount > 0 {
+		return Check{
+			Name:    "Permission rules",
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("%d permission rule(s) reference unknown tools.", rules.UnknownCount),
+			Details: details,
+			Hint:    "Fix unknown permission rule tools or inspect `codog status --json` config.permission_rules for resolved_tool_name details.",
+			Data:    data,
+		}
+	}
+	if total == 0 {
+		return Check{
+			Name:    "Permission rules",
+			Status:  StatusOK,
+			Summary: "No explicit permission rules are configured.",
+			Details: details,
+			Data:    data,
+		}
+	}
+	return Check{
+		Name:    "Permission rules",
+		Status:  StatusOK,
+		Summary: fmt.Sprintf("%d permission rule(s) resolved successfully.", total),
+		Details: details,
+		Data:    data,
+	}
+}
+
+func permissionRuleDetails(kind string, entries []localstatus.PermissionRuleStatus) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		raw := strings.TrimSpace(entry.Raw)
+		if raw == "" {
+			continue
+		}
+		resolved := strings.TrimSpace(entry.ResolvedToolName)
+		if resolved == "" {
+			resolved = "<unknown>"
+		}
+		detail := fmt.Sprintf("%s: %s -> %s", kind, raw, resolved)
+		if matcher := strings.TrimSpace(entry.Matcher); matcher != "" {
+			detail += " matcher=" + matcher
+		}
+		if entry.UnknownTool {
+			detail += " unknown_tool=true"
+		}
+		out = append(out, detail)
+	}
+	return out
 }
 
 func checkTools(count int) Check {

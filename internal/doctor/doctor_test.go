@@ -76,6 +76,38 @@ func TestRunFailsInvalidPermissionMode(t *testing.T) {
 	require.Contains(t, permissions.Hint, "workspace-write")
 }
 
+func TestRunWarnsUnknownPermissionRules(t *testing.T) {
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		PermissionRules: localstatus.PermissionRulesStatus{
+			Deny: []localstatus.PermissionRuleStatus{
+				{Raw: "Bash(rm:*)", Tool: "Bash", ResolvedToolName: "bash", Matcher: "rm"},
+				{Raw: "Bsh(echo:*)", Tool: "Bsh", Matcher: "echo", UnknownTool: true},
+			},
+			UnknownCount: 1,
+		},
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	require.False(t, report.HasFailures)
+	require.Contains(t, report.CheckNames, "permission rules")
+	check := findCheck(t, report, "Permission rules")
+	require.Equal(t, StatusWarn, check.Status)
+	require.Contains(t, check.Summary, "1 permission rule")
+	require.Contains(t, strings.Join(check.Details, "\n"), "Bsh(echo:*)")
+	require.Contains(t, strings.Join(check.Details, "\n"), "unknown_tool=true")
+	require.Equal(t, 1, check.Data["unknown_count"])
+}
+
 func TestRunFailsConfigLoadError(t *testing.T) {
 	report := Run(Options{
 		Workspace:           t.TempDir(),

@@ -361,7 +361,7 @@ func Build(opts Options) Snapshot {
 			FastMode:                    opts.FastMode,
 			BaseURL:                     opts.BaseURL,
 			PermissionMode:              opts.PermissionMode,
-			PermissionRules:             buildPermissionRulesStatus(opts),
+			PermissionRules:             BuildPermissionRulesStatus(opts.PermissionRules, opts.ToolNames, opts.ToolAliases),
 			MaxTokens:                   opts.MaxTokens,
 			MaxTurns:                    opts.MaxTurns,
 			AutoCompactMessages:         opts.AutoCompactMessages,
@@ -481,6 +481,17 @@ func buildAllowedToolsStatus(opts Options) AllowedToolsStatus {
 	}
 }
 
+// BuildPermissionRulesStatus parses configured permission rules against the
+// active tool registry so status and doctor use the same audit semantics.
+func BuildPermissionRulesStatus(rules config.PermissionRules, toolNames []string, toolAliases map[string]string) PermissionRulesStatus {
+	opts := Options{
+		PermissionRules: rules,
+		ToolNames:       append([]string(nil), toolNames...),
+		ToolAliases:     copyStringMap(toolAliases),
+	}
+	return buildPermissionRulesStatus(opts)
+}
+
 func buildPermissionRulesStatus(opts Options) PermissionRulesStatus {
 	report := PermissionRulesStatus{
 		Allow:       buildPermissionRuleEntries(opts.PermissionRules.Allow, opts),
@@ -493,6 +504,14 @@ func buildPermissionRulesStatus(opts Options) PermissionRulesStatus {
 		permissionRuleUnknownCount(report.Ask) +
 		permissionRuleUnknownCount(report.DeniedTools)
 	return report
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func buildPermissionRuleEntries(rules []string, opts Options) []PermissionRuleStatus {

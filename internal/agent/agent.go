@@ -25734,8 +25734,13 @@ func (a *App) Doctor(args []string) error {
 		return err
 	}
 	toolCount := 0
+	toolNames := []string{}
 	if a.Tools != nil {
-		toolCount = len(a.Tools.Definitions())
+		definitions := a.Tools.Definitions()
+		toolCount = len(definitions)
+		for _, definition := range definitions {
+			toolNames = append(toolNames, definition.Name)
+		}
 	}
 	sessionCount := -1
 	if a.Sessions != nil {
@@ -25766,6 +25771,7 @@ func (a *App) Doctor(args []string) error {
 		APIKey:              a.Config.APIKey,
 		AuthToken:           a.Config.AuthToken,
 		PermissionMode:      a.Config.PermissionMode,
+		PermissionRules:     localstatus.BuildPermissionRulesStatus(a.Config.PermissionRules, toolNames, tools.ClaudeToolAliases()),
 		ConfigLoadError:     a.ConfigLoadError,
 		ConfigLoadErrorKind: a.ConfigLoadErrorKind,
 		ToolCount:           toolCount,

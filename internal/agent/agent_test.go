@@ -9371,6 +9371,9 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 			BaseURL:        "https://api.example.test",
 			APIKey:         "secret",
 			PermissionMode: "workspace-write",
+			PermissionRules: config.PermissionRules{
+				Deny: []string{"Bash(rm:*)", "Bsh(echo:*)"},
+			},
 		},
 		Tools:     tools.NewRegistry(workspace),
 		Sessions:  session.NewWorkspaceStore(configHome, workspace),
@@ -9385,6 +9388,7 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Auth")
 	require.Contains(t, out.String(), "Memory")
 	require.Contains(t, out.String(), "Permissions")
+	require.Contains(t, out.String(), "Permission rules")
 	out.Reset()
 
 	require.NoError(t, app.Doctor([]string{"--json"}))
@@ -9396,14 +9400,20 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.Contains(t, doctorReport.OutputFields, "check_names")
 	require.Contains(t, doctorReport.CheckNames, "auth")
 	require.Contains(t, doctorReport.CheckNames, "memory")
+	require.Contains(t, doctorReport.CheckNames, "permission rules")
 	require.Equal(t, []string{doctor.StatusOK, doctor.StatusWarn, doctor.StatusFail}, doctorReport.StatusValues)
 	var sandboxCheck doctor.Check
+	var permissionRulesCheck doctor.Check
 	for _, check := range doctorReport.Checks {
 		if check.Name == "Sandbox" {
 			sandboxCheck = check
-			break
+		}
+		if check.Name == "Permission rules" {
+			permissionRulesCheck = check
 		}
 	}
+	require.Equal(t, doctor.StatusWarn, permissionRulesCheck.Status)
+	require.Equal(t, float64(1), permissionRulesCheck.Data["unknown_count"])
 	require.Equal(t, "Sandbox", sandboxCheck.Name)
 	require.Contains(t, sandboxCheck.Data, "enabled")
 	require.Contains(t, sandboxCheck.Data, "filesystem_mode")
