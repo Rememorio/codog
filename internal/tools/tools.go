@@ -41,6 +41,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/recovery"
@@ -122,6 +123,7 @@ type RegistryOptions struct {
 	Sandbox         config.SandboxConfig
 	AdditionalDirs  []string
 	ConfigHome      string
+	OAuthProfile    string
 	MCPServers      map[string]config.MCPServerConfig
 	PowerShell      string
 	QuestionIn      io.Reader
@@ -619,7 +621,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(MCPDispatchTool{Servers: opts.MCPServers})
-	r.Register(MCPAuthTool{Servers: opts.MCPServers})
+	r.Register(MCPAuthTool{Servers: opts.MCPServers, ConfigHome: opts.ConfigHome, OAuthProfile: opts.OAuthProfile})
 	r.Register(ListMCPResourcesTool{Servers: opts.MCPServers})
 	r.Register(ReadMCPResourceTool{Servers: opts.MCPServers})
 	r.Register(ListMCPResourceTemplatesTool{Servers: opts.MCPServers})
@@ -1152,11 +1154,19 @@ func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (st
 }
 
 type MCPAuthTool struct {
-	Servers map[string]config.MCPServerConfig
+	Servers      map[string]config.MCPServerConfig
+	ConfigHome   string
+	OAuthProfile string
 }
 
 type mcpAuthInput struct {
 	Server string `json:"server"`
+}
+
+type mcpAuthToolReport struct {
+	mcp.AuthStatusResult
+	OAuthProfile string        `json:"oauth_profile,omitempty"`
+	OAuthStatus  *oauth.Status `json:"oauth_status,omitempty"`
 }
 
 func (MCPAuthTool) Definition() anthropic.ToolDefinition {
@@ -1191,13 +1201,28 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 	}
 	server, ok := t.Servers[payload.Server]
 	if !ok {
-		return pretty(map[string]any{
-			"server": payload.Server,
-			"status": "unknown",
-			"error":  "server is not configured",
-		}), nil
+		return pretty(t.withOAuthStatus(mcp.AuthStatusResult{
+			Server: payload.Server,
+			Status: "unknown",
+			Error:  "server is not configured",
+		})), nil
 	}
-	return pretty(mcp.InspectAuth(ctx, payload.Server, server)), nil
+	return pretty(t.withOAuthStatus(mcp.InspectAuth(ctx, payload.Server, server))), nil
+}
+
+func (t MCPAuthTool) withOAuthStatus(result mcp.AuthStatusResult) mcpAuthToolReport {
+	report := mcpAuthToolReport{AuthStatusResult: result}
+	if strings.TrimSpace(t.OAuthProfile) != "" {
+		report.OAuthProfile = strings.TrimSpace(t.OAuthProfile)
+	}
+	if strings.TrimSpace(t.ConfigHome) != "" || strings.TrimSpace(t.OAuthProfile) != "" {
+		status := oauth.InspectStatus(t.ConfigHome, t.OAuthProfile, time.Now().UTC())
+		report.OAuthStatus = &status
+		if report.OAuthProfile == "" {
+			report.OAuthProfile = status.ProfileName
+		}
+	}
+	return report
 }
 
 type ListMCPResourcesTool struct {

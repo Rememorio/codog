@@ -20,6 +20,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/hookenv"
+	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/undo"
@@ -3538,6 +3539,59 @@ func TestMCPToolCallsRemoteTool(t *testing.T) {
 	authOut, err = MCPAuthTool{Servers: map[string]config.MCPServerConfig{"test": server}}.Execute(context.Background(), []byte(`{"server":"missing"}`))
 	require.NoError(t, err)
 	require.Contains(t, authOut, `"status": "unknown"`)
+}
+
+func TestMCPAuthToolReportsOAuthReadiness(t *testing.T) {
+	configHome := t.TempDir()
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/.well-known/oauth-authorization-server", r.URL.Path)
+		_, _ = fmt.Fprintf(w, `{"authorization_endpoint":"%s/authorize","token_endpoint":"%s/token"}`, "https://auth.example", "https://auth.example")
+	}))
+	defer issuer.Close()
+	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "work", issuer.URL, "client-1", []string{"profile"})
+	require.NoError(t, err)
+	_, err = oauth.SaveToken(configHome, oauth.Token{AccessToken: "access-token-1234", RefreshToken: "refresh-token-1234"})
+	require.NoError(t, err)
+
+	server := config.MCPServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestMCPToolHelperProcess"},
+		Env:     []string{"CODOG_MCP_TOOL_HELPER=1"},
+	}
+	out, err := MCPAuthTool{
+		Servers:      map[string]config.MCPServerConfig{"test": server},
+		ConfigHome:   configHome,
+		OAuthProfile: "work",
+	}.Execute(context.Background(), []byte(`{"server":"test"}`))
+	require.NoError(t, err)
+
+	var report struct {
+		Server       string `json:"server"`
+		Status       string `json:"status"`
+		OAuthProfile string `json:"oauth_profile"`
+		OAuthStatus  struct {
+			ProfileName       string `json:"profile_name"`
+			ProfileConfigured bool   `json:"profile_configured"`
+			TokenPresent      bool   `json:"token_present"`
+			Ready             bool   `json:"ready"`
+			Token             struct {
+				AccessToken  string `json:"access_token"`
+				RefreshToken string `json:"refresh_token"`
+			} `json:"token"`
+		} `json:"oauth_status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "test", report.Server)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "work", report.OAuthProfile)
+	require.Equal(t, "work", report.OAuthStatus.ProfileName)
+	require.True(t, report.OAuthStatus.ProfileConfigured)
+	require.True(t, report.OAuthStatus.TokenPresent)
+	require.True(t, report.OAuthStatus.Ready)
+	require.NotContains(t, out, "access-token-1234")
+	require.NotContains(t, out, "refresh-token-1234")
+	require.Contains(t, report.OAuthStatus.Token.AccessToken, "acce")
+	require.Contains(t, report.OAuthStatus.Token.RefreshToken, "refr")
 }
 
 func TestMCPResourceToolsListAndReadRemoteResources(t *testing.T) {
