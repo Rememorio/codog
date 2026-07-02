@@ -1153,6 +1153,8 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "exit_plan_mode", CanonicalToolName("ExitPlanMode"))
 	require.Equal(t, "sleep", CanonicalToolName("SleepTool"))
 	require.Equal(t, "repl", CanonicalToolName("REPLTool"))
+	require.Equal(t, "git_diff", CanonicalToolName("GitDiffTool"))
+	require.Equal(t, "git_log", CanonicalToolName("GitLogTool"))
 	require.Equal(t, "mcp__server__tool", CanonicalToolName("mcp__server__tool"))
 
 	aliases := ClaudeToolAliases()
@@ -1164,6 +1166,10 @@ func TestCanonicalToolNameAcceptsClaudeStyleAliases(t *testing.T) {
 	require.Equal(t, "exit_plan_mode", aliases["ExitPlanMode"])
 	require.Equal(t, "sleep", aliases["SleepTool"])
 	require.Equal(t, "repl", aliases["REPLTool"])
+	require.Equal(t, "git_blame", aliases["GitBlameTool"])
+	require.Equal(t, "git_diff", aliases["GitDiffTool"])
+	require.Equal(t, "git_log", aliases["GitLogTool"])
+	require.Equal(t, "git_show", aliases["GitShowTool"])
 	aliases["WebFetch"] = "changed"
 	require.Equal(t, "web_fetch", ClaudeToolAliases()["WebFetch"])
 }
@@ -1815,6 +1821,14 @@ func TestRegistryExecutesClaudeToolAliases(t *testing.T) {
 		"FileWriteTool":                "write_file",
 		"BranchFreshness":              "branch_freshness",
 		"BranchFreshnessTool":          "branch_freshness",
+		"GitBlame":                     "git_blame",
+		"GitBlameTool":                 "git_blame",
+		"GitDiff":                      "git_diff",
+		"GitDiffTool":                  "git_diff",
+		"GitLog":                       "git_log",
+		"GitLogTool":                   "git_log",
+		"GitShow":                      "git_show",
+		"GitShowTool":                  "git_show",
 		"GitStatusTool":                "git_status",
 		"PolicyEvaluate":               "policy_evaluate",
 		"PolicyEvaluateTool":           "policy_evaluate",
