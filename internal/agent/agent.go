@@ -360,12 +360,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "version":
 		return renderVersion(app.Out, app.Workspace, rest)
 	case "":
-		input, err := readPromptInput(app.In)
+		input, nonTerminalStdin, err := readPromptInputState(app.In)
 		if err != nil {
 			return err
 		}
 		if strings.TrimSpace(input) != "" {
 			return app.promptWithOutput(ctx, strings.TrimSpace(input), overrides, requestedOutputFormat(originalArgs), false)
+		}
+		if nonTerminalStdin {
+			return renderInteractiveOnlyWithHint(app.Out, "repl", "codog requires an interactive terminal", "Pipe a prompt with `echo 'task' | codog` or run `codog repl` in an interactive terminal.", requestedOutputFormat(originalArgs))
 		}
 		return app.REPL(ctx, overrides)
 	case "repl":
@@ -24377,20 +24380,26 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 }
 
 func readPromptInput(in io.Reader) (string, error) {
+	input, _, err := readPromptInputState(in)
+	return input, err
+}
+
+func readPromptInputState(in io.Reader) (string, bool, error) {
 	if in == nil {
-		return "", nil
+		return "", false, nil
 	}
+	nonTerminal := true
 	if file, ok := in.(*os.File); ok {
 		info, err := file.Stat()
 		if err == nil && info.Mode()&os.ModeCharDevice != 0 {
-			return "", nil
+			return "", false, nil
 		}
 	}
 	data, err := io.ReadAll(in)
 	if err != nil {
-		return "", err
+		return "", nonTerminal, err
 	}
-	return string(data), nil
+	return string(data), nonTerminal, nil
 }
 
 func mergePromptWithStdin(prompt string, stdin string) string {

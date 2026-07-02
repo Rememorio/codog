@@ -4731,6 +4731,39 @@ func TestTopLevelPipedStdinRunsOneShotPrompt(t *testing.T) {
 	require.Contains(t, string(raw), "top-level stdin prompt")
 }
 
+func TestTopLevelEmptyNonTTYStdinReturnsInteractiveOnly(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	require.NoError(t, os.WriteFile(stdinPath, nil, 0o644))
+	stdinFile, err := os.Open(stdinPath)
+	require.NoError(t, err)
+	originalStdin := os.Stdin
+	os.Stdin = stdinFile
+	defer func() {
+		os.Stdin = originalStdin
+		require.NoError(t, stdinFile.Close())
+	}()
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report slashErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "interactive_only", report.ErrorKind)
+	require.Equal(t, "repl", report.Command)
+	require.Contains(t, report.Hint, "echo 'task' | codog")
+}
+
 func TestCompactFlagShorthandStaysOnPromptPath(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
