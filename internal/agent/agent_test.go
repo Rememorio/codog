@@ -19646,6 +19646,8 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.Equal(t, 1, runsReport.Count)
 	require.Equal(t, runReport.RunID, runsReport.Runs[0].Run.ID)
 	require.NotEmpty(t, runsReport.Runs[0].CurrentStatus)
+	require.NotEmpty(t, runsReport.Runs[0].Freshness)
+	require.NotEmpty(t, runsReport.Runs[0].Health.State)
 	out.Reset()
 
 	require.NoError(t, app.Subagent([]string{"list", "--json"}, config.FlagOverrides{}))
@@ -19663,6 +19665,7 @@ func TestAgentsRunEmitsSubagentStartHook(t *testing.T) {
 	require.NotNil(t, statusReport.Run)
 	require.Equal(t, runReport.RunID, statusReport.Run.Run.ID)
 	require.Equal(t, runReport.Task.ID, statusReport.Run.Run.TaskID)
+	require.NotEmpty(t, statusReport.Run.Health.Summary)
 	out.Reset()
 
 	require.NoError(t, app.AgentsWithOverrides([]string{"update", runReport.RunID, "more", "context", "--json"}, config.FlagOverrides{}))

@@ -6643,7 +6643,12 @@ func renderAgentRunStatus(out io.Writer, status agentRunStatus) {
 	fmt.Fprintf(out, "  - %s\n", run.ID)
 	fmt.Fprintf(out, "    Agent          %s\n", run.Agent)
 	fmt.Fprintf(out, "    Status         %s\n", status.CurrentStatus)
+	fmt.Fprintf(out, "    Freshness      %s\n", status.Freshness)
+	fmt.Fprintf(out, "    Health         %s\n", status.Health.State)
 	fmt.Fprintf(out, "    Task           %s\n", run.TaskID)
+	if status.Health.RecommendedAction != "" {
+		fmt.Fprintf(out, "    Next           %s\n", status.Health.RecommendedAction)
+	}
 	if run.SessionID != "" {
 		fmt.Fprintf(out, "    Session        %s\n", run.SessionID)
 	}

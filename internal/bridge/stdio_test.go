@@ -932,6 +932,8 @@ func TestBridgeAgentRunsLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"id":"`+run.ID+`"`)
 	require.Contains(t, out.String(), `"current_status":"completed"`)
+	require.Contains(t, out.String(), `"freshness":"unknown"`)
+	require.Contains(t, out.String(), `"health":{"state":"finished"`)
 	require.Contains(t, out.String(), `"logs":"agent-bridge"`)
 	require.Contains(t, out.String(), `"heartbeat":{"observed_at":"`+observedAt+`","transport_alive":true,"status":"working"}`)
 	require.Contains(t, out.String(), `"active":[{"run":`)

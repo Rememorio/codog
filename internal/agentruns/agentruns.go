@@ -36,10 +36,20 @@ type Store struct {
 // Status combines an agent run record with the current state of its background
 // task, when that task can still be found.
 type Status struct {
-	Run           Run              `json:"run"`
-	Task          *background.Task `json:"task,omitempty"`
-	CurrentStatus string           `json:"current_status"`
-	Error         string           `json:"error,omitempty"`
+	Run           Run                       `json:"run"`
+	Task          *background.Task          `json:"task,omitempty"`
+	CurrentStatus string                    `json:"current_status"`
+	Heartbeat     *background.LaneHeartbeat `json:"heartbeat,omitempty"`
+	Freshness     background.LaneFreshness  `json:"freshness"`
+	Health        HealthReport              `json:"health"`
+	Error         string                    `json:"error,omitempty"`
+}
+
+// HealthReport gives operators a compact diagnosis and next action for a run.
+type HealthReport struct {
+	State             string `json:"state"`
+	Summary           string `json:"summary"`
+	RecommendedAction string `json:"recommended_action,omitempty"`
 }
 
 // BoardEntry is the lane-board view for a single agent run.
@@ -163,14 +173,24 @@ func (s Store) Remove(id string) error {
 
 // StatusForTask resolves an agent run against the background task store.
 func StatusForTask(store background.Store, run Run) Status {
-	status := Status{Run: run, CurrentStatus: "unknown"}
+	return StatusForTaskAt(store, run, time.Now().UTC(), 30*time.Second)
+}
+
+// StatusForTaskAt resolves an agent run at a specific time, which makes
+// heartbeat freshness deterministic in tests and bridge status calls.
+func StatusForTaskAt(store background.Store, run Run, now time.Time, stalledAfter time.Duration) Status {
+	status := Status{Run: run, CurrentStatus: "unknown", Freshness: background.LaneFreshnessUnknown}
 	task, err := store.Status(run.TaskID)
 	if err != nil {
 		status.Error = err.Error()
+		status.Health = healthReport(status.CurrentStatus, status.Freshness, nil, status.Error)
 		return status
 	}
 	status.Task = &task
 	status.CurrentStatus = firstNonEmpty(task.Status, "unknown")
+	status.Heartbeat = task.Heartbeat
+	status.Freshness = freshness(task.Heartbeat, now, stalledAfter)
+	status.Health = healthReport(status.CurrentStatus, status.Freshness, &task, "")
 	return status
 }
 
@@ -307,4 +327,63 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func healthReport(status string, freshness background.LaneFreshness, task *background.Task, runError string) HealthReport {
+	if strings.TrimSpace(runError) != "" {
+		return HealthReport{
+			State:             "orphaned",
+			Summary:           "The agent run record points to a missing or unreadable background task.",
+			RecommendedAction: "Inspect the run id and task store, then prune the orphaned run if it is stale.",
+		}
+	}
+	switch freshness {
+	case background.LaneFreshnessTransportDead:
+		return HealthReport{
+			State:             "transport_dead",
+			Summary:           "The agent heartbeat reports a dead transport.",
+			RecommendedAction: "Inspect logs, restart the run if needed, or stop it if the worker is no longer reachable.",
+		}
+	case background.LaneFreshnessStalled:
+		return HealthReport{
+			State:             "stalled",
+			Summary:           "The agent heartbeat is older than the configured stalled threshold.",
+			RecommendedAction: "Check logs and send a heartbeat or update; stop and restart if no progress is visible.",
+		}
+	}
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	if task != nil && task.Error != "" {
+		return HealthReport{
+			State:             "failed",
+			Summary:           "The background task recorded an error: " + task.Error,
+			RecommendedAction: "Inspect logs and rerun the agent after addressing the failure.",
+		}
+	}
+	switch normalized {
+	case "running", "created", "starting", "pending":
+		if freshness == background.LaneFreshnessUnknown {
+			return HealthReport{
+				State:             "heartbeat_unknown",
+				Summary:           "The agent task is active but has not reported a heartbeat.",
+				RecommendedAction: "Wait briefly for startup or send an agent heartbeat from the bridge.",
+			}
+		}
+		return HealthReport{State: "healthy", Summary: "The agent task is active and heartbeat freshness is healthy."}
+	case "completed", "finished", "stopped":
+		return HealthReport{State: "finished", Summary: "The agent task has reached a terminal status."}
+	case "failed", "error":
+		return HealthReport{
+			State:             "failed",
+			Summary:           "The agent task has reached a failed status.",
+			RecommendedAction: "Inspect logs and rerun the agent after addressing the failure.",
+		}
+	case "":
+		return HealthReport{
+			State:             "unknown",
+			Summary:           "The agent task status is missing.",
+			RecommendedAction: "Inspect the task record and logs.",
+		}
+	default:
+		return HealthReport{State: normalized, Summary: "The agent task status is " + normalized + "."}
+	}
 }

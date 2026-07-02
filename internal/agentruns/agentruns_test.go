@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,4 +53,55 @@ func TestStoreRejectsInvalidRuns(t *testing.T) {
 
 	_, err = store.Save(Run{ID: "run-1"})
 	require.ErrorContains(t, err, "task id is required")
+}
+
+func TestStatusForTaskReportsHealth(t *testing.T) {
+	configHome := t.TempDir()
+	taskStore := background.NewStore(configHome)
+	runStore := NewStore(configHome)
+	workspace := t.TempDir()
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+
+	task, err := taskStore.RunWithOptions("printf ok", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer"})
+	require.NoError(t, err)
+	_, err = taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
+		ObservedAt:     now.Add(-5 * time.Second),
+		TransportAlive: true,
+		Status:         "working",
+	})
+	require.NoError(t, err)
+	run, err := runStore.Save(Run{ID: "run-" + task.ID, Agent: "reviewer", TaskID: task.ID, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+
+	status := StatusForTaskAt(taskStore, run, now, 30*time.Second)
+	require.Equal(t, background.LaneFreshnessHealthy, status.Freshness)
+	require.NotNil(t, status.Heartbeat)
+	require.Equal(t, "healthy", status.Health.State)
+	require.NotEmpty(t, status.Health.Summary)
+
+	_, err = taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
+		ObservedAt:     now.Add(-2 * time.Minute),
+		TransportAlive: true,
+		Status:         "working",
+	})
+	require.NoError(t, err)
+	status = StatusForTaskAt(taskStore, run, now, 30*time.Second)
+	require.Equal(t, background.LaneFreshnessStalled, status.Freshness)
+	require.Equal(t, "stalled", status.Health.State)
+	require.Contains(t, status.Health.RecommendedAction, "logs")
+
+	_, err = taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
+		ObservedAt:     now,
+		TransportAlive: false,
+		Status:         "disconnected",
+	})
+	require.NoError(t, err)
+	status = StatusForTaskAt(taskStore, run, now, 30*time.Second)
+	require.Equal(t, background.LaneFreshnessTransportDead, status.Freshness)
+	require.Equal(t, "transport_dead", status.Health.State)
+
+	orphan := StatusForTaskAt(taskStore, Run{ID: "run-orphan", Agent: "reviewer", TaskID: "missing-task"}, now, 30*time.Second)
+	require.Equal(t, background.LaneFreshnessUnknown, orphan.Freshness)
+	require.Equal(t, "orphaned", orphan.Health.State)
+	require.NotEmpty(t, orphan.Error)
 }
