@@ -265,7 +265,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		return initProject(os.Stdout, workspace, rest, func(report projectinit.Report) error {
+		if err := initProject(os.Stdout, workspace, rest, func(report projectinit.Report) error {
 			cfg, _, err := config.LoadForInspection(overrides)
 			if err != nil {
 				return nil
@@ -278,7 +278,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 				AllowedHTTPHookURLs:    cfg.AllowedHTTPHookURLs,
 				HTTPHookAllowedEnvVars: cfg.HTTPHookAllowedEnvVars,
 			}, workspace, "init", report.Status)
-		})
+		}); err != nil {
+			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	}
 	if command == "state" {
 		workspace, err := os.Getwd()

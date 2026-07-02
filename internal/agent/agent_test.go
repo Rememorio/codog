@@ -5881,6 +5881,14 @@ func TestLocalArgumentErrorJSONContracts(t *testing.T) {
 			option:    "bogus",
 			hintPart:  "system-prompt",
 		},
+		{
+			name:      "init extra positional",
+			args:      []string{"--config", configPath, "--output-format", "json", "init", "extraarg"},
+			errorKind: "unknown_option",
+			command:   "init",
+			option:    "extraarg",
+			hintPart:  "codog init",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
