@@ -33978,6 +33978,10 @@ func (a *App) ExportWithOverrides(args []string, overrides config.FlagOverrides)
 	if err != nil {
 		return err
 	}
+	return a.writeExport(req)
+}
+
+func (a *App) writeExport(req exportRequest) error {
 	data, sess, err := a.Sessions.Export(req.SessionID, req.Format)
 	if err != nil {
 		return err
@@ -34642,6 +34646,8 @@ func (a *App) SessionsCommand(args []string) error {
 			existsArgs = append(append([]string(nil), existsArgs...), "--json")
 		}
 		return a.SessionExists(existsArgs, "")
+	case "export":
+		return a.SessionExport(args[1:])
 	case "fork":
 		req, err := parseSessionForkArgs("codog sessions fork", args[1:], "", "json")
 		if err != nil {
@@ -34725,7 +34731,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, or `codog sessions delete ID`.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, or `codog sessions delete ID`.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -34767,6 +34773,73 @@ func (a *App) SessionShow(args []string) error {
 	}
 	renderSessionShowText(a.Out, report)
 	return nil
+}
+
+func (a *App) SessionExport(args []string) error {
+	req, err := parseSessionExportArgs(args)
+	if err != nil {
+		return err
+	}
+	return a.writeExport(req)
+}
+
+func parseSessionExportArgs(args []string) (exportRequest, error) {
+	req := exportRequest{Format: session.ExportMarkdown}
+	usage := "codog sessions export ID [PATH] [--output PATH] [--format markdown|json|jsonl|html]"
+	positionals := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "sessions export", Flag: arg, Usage: usage}
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--output" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "sessions export", Flag: arg, Usage: usage}
+			}
+			req.Output = args[index]
+		case strings.HasPrefix(arg, "--output="):
+			req.Output = strings.TrimPrefix(arg, "--output=")
+		case arg == "--format" || arg == "--output-format":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "sessions export", Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--format="):
+			req.Format = strings.TrimPrefix(arg, "--format=")
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "sessions export", Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		if len(positionals) == 0 {
+			return req, errors.New("usage: " + usage)
+		}
+		req.SessionID = positionals[0]
+		positionals = positionals[1:]
+	}
+	if req.Output == "" && len(positionals) > 0 {
+		req.Output = positionals[0]
+		positionals = positionals[1:]
+	}
+	if len(positionals) > 0 {
+		return req, unexpectedExtraArgsError{Command: "sessions export", Args: positionals, Usage: usage}
+	}
+	if _, err := session.NormalizeExportFormat(req.Format); err != nil {
+		return req, err
+	}
+	return req, nil
 }
 
 func (a *App) buildSessionShowReport(id string) (sessionShowReport, error) {

@@ -5134,6 +5134,51 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 	require.NotEmpty(t, deleteReport.Path)
 }
 
+func TestSessionsCommandExportWritesFormats(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "export through sessions")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Workspace: workspace, Out: &out}
+
+	require.NoError(t, app.SessionsCommand([]string{"export", "source"}))
+	require.Contains(t, out.String(), "# Conversation Export")
+	require.Contains(t, out.String(), "export through sessions")
+	out.Reset()
+
+	jsonPath := filepath.Join(workspace, "session-export.json")
+	require.NoError(t, app.SessionsCommand([]string{"export", "source", jsonPath, "--format", "json"}))
+	var jsonReport struct {
+		SessionID string `json:"session_id"`
+		File      string `json:"file"`
+		Format    string `json:"format"`
+		Messages  int    `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &jsonReport))
+	require.Equal(t, "source", jsonReport.SessionID)
+	require.Equal(t, jsonPath, jsonReport.File)
+	require.Equal(t, "json", jsonReport.Format)
+	require.Equal(t, 1, jsonReport.Messages)
+	data, err := os.ReadFile(jsonPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"id": "source"`)
+	out.Reset()
+
+	require.NoError(t, app.SessionsCommand([]string{"export", "--session=source", "--output", "session-export.html", "--output-format", "html"}))
+	var htmlReport struct {
+		File   string `json:"file"`
+		Format string `json:"format"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &htmlReport))
+	require.Equal(t, filepath.Join(workspace, "session-export.html"), htmlReport.File)
+	require.Equal(t, "html", htmlReport.Format)
+	data, err = os.ReadFile(htmlReport.File)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "<!doctype html>")
+	require.Contains(t, string(data), "export through sessions")
+}
+
 func TestSessionsShowJSONUsesStableReport(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
