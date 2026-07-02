@@ -15696,6 +15696,35 @@ func TestOAuthDeviceCommands(t *testing.T) {
 	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", []string{"profile"})
 	require.NoError(t, err)
 
+	for _, tc := range []struct {
+		args     []string
+		action   string
+		argument string
+	}{
+		{[]string{"device", "start", "--json"}, "device_start", "profile_or_issuer"},
+		{[]string{"device", "start", server.URL, "--json"}, "device_start", "client_id"},
+		{[]string{"device", "poll", "--json"}, "device_poll", "profile_or_issuer"},
+		{[]string{"device", "poll", "default", "--json"}, "device_poll", "device_code"},
+		{[]string{"device", "poll", server.URL, "--json"}, "device_poll", "client_id"},
+		{[]string{"device", "poll", server.URL, "client-1", "--json"}, "device_poll", "device_code"},
+		{[]string{"device", "login", "--json"}, "device_login", "profile_or_issuer"},
+		{[]string{"device", "login", server.URL, "--json"}, "device_login", "client_id"},
+	} {
+		err := app.OAuth(tc.args)
+		require.Error(t, err)
+		var exitErr *ExitError
+		require.ErrorAs(t, err, &exitErr)
+		require.Equal(t, 1, exitErr.Code)
+		require.True(t, exitErr.Silent)
+		var report actionErrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+		require.Equal(t, "oauth", report.Kind)
+		require.Equal(t, tc.action, report.Action)
+		require.Equal(t, "missing_argument", report.ErrorKind)
+		require.Equal(t, tc.argument, report.Argument)
+		out.Reset()
+	}
+
 	require.NoError(t, app.OAuth([]string{"device"}))
 	require.Contains(t, out.String(), `"flow": "device"`)
 	require.Contains(t, out.String(), `"profile_count": 1`)
@@ -16059,6 +16088,34 @@ func TestOAuthBrowserCommands(t *testing.T) {
 		Config: config.Config{ConfigHome: configHome},
 		Out:    &out,
 	}
+	for _, tc := range []struct {
+		args     []string
+		action   string
+		argument string
+	}{
+		{[]string{"browser", "start", "--json"}, "browser_start", "profile"},
+		{[]string{"browser", "start", "default", "--json"}, "browser_start", "redirect_uri"},
+		{[]string{"browser", "exchange", "--json"}, "browser_exchange", "profile"},
+		{[]string{"browser", "exchange", "default", "--json"}, "browser_exchange", "code"},
+		{[]string{"browser", "exchange", "default", "code-1", "--json"}, "browser_exchange", "code_verifier"},
+		{[]string{"browser", "exchange", "default", "code-1", "verifier-1", "--json"}, "browser_exchange", "redirect_uri"},
+		{[]string{"browser", "login", "--json"}, "browser_login", "profile"},
+	} {
+		err := app.OAuth(tc.args)
+		require.Error(t, err)
+		var exitErr *ExitError
+		require.ErrorAs(t, err, &exitErr)
+		require.Equal(t, 1, exitErr.Code)
+		require.True(t, exitErr.Silent)
+		var report actionErrorReport
+		require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+		require.Equal(t, "oauth", report.Kind)
+		require.Equal(t, tc.action, report.Action)
+		require.Equal(t, "missing_argument", report.ErrorKind)
+		require.Equal(t, tc.argument, report.Argument)
+		out.Reset()
+	}
+
 	require.NoError(t, app.OAuth([]string{"browser"}))
 	require.Contains(t, out.String(), `"flow": "browser"`)
 	require.Contains(t, out.String(), `"profile_count": 1`)

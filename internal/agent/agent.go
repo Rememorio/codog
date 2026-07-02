@@ -9974,8 +9974,11 @@ func (a *App) oauthBrowser(args []string) error {
 	}
 	switch args[0] {
 	case "start":
+		if len(args) < 2 {
+			return renderMissingActionArgument(a.Out, "oauth", "browser_start", "profile", "oauth browser start requires a profile name", "Usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...].", "json")
+		}
 		if len(args) < 3 {
-			return errors.New("usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...]")
+			return renderMissingActionArgument(a.Out, "oauth", "browser_start", "redirect_uri", "oauth browser start requires a redirect URI", "Usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...].", "json")
 		}
 		source, err := a.oauthProfileSource(args[1], args[3:])
 		if err != nil {
@@ -9989,8 +9992,17 @@ func (a *App) oauthBrowser(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "exchange":
+		if len(args) < 2 {
+			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "profile", "oauth browser exchange requires a profile name", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
+		}
+		if len(args) < 3 {
+			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "code", "oauth browser exchange requires an authorization code", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
+		}
+		if len(args) < 4 {
+			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "code_verifier", "oauth browser exchange requires a PKCE code verifier", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
+		}
 		if len(args) < 5 {
-			return errors.New("usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI")
+			return renderMissingActionArgument(a.Out, "oauth", "browser_exchange", "redirect_uri", "oauth browser exchange requires a redirect URI", "Usage: codog oauth browser exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI.", "json")
 		}
 		source, err := a.oauthProfileSource(args[1], nil)
 		if err != nil {
@@ -10009,7 +10021,7 @@ func (a *App) oauthBrowser(args []string) error {
 		return nil
 	case "login":
 		if len(args) < 2 {
-			return errors.New("usage: codog oauth browser login PROFILE [ADDR]")
+			return renderMissingActionArgument(a.Out, "oauth", "browser_login", "profile", "oauth browser login requires a profile name", "Usage: codog oauth browser login PROFILE [ADDR].", "json")
 		}
 		source, err := a.oauthProfileSource(args[1], nil)
 		if err != nil {
@@ -10074,6 +10086,12 @@ func (a *App) oauthDevice(args []string) error {
 	}
 	switch args[0] {
 	case "start":
+		if len(args) < 2 {
+			return renderMissingActionArgument(a.Out, "oauth", "device_start", "profile_or_issuer", "oauth device start requires a profile name or issuer URL", "Usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] or codog oauth device start PROFILE [SCOPE...].", "json")
+		}
+		if isURLish(args[1]) && len(args) < 3 {
+			return renderMissingActionArgument(a.Out, "oauth", "device_start", "client_id", "oauth device start with an issuer URL requires a client id", "Usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...].", "json")
+		}
 		source, err := a.oauthDeviceSource(args[1:], true)
 		if err != nil {
 			return err
@@ -10086,6 +10104,19 @@ func (a *App) oauthDevice(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "poll":
+		if len(args) < 2 {
+			return renderMissingActionArgument(a.Out, "oauth", "device_poll", "profile_or_issuer", "oauth device poll requires a profile name or issuer URL", "Usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE or codog oauth device poll PROFILE DEVICE_CODE.", "json")
+		}
+		if isURLish(args[1]) {
+			if len(args) < 3 {
+				return renderMissingActionArgument(a.Out, "oauth", "device_poll", "client_id", "oauth device poll with an issuer URL requires a client id", "Usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE.", "json")
+			}
+			if len(args) < 4 {
+				return renderMissingActionArgument(a.Out, "oauth", "device_poll", "device_code", "oauth device poll requires a device code", "Usage: codog oauth device poll ISSUER_URL CLIENT_ID DEVICE_CODE.", "json")
+			}
+		} else if len(args) < 3 {
+			return renderMissingActionArgument(a.Out, "oauth", "device_poll", "device_code", "oauth device poll requires a device code", "Usage: codog oauth device poll PROFILE DEVICE_CODE.", "json")
+		}
 		source, deviceCode, err := a.oauthDevicePollSource(args[1:])
 		if err != nil {
 			return err
@@ -10102,6 +10133,12 @@ func (a *App) oauthDevice(args []string) error {
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	case "login":
+		if len(args) < 2 {
+			return renderMissingActionArgument(a.Out, "oauth", "device_login", "profile_or_issuer", "oauth device login requires a profile name or issuer URL", "Usage: codog oauth device login ISSUER_URL CLIENT_ID [SCOPE...] or codog oauth device login PROFILE [SCOPE...].", "json")
+		}
+		if isURLish(args[1]) && len(args) < 3 {
+			return renderMissingActionArgument(a.Out, "oauth", "device_login", "client_id", "oauth device login with an issuer URL requires a client id", "Usage: codog oauth device login ISSUER_URL CLIENT_ID [SCOPE...].", "json")
+		}
 		source, err := a.oauthDeviceSource(args[1:], true)
 		if err != nil {
 			return err
