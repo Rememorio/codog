@@ -25115,6 +25115,11 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 	case "", "list", "run", "status", "logs", "board", "lane-board", "lanes",
 		"heartbeat", "stop", "restart", "prune", "supervise":
 		return a.BackgroundWithOverrides(args, overrides)
+	case "watch":
+		if err := validateResumedBackgroundWatch(args); err != nil {
+			return err
+		}
+		return a.BackgroundWithOverrides(args, overrides)
 	default:
 		command := "/tasks"
 		if action != "" {
@@ -25122,6 +25127,24 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 		}
 		return renderUnsupportedResumedSlashCommand(a.Out, command, format)
 	}
+}
+
+func validateResumedBackgroundWatch(args []string) error {
+	cleanArgs, _, err := parseBackgroundOutputFormat(args)
+	if err != nil {
+		return err
+	}
+	if len(cleanArgs) == 0 || !strings.EqualFold(strings.TrimSpace(cleanArgs[0]), "watch") {
+		return errors.New("usage: codog background watch ID [offset|--offset N] [--max-events N]")
+	}
+	_, _, maxEvents, err := parseBackgroundWatchArgs(cleanArgs[1:])
+	if err != nil {
+		return err
+	}
+	if maxEvents <= 0 {
+		return errors.New("resumed background watch requires --max-events N to avoid blocking indefinitely")
+	}
+	return nil
 }
 
 func (a *App) runResumedSkillsSlash(command string, args []string, format string) error {

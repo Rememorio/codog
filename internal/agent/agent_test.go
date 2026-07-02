@@ -20128,6 +20128,37 @@ func TestResumedBackgroundLifecycleActions(t *testing.T) {
 	require.NotNil(t, report.Prune)
 }
 
+func TestResumedBackgroundWatchRequiresBoundedEvents(t *testing.T) {
+	configHome := t.TempDir()
+	store := background.NewStore(configHome)
+	task, err := store.Run("echo resumed-watch", t.TempDir())
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := store.Logs(task.ID, 1024)
+		return err == nil && strings.Contains(logs, "resumed-watch")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{ConfigHome: configHome},
+		Out:    &out,
+	}
+	overrides := config.FlagOverrides{Resume: "resume-bg"}
+
+	require.NoError(t, app.runResumedBackgroundSlash([]string{"watch", task.ID, "--max-events", "1", "--json"}, overrides, "json"))
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 1)
+	var event background.WatchEvent
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &event))
+	require.Equal(t, "status", event.Type)
+	require.Equal(t, task.ID, event.ID)
+	out.Reset()
+
+	err = app.runResumedBackgroundSlash([]string{"watch", task.ID, "--json"}, overrides, "json")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires --max-events")
+}
+
 func TestBackgroundRunEmitsNotificationHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")
