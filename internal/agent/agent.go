@@ -22859,6 +22859,7 @@ type cliErrorReport struct {
 	Provider          string            `json:"provider,omitempty"`
 	EnvVars           []string          `json:"env_vars,omitempty"`
 	Value             string            `json:"value,omitempty"`
+	Values            []string          `json:"values,omitempty"`
 	Expected          []string          `json:"expected,omitempty"`
 	Argument          string            `json:"argument,omitempty"`
 	ToolName          string            `json:"tool_name,omitempty"`
@@ -23022,6 +23023,20 @@ func (e invalidFlagValueError) Error() string {
 		message = flag + " has an invalid value"
 	}
 	return "invalid_flag_value: " + message
+}
+
+type duplicateFlagError struct {
+	Flag   string
+	Values []string
+	Usage  string
+}
+
+func (e duplicateFlagError) Error() string {
+	flag := strings.TrimSpace(e.Flag)
+	if flag == "" {
+		flag = "flag"
+	}
+	return "duplicate_flag: " + flag + " was specified multiple times"
 }
 
 type invalidCWDError struct {
@@ -23475,6 +23490,28 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Message:   message,
 			Hint:      "Provide the required flag value.",
+		}
+	}
+	var duplicateFlagErr duplicateFlagError
+	if errors.As(err, &duplicateFlagErr) {
+		flag := strings.TrimSpace(duplicateFlagErr.Flag)
+		if flag == "" {
+			flag = "flag"
+		}
+		usage := strings.TrimSpace(duplicateFlagErr.Usage)
+		hint := "Remove the duplicate flag or keep a single effective value."
+		if usage != "" {
+			hint = "Usage: " + usage
+		}
+		return cliErrorReport{
+			Kind:      "duplicate_flag",
+			ErrorKind: "duplicate_flag",
+			Status:    "error",
+			Option:    flag,
+			Value:     strings.Join(duplicateFlagErr.Values, ","),
+			Values:    append([]string(nil), duplicateFlagErr.Values...),
+			Message:   fmt.Sprintf("%s was specified multiple times", flag),
+			Hint:      hint,
 		}
 	}
 	var invalidFlagErr invalidFlagValueError
@@ -44291,7 +44328,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	if missing, ok := missingToolFlagArgument(args); ok {
 		return base, "", nil, missing
 	}
-	if err := rejectDuplicatePermissionModeFlags(args); err != nil {
+	if err := rejectDuplicateScalarGlobalFlags(args); err != nil {
 		return base, "", nil, err
 	}
 	flags := flag.NewFlagSet("codog", flag.ContinueOnError)
@@ -44381,8 +44418,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	return base, command, rest, nil
 }
 
-func rejectDuplicatePermissionModeFlags(args []string) error {
-	seen := []string{}
+func rejectDuplicateScalarGlobalFlags(args []string) error {
+	seen := map[string][]string{}
+	order := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
 		if arg == "" {
@@ -44395,30 +44433,85 @@ func rejectDuplicatePermissionModeFlags(args []string) error {
 			break
 		}
 		consumedValue := false
-		switch {
-		case arg == "--permission-mode" || arg == "-permission-mode":
-			seen = append(seen, arg)
-			if index+1 < len(args) {
+		if key, value, consumesNext, ok := duplicateTrackedGlobalFlag(arg, args, index); ok {
+			if _, exists := seen[key]; !exists {
+				order = append(order, key)
+			}
+			seen[key] = append(seen[key], value)
+			if consumesNext {
 				index++
 				consumedValue = true
 			}
-		case strings.HasPrefix(arg, "--permission-mode="), strings.HasPrefix(arg, "-permission-mode="):
-			seen = append(seen, strings.SplitN(arg, "=", 2)[0])
-		case arg == "--skip-permissions" || arg == "-skip-permissions" || arg == "--dangerously-skip-permissions" || arg == "-dangerously-skip-permissions":
-			seen = append(seen, arg)
 		}
 		if !consumedValue && globalFlagConsumesNext(arg) && !strings.Contains(arg, "=") && index+1 < len(args) {
 			index++
 		}
 	}
-	if len(seen) <= 1 {
-		return nil
+	for _, key := range order {
+		values := seen[key]
+		if len(values) <= 1 {
+			continue
+		}
+		return duplicateFlagError{
+			Flag:   key,
+			Values: values,
+			Usage:  duplicateFlagUsage(key),
+		}
 	}
-	return invalidFlagValueError{
-		Flag:    "--permission-mode",
-		Value:   strings.Join(seen, ","),
-		Message: "permission mode was specified multiple times",
-		Usage:   "codog [--permission-mode MODE | --skip-permissions] COMMAND",
+	return nil
+}
+
+func duplicateTrackedGlobalFlag(arg string, args []string, index int) (key string, value string, consumesNext bool, ok bool) {
+	if before, after, found := strings.Cut(arg, "="); found {
+		key, ok = duplicateTrackedGlobalFlagKey(before)
+		if !ok {
+			return "", "", false, false
+		}
+		return key, after, false, true
+	}
+	key, ok = duplicateTrackedGlobalFlagKey(arg)
+	if !ok {
+		return "", "", false, false
+	}
+	switch key {
+	case "--output-format":
+		if arg == "--json" || arg == "-json" {
+			return key, "json", false, true
+		}
+	case "--permission-mode":
+		if arg == "--skip-permissions" || arg == "-skip-permissions" || arg == "--dangerously-skip-permissions" || arg == "-dangerously-skip-permissions" {
+			return key, "allow", false, true
+		}
+	}
+	if index+1 < len(args) {
+		return key, args[index+1], true, true
+	}
+	return key, "", false, true
+}
+
+func duplicateTrackedGlobalFlagKey(arg string) (string, bool) {
+	switch arg {
+	case "--model", "-model":
+		return "--model", true
+	case "--output-format", "-output-format", "-o", "--o", "--json", "-json":
+		return "--output-format", true
+	case "--permission-mode", "-permission-mode", "--skip-permissions", "-skip-permissions", "--dangerously-skip-permissions", "-dangerously-skip-permissions":
+		return "--permission-mode", true
+	default:
+		return "", false
+	}
+}
+
+func duplicateFlagUsage(flag string) string {
+	switch flag {
+	case "--model":
+		return "codog --model MODEL COMMAND"
+	case "--output-format":
+		return "codog --output-format text|json COMMAND"
+	case "--permission-mode":
+		return "codog [--permission-mode MODE | --skip-permissions] COMMAND"
+	default:
+		return "codog [flags] COMMAND"
 	}
 }
 

@@ -4906,27 +4906,56 @@ func TestInvalidPermissionModeJSONContract(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_permission_mode")
 }
 
-func TestDuplicatePermissionModeFlagJSONContract(t *testing.T) {
+func TestDuplicateGlobalFlagJSONContract(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	data, err := json.Marshal(map[string]string{"config_home": configHome})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
-	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "--permission-mode", "read-only", "--permission-mode", "danger-full-access", "status"}, config.FlagOverrides{})
-	})
-	require.Error(t, err)
-	var exitErr *ExitError
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	var report cliErrorReport
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	require.Equal(t, "invalid_flag_value", report.Kind)
-	require.Equal(t, "invalid_flag_value", report.ErrorKind)
-	require.Equal(t, "--permission-mode", report.Option)
-	require.Contains(t, report.Message, "specified multiple times")
-	require.Contains(t, report.Hint, "--skip-permissions")
+	tests := []struct {
+		name   string
+		args   []string
+		option string
+		values []string
+	}{
+		{
+			name:   "permission mode",
+			args:   []string{"--config", configPath, "--output-format", "json", "--permission-mode", "read-only", "--permission-mode", "danger-full-access", "status"},
+			option: "--permission-mode",
+			values: []string{"read-only", "danger-full-access"},
+		},
+		{
+			name:   "output format",
+			args:   []string{"--config", configPath, "--output-format", "json", "--output-format", "text", "status"},
+			option: "--output-format",
+			values: []string{"json", "text"},
+		},
+		{
+			name:   "model",
+			args:   []string{"--config", configPath, "--output-format", "json", "--model", "openai/gpt-4", "--model", "claude-test", "status"},
+			option: "--model",
+			values: []string{"openai/gpt-4", "claude-test"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), tt.args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "duplicate_flag", report.Kind)
+			require.Equal(t, "duplicate_flag", report.ErrorKind)
+			require.Equal(t, tt.option, report.Option)
+			require.Equal(t, tt.values, report.Values)
+			require.Contains(t, report.Message, "specified multiple times")
+		})
+	}
 }
 
 func TestInvalidOutputFormatJSONContract(t *testing.T) {
@@ -6168,14 +6197,28 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	}
 }
 
-func TestParseFlagsRejectsDuplicatePermissionMode(t *testing.T) {
+func TestParseFlagsRejectsDuplicateScalarGlobalFlags(t *testing.T) {
 	_, _, _, err := parseFlags([]string{"--permission-mode", "read-only", "--permission-mode=danger-full-access", "status"}, config.FlagOverrides{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "permission mode was specified multiple times")
+	require.Contains(t, err.Error(), "duplicate_flag")
+	require.Contains(t, err.Error(), "--permission-mode")
 
 	_, _, _, err = parseFlags([]string{"--permission-mode", "workspace-write", "--skip-permissions", "status"}, config.FlagOverrides{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "permission mode was specified multiple times")
+	require.Contains(t, err.Error(), "--permission-mode")
+
+	_, _, _, err = parseFlags([]string{"--json", "--output-format", "text", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--output-format")
+
+	_, _, _, err = parseFlags([]string{"--model", "openai/gpt-4", "--model", "claude-test", "status"}, config.FlagOverrides{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--model")
+
+	_, command, rest, err := parseFlags([]string{"--output-format", "json", "status", "--output-format", "text"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "status", command)
+	require.Equal(t, []string{"--output-format", "text"}, rest)
 }
 
 func TestParseFlagsSupportsOutputFormatEnv(t *testing.T) {
