@@ -31446,6 +31446,7 @@ var resetSectionKeys = map[string][]string{
 	"model":       []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
 	"permissions": []string{"permission_mode", "permission_rules"},
 	"privacy":     []string{"privacy_settings"},
+	"rag":         []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
 	"rate-limit":  []string{"rate_limit"},
 	"remote":      []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
 	"skills":      []string{"enabled_skills"},
@@ -31468,6 +31469,9 @@ var resetSectionAliases = map[string]string{
 	"permissions":      "permissions",
 	"privacy":          "privacy",
 	"privacy-settings": "privacy",
+	"rag":              "rag",
+	"retrieve-context": "rag",
+	"retrieve_context": "rag",
 	"rate_limit":       "rate-limit",
 	"rate-limit":       "rate-limit",
 	"remote":           "remote",
@@ -31693,6 +31697,10 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.PermissionRules = config.PermissionRules{}
 	case "privacy":
 		a.Config.Privacy = config.PrivacyConfig{}
+	case "rag":
+		a.Config.RAGBaseURL = ""
+		a.Config.RAGTimeoutSeconds = 0
+		a.Config.RAGTopKMax = 0
 	case "rate-limit":
 		a.Config.RateLimit = defaults.RateLimit
 	case "remote":

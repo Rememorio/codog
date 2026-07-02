@@ -51,6 +51,14 @@ func TestValidateBytesReportsDeprecatedCompatibilityAliases(t *testing.T) {
 	require.Equal(t, "mcp_servers", result.Warnings[1].Replacement)
 }
 
+func TestValidateBytesAcceptsRAGConfig(t *testing.T) {
+	result := ValidateBytes([]byte(`{"rag_base_url":"http://127.0.0.1:8090","rag_timeout_seconds":15,"rag_top_k_max":8}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
 	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"extra":true}}}`)
 

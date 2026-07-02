@@ -7753,6 +7753,8 @@ func TestRenderConfigInspectionMutatesConfigFile(t *testing.T) {
 	out.Reset()
 	require.NoError(t, renderConfigInspection(&out, config.Config{}, []string{configPath}, []string{"set", "rate_limit.max_retries", "4"}))
 	out.Reset()
+	require.NoError(t, renderConfigInspection(&out, config.Config{}, []string{configPath}, []string{"set", "rag_base_url", "http://127.0.0.1:8090"}))
+	out.Reset()
 	require.NoError(t, renderConfigInspection(&out, config.Config{}, []string{configPath}, []string{"unset", "model"}))
 	require.Contains(t, out.String(), `"action": "unset"`)
 
@@ -7760,6 +7762,25 @@ func TestRenderConfigInspectionMutatesConfigFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"model"`)
 	require.Contains(t, string(data), `"max_retries": 4`)
+	require.Contains(t, string(data), `"rag_base_url": "http://127.0.0.1:8090"`)
+}
+
+func TestResetRAGConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rag_base_url":"http://rag","rag_timeout_seconds":5,"rag_top_k_max":9,"model":"keep"}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "rag", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "rag", report.Section)
+	require.ElementsMatch(t, []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "rag_base_url")
+	require.NotContains(t, string(data), "rag_timeout_seconds")
+	require.NotContains(t, string(data), "rag_top_k_max")
+	require.Contains(t, string(data), `"model": "keep"`)
 }
 
 func TestAllowedToolsSlashMutatesRuntimeAllowRules(t *testing.T) {
