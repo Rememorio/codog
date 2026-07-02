@@ -3881,6 +3881,18 @@ func risky(value any) {
 	require.Contains(t, resumedMockLimitsServe.Task.Command, "mock-limits serve")
 	require.Contains(t, resumedMockLimitsServe.Task.Command, "127.0.0.1:0")
 
+	out, err = runResumedJSON("/acp", "serve")
+	require.NoError(t, err)
+	var resumedACPServe backgroundCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedACPServe))
+	require.Equal(t, "background", resumedACPServe.Kind)
+	require.Equal(t, "run", resumedACPServe.Action)
+	require.Equal(t, "ok", resumedACPServe.Status)
+	require.Equal(t, "resume-slash", resumedACPServe.SessionID)
+	require.NotNil(t, resumedACPServe.Task)
+	require.Equal(t, "acp", resumedACPServe.Task.Kind)
+	require.Contains(t, resumedACPServe.Task.Command, "acp serve")
+
 	out, err = runResumedJSON("/extra-usage", "--admin", "--no-open")
 	require.NoError(t, err)
 	var resumedExtraUsage extraUsageReport
@@ -4518,7 +4530,6 @@ func risky(value any) {
 		Report  string
 	}{
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
-		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
 		require.Error(t, err, guarded.Command)

@@ -23640,7 +23640,7 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	case "/capabilities":
 		return a.Capabilities(resumeSlashArgs("capabilities", args, format))
 	case "/acp":
-		return a.runResumedACPSlash(ctx, resumeSlashArgs("acp", args, format), format)
+		return a.runResumedACPSlash(ctx, resumeSlashArgs("acp", args, format), resumed, format)
 	case "/skill":
 		return a.runResumedSkillsSlash("/skill", resumeSlashArgs("skills", args, format), format)
 	case "/skills":
@@ -24172,9 +24172,9 @@ func (a *App) runResumedBridgeSlash(command string, args []string, format string
 	return a.IDE(bridgeArgs)
 }
 
-func (a *App) runResumedACPSlash(ctx context.Context, args []string, format string) error {
+func (a *App) runResumedACPSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {
 	if acpServeRequested(args) {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/acp", "serve"), format)
+		return a.startResumedServerTask("acp", args, "acp", "ACP server started", overrides)
 	}
 	return a.ACP(ctx, args)
 }
@@ -24237,6 +24237,10 @@ func (a *App) runResumedMockLimitsSlash(args []string, overrides config.FlagOver
 }
 
 func (a *App) startResumedMockLimitsServer(args []string, overrides config.FlagOverrides) error {
+	return a.startResumedServerTask("mock-limits", args, "mock_limits", "Mock limits server started", overrides)
+}
+
+func (a *App) startResumedServerTask(commandName string, args []string, kind string, message string, overrides config.FlagOverrides) error {
 	executable, err := a.executablePath()
 	if err != nil {
 		return err
@@ -24245,13 +24249,13 @@ func (a *App) startResumedMockLimitsServer(args []string, overrides config.FlagO
 	if err != nil {
 		return err
 	}
-	commandParts := []string{"CODOG_CONFIG_HOME=" + shellQuote(a.Config.ConfigHome), shellQuote(executable), "mock-limits"}
+	commandParts := []string{"CODOG_CONFIG_HOME=" + shellQuote(a.Config.ConfigHome), shellQuote(executable), commandName}
 	commandParts = append(commandParts, shellQuoteArgs(args)...)
 	command := strings.Join(commandParts, " ")
 	task, err := background.NewStore(a.Config.ConfigHome).RunWithOptions(command, a.Workspace, background.RunOptions{
-		Kind:        "mock_limits",
+		Kind:        kind,
 		SessionID:   sessionID,
-		Description: "mock-limits server",
+		Description: commandName + " server",
 	})
 	if err != nil {
 		return err
@@ -24264,12 +24268,12 @@ func (a *App) startResumedMockLimitsServer(args []string, overrides config.FlagO
 		SessionID: sessionID,
 		TaskID:    task.ID,
 		Task:      &task,
-		Message:   "Mock limits server started",
+		Message:   message,
 	}); err != nil {
 		return err
 	}
 	a.runTaskCreatedHook(context.Background(), task)
-	a.runNotificationHook(context.Background(), "background_task_started", "Mock limits server started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
+	a.runNotificationHook(context.Background(), "background_task_started", message, fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
 	return nil
 }
 
