@@ -13859,6 +13859,15 @@ func TestStateCommandMissingStateReportsActionableErrors(t *testing.T) {
 	require.Contains(t, report.Commands, "codog state [--json]")
 }
 
+func TestStateCommandParseErrorsHonorGlobalJSONFormat(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--output-format", "json", "state", "bogus"}, config.FlagOverrides{})
+	})
+	requireStructuredCLIError(t, err, []byte(out), "unknown_option", "unknown_option")
+	require.Contains(t, out, `"command": "state"`)
+	require.Contains(t, out, `"option": "bogus"`)
+}
+
 func TestHooksCommandAndSlash(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

@@ -288,7 +288,14 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		return renderWorkerState(os.Stdout, workspace, rest)
+		if err := renderWorkerState(os.Stdout, workspace, rest); err != nil {
+			var exitErr *ExitError
+			if errors.As(err, &exitErr) {
+				return err
+			}
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	}
 	if command == "memory" {
 		workspace, err := os.Getwd()
