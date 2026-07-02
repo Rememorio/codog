@@ -554,6 +554,82 @@ func TestLoadMCPHeadersHelperAliases(t *testing.T) {
 	require.Equal(t, 25000, cfg.MCPServers["camel"].ToolCallTimeoutMS)
 }
 
+func TestLoadMCPServersCamelAliasAndEnvObject(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"mcpServers": {
+			"demo": {"command": "demo-mcp", "args": ["--stdio"], "env": {"TOKEN": "secret", "A": "b"}}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "demo-mcp", cfg.MCPServers["demo"].Command)
+	require.Equal(t, []string{"--stdio"}, cfg.MCPServers["demo"].Args)
+	require.Equal(t, []string{"A=b", "TOKEN=secret"}, cfg.MCPServers["demo"].Env)
+}
+
+func TestLoadProjectMCPJSONRespectsTrustSettings(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{
+		"enableAllProjectMcpServers": true,
+		"disabledMcpjsonServers": ["blocked"],
+		"mcp_servers": {
+			"shared": {"command": "settings-mcp"}
+		}
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".mcp.json"), []byte(`{
+		"mcpServers": {
+			"project": {"command": "project-mcp", "env": {"TOKEN": "secret"}},
+			"blocked": {"command": "blocked-mcp"},
+			"shared": {"command": "project-override"}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "project-mcp", cfg.MCPServers["project"].Command)
+	require.Equal(t, []string{"TOKEN=secret"}, cfg.MCPServers["project"].Env)
+	require.NotContains(t, cfg.MCPServers, "blocked")
+	require.Equal(t, "settings-mcp", cfg.MCPServers["shared"].Command)
+}
+
+func TestLoadProjectMCPJSONRequiresExplicitEnablement(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{
+		"enabledMcpjsonServers": ["allowed"]
+	}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".mcp.json"), []byte(`{
+		"mcpServers": {
+			"allowed": {"command": "allowed-mcp"},
+			"ignored": {"command": "ignored-mcp"}
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "allowed-mcp", cfg.MCPServers["allowed"].Command)
+	require.NotContains(t, cfg.MCPServers, "ignored")
+}
+
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

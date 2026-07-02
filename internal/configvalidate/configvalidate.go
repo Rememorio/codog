@@ -20,6 +20,7 @@ const (
 	FieldHookArray           FieldType = "hook_array"
 	FieldNumber              FieldType = "number"
 	FieldStringOrStringArray FieldType = "string_or_string_array"
+	FieldStringArrayOrMap    FieldType = "string_array_or_map"
 	FieldStringMap           FieldType = "string_map"
 )
 
@@ -97,6 +98,9 @@ var topLevelFields = []fieldSpec{
 	{"cleanupPeriodDays", FieldNumber},
 	{"respectGitignore", FieldBool},
 	{"disableAllHooks", FieldBool},
+	{"enableAllProjectMcpServers", FieldBool},
+	{"enabledMcpjsonServers", FieldStringArray},
+	{"disabledMcpjsonServers", FieldStringArray},
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},
@@ -206,7 +210,7 @@ var hookFields = []fieldSpec{
 var mcpServerFields = []fieldSpec{
 	{"command", FieldString},
 	{"args", FieldStringArray},
-	{"env", FieldStringArray},
+	{"env", FieldStringArrayOrMap},
 	{"url", FieldString},
 	{"headers", FieldObject},
 	{"headers_helper", FieldString},
@@ -575,6 +579,11 @@ func matchesFieldType(expected FieldType, value any) bool {
 			return true
 		}
 		return matchesFieldType(FieldStringArray, value)
+	case FieldStringArrayOrMap:
+		if matchesFieldType(FieldStringArray, value) {
+			return true
+		}
+		return matchesFieldType(FieldStringMap, value)
 	default:
 		return true
 	}
@@ -598,6 +607,8 @@ func (t FieldType) label() string {
 		return "a number"
 	case FieldStringOrStringArray:
 		return "a string or an array of strings"
+	case FieldStringArrayOrMap:
+		return "an array of strings or an object with string values"
 	default:
 		return "a valid value"
 	}

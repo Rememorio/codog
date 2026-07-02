@@ -86,6 +86,27 @@ func TestValidateBytesValidatesDisableAllHooksType(t *testing.T) {
 	require.Equal(t, "a boolean", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesProjectMCPTrustTypes(t *testing.T) {
+	result := ValidateBytes([]byte(`{"enableAllProjectMcpServers":"true","enabledMcpjsonServers":[42],"disabledMcpjsonServers":"demo"}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 3)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "a boolean", errorsByField["enableAllProjectMcpServers"])
+	require.Equal(t, "an array of strings", errorsByField["enabledMcpjsonServers"])
+	require.Equal(t, "an array of strings", errorsByField["disabledMcpjsonServers"])
+}
+
+func TestValidateBytesAcceptsMCPEnvObject(t *testing.T) {
+	result := ValidateBytes([]byte(`{"mcpServers":{"demo":{"command":"demo-mcp","env":{"TOKEN":"secret"}}}}`), "config.json")
+
+	require.NotEqual(t, "error", result.Status)
+	require.Empty(t, result.Errors)
+}
+
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
 	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true,"extra":true}}}`)
 

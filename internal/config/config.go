@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -272,7 +273,7 @@ func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 	type rawMCPServerConfig struct {
 		Command              string            `json:"command,omitempty"`
 		Args                 []string          `json:"args,omitempty"`
-		Env                  []string          `json:"env,omitempty"`
+		Env                  json.RawMessage   `json:"env,omitempty"`
 		URL                  string            `json:"url,omitempty"`
 		Headers              map[string]string `json:"headers,omitempty"`
 		HeadersHelper        string            `json:"headers_helper,omitempty"`
@@ -287,7 +288,11 @@ func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 	}
 	m.Command = raw.Command
 	m.Args = raw.Args
-	m.Env = raw.Env
+	env, err := parseMCPEnv(raw.Env)
+	if err != nil {
+		return err
+	}
+	m.Env = env
 	m.URL = raw.URL
 	m.Headers = raw.Headers
 	m.HeadersHelper = raw.HeadersHelper
@@ -300,6 +305,32 @@ func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 	}
 	m.Required = raw.Required
 	return nil
+}
+
+func parseMCPEnv(data json.RawMessage) ([]string, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return nil, nil
+	}
+	var entries []string
+	if err := json.Unmarshal(data, &entries); err == nil {
+		return entries, nil
+	}
+	var object map[string]string
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, fmt.Errorf("invalid mcp server env: %w", err)
+	}
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	entries = make([]string, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, key+"="+object[key])
+	}
+	return entries, nil
 }
 
 type SandboxConfig struct {
@@ -420,47 +451,86 @@ type ManagedPolicy struct {
 }
 
 type Config struct {
-	APIKey              string                     `json:"api_key,omitempty"`
-	AuthToken           string                     `json:"auth_token,omitempty"`
-	OAuthProfile        string                     `json:"oauth_profile,omitempty"`
-	BaseURL             string                     `json:"base_url,omitempty"`
-	Model               string                     `json:"model,omitempty"`
-	AdvisorModel        string                     `json:"advisor_model,omitempty"`
-	SystemPrompt        string                     `json:"system_prompt,omitempty"`
-	AppendSystemPrompt  string                     `json:"append_system_prompt,omitempty"`
-	Language            string                     `json:"language,omitempty"`
-	Theme               string                     `json:"theme,omitempty"`
-	EditorMode          string                     `json:"editorMode,omitempty"`
-	ReasoningEffort     string                     `json:"reasoning_effort,omitempty"`
-	FastMode            *bool                      `json:"fast_mode,omitempty"`
-	VoiceEnabled        *bool                      `json:"voice_enabled,omitempty"`
-	VoiceCommand        string                     `json:"voice_command,omitempty"`
-	SpeechCommand       string                     `json:"speech_command,omitempty"`
-	MaxTokens           int                        `json:"max_tokens,omitempty"`
-	MaxTurns            int                        `json:"max_turns,omitempty"`
-	Temperature         *float64                   `json:"temperature,omitempty"`
-	PermissionMode      string                     `json:"permission_mode,omitempty"`
-	PlanMode            bool                       `json:"-"`
-	Privacy             PrivacyConfig              `json:"privacy_settings,omitempty"`
-	PermissionRules     PermissionRules            `json:"permission_rules,omitempty"`
-	ConfigHome          string                     `json:"config_home,omitempty"`
-	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
-	CleanupPeriodDays   *int                       `json:"cleanupPeriodDays,omitempty"`
-	RespectGitignore    *bool                      `json:"respectGitignore,omitempty"`
-	DisableAllHooks     *bool                      `json:"disableAllHooks,omitempty"`
-	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
-	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
-	ProviderFallbacks   ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
-	Env                 map[string]string          `json:"env,omitempty"`
-	TrustedRoots        []string                   `json:"trustedRoots,omitempty"`
-	RAGBaseURL          string                     `json:"rag_base_url,omitempty"`
-	RAGTimeoutSeconds   int                        `json:"rag_timeout_seconds,omitempty"`
-	RAGTopKMax          int                        `json:"rag_top_k_max,omitempty"`
-	AdditionalDirs      []string                   `json:"additional_dirs,omitempty"`
-	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
-	Hooks               HookConfig                 `json:"hooks,omitempty"`
-	MCPServers          map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
-	Future              FutureConfig               `json:"future,omitempty"`
+	APIKey                     string                     `json:"api_key,omitempty"`
+	AuthToken                  string                     `json:"auth_token,omitempty"`
+	OAuthProfile               string                     `json:"oauth_profile,omitempty"`
+	BaseURL                    string                     `json:"base_url,omitempty"`
+	Model                      string                     `json:"model,omitempty"`
+	AdvisorModel               string                     `json:"advisor_model,omitempty"`
+	SystemPrompt               string                     `json:"system_prompt,omitempty"`
+	AppendSystemPrompt         string                     `json:"append_system_prompt,omitempty"`
+	Language                   string                     `json:"language,omitempty"`
+	Theme                      string                     `json:"theme,omitempty"`
+	EditorMode                 string                     `json:"editorMode,omitempty"`
+	ReasoningEffort            string                     `json:"reasoning_effort,omitempty"`
+	FastMode                   *bool                      `json:"fast_mode,omitempty"`
+	VoiceEnabled               *bool                      `json:"voice_enabled,omitempty"`
+	VoiceCommand               string                     `json:"voice_command,omitempty"`
+	SpeechCommand              string                     `json:"speech_command,omitempty"`
+	MaxTokens                  int                        `json:"max_tokens,omitempty"`
+	MaxTurns                   int                        `json:"max_turns,omitempty"`
+	Temperature                *float64                   `json:"temperature,omitempty"`
+	PermissionMode             string                     `json:"permission_mode,omitempty"`
+	PlanMode                   bool                       `json:"-"`
+	Privacy                    PrivacyConfig              `json:"privacy_settings,omitempty"`
+	PermissionRules            PermissionRules            `json:"permission_rules,omitempty"`
+	ConfigHome                 string                     `json:"config_home,omitempty"`
+	AutoCompactMessages        int                        `json:"auto_compact_messages,omitempty"`
+	CleanupPeriodDays          *int                       `json:"cleanupPeriodDays,omitempty"`
+	RespectGitignore           *bool                      `json:"respectGitignore,omitempty"`
+	DisableAllHooks            *bool                      `json:"disableAllHooks,omitempty"`
+	EnableAllProjectMCPServers *bool                      `json:"enableAllProjectMcpServers,omitempty"`
+	EnabledMCPJSONServers      []string                   `json:"enabledMcpjsonServers,omitempty"`
+	DisabledMCPJSONServers     []string                   `json:"disabledMcpjsonServers,omitempty"`
+	RateLimit                  RateLimitConfig            `json:"rate_limit,omitempty"`
+	APITimeout                 APITimeoutConfig           `json:"apiTimeout,omitempty"`
+	ProviderFallbacks          ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
+	Env                        map[string]string          `json:"env,omitempty"`
+	TrustedRoots               []string                   `json:"trustedRoots,omitempty"`
+	RAGBaseURL                 string                     `json:"rag_base_url,omitempty"`
+	RAGTimeoutSeconds          int                        `json:"rag_timeout_seconds,omitempty"`
+	RAGTopKMax                 int                        `json:"rag_top_k_max,omitempty"`
+	AdditionalDirs             []string                   `json:"additional_dirs,omitempty"`
+	EnabledSkills              []string                   `json:"enabled_skills,omitempty"`
+	Hooks                      HookConfig                 `json:"hooks,omitempty"`
+	MCPServers                 map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+	Future                     FutureConfig               `json:"future,omitempty"`
+}
+
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type plain Config
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var aliases struct {
+		PermissionModeCamel string                     `json:"permissionMode,omitempty"`
+		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
+		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aliases); err != nil {
+		return err
+	}
+	if parsed.PermissionMode == "" {
+		parsed.PermissionMode = aliases.PermissionModeCamel
+	}
+	if permissionRulesSet(aliases.PermissionRules) {
+		mergePermissionRules(&parsed.PermissionRules, aliases.PermissionRules)
+	}
+	if len(aliases.MCPServers) != 0 {
+		if parsed.MCPServers == nil {
+			parsed.MCPServers = map[string]MCPServerConfig{}
+		}
+		for name, server := range aliases.MCPServers {
+			parsed.MCPServers[name] = server
+		}
+	}
+	if sandboxConfigSet(aliases.Sandbox) {
+		mergeSandboxConfig(&parsed.Future.Sandbox, aliases.Sandbox)
+	}
+	*c = Config(parsed)
+	return nil
 }
 
 type MutationReport struct {
@@ -536,6 +606,11 @@ func LoadForInspection(overrides FlagOverrides) (Config, []string, error) {
 			return Config{}, paths, err
 		}
 		merge(&cfg, next)
+	}
+	if overrides.ConfigPath == "" {
+		if err := applyProjectMCPJSON(&cfg, ".mcp.json"); err != nil {
+			return Config{}, paths, err
+		}
 	}
 	applyEnv(&cfg)
 	applyFlags(&cfg, overrides)
@@ -665,6 +740,67 @@ func readConfigFile(path string) (Config, error) {
 		return Config{}, &FileError{Path: path, Err: err}
 	}
 	return cfg, nil
+}
+
+func applyProjectMCPJSON(cfg *Config, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return &FileError{Path: path, Err: err}
+	}
+	var parsed struct {
+		MCPServersSnake map[string]MCPServerConfig `json:"mcp_servers,omitempty"`
+		MCPServersCamel map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return &FileError{Path: path, Err: err}
+	}
+	servers := map[string]MCPServerConfig{}
+	for name, server := range parsed.MCPServersSnake {
+		servers[name] = server
+	}
+	for name, server := range parsed.MCPServersCamel {
+		servers[name] = server
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	if cfg.MCPServers == nil {
+		cfg.MCPServers = map[string]MCPServerConfig{}
+	}
+	for _, name := range sortedMCPServerNames(servers) {
+		if !projectMCPServerEnabled(*cfg, name) {
+			continue
+		}
+		if _, exists := cfg.MCPServers[name]; exists {
+			continue
+		}
+		cfg.MCPServers[name] = servers[name]
+	}
+	return nil
+}
+
+func projectMCPServerEnabled(cfg Config, name string) bool {
+	if stringListContains(cfg.DisabledMCPJSONServers, name) {
+		return false
+	}
+	if cfg.EnableAllProjectMCPServers != nil && *cfg.EnableAllProjectMCPServers {
+		return true
+	}
+	return stringListContains(cfg.EnabledMCPJSONServers, name)
+}
+
+func sortedMCPServerNames(servers map[string]MCPServerConfig) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		if strings.TrimSpace(name) != "" {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 type FileError struct {
@@ -1170,6 +1306,16 @@ func merge(dst *Config, src Config) {
 		disabled := *src.DisableAllHooks
 		dst.DisableAllHooks = &disabled
 	}
+	if src.EnableAllProjectMCPServers != nil {
+		enabled := *src.EnableAllProjectMCPServers
+		dst.EnableAllProjectMCPServers = &enabled
+	}
+	if src.EnabledMCPJSONServers != nil {
+		dst.EnabledMCPJSONServers = mergeStringLists(dst.EnabledMCPJSONServers, src.EnabledMCPJSONServers)
+	}
+	if src.DisabledMCPJSONServers != nil {
+		dst.DisabledMCPJSONServers = mergeStringLists(dst.DisabledMCPJSONServers, src.DisabledMCPJSONServers)
+	}
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
 	}
@@ -1454,6 +1600,19 @@ func mergeStringLists(base []string, overlay []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func stringListContains(values []string, needle string) bool {
+	needle = strings.TrimSpace(needle)
+	if needle == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeHookConfig(dst *HookConfig, src HookConfig) {
