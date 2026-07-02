@@ -19133,6 +19133,69 @@ func TestProvidersShowCurrent(t *testing.T) {
 	require.Contains(t, out.String(), `"model": "qwen-plus"`)
 }
 
+func TestRuntimeConfigErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "permissions invalid mode",
+			args:      []string{"permissions", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "mode"`, `"value": "bogus"`},
+		},
+		{
+			name:      "permissions set invalid mode",
+			args:      []string{"permissions", "set", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "mode"`, `"value": "bogus"`},
+		},
+		{
+			name:      "sandbox-toggle invalid strategy",
+			args:      []string{"sandbox-toggle", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "strategy"`, `"value": "bogus"`},
+		},
+		{
+			name:      "providers missing show name",
+			args:      []string{"providers", "show"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "providers show"`, `"argument": "NAME"`},
+		},
+		{
+			name:      "providers unknown provider",
+			args:      []string{"providers", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "provider"`, `"value": "bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestOAuthBrowserCommands(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

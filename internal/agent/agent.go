@@ -234,7 +234,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 		}
 		applyStoredOAuthToken(&cfg, time.Now().UTC())
-		return renderProvidersCommand(os.Stdout, cfg, paths, rest)
+		if err := renderProvidersCommand(os.Stdout, cfg, paths, rest); err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	}
 	helpCommand := command
 	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) == "" {
@@ -514,7 +517,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "max-turns":
 		return app.MaxTurns(rest)
 	case "permissions":
-		return app.Permissions(rest)
+		if err := app.Permissions(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "allowed-tools":
 		return app.AllowedTools(rest)
 	case "language":
@@ -757,7 +763,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "xaaIdpCommand":
 		return app.XAAIDPCommand(ctx, rest)
 	case "providers":
-		return app.Providers(rest)
+		if err := app.Providers(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "createMovedToPluginCommand":
 		return app.MovedToPluginCommand(rest)
 	case "exit":
@@ -811,7 +820,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "sandbox":
 		return app.Sandbox()
 	case "sandbox-toggle":
-		return app.SandboxToggle(rest)
+		if err := app.SandboxToggle(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "heapdump":
 		return app.HeapDump(rest)
 	case "symbols":
@@ -9864,22 +9876,30 @@ func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
 	switch req.Action {
 	case "status", "list":
 		if len(positionals) > 0 {
-			return req, fmt.Errorf("unexpected providers argument %q", positionals[0])
+			return req, unexpectedExtraArgsError{
+				Command: "providers " + req.Action,
+				Args:    append([]string(nil), positionals...),
+				Usage:   "codog providers [status|list|show NAME|set NAME [BASE_URL] [MODEL]] [--json|--output-format text|json]",
+			}
 		}
 	case "show":
 		if req.Name == "" {
 			if len(positionals) == 0 {
-				return req, errors.New("usage: codog providers show NAME")
+				return req, requiredArgumentError{Command: "providers show", Argument: "NAME", Usage: "codog providers show NAME [--json|--output-format text|json]"}
 			}
 			req.Name = positionals[0]
 			positionals = positionals[1:]
 		}
 		if len(positionals) > 0 {
-			return req, fmt.Errorf("unexpected providers argument %q", positionals[0])
+			return req, unexpectedExtraArgsError{
+				Command: "providers show",
+				Args:    append([]string(nil), positionals...),
+				Usage:   "codog providers show NAME [--json|--output-format text|json]",
+			}
 		}
 	case "set":
 		if len(positionals) == 0 {
-			return req, errors.New("usage: codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]")
+			return req, requiredArgumentError{Command: "providers set", Argument: "provider", Usage: "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]"}
 		}
 		req.Name = positionals[0]
 		if len(positionals) > 1 && req.BaseURL == "" {
@@ -9889,16 +9909,24 @@ func parseProviderCommandArgs(args []string) (providerCommandRequest, error) {
 			req.Model = positionals[2]
 		}
 		if len(positionals) > 3 {
-			return req, fmt.Errorf("unexpected providers argument %q", positionals[3])
+			return req, unexpectedExtraArgsError{
+				Command: "providers set",
+				Args:    append([]string(nil), positionals[3:]...),
+				Usage:   "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]",
+			}
 		}
 	default:
-		return req, fmt.Errorf("unknown providers command %q", req.Action)
+		return req, unexpectedExtraArgsError{
+			Command: "providers",
+			Args:    []string{req.Action},
+			Usage:   "codog providers [status|list|show NAME|set NAME [BASE_URL] [MODEL]] [--json|--output-format text|json]",
+		}
 	}
 	switch req.Format {
 	case "text", "json":
 		return req, nil
 	default:
-		return req, fmt.Errorf("unknown providers output format %q", req.Format)
+		return req, outputFormatError{Command: "providers", Value: req.Format, Expected: []string{"text", "json"}}
 	}
 }
 
@@ -10070,7 +10098,12 @@ func providerShowPayload(report providersReport, name string) (any, error) {
 			return profile, nil
 		}
 	}
-	return nil, fmt.Errorf("unknown provider %q", name)
+	return nil, invalidFlagValueError{
+		Flag:    "provider",
+		Value:   name,
+		Message: fmt.Sprintf("unknown provider %q", name),
+		Usage:   "codog providers show NAME [--json|--output-format text|json]",
+	}
 }
 
 func setProviderConfig(paths []string, req providerCommandRequest) (providerSetReport, error) {
@@ -10124,7 +10157,12 @@ func setProviderConfig(paths []string, req providerCommandRequest) (providerSetR
 		}
 	default:
 		if baseURL == "" {
-			return providerSetReport{}, fmt.Errorf("unknown provider %q; use anthropic, openai, xai, dashscope, or custom --base-url URL", req.Name)
+			return providerSetReport{}, invalidFlagValueError{
+				Flag:    "provider",
+				Value:   req.Name,
+				Message: fmt.Sprintf("unknown provider %q; use anthropic, openai, xai, dashscope, or custom --base-url URL", req.Name),
+				Usage:   "codog providers set anthropic|openai|xai|dashscope|custom [BASE_URL] [MODEL] [--target user|project|local|--path PATH]",
+			}
 		}
 	}
 	if err := validateProviderBaseURL(baseURL); err != nil {
@@ -10877,10 +10915,14 @@ func parseSandboxToggleArgs(args []string) (sandboxToggleRequest, error) {
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown sandbox-toggle flag %q", arg)
+			return req, unknownOptionError{Command: "sandbox-toggle", Option: arg, Usage: "codog sandbox-toggle [status|on|off|clear|sandbox-exec|bwrap|unshare|restricted-token] [--target user|project|local|--path PATH] [--json|--output-format text|json]"}
 		default:
 			if actionSet {
-				return req, fmt.Errorf("unexpected sandbox-toggle argument %q", arg)
+				return req, unexpectedExtraArgsError{
+					Command: "sandbox-toggle",
+					Args:    []string{arg},
+					Usage:   "codog sandbox-toggle [status|on|off|clear|sandbox-exec|bwrap|unshare|restricted-token] [--target user|project|local|--path PATH] [--json|--output-format text|json]",
+				}
 			}
 			action, strategy, err := normalizeSandboxToggleAction(arg)
 			if err != nil {
@@ -10910,7 +10952,12 @@ func normalizeSandboxToggleAction(value string) (string, string, error) {
 	case "sandbox-exec", "bwrap", "unshare", "restricted-token":
 		return "set", strings.ToLower(strings.TrimSpace(value)), nil
 	default:
-		return "", "", fmt.Errorf("unknown sandbox-toggle strategy %q", value)
+		return "", "", invalidFlagValueError{
+			Flag:    "strategy",
+			Value:   value,
+			Message: fmt.Sprintf("unknown sandbox-toggle strategy %q", value),
+			Usage:   "codog sandbox-toggle [status|on|off|clear|sandbox-exec|bwrap|unshare|restricted-token] [--json|--output-format text|json]",
+		}
 	}
 }
 
@@ -31175,32 +31222,53 @@ func parsePermissionsArgs(args []string) (permissionsRequest, error) {
 	switch strings.ToLower(strings.TrimSpace(positionals[0])) {
 	case "show", "status", "list":
 		if len(positionals) > 1 {
-			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
+			return req, unexpectedExtraArgsError{
+				Command: "permissions show",
+				Args:    append([]string(nil), positionals[1:]...),
+				Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
+			}
 		}
 		req.Action = "show"
 	case "mode", "set":
 		if len(positionals) < 2 {
-			return req, errors.New("usage: codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]")
+			return req, requiredArgumentError{Command: "permissions set", Argument: "MODE", Usage: "codog permissions set MODE [--target user|project|local] [--json|--output-format text|json]"}
 		}
 		if len(positionals) > 2 {
-			return req, fmt.Errorf("unexpected permissions argument %q", positionals[2])
+			return req, unexpectedExtraArgsError{
+				Command: "permissions set",
+				Args:    append([]string(nil), positionals[2:]...),
+				Usage:   "codog permissions set MODE [--target user|project|local] [--json|--output-format text|json]",
+			}
 		}
 		req.Action = "set"
 		req.Mode = positionals[1]
 	case "clear", "reset", "unset", "default":
 		if len(positionals) > 1 {
-			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
+			return req, unexpectedExtraArgsError{
+				Command: "permissions clear",
+				Args:    append([]string(nil), positionals[1:]...),
+				Usage:   "codog permissions clear [--target user|project|local] [--json|--output-format text|json]",
+			}
 		}
 		req.Action = "clear"
 	default:
 		if len(positionals) > 1 {
-			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
+			return req, unexpectedExtraArgsError{
+				Command: "permissions",
+				Args:    append([]string(nil), positionals[1:]...),
+				Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
+			}
 		}
 		req.Action = "set"
 		req.Mode = positionals[0]
 	}
 	if req.Action == "set" && !validPermissionMode(req.Mode) {
-		return req, fmt.Errorf("unknown permission mode: %s", req.Mode)
+		return req, invalidFlagValueError{
+			Flag:    "mode",
+			Value:   req.Mode,
+			Message: fmt.Sprintf("unknown permission mode: %s", req.Mode),
+			Usage:   "codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]",
+		}
 	}
 	if req.Format == "" {
 		if req.Action == "show" {
