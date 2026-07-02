@@ -41372,6 +41372,7 @@ type xaaIDPRequest struct {
 	Format  string
 	Server  string
 	Profile string
+	Refresh bool
 }
 
 func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
@@ -41381,6 +41382,9 @@ func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
 	}
 	if req.Server != "" {
 		mcpArgs := []string{"auth", req.Server}
+		if req.Refresh {
+			mcpArgs = []string{"auth", "--refresh", req.Server}
+		}
 		if req.Format == "json" {
 			mcpArgs = append(mcpArgs, "--json")
 		}
@@ -41393,9 +41397,16 @@ func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
 	if profileName == "" {
 		profileName = a.Config.OAuthProfile
 	}
+	now := time.Now().UTC()
 	for _, name := range configuredServers {
-		status := mcpauthdiag.Build(mcp.InspectAuth(ctx, name, a.Config.MCPServers[name]), a.Config.ConfigHome, profileName, time.Now().UTC())
-		if status.Status == "error" || status.Error != "" {
+		result := mcp.InspectAuth(ctx, name, a.Config.MCPServers[name])
+		var status mcpauthdiag.Report
+		if req.Refresh {
+			status = mcpauthdiag.Refresh(ctx, result, a.Config.ConfigHome, profileName, now)
+		} else {
+			status = mcpauthdiag.Build(result, a.Config.ConfigHome, profileName, now)
+		}
+		if status.Status == "error" || status.Error != "" || status.RefreshError != "" {
 			errorCount++
 		}
 		authStatuses = append(authStatuses, status)
@@ -41415,7 +41426,7 @@ func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
 		OAuthProfile:       profileName,
 		OAuthStatus:        &oauthStatus,
 		OAuthProfiles:      oauthProfiles,
-		Usage:              "codog xaaIdpCommand [SERVER] [--profile PROFILE] [--json]",
+		Usage:              "codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--json]",
 	}
 	switch {
 	case len(configuredServers) == 0:
@@ -41424,6 +41435,9 @@ func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
 	case errorCount > 0:
 		report.Status = "warn"
 		report.Message = "MCP auth preflight completed with server errors; inspect auth_statuses for details."
+	case req.Refresh:
+		report.Status = "ok"
+		report.Message = "MCP auth refresh completed for all configured servers."
 	default:
 		report.Status = "ok"
 		report.Message = "MCP auth preflight completed for all configured servers."
@@ -41461,6 +41475,10 @@ func parseXAAIDPArgs(args []string) (xaaIDPRequest, error) {
 			req.Profile = args[index]
 		case strings.HasPrefix(arg, "--profile="):
 			req.Profile = strings.TrimPrefix(arg, "--profile=")
+		case arg == "--refresh":
+			req.Refresh = true
+		case arg == "--status":
+			req.Refresh = false
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown xaaIdpCommand flag %q", arg)
 		default:
@@ -41470,8 +41488,17 @@ func parseXAAIDPArgs(args []string) (xaaIDPRequest, error) {
 	if err := validateTextOrJSON(req.Format, "xaaIdpCommand"); err != nil {
 		return req, err
 	}
+	if len(positionals) > 0 {
+		first := strings.ToLower(strings.TrimSpace(positionals[0]))
+		if first == "refresh" {
+			req.Refresh = true
+			positionals = positionals[1:]
+		} else if first == "status" {
+			positionals = positionals[1:]
+		}
+	}
 	if len(positionals) > 1 {
-		return req, errors.New("usage: codog xaaIdpCommand [SERVER] [--profile PROFILE] [--json]")
+		return req, errors.New("usage: codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--json]")
 	}
 	if len(positionals) == 1 {
 		if req.Profile != "" {
@@ -47729,8 +47756,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"xaaIdpCommand",
 			"xaaIdpCommand",
-			"codog xaaIdpCommand [SERVER] [--profile PROFILE] [--output-format text|json]",
-			"xaaIdpCommand\n\nUsage:\n  codog xaaIdpCommand [SERVER] [--profile PROFILE] [--output-format text|json]\n\nCompatibility entrypoint for archived MCP XAA IdP authentication. With a server name it delegates to `codog mcp auth SERVER`; without one it runs MCP auth preflight for all configured servers and summarizes local OAuth profile/token readiness.\n",
+			"codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--output-format text|json]",
+			"xaaIdpCommand\n\nUsage:\n  codog xaaIdpCommand [--refresh|refresh] [SERVER] [--profile PROFILE] [--output-format text|json]\n\nCompatibility entrypoint for archived MCP XAA IdP authentication. With a server name it delegates to `codog mcp auth [--refresh] SERVER`; without one it runs MCP auth preflight for all configured servers and summarizes local OAuth profile/token readiness. `--refresh` refreshes the saved OAuth token before reporting readiness.\n",
 			[]string{"configured_servers", "auth_statuses", "oauth_status", "oauth_profiles", "provider_configured", "oauth_ready", "usage"},
 			[]string{"ok", "warn", "no_servers", "error"},
 			false,
