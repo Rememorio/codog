@@ -22992,6 +22992,20 @@ func (e missingArgumentError) Error() string {
 	return fmt.Sprintf("missing_argument: %s requires a value", e.Argument)
 }
 
+type requiredArgumentError struct {
+	Command  string
+	Argument string
+	Usage    string
+}
+
+func (e requiredArgumentError) Error() string {
+	argument := strings.TrimSpace(e.Argument)
+	if argument == "" {
+		argument = "argument"
+	}
+	return fmt.Sprintf("missing_argument: %s is required", argument)
+}
+
 type missingFlagValueError struct {
 	Command string
 	Flag    string
@@ -23455,6 +23469,28 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Message:   fmt.Sprintf("%s requires a value", argument),
 			Hint:      fmt.Sprintf("Provide a comma-separated tool list, for example `%s`.", example),
 			Argument:  argument,
+		}
+	}
+	var requiredArgErr requiredArgumentError
+	if errors.As(err, &requiredArgErr) {
+		command := strings.TrimSpace(requiredArgErr.Command)
+		argument := strings.TrimSpace(requiredArgErr.Argument)
+		if argument == "" {
+			argument = "argument"
+		}
+		usage := strings.TrimSpace(requiredArgErr.Usage)
+		hint := fmt.Sprintf("Provide %s.", argument)
+		if usage != "" {
+			hint = "Usage: " + usage
+		}
+		return cliErrorReport{
+			Kind:      "missing_argument",
+			ErrorKind: "missing_argument",
+			Status:    "error",
+			Command:   command,
+			Argument:  argument,
+			Message:   fmt.Sprintf("%s is required", argument),
+			Hint:      hint,
 		}
 	}
 	var missingFlagErr missingFlagValueError
@@ -34756,6 +34792,13 @@ func parseGitCommitArgs(args []string, defaultFormat string) (gitCommitRequest, 
 	}
 	req.Format = normalized
 	req.Options.Message = strings.Join(message, " ")
+	if strings.TrimSpace(req.Options.Message) == "" {
+		return req, requiredArgumentError{
+			Command:  "commit",
+			Argument: "commit message",
+			Usage:    "codog commit [--all] MESSAGE [--json|--output-format text|json]",
+		}
+	}
 	return req, nil
 }
 

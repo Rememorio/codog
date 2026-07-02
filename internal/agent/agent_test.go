@@ -1943,7 +1943,15 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/commit"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "commit")
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var commitError cliErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &commitError))
+	require.Equal(t, "missing_argument", commitError.ErrorKind)
+	require.Equal(t, "commit", commitError.Command)
+	require.Equal(t, "commit message", commitError.Argument)
+	require.Contains(t, commitError.Hint, "codog commit")
+	require.NotContains(t, out, "config_load_failed")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/compact"}, config.FlagOverrides{})
