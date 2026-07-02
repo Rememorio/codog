@@ -24716,6 +24716,12 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedProvidersSlash(resumeSlashArgs("providers", args, format), format)
 	case "/oauth":
 		return a.runResumedOAuthSlash(args, format)
+	case "/login":
+		return a.runResumedLoginSlash(resumeSlashArgs("login", args, format), format)
+	case "/oauth-refresh":
+		return a.runResumedOAuthRefreshSlash(resumeSlashArgs("oauth-refresh", args, format), format)
+	case "/logout":
+		return a.runResumedLogoutSlash(resumeSlashArgs("logout", args, format), format)
 	case "/profile":
 		return a.runResumedProfileSlash(resumeSlashArgs("profile", args, format), format)
 	case "/advisor":
@@ -25904,6 +25910,18 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 
 func (a *App) runResumedProfileSlash(args []string, format string) error {
 	return a.Profile(args)
+}
+
+func (a *App) runResumedLoginSlash(args []string, format string) error {
+	return a.Login(args)
+}
+
+func (a *App) runResumedOAuthRefreshSlash(args []string, format string) error {
+	return a.OAuthRefresh(args)
+}
+
+func (a *App) runResumedLogoutSlash(args []string, format string) error {
+	return a.Logout(args)
 }
 
 func (a *App) runResumedBudgetSlash(args []string, format string) error {

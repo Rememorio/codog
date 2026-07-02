@@ -2996,6 +2996,17 @@ func risky(value any) {
 	require.True(t, resumedOAuthLogout.Deleted)
 	require.Equal(t, "unavailable", resumedOAuthLogout.Revocation)
 
+	out, err = runResumedJSON("/oauth", "token", "save", "resume-oauth-logout-alias-access")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthTokenSave))
+
+	out, err = runResumedJSON("/logout", "default")
+	require.NoError(t, err)
+	var resumedLogoutAlias oauth.LogoutResult
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLogoutAlias))
+	require.True(t, resumedLogoutAlias.Deleted)
+	require.Equal(t, "unavailable", resumedLogoutAlias.Revocation)
+
 	out, err = runResumedJSON("/profile", "list")
 	require.NoError(t, err)
 	var resumedProfile profileReport
@@ -5225,6 +5236,20 @@ func risky(value any) {
 	require.Equal(t, "Bearer", resumedOAuthTokenRefresh.TokenType)
 	require.False(t, resumedOAuthTokenRefresh.ExpiresAt.IsZero())
 
+	_, err = oauth.SaveToken(configHome, oauth.Token{
+		AccessToken:  "resume-oauth-access-1234",
+		RefreshToken: "resume-oauth-refresh-1234",
+		ExpiresAt:    time.Now().UTC().Add(time.Hour),
+	})
+	require.NoError(t, err)
+	out, err = runResumedJSON("/oauth-refresh", "default")
+	require.NoError(t, err)
+	var resumedOAuthRefreshAlias oauth.TokenView
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthRefreshAlias))
+	require.Equal(t, "refr...1234", resumedOAuthRefreshAlias.AccessToken)
+	require.Equal(t, "refr...1234", resumedOAuthRefreshAlias.RefreshToken)
+	require.Equal(t, "Bearer", resumedOAuthRefreshAlias.TokenType)
+
 	out, err = runResumedJSON("/oauth", "device", "login", "default")
 	require.NoError(t, err)
 	var resumedOAuthDeviceLogin struct {
@@ -5237,6 +5262,16 @@ func risky(value any) {
 	require.Equal(t, "devi...1234", resumedOAuthDeviceLogin.Token.AccessToken)
 	require.Equal(t, "devi...1234", resumedOAuthDeviceLogin.Token.RefreshToken)
 
+	out, err = runResumedJSON("/login", "device", "default")
+	require.NoError(t, err)
+	var resumedLoginDeviceAlias struct {
+		Device oauth.DeviceAuthorization `json:"device"`
+		Token  oauth.TokenView           `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLoginDeviceAlias))
+	require.Equal(t, "resume-device-1", resumedLoginDeviceAlias.Device.DeviceCode)
+	require.Equal(t, "devi...1234", resumedLoginDeviceAlias.Token.AccessToken)
+
 	out, err = runResumedJSON("/oauth", "browser", "login", "default")
 	require.NoError(t, err)
 	var resumedOAuthBrowserLogin struct {
@@ -5247,6 +5282,16 @@ func risky(value any) {
 	require.Equal(t, "http://127.0.0.1:18080/oauth/callback", resumedOAuthBrowserLogin.RedirectURI)
 	require.Equal(t, "brow...1234", resumedOAuthBrowserLogin.Token.AccessToken)
 	require.Equal(t, "brow...1234", resumedOAuthBrowserLogin.Token.RefreshToken)
+
+	out, err = runResumedJSON("/login", "browser", "default")
+	require.NoError(t, err)
+	var resumedLoginBrowserAlias struct {
+		RedirectURI string          `json:"redirect_uri"`
+		Token       oauth.TokenView `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLoginBrowserAlias))
+	require.Equal(t, "http://127.0.0.1:18080/oauth/callback", resumedLoginBrowserAlias.RedirectURI)
+	require.Equal(t, "brow...1234", resumedLoginBrowserAlias.Token.AccessToken)
 
 	out, err = runResumedJSON("/doctor")
 	require.NoError(t, err)
