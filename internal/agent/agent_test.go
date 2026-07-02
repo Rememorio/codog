@@ -11816,7 +11816,7 @@ Review body.
 	require.Equal(t, "skill_not_found", report.ErrorKind)
 }
 
-func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
+func TestSkillsActivationCommandsAndUnsupportedAction(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	data, err := json.Marshal(map[string]string{"config_home": configHome})
@@ -11837,6 +11837,64 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.FileExists(t, filepath.Join(configHome, "skills", "review.md"))
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "enable", "review", "--path", configPath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var enabled skillActivationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &enabled))
+	require.Equal(t, "skills", enabled.Kind)
+	require.Equal(t, "enable", enabled.Action)
+	require.Equal(t, "ok", enabled.Status)
+	require.Equal(t, []string{"review"}, enabled.Added)
+	require.Equal(t, []string{"review"}, enabled.EnabledSkills)
+	var diskConfig struct {
+		EnabledSkills []string `json:"enabled_skills"`
+	}
+	configData, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(configData, &diskConfig))
+	require.Equal(t, []string{"review"}, diskConfig.EnabledSkills)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "status", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var status skillActivationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &status))
+	require.Equal(t, "status", status.Action)
+	require.Equal(t, "ok", status.Status)
+	require.Equal(t, []string{"review"}, status.EnabledSkills)
+	require.Equal(t, []string{"review"}, status.ResolvedSkills)
+	require.GreaterOrEqual(t, status.AvailableSkillCount, 1)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "enable", "review", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var unchanged skillActivationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &unchanged))
+	require.Empty(t, unchanged.Added)
+	require.Equal(t, []string{"review"}, unchanged.Unchanged)
+	require.Equal(t, []string{"review"}, unchanged.EnabledSkills)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "disable", "review", "--path", configPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var disabled skillActivationReport
+	require.NoError(t, json.Unmarshal([]byte(out), &disabled))
+	require.Equal(t, "disable", disabled.Action)
+	require.Equal(t, []string{"review"}, disabled.Removed)
+	require.Empty(t, disabled.EnabledSkills)
+	configData, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	diskConfig = struct {
+		EnabledSkills []string `json:"enabled_skills"`
+	}{}
+	require.NoError(t, json.Unmarshal(configData, &diskConfig))
+	require.Empty(t, diskConfig.EnabledSkills)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "enable"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
@@ -11844,20 +11902,37 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.ErrorAs(t, err, &exitErr)
 	require.Equal(t, 1, exitErr.Code)
 	require.True(t, exitErr.Silent)
+	var missing actionErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &missing))
+	require.Equal(t, "skills", missing.Kind)
+	require.Equal(t, "enable", missing.Action)
+	require.Equal(t, "missing_skill_name", missing.ErrorKind)
+	require.Contains(t, missing.Hint, "codog skills enable NAME")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "skills", "bogus"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
 	var report actionErrorReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "skills", report.Kind)
-	require.Equal(t, "enable", report.Action)
+	require.Equal(t, "bogus", report.Action)
 	require.Equal(t, "error", report.Status)
 	require.Equal(t, "unsupported_skills_action", report.ErrorKind)
 	require.Contains(t, report.Message, "unsupported skills action")
 	require.Contains(t, report.Hint, "codog skills list")
+	require.Contains(t, report.Hint, "codog skills status")
+	require.Contains(t, report.Hint, "codog skills enable")
+	require.Contains(t, report.Hint, "codog skills disable")
 	require.Contains(t, report.Hint, "show|info|describe")
 	require.Contains(t, report.Hint, "codog skills add")
 	require.Contains(t, report.Hint, "codog skills help")
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "enable"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "skills", "bogus"}, config.FlagOverrides{})
 	})
 	require.Empty(t, out)
 	require.Error(t, err)
@@ -11875,11 +11950,15 @@ func TestSkillsUnsupportedActionReportsTypedError(t *testing.T) {
 	require.Equal(t, "skills", help.Topic)
 	require.Equal(t, "skills", help.Command)
 	require.Contains(t, help.Usage, "sources")
+	require.Contains(t, help.Usage, "status")
+	require.Contains(t, help.Usage, "enable")
+	require.Contains(t, help.Usage, "disable")
 	require.Contains(t, help.Usage, "info")
 	require.Contains(t, help.Usage, "describe")
 	require.Contains(t, help.Usage, "help")
 	require.Contains(t, help.Help, "roots")
 	require.Contains(t, help.Help, "aliases for `show`")
+	require.Contains(t, help.Help, "aliases for `enable` and `disable`")
 	require.Contains(t, help.Help, "codog skills help")
 }
 

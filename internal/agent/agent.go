@@ -31886,6 +31886,12 @@ func (a *App) Skills(args []string) error {
 		fmt.Fprintln(a.Out, "Skill Uninstalled")
 		fmt.Fprintf(a.Out, "  Name             %s\n", report.Name)
 		fmt.Fprintf(a.Out, "  Path             %s\n", report.Path)
+	case "enable", "on":
+		return a.skillActivation("enable", rest)
+	case "disable", "off":
+		return a.skillActivation("disable", rest)
+	case "status", "enabled":
+		return a.skillActivation("status", rest)
 	default:
 		_, format, err := stripJSONOnlyOutputFormat("skills", rest)
 		if err != nil {
@@ -31946,7 +31952,7 @@ func renderUnsupportedSkillsAction(out io.Writer, action string, format string) 
 		Status:    "error",
 		ErrorKind: "unsupported_skills_action",
 		Message:   fmt.Sprintf("unsupported skills action %q", action),
-		Hint:      "Supported: `codog skills list`, `codog skills show|info|describe NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills add SOURCE`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
+		Hint:      "Supported: `codog skills list`, `codog skills status`, `codog skills enable NAME`, `codog skills disable NAME`, `codog skills show|info|describe NAME`, `codog skills invoke NAME [ARGS...]`, `codog skills add SOURCE`, `codog skills install SOURCE`, `codog skills uninstall NAME`, or `codog skills help`.",
 	}, format)
 }
 
@@ -31961,6 +31967,346 @@ type skillUninstallRequest struct {
 	Format string
 	Target string
 	Name   string
+}
+
+type skillActivationRequest struct {
+	Action string
+	Format string
+	Target string
+	Path   string
+	Names  []string
+}
+
+type skillActivationReport struct {
+	Kind                string   `json:"kind"`
+	Action              string   `json:"action"`
+	Status              string   `json:"status"`
+	Target              string   `json:"target,omitempty"`
+	Path                string   `json:"path,omitempty"`
+	EnabledSkills       []string `json:"enabled_skills"`
+	Added               []string `json:"added,omitempty"`
+	Removed             []string `json:"removed,omitempty"`
+	Unchanged           []string `json:"unchanged,omitempty"`
+	AvailableSkillCount int      `json:"available_skill_count,omitempty"`
+	ResolvedSkills      []string `json:"resolved_skills,omitempty"`
+	MissingSkills       []string `json:"missing_skills,omitempty"`
+	Message             string   `json:"message,omitempty"`
+}
+
+func (a *App) skillActivation(action string, args []string) error {
+	req, err := parseSkillActivationArgs(action, args)
+	if err != nil {
+		return renderCLIError(a.Out, err, req.Format)
+	}
+	if req.Action == "status" {
+		report, err := a.buildSkillActivationStatus(req)
+		if err != nil {
+			return err
+		}
+		return renderSkillActivationReport(a.Out, req.Format, report)
+	}
+	if len(req.Names) == 0 {
+		return renderActionError(a.Out, actionErrorReport{
+			Kind:      "skills",
+			Action:    req.Action,
+			Status:    "error",
+			ErrorKind: "missing_skill_name",
+			Message:   fmt.Sprintf("skills %s requires at least one skill name", req.Action),
+			Hint:      fmt.Sprintf("Usage: codog skills %s NAME [NAME...] [--target user|project|local|--path PATH] [--json]", req.Action),
+		}, req.Format)
+	}
+	path, err := a.preferenceConfigPath(req.Target, req.Path)
+	if err != nil {
+		return err
+	}
+	current := normalizeEnabledSkillNames(a.Config.EnabledSkills)
+	next := append([]string(nil), current...)
+	report := skillActivationReport{
+		Kind:          "skills",
+		Action:        req.Action,
+		Status:        "ok",
+		Target:        normalizedConfigTarget(req.Target),
+		Path:          path,
+		EnabledSkills: next,
+	}
+	switch req.Action {
+	case "enable":
+		for _, name := range req.Names {
+			skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name)
+			if err != nil {
+				return renderSkillLookupError(a.Out, "enable", name, err, req.Format)
+			}
+			if containsFold(next, skill.Name) {
+				report.Unchanged = appendUniqueFold(report.Unchanged, skill.Name)
+				continue
+			}
+			next = append(next, skill.Name)
+			report.Added = appendUniqueFold(report.Added, skill.Name)
+		}
+		report.Message = activationSummary("enabled", report.Added, report.Unchanged)
+	case "disable":
+		var removed []string
+		for _, name := range req.Names {
+			removeName := name
+			if skill, err := skills.Find(a.Config.ConfigHome, a.Workspace, name); err == nil {
+				removeName = skill.Name
+			}
+			var changed bool
+			next, changed = removeEnabledSkillName(next, removeName)
+			if changed {
+				removed = appendUniqueFold(removed, removeName)
+			} else {
+				report.Unchanged = appendUniqueFold(report.Unchanged, name)
+			}
+		}
+		report.Removed = removed
+		report.Message = activationSummary("disabled", report.Removed, report.Unchanged)
+	}
+	report.EnabledSkills = next
+	if len(next) == 0 {
+		if _, err := config.UnsetFileValue(path, "enabled_skills"); err != nil {
+			return err
+		}
+	} else if _, err := config.SetFileValue(path, "enabled_skills", next); err != nil {
+		return err
+	}
+	a.Config.EnabledSkills = append([]string(nil), next...)
+	return renderSkillActivationReport(a.Out, req.Format, report)
+}
+
+func parseSkillActivationArgs(action string, args []string) (skillActivationRequest, error) {
+	req := skillActivationRequest{
+		Action: canonicalSkillActivationAction(action),
+		Format: "text",
+		Target: "user",
+	}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("skills %s output format is required", req.Action)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("skills %s target is required", req.Action)
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("skills %s path is required", req.Action)
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
+		case arg == "--user" || arg == "--global":
+			req.Target = "user"
+		case arg == "--project" || arg == "--workspace":
+			req.Target = "project"
+		case arg == "--local":
+			req.Target = "local"
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Kind:    "unknown_option",
+				Command: "skills " + req.Action,
+				Option:  arg,
+				Usage:   skillActivationUsage(req.Action),
+			}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "skills "+req.Action); err != nil {
+		return req, err
+	}
+	req.Names = positionals
+	if req.Action == "status" && len(positionals) != 0 {
+		return req, unexpectedExtraArgsError{
+			Command: "skills status",
+			Args:    append([]string(nil), positionals...),
+			Usage:   skillActivationUsage("status"),
+		}
+	}
+	return req, nil
+}
+
+func canonicalSkillActivationAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "on":
+		return "enable"
+	case "off":
+		return "disable"
+	case "enabled":
+		return "status"
+	default:
+		return strings.ToLower(strings.TrimSpace(action))
+	}
+}
+
+func skillActivationUsage(action string) string {
+	if action == "status" {
+		return "codog skills status [--json|--output-format text|json]"
+	}
+	return fmt.Sprintf("codog skills %s NAME [NAME...] [--target user|project|local|--path PATH] [--json|--output-format text|json]", action)
+}
+
+func (a *App) buildSkillActivationStatus(req skillActivationRequest) (skillActivationReport, error) {
+	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	if err != nil {
+		return skillActivationReport{}, err
+	}
+	enabled := normalizeEnabledSkillNames(a.Config.EnabledSkills)
+	available := activeSkillNames(all)
+	resolved, missing := resolveEnabledSkillNames(enabled, available)
+	status := "ok"
+	if len(missing) != 0 {
+		status = "degraded"
+	}
+	return skillActivationReport{
+		Kind:                "skills",
+		Action:              "status",
+		Status:              status,
+		EnabledSkills:       enabled,
+		AvailableSkillCount: len(available),
+		ResolvedSkills:      resolved,
+		MissingSkills:       missing,
+		Message:             skillStatusMessage(enabled, missing),
+	}, nil
+}
+
+func renderSkillActivationReport(out io.Writer, format string, report skillActivationReport) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	title := "Skill Status"
+	switch report.Action {
+	case "enable":
+		title = "Skills Enabled"
+	case "disable":
+		title = "Skills Disabled"
+	}
+	fmt.Fprintln(out, title)
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+	}
+	if report.Target != "" {
+		fmt.Fprintf(out, "  Target           %s\n", report.Target)
+	}
+	if len(report.Added) != 0 {
+		fmt.Fprintf(out, "  Added            %s\n", strings.Join(report.Added, ", "))
+	}
+	if len(report.Removed) != 0 {
+		fmt.Fprintf(out, "  Removed          %s\n", strings.Join(report.Removed, ", "))
+	}
+	if len(report.Unchanged) != 0 {
+		fmt.Fprintf(out, "  Unchanged        %s\n", strings.Join(report.Unchanged, ", "))
+	}
+	if len(report.EnabledSkills) == 0 {
+		fmt.Fprintln(out, "  Enabled skills   none")
+	} else {
+		fmt.Fprintf(out, "  Enabled skills   %s\n", strings.Join(report.EnabledSkills, ", "))
+	}
+	if len(report.MissingSkills) != 0 {
+		fmt.Fprintf(out, "  Missing skills   %s\n", strings.Join(report.MissingSkills, ", "))
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	return nil
+}
+
+func normalizeEnabledSkillNames(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = appendUniqueFold(out, value)
+	}
+	return out
+}
+
+func appendUniqueFold(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || containsFold(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func removeEnabledSkillName(values []string, name string) ([]string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return append([]string(nil), values...), false
+	}
+	out := make([]string, 0, len(values))
+	removed := false
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), name) {
+			removed = true
+			continue
+		}
+		out = appendUniqueFold(out, value)
+	}
+	return out, removed
+}
+
+func activeSkillNames(all []skills.Skill) []string {
+	names := make([]string, 0, len(all))
+	for _, skill := range all {
+		if skill.Active {
+			names = appendUniqueFold(names, skill.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func resolveEnabledSkillNames(enabled []string, available []string) ([]string, []string) {
+	var resolved []string
+	var missing []string
+	for _, name := range enabled {
+		if containsFold(available, name) {
+			resolved = appendUniqueFold(resolved, name)
+		} else {
+			missing = appendUniqueFold(missing, name)
+		}
+	}
+	return resolved, missing
+}
+
+func activationSummary(verb string, changed []string, unchanged []string) string {
+	if len(changed) == 0 && len(unchanged) == 0 {
+		return "No skill changes were requested."
+	}
+	var parts []string
+	if len(changed) != 0 {
+		parts = append(parts, fmt.Sprintf("%s %s", verb, strings.Join(changed, ", ")))
+	}
+	if len(unchanged) != 0 {
+		parts = append(parts, fmt.Sprintf("unchanged %s", strings.Join(unchanged, ", ")))
+	}
+	return strings.Join(parts, "; ") + "."
+}
+
+func skillStatusMessage(enabled []string, missing []string) string {
+	if len(enabled) == 0 {
+		return "No skills are enabled."
+	}
+	if len(missing) != 0 {
+		return "Some enabled skills could not be resolved."
+	}
+	return "All enabled skills resolved."
 }
 
 func parseSkillInstallArgs(args []string) (skillInstallRequest, error) {
@@ -38168,8 +38514,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"skills",
 			"skills",
-			"codog skill|skills [list|sources|show|info|describe|invoke|add|install|uninstall|help]",
-			"Skills\n\nUsage:\n  codog skills [list|sources|show|info|describe|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `info` and `describe` are aliases for `show`; `add` is an alias for `install`; `roots` is an alias for `sources`. Run `codog skills help` for this local command reference.\n",
+			"codog skill|skills [list|sources|status|enable|disable|show|info|describe|invoke|add|install|uninstall|help]",
+			"Skills\n\nUsage:\n  codog skills [list|sources|status|enable|disable|show|info|describe|invoke|add|install|uninstall|help]\n  codog skill [same actions]\n\nLists, audits sources, enables, disables, renders, invokes, installs, or removes bundled, user, workspace, plugin, compatible Claude Markdown skills, and legacy `/commands` Markdown exposed as skill-like compatibility entries. `info` and `describe` are aliases for `show`; `add` is an alias for `install`; `roots` is an alias for `sources`; `on` and `off` are aliases for `enable` and `disable`. Run `codog skills help` for this local command reference.\n",
 			[]string{"skills", "roots", "name", "path", "body", "origin", "active", "shadowed_by", "metadata_drift", "metadata_drift_count"},
 			[]string{"ok", "error"},
 			true,
@@ -38178,7 +38524,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		if strings.EqualFold(strings.TrimSpace(topic), "skill") {
 			spec.Topic = "skill"
 			spec.Command = "skill"
-			spec.Usage = "codog skill [list|sources|show|invoke|add|install|uninstall|help]"
+			spec.Usage = "codog skill [list|sources|status|enable|disable|show|invoke|add|install|uninstall|help]"
 			spec.Aliases = []string{"skills"}
 		}
 		return spec, true
