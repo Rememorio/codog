@@ -142,7 +142,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			if err != nil {
 				return err
 			}
-			return renderVersion(os.Stdout, workspace, args[1:])
+			if err := renderVersion(os.Stdout, workspace, args[1:]); err != nil {
+				return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+			}
+			return nil
 		case "--acp", "-acp":
 			if acpHelpRequested(args[1:]) {
 				return renderCommandHelpTopic(os.Stdout, "acp", commandHelpArgsWithoutHelp(args[1:]), requestedOutputFormat(originalArgs))
@@ -189,7 +192,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if err != nil {
 			return err
 		}
-		return renderVersion(os.Stdout, workspace, rest)
+		if err := renderVersion(os.Stdout, workspace, rest); err != nil {
+			return renderCLIErrorWhenStructured(os.Stdout, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	}
 	if command == "acp" {
 		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
@@ -391,7 +397,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "help":
 		return renderHelpCommand(app.Out, rest)
 	case "version":
-		return renderVersion(app.Out, app.Workspace, rest)
+		if err := renderVersion(app.Out, app.Workspace, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "":
 		input, nonTerminalStdin, err := readPromptInputState(app.In)
 		if err != nil {
@@ -768,11 +777,17 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "memory":
 		return app.Memory(rest)
 	case "project":
-		return app.Project(rest)
+		if err := app.Project(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "onboarding":
 		return app.Onboarding(rest)
 	case "env":
-		return app.Env(rest)
+		if err := app.Env(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "doctor":
 		return app.Doctor(rest)
 	case "sandbox":

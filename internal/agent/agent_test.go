@@ -13688,6 +13688,26 @@ func TestProjectCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Project")
 }
 
+func TestSimpleInfoCommandParseErrorsHonorGlobalJSONFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+	}{
+		{name: "project", command: "project"},
+		{name: "env", command: "env"},
+		{name: "version", command: "version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), []string{"--output-format", "json", tc.command, "bogus"}, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), "unknown_option", "unknown_option")
+			require.Contains(t, out, fmt.Sprintf(`"command": "%s"`, tc.command))
+			require.Contains(t, out, `"option": "bogus"`)
+		})
+	}
+}
+
 func TestEnvCommandRedactsSensitiveValues(t *testing.T) {
 	report := buildEnvReport([]string{
 		"ALPHA=visible",
