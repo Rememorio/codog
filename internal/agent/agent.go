@@ -22055,6 +22055,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		FastMode:                    fastModeEnabled(a.Config.FastMode),
 		BaseURL:                     a.Config.BaseURL,
 		PermissionMode:              a.Config.PermissionMode,
+		PermissionRules:             a.Config.PermissionRules,
 		MaxTokens:                   a.Config.MaxTokens,
 		MaxTurns:                    a.Config.MaxTurns,
 		AutoCompactMessages:         a.Config.AutoCompactMessages,

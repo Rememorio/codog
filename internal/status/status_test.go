@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/stretchr/testify/require"
 )
@@ -19,19 +20,25 @@ func TestBuildParsesGitStatus(t *testing.T) {
 		Workspace:        "/repo/codog",
 		Model:            "claude-test",
 		PermissionMode:   "workspace-write",
-		AuthConfigured:   true,
-		PlanActive:       true,
-		PlanText:         "inspect first",
-		PlanUpdatedAt:    "2026-01-01T00:00:00Z",
+		PermissionRules: config.PermissionRules{
+			Allow:       []string{"Read", "mcp__demo__*"},
+			Deny:        []string{"Bash(rm:*)", "Bsh(echo:*)"},
+			Ask:         []string{"WebFetch"},
+			DeniedTools: []string{"write_file"},
+		},
+		AuthConfigured: true,
+		PlanActive:     true,
+		PlanText:       "inspect first",
+		PlanUpdatedAt:  "2026-01-01T00:00:00Z",
 		MemoryFiles: []MemoryFileStatus{{
 			Path:  "/repo/codog/AGENTS.md",
 			Name:  "AGENTS.md",
 			Scope: "/repo/codog",
 			Chars: 18,
 		}},
-		ToolNames:          []string{"bash", "read_file"},
+		ToolNames:          []string{"bash", "read_file", "web_fetch", "write_file"},
 		AllowedToolEntries: []string{"read_file", "grep"},
-		ToolAliases:        map[string]string{"Read": "read_file"},
+		ToolAliases:        map[string]string{"Read": "read_file", "WebFetch": "web_fetch"},
 		LaneBoard: &background.LaneBoard{
 			GeneratedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
 			Active: []background.LaneBoardEntry{{
@@ -65,12 +72,26 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, 1, snapshot.Git.Unstaged)
 	require.Equal(t, 1, snapshot.Git.Untracked)
 	require.Equal(t, 1, snapshot.Git.Conflicts)
-	require.Equal(t, 2, snapshot.Tools.Count)
+	require.Equal(t, 4, snapshot.Tools.Count)
 	require.True(t, snapshot.AllowedTools.Restricted)
 	require.Equal(t, "configured", snapshot.AllowedTools.Source)
 	require.Equal(t, []string{"read_file", "grep"}, snapshot.AllowedTools.Entries)
-	require.Equal(t, []string{"bash", "read_file"}, snapshot.AllowedTools.Available)
+	require.Equal(t, []string{"bash", "read_file", "web_fetch", "write_file"}, snapshot.AllowedTools.Available)
 	require.Equal(t, "read_file", snapshot.AllowedTools.Aliases["Read"])
+	require.Len(t, snapshot.Config.PermissionRules.Allow, 2)
+	require.Equal(t, "Read", snapshot.Config.PermissionRules.Allow[0].Raw)
+	require.Equal(t, "Read", snapshot.Config.PermissionRules.Allow[0].Tool)
+	require.Equal(t, "read_file", snapshot.Config.PermissionRules.Allow[0].ResolvedToolName)
+	require.Equal(t, "mcp__demo__*", snapshot.Config.PermissionRules.Allow[1].ResolvedToolName)
+	require.Len(t, snapshot.Config.PermissionRules.Deny, 2)
+	require.Equal(t, "Bash(rm:*)", snapshot.Config.PermissionRules.Deny[0].Raw)
+	require.Equal(t, "Bash", snapshot.Config.PermissionRules.Deny[0].Tool)
+	require.Equal(t, "bash", snapshot.Config.PermissionRules.Deny[0].ResolvedToolName)
+	require.Equal(t, "rm", snapshot.Config.PermissionRules.Deny[0].Matcher)
+	require.True(t, snapshot.Config.PermissionRules.Deny[1].UnknownTool)
+	require.Equal(t, 1, snapshot.Config.PermissionRules.UnknownCount)
+	require.Equal(t, "web_fetch", snapshot.Config.PermissionRules.Ask[0].ResolvedToolName)
+	require.Equal(t, "write_file", snapshot.Config.PermissionRules.DeniedTools[0].ResolvedToolName)
 	require.True(t, snapshot.Plan.Active)
 	require.Equal(t, "inspect first", snapshot.Plan.Text)
 	require.True(t, snapshot.LaneBoard.StatusJSONSupported)

@@ -9528,12 +9528,15 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
-			ConfigHome:          configHome,
-			Model:               "claude-test",
-			BaseURL:             "https://api.example.test",
-			APIKey:              "secret",
-			PermissionMode:      "workspace-write",
-			PermissionRules:     config.PermissionRules{Allow: []string{"read_file", "grep"}},
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			BaseURL:        "https://api.example.test",
+			APIKey:         "secret",
+			PermissionMode: "workspace-write",
+			PermissionRules: config.PermissionRules{
+				Allow: []string{"read_file", "grep"},
+				Deny:  []string{"Bash(rm:*)", "Bsh(echo:*)"},
+			},
 			MaxTokens:           1000,
 			MaxTurns:            4,
 			AutoCompactMessages: 20,
@@ -9583,6 +9586,18 @@ func TestStatusCommandAndSlash(t *testing.T) {
 			Available  []string          `json:"available"`
 			Aliases    map[string]string `json:"aliases"`
 		} `json:"allowed_tools"`
+		Config struct {
+			PermissionRules struct {
+				Deny []struct {
+					Raw              string `json:"raw"`
+					Tool             string `json:"tool"`
+					ResolvedToolName string `json:"resolved_tool_name"`
+					Matcher          string `json:"matcher"`
+					UnknownTool      bool   `json:"unknown_tool"`
+				} `json:"deny"`
+				UnknownCount int `json:"unknown_count"`
+			} `json:"permission_rules"`
+		} `json:"config"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
 	require.Equal(t, "flag", statusReport.FormatSource)
@@ -9600,6 +9615,13 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Equal(t, []string{"read_file", "grep"}, statusReport.AllowedTools.Entries)
 	require.Contains(t, statusReport.AllowedTools.Available, "read_file")
 	require.Equal(t, "web_fetch", statusReport.AllowedTools.Aliases["WebFetch"])
+	require.Len(t, statusReport.Config.PermissionRules.Deny, 2)
+	require.Equal(t, "Bash(rm:*)", statusReport.Config.PermissionRules.Deny[0].Raw)
+	require.Equal(t, "Bash", statusReport.Config.PermissionRules.Deny[0].Tool)
+	require.Equal(t, "bash", statusReport.Config.PermissionRules.Deny[0].ResolvedToolName)
+	require.Equal(t, "rm", statusReport.Config.PermissionRules.Deny[0].Matcher)
+	require.True(t, statusReport.Config.PermissionRules.Deny[1].UnknownTool)
+	require.Equal(t, 1, statusReport.Config.PermissionRules.UnknownCount)
 	out.Reset()
 
 	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{AllowedTools: []string{"read_file"}}))

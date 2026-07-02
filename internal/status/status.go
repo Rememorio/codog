@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/gitops"
 )
 
@@ -28,6 +29,7 @@ type Options struct {
 	FastMode                    bool
 	BaseURL                     string
 	PermissionMode              string
+	PermissionRules             config.PermissionRules
 	MaxTokens                   int
 	MaxTurns                    int
 	AutoCompactMessages         int
@@ -139,41 +141,60 @@ type MemoryFileStatus struct {
 
 // ConfigStatus summarizes the effective runtime configuration.
 type ConfigStatus struct {
-	ConfigHome                  string `json:"config_home"`
-	Model                       string `json:"model"`
-	ModelEnvVar                 string `json:"model_env_var,omitempty"`
-	FastMode                    bool   `json:"fast_mode"`
-	BaseURL                     string `json:"base_url"`
-	PermissionMode              string `json:"permission_mode"`
-	MaxTokens                   int    `json:"max_tokens"`
-	MaxTurns                    int    `json:"max_turns"`
-	AutoCompactMessages         int    `json:"auto_compact_messages"`
-	AuthConfigured              bool   `json:"auth_configured"`
-	MCPServerCount              int    `json:"mcp_server_count"`
-	UserPromptSubmitHookCount   int    `json:"user_prompt_submit_hook_count"`
-	SessionStartHookCount       int    `json:"session_start_hook_count"`
-	SessionEndHookCount         int    `json:"session_end_hook_count"`
-	SetupHookCount              int    `json:"setup_hook_count"`
-	PreHookCount                int    `json:"pre_hook_count"`
-	PostHookCount               int    `json:"post_hook_count"`
-	PostFailureHookCount        int    `json:"post_tool_use_failure_hook_count"`
-	PermissionRequestHookCount  int    `json:"permission_request_hook_count"`
-	PermissionDeniedHookCount   int    `json:"permission_denied_hook_count"`
-	StopHookCount               int    `json:"stop_hook_count"`
-	StopFailureHookCount        int    `json:"stop_failure_hook_count"`
-	PreCompactHookCount         int    `json:"pre_compact_hook_count"`
-	PostCompactHookCount        int    `json:"post_compact_hook_count"`
-	NotificationHookCount       int    `json:"notification_hook_count"`
-	SubagentStartHookCount      int    `json:"subagent_start_hook_count"`
-	SubagentStopHookCount       int    `json:"subagent_stop_hook_count"`
-	WorktreeCreateHookCount     int    `json:"worktree_create_hook_count"`
-	WorktreeRemoveHookCount     int    `json:"worktree_remove_hook_count"`
-	CwdChangedHookCount         int    `json:"cwd_changed_hook_count"`
-	TaskCreatedHookCount        int    `json:"task_created_hook_count"`
-	TaskCompletedHookCount      int    `json:"task_completed_hook_count"`
-	InstructionsLoadedHookCount int    `json:"instructions_loaded_hook_count"`
-	FileChangedHookCount        int    `json:"file_changed_hook_count"`
-	EnabledSkillCount           int    `json:"enabled_skill_count"`
+	ConfigHome                  string                `json:"config_home"`
+	Model                       string                `json:"model"`
+	ModelEnvVar                 string                `json:"model_env_var,omitempty"`
+	FastMode                    bool                  `json:"fast_mode"`
+	BaseURL                     string                `json:"base_url"`
+	PermissionMode              string                `json:"permission_mode"`
+	PermissionRules             PermissionRulesStatus `json:"permission_rules,omitempty"`
+	MaxTokens                   int                   `json:"max_tokens"`
+	MaxTurns                    int                   `json:"max_turns"`
+	AutoCompactMessages         int                   `json:"auto_compact_messages"`
+	AuthConfigured              bool                  `json:"auth_configured"`
+	MCPServerCount              int                   `json:"mcp_server_count"`
+	UserPromptSubmitHookCount   int                   `json:"user_prompt_submit_hook_count"`
+	SessionStartHookCount       int                   `json:"session_start_hook_count"`
+	SessionEndHookCount         int                   `json:"session_end_hook_count"`
+	SetupHookCount              int                   `json:"setup_hook_count"`
+	PreHookCount                int                   `json:"pre_hook_count"`
+	PostHookCount               int                   `json:"post_hook_count"`
+	PostFailureHookCount        int                   `json:"post_tool_use_failure_hook_count"`
+	PermissionRequestHookCount  int                   `json:"permission_request_hook_count"`
+	PermissionDeniedHookCount   int                   `json:"permission_denied_hook_count"`
+	StopHookCount               int                   `json:"stop_hook_count"`
+	StopFailureHookCount        int                   `json:"stop_failure_hook_count"`
+	PreCompactHookCount         int                   `json:"pre_compact_hook_count"`
+	PostCompactHookCount        int                   `json:"post_compact_hook_count"`
+	NotificationHookCount       int                   `json:"notification_hook_count"`
+	SubagentStartHookCount      int                   `json:"subagent_start_hook_count"`
+	SubagentStopHookCount       int                   `json:"subagent_stop_hook_count"`
+	WorktreeCreateHookCount     int                   `json:"worktree_create_hook_count"`
+	WorktreeRemoveHookCount     int                   `json:"worktree_remove_hook_count"`
+	CwdChangedHookCount         int                   `json:"cwd_changed_hook_count"`
+	TaskCreatedHookCount        int                   `json:"task_created_hook_count"`
+	TaskCompletedHookCount      int                   `json:"task_completed_hook_count"`
+	InstructionsLoadedHookCount int                   `json:"instructions_loaded_hook_count"`
+	FileChangedHookCount        int                   `json:"file_changed_hook_count"`
+	EnabledSkillCount           int                   `json:"enabled_skill_count"`
+}
+
+// PermissionRulesStatus exposes parsed permission rules for automation audits.
+type PermissionRulesStatus struct {
+	Allow        []PermissionRuleStatus `json:"allow,omitempty"`
+	Deny         []PermissionRuleStatus `json:"deny,omitempty"`
+	Ask          []PermissionRuleStatus `json:"ask,omitempty"`
+	DeniedTools  []PermissionRuleStatus `json:"denied_tools,omitempty"`
+	UnknownCount int                    `json:"unknown_count,omitempty"`
+}
+
+// PermissionRuleStatus describes one configured permission rule.
+type PermissionRuleStatus struct {
+	Raw              string `json:"raw"`
+	Tool             string `json:"tool,omitempty"`
+	ResolvedToolName string `json:"resolved_tool_name,omitempty"`
+	Matcher          string `json:"matcher,omitempty"`
+	UnknownTool      bool   `json:"unknown_tool,omitempty"`
 }
 
 // SessionStatus summarizes the active session and saved session ledger.
@@ -340,6 +361,7 @@ func Build(opts Options) Snapshot {
 			FastMode:                    opts.FastMode,
 			BaseURL:                     opts.BaseURL,
 			PermissionMode:              opts.PermissionMode,
+			PermissionRules:             buildPermissionRulesStatus(opts),
 			MaxTokens:                   opts.MaxTokens,
 			MaxTurns:                    opts.MaxTurns,
 			AutoCompactMessages:         opts.AutoCompactMessages,
@@ -457,6 +479,123 @@ func buildAllowedToolsStatus(opts Options) AllowedToolsStatus {
 		Available:  available,
 		Aliases:    aliases,
 	}
+}
+
+func buildPermissionRulesStatus(opts Options) PermissionRulesStatus {
+	report := PermissionRulesStatus{
+		Allow:       buildPermissionRuleEntries(opts.PermissionRules.Allow, opts),
+		Deny:        buildPermissionRuleEntries(opts.PermissionRules.Deny, opts),
+		Ask:         buildPermissionRuleEntries(opts.PermissionRules.Ask, opts),
+		DeniedTools: buildPermissionRuleEntries(opts.PermissionRules.DeniedTools, opts),
+	}
+	report.UnknownCount = permissionRuleUnknownCount(report.Allow) +
+		permissionRuleUnknownCount(report.Deny) +
+		permissionRuleUnknownCount(report.Ask) +
+		permissionRuleUnknownCount(report.DeniedTools)
+	return report
+}
+
+func buildPermissionRuleEntries(rules []string, opts Options) []PermissionRuleStatus {
+	if len(rules) == 0 {
+		return nil
+	}
+	available := map[string]string{}
+	for _, name := range opts.ToolNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		available[name] = name
+		available[strings.ToLower(name)] = name
+	}
+	aliases := map[string]string{}
+	for alias, canonical := range opts.ToolAliases {
+		alias = strings.TrimSpace(alias)
+		canonical = strings.TrimSpace(canonical)
+		if alias == "" || canonical == "" {
+			continue
+		}
+		aliases[alias] = canonical
+		aliases[strings.ToLower(alias)] = canonical
+	}
+	out := make([]PermissionRuleStatus, 0, len(rules))
+	for _, raw := range rules {
+		entry := buildPermissionRuleEntry(raw, available, aliases)
+		if strings.TrimSpace(entry.Raw) != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func buildPermissionRuleEntry(raw string, available map[string]string, aliases map[string]string) PermissionRuleStatus {
+	entry := PermissionRuleStatus{Raw: strings.TrimSpace(raw)}
+	tool, matcher := parsePermissionRuleStatus(entry.Raw)
+	entry.Tool = tool
+	entry.Matcher = matcher
+	if tool == "" || tool == "*" {
+		entry.ResolvedToolName = tool
+		return entry
+	}
+	if strings.HasPrefix(strings.ToLower(tool), "mcp__") && strings.Contains(tool, "__") {
+		entry.ResolvedToolName = tool
+		return entry
+	}
+	if resolved := resolvePermissionRuleTool(tool, available, aliases); resolved != "" {
+		entry.ResolvedToolName = resolved
+		return entry
+	}
+	entry.UnknownTool = true
+	return entry
+}
+
+func resolvePermissionRuleTool(tool string, available map[string]string, aliases map[string]string) string {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return ""
+	}
+	if resolved := available[tool]; resolved != "" {
+		return resolved
+	}
+	if resolved := aliases[tool]; resolved != "" {
+		return resolved
+	}
+	lower := strings.ToLower(tool)
+	if resolved := available[lower]; resolved != "" {
+		return resolved
+	}
+	return aliases[lower]
+}
+
+func parsePermissionRuleStatus(rule string) (string, string) {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return "", ""
+	}
+	if open := strings.Index(rule, "("); open > 0 && strings.HasSuffix(rule, ")") {
+		return strings.TrimSpace(rule[:open]), normalizePermissionRuleMatcher(rule[open+1 : len(rule)-1])
+	}
+	if tool, matcher, ok := strings.Cut(rule, ":"); ok {
+		return strings.TrimSpace(tool), normalizePermissionRuleMatcher(matcher)
+	}
+	return rule, ""
+}
+
+func normalizePermissionRuleMatcher(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "*")
+	value = strings.TrimSuffix(value, ":")
+	return strings.TrimSpace(value)
+}
+
+func permissionRuleUnknownCount(entries []PermissionRuleStatus) int {
+	count := 0
+	for _, entry := range entries {
+		if entry.UnknownTool {
+			count++
+		}
+	}
+	return count
 }
 
 func defaultString(value string, fallback string) string {
