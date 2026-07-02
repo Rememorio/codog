@@ -22750,23 +22750,26 @@ type slashErrorReport struct {
 }
 
 type cliErrorReport struct {
-	Kind        string            `json:"kind"`
-	ErrorKind   string            `json:"error_kind"`
-	Status      string            `json:"status"`
-	Action      string            `json:"action,omitempty"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	Option      string            `json:"option,omitempty"`
-	Message     string            `json:"message"`
-	Hint        string            `json:"hint"`
-	Provider    string            `json:"provider,omitempty"`
-	EnvVars     []string          `json:"env_vars,omitempty"`
-	Value       string            `json:"value,omitempty"`
-	Expected    []string          `json:"expected,omitempty"`
-	Argument    string            `json:"argument,omitempty"`
-	ToolName    string            `json:"tool_name,omitempty"`
-	Available   []string          `json:"available,omitempty"`
-	ToolAliases map[string]string `json:"tool_aliases,omitempty"`
+	Kind              string            `json:"kind"`
+	ErrorKind         string            `json:"error_kind"`
+	Status            string            `json:"status"`
+	Action            string            `json:"action,omitempty"`
+	Command           string            `json:"command,omitempty"`
+	Args              []string          `json:"args,omitempty"`
+	Option            string            `json:"option,omitempty"`
+	Message           string            `json:"message"`
+	Hint              string            `json:"hint"`
+	Provider          string            `json:"provider,omitempty"`
+	EnvVars           []string          `json:"env_vars,omitempty"`
+	Value             string            `json:"value,omitempty"`
+	Expected          []string          `json:"expected,omitempty"`
+	Argument          string            `json:"argument,omitempty"`
+	ToolName          string            `json:"tool_name,omitempty"`
+	Available         []string          `json:"available,omitempty"`
+	ToolAliases       map[string]string `json:"tool_aliases,omitempty"`
+	Path              string            `json:"path,omitempty"`
+	ExpectedWorkspace string            `json:"expected_workspace,omitempty"`
+	ActualWorkspace   string            `json:"actual_workspace,omitempty"`
 }
 
 type actionErrorReport struct {
@@ -22780,14 +22783,16 @@ type actionErrorReport struct {
 }
 
 type sessionRestoreErrorReport struct {
-	Kind             string `json:"kind"`
-	Action           string `json:"action"`
-	Status           string `json:"status"`
-	ErrorKind        string `json:"error_kind"`
-	RequestedSession string `json:"requested_session,omitempty"`
-	Path             string `json:"path,omitempty"`
-	Message          string `json:"message"`
-	Hint             string `json:"hint"`
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	ErrorKind         string `json:"error_kind"`
+	RequestedSession  string `json:"requested_session,omitempty"`
+	Path              string `json:"path,omitempty"`
+	ExpectedWorkspace string `json:"expected_workspace,omitempty"`
+	ActualWorkspace   string `json:"actual_workspace,omitempty"`
+	Message           string `json:"message"`
+	Hint              string `json:"hint"`
 }
 
 func renderSessionRestoreError(out io.Writer, action string, requested string, err error, format string) error {
@@ -22819,19 +22824,27 @@ func buildSessionRestoreErrorReport(action string, requested string, err error) 
 		ErrorKind:        "session_load_failed",
 		RequestedSession: requested,
 		Message:          strings.TrimSpace(err.Error()),
-		Hint:             "Pass a readable .jsonl session file or a managed session id from `codog sessions list`.",
+		Hint:             "Pass a readable .jsonl or .json session file, or a managed session id from `codog sessions list`.",
 	}
 	var directoryErr session.PathIsDirectoryError
+	var mismatchErr session.WorkspaceMismatchError
 	switch {
 	case errors.As(err, &directoryErr):
 		report.ErrorKind = "session_path_is_directory"
 		report.Path = directoryErr.Path
 		report.Message = fmt.Sprintf("session path is a directory: %s", directoryErr.Path)
-		report.Hint = "--resume expects a session id or a .jsonl session file path, not a directory. Run `codog sessions list --json` to list managed sessions."
+		report.Hint = "--resume expects a session id or a .jsonl/.json session file path, not a directory. Run `codog sessions list --json` to list managed sessions."
+	case errors.As(err, &mismatchErr):
+		report.ErrorKind = "session_workspace_mismatch"
+		report.Path = mismatchErr.Path
+		report.ExpectedWorkspace = mismatchErr.Expected
+		report.ActualWorkspace = mismatchErr.Actual
+		report.Message = mismatchErr.Error()
+		report.Hint = "Open this session from its original workspace, or use `codog --resume latest` to select the newest compatible session."
 	case errors.Is(err, session.ErrNoSessions):
 		report.ErrorKind = "no_managed_sessions"
 		report.Message = "no managed sessions found"
-		report.Hint = "Run `codog prompt <text>` to create a session, or pass an existing .jsonl session path."
+		report.Hint = "Run `codog prompt <text>` to create a session, or pass an existing .jsonl/.json session path."
 	case errors.Is(err, session.ErrSessionNotFound):
 		report.ErrorKind = "session_not_found"
 		if requested != "" {
@@ -22839,7 +22852,7 @@ func buildSessionRestoreErrorReport(action string, requested string, err error) 
 		} else {
 			report.Message = "session was not found"
 		}
-		report.Hint = "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl session path."
+		report.Hint = "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl/.json session path."
 	}
 	return report
 }
@@ -23235,7 +23248,22 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Action:    "abort",
 			Message:   fmt.Sprintf("session path is a directory: %s", directoryErr.Path),
-			Hint:      "Pass a readable .jsonl session file or a managed session id from `codog sessions list`.",
+			Hint:      "Pass a readable .jsonl or .json session file, or a managed session id from `codog sessions list`.",
+			Path:      directoryErr.Path,
+		}
+	}
+	var mismatchErr session.WorkspaceMismatchError
+	if errors.As(err, &mismatchErr) {
+		return cliErrorReport{
+			Kind:              "session_workspace_mismatch",
+			ErrorKind:         "session_workspace_mismatch",
+			Status:            "error",
+			Action:            "abort",
+			Message:           mismatchErr.Error(),
+			Hint:              "Open this session from its original workspace, or use `codog --resume latest` to select the newest compatible session.",
+			Path:              mismatchErr.Path,
+			ExpectedWorkspace: mismatchErr.Expected,
+			ActualWorkspace:   mismatchErr.Actual,
 		}
 	}
 	if errors.Is(err, session.ErrNoSessions) {
@@ -23245,7 +23273,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Action:    "abort",
 			Message:   "no managed sessions found",
-			Hint:      "Run `codog prompt <text>` to create a session, or pass an existing .jsonl session path.",
+			Hint:      "Run `codog prompt <text>` to create a session, or pass an existing .jsonl/.json session path.",
 		}
 	}
 	if errors.Is(err, session.ErrSessionNotFound) {
@@ -23255,7 +23283,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Action:    "abort",
 			Message:   sessionNotFoundMessage(message),
-			Hint:      "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl session path.",
+			Hint:      "Run `codog sessions list` to see saved sessions, or pass an existing .jsonl/.json session path.",
 		}
 	}
 	var credentialsErr anthropic.MissingCredentialsError

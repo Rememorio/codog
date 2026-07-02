@@ -5666,6 +5666,46 @@ func TestResumeDirectoryPathReportsTypedError(t *testing.T) {
 	require.Contains(t, report.Hint, "codog sessions list --json")
 }
 
+func TestResumeCrossWorkspaceSessionReportsTypedError(t *testing.T) {
+	configHome := t.TempDir()
+	workspaceA := filepath.Join(t.TempDir(), "repo-a")
+	workspaceB := filepath.Join(t.TempDir(), "repo-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	storeA := session.NewWorkspaceStore(configHome, workspaceA)
+	created, err := storeA.CreateWithIdentity("cross-workspace", session.SessionIdentity{Purpose: "test"})
+	require.NoError(t, err)
+	require.NoError(t, storeA.Append(created.ID, anthropic.TextMessage("user", "from workspace a")))
+	canonicalA, err := filepath.EvalSymlinks(workspaceA)
+	require.NoError(t, err)
+	canonicalB, err := filepath.EvalSymlinks(workspaceB)
+	require.NoError(t, err)
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspaceB))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", created.Path, "--output-format", "json", "/status"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report sessionRestoreErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "session_workspace_mismatch", report.ErrorKind)
+	require.Equal(t, created.Path, report.Path)
+	require.Equal(t, canonicalB, report.ExpectedWorkspace)
+	require.Equal(t, canonicalA, report.ActualWorkspace)
+	require.Contains(t, report.Hint, "original workspace")
+}
+
 func TestRunCLIClearCommand(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
