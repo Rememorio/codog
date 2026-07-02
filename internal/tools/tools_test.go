@@ -2746,6 +2746,7 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 
 	definitionOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget"}`))
 	require.NoError(t, err)
+	require.Contains(t, definitionOut, `"source": "static"`)
 	require.Contains(t, definitionOut, `"found": true`)
 	require.Contains(t, definitionOut, `"name": "Widget"`)
 
@@ -2757,6 +2758,12 @@ func TestLSPToolQueriesCodeIntel(t *testing.T) {
 	languageFallbackOut, err := tool.Execute(context.Background(), []byte(`{"action":"definition","query":"Widget","language":"go"}`))
 	require.NoError(t, err)
 	require.Contains(t, languageFallbackOut, `"action": "definition"`)
+	require.Contains(t, languageFallbackOut, `"source": "static"`)
+	require.Contains(t, languageFallbackOut, `"fallback": {`)
+	require.Contains(t, languageFallbackOut, `"from": "lsp"`)
+	require.Contains(t, languageFallbackOut, `"to": "static"`)
+	require.Contains(t, languageFallbackOut, `"reason": "lsp_server_unavailable"`)
+	require.Contains(t, languageFallbackOut, `"error": "config home is required for lsp server queries"`)
 	require.Contains(t, languageFallbackOut, `"found": true`)
 
 	_, err = tool.Execute(context.Background(), []byte(`{"action":"hover","path":"demo.go","line":4,"character":6,"use_server":true}`))

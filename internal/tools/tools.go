@@ -5740,6 +5740,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	if err != nil {
 		return "", err
 	}
+	var fallback any
 	if payload.UseServer || strings.TrimSpace(payload.Language) != "" {
 		result, err := t.executeServerLSP(ctx, action, payload.Language, payload.Path, payload.Line, payload.Character)
 		if err == nil {
@@ -5747,6 +5748,12 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		}
 		if payload.UseServer {
 			return "", err
+		}
+		fallback = map[string]any{
+			"from":   "lsp",
+			"to":     "static",
+			"reason": "lsp_server_unavailable",
+			"error":  err.Error(),
 		}
 	}
 	switch action {
@@ -5768,7 +5775,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 			}
 			symbols = filtered
 		}
-		return pretty(map[string]any{"action": action, "symbols": symbols, "total": len(symbols)}), nil
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"symbols": symbols, "total": len(symbols)})), nil
 	case "definition":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -5778,7 +5785,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"action": action, "query": query, "found": found, "definition": definition}), nil
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "found": found, "definition": definition})), nil
 	case "references":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -5788,7 +5795,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"action": action, "query": query, "references": refs, "total": len(refs)}), nil
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "references": refs, "total": len(refs)})), nil
 	case "hover":
 		query, err := t.lspQuery(payload.Query, payload.Path, payload.Line, payload.Character)
 		if err != nil {
@@ -5798,7 +5805,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"action": action, "query": query, "hover": hover}), nil
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"query": query, "hover": hover})), nil
 	case "completion":
 		query := strings.TrimSpace(payload.Query)
 		if query == "" && strings.TrimSpace(payload.Path) != "" {
@@ -5812,7 +5819,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"action": "completion", "query": query, "completions": completions, "total": len(completions)}), nil
+		return pretty(staticLSPToolReport("completion", fallback, map[string]any{"query": query, "completions": completions, "total": len(completions)})), nil
 	case "format":
 		if strings.TrimSpace(payload.Path) == "" {
 			return "", errors.New("path is required for lsp format")
@@ -5821,7 +5828,7 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"action": "format", "format": result}), nil
+		return pretty(staticLSPToolReport("format", fallback, map[string]any{"format": result})), nil
 	case "diagnostics":
 		patterns := []string{}
 		if strings.TrimSpace(payload.Path) != "" {
@@ -5833,10 +5840,21 @@ func (t LSPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 		if err != nil {
 			return "", err
 		}
-		return pretty(map[string]any{"action": action, "diagnostics": diagnostics, "total": len(diagnostics)}), nil
+		return pretty(staticLSPToolReport(action, fallback, map[string]any{"diagnostics": diagnostics, "total": len(diagnostics)})), nil
 	default:
 		return "", fmt.Errorf("unknown lsp action %q", payload.Action)
 	}
+}
+
+func staticLSPToolReport(action string, fallback any, values map[string]any) map[string]any {
+	report := map[string]any{"action": action, "source": "static"}
+	for key, value := range values {
+		report[key] = value
+	}
+	if fallback != nil {
+		report["fallback"] = fallback
+	}
+	return report
 }
 
 func (t LSPTool) lspQuery(query string, path string, line int, character int) (string, error) {
