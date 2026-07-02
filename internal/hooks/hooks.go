@@ -955,10 +955,12 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		result := CommandResult{Command: command, Type: "command", ExitCode: -1, Success: false, Error: err.Error()}
 		return result, err
 	}
+	hookEventName := claudeHookEventName(payload.Event)
+	hookToolName := firstNonEmpty(payload.ToolName, payload.Tool)
 	cmd.Env = append(os.Environ(),
 		"CODOG_HOOK_EVENT="+payload.Event,
 		"CODOG_HOOK_TOOL="+payload.Tool,
-		"CODOG_HOOK_TOOL_NAME="+payload.ToolName,
+		"CODOG_HOOK_TOOL_NAME="+hookToolName,
 		"CODOG_HOOK_TOOL_USE_ID="+payload.ToolUseID,
 		"CODOG_HOOK_INPUT="+payload.Input,
 		"CODOG_HOOK_OUTPUT="+payload.Output,
@@ -987,10 +989,15 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		"CODOG_HOOK_GLOBS="+strings.Join(payload.Globs, ","),
 		"CODOG_HOOK_TRIGGER_FILE_PATH="+payload.TriggerFilePath,
 		"CODOG_HOOK_PARENT_FILE_PATH="+payload.ParentFilePath,
+		"HOOK_EVENT="+hookEventName,
+		"HOOK_TOOL_NAME="+hookToolName,
+		"HOOK_TOOL_INPUT="+payload.Input,
+		"HOOK_TOOL_OUTPUT="+payload.Output,
+		"HOOK_TOOL_IS_ERROR="+hookErrorFlag(payload.IsError),
 		"CODOG_HOOK_ENV_FILE="+envFile,
 		"CLAUDE_ENV_FILE="+envFile,
 		"CLAUDE_SESSION_ID="+firstNonEmpty(r.SessionID, payloadSessionID(payload)),
-		"CLAUDE_HOOK_EVENT_NAME="+claudeHookEventName(payload.Event),
+		"CLAUDE_HOOK_EVENT_NAME="+hookEventName,
 		"CLAUDE_TRANSCRIPT_PATH="+payloadTranscriptPath(payload),
 	)
 	cmd.Stdin = bytes.NewReader(data)
@@ -1138,6 +1145,13 @@ func hookTimeout(hook config.HookCommand, fallback time.Duration) time.Duration 
 		return time.Duration(hook.TimeoutSeconds * float64(time.Second))
 	}
 	return fallback
+}
+
+func hookErrorFlag(isError bool) string {
+	if isError {
+		return "1"
+	}
+	return "0"
 }
 
 func hookType(hook config.HookCommand) string {

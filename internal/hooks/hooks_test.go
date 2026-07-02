@@ -96,6 +96,22 @@ func TestRunPayloadProvidesClaudeEnvFile(t *testing.T) {
 	require.Contains(t, env, "CODOG_HOOK_ENV_READY=yes")
 }
 
+func TestCommandHooksExposeClawCompatibleEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{Workspace: t.TempDir()}.RunPayload(context.Background(), []string{`printf '%s\n%s\n%s\n%s\n%s\n' "$HOOK_EVENT" "$HOOK_TOOL_NAME" "$HOOK_TOOL_INPUT" "$HOOK_TOOL_OUTPUT" "$HOOK_TOOL_IS_ERROR"`}, Payload{
+		Event:   "post_tool_use_failure",
+		Tool:    "bash",
+		Input:   `{"command":"rm -rf /"}`,
+		Output:  "blocked",
+		IsError: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, "PostToolUseFailure\nbash\n{\"command\":\"rm -rf /\"}\nblocked\n1\n", report.Results[0].Stdout)
+}
+
 func TestSessionHooksUseClaudeCompatibleStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")
