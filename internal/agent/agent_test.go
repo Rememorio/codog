@@ -1868,6 +1868,8 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	t.Cleanup(oauthServer.Close)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
 	require.NoError(t, err)
+	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", oauthServer.URL, "client-work", []string{"profile"})
+	require.NoError(t, err)
 	_, err = oauth.SaveToken(configHome, oauth.Token{
 		AccessToken:  "resume-oauth-access-1234",
 		RefreshToken: "resume-oauth-refresh-1234",
@@ -2252,9 +2254,13 @@ func risky(value any) {
 	require.NoError(t, err)
 	var resumedOAuthProfiles []oauth.ProviderProfile
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedOAuthProfiles))
-	require.Len(t, resumedOAuthProfiles, 1)
-	require.Equal(t, "default", resumedOAuthProfiles[0].Name)
-	require.Equal(t, "client-resume", resumedOAuthProfiles[0].ClientID)
+	require.Len(t, resumedOAuthProfiles, 2)
+	resumedOAuthProfileClients := map[string]string{}
+	for _, profile := range resumedOAuthProfiles {
+		resumedOAuthProfileClients[profile.Name] = profile.ClientID
+	}
+	require.Equal(t, "client-resume", resumedOAuthProfileClients["default"])
+	require.Equal(t, "client-work", resumedOAuthProfileClients["work"])
 
 	out, err = runResumedJSON("/oauth", "provider", "show", "default")
 	require.NoError(t, err)
@@ -2277,6 +2283,18 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedProfile))
 	require.Equal(t, "profile", resumedProfile.Kind)
 	require.Equal(t, "list", resumedProfile.Action)
+	require.Len(t, resumedProfile.Profiles, 2)
+
+	out, err = runResumedJSON("/profile", "set", "work")
+	require.NoError(t, err)
+	var resumedProfileSet profileReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedProfileSet))
+	require.Equal(t, "profile", resumedProfileSet.Kind)
+	require.Equal(t, "set", resumedProfileSet.Action)
+	require.Equal(t, "work", resumedProfileSet.ActiveProfile)
+	require.NotNil(t, resumedProfileSet.Profile)
+	require.Equal(t, "work", resumedProfileSet.Profile.Name)
+	require.NotEmpty(t, resumedProfileSet.Path)
 
 	out, err = runResumedJSON("/budget")
 	require.NoError(t, err)
@@ -3419,12 +3437,28 @@ func risky(value any) {
 	require.Equal(t, "ide", resumedIDE.Kind)
 	require.Equal(t, "status", resumedIDE.Action)
 
+	out, err = runResumedJSON("/ide", "clear")
+	require.NoError(t, err)
+	var resumedIDEClear ideReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedIDEClear))
+	require.Equal(t, "ide", resumedIDEClear.Kind)
+	require.Equal(t, "clear", resumedIDEClear.Action)
+	require.True(t, resumedIDEClear.Cleared)
+
 	out, err = runResumedJSON("/bridge-kick")
 	require.NoError(t, err)
 	var resumedBridgeKick bridgeKickReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedBridgeKick))
 	require.Equal(t, "bridge_kick", resumedBridgeKick.Kind)
 	require.Equal(t, "status", resumedBridgeKick.Action)
+
+	out, err = runResumedJSON("/bridge-kick", "clear")
+	require.NoError(t, err)
+	var resumedBridgeKickClear bridgeKickReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBridgeKickClear))
+	require.Equal(t, "bridge_kick", resumedBridgeKickClear.Kind)
+	require.Equal(t, "clear", resumedBridgeKickClear.Action)
+	require.True(t, resumedBridgeKickClear.Cleared)
 
 	out, err = runResumedJSON("/workspace")
 	require.NoError(t, err)
@@ -3435,6 +3469,18 @@ func risky(value any) {
 	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 	require.Equal(t, expectedWorkspace, resumedWorkspace.Workspace)
+
+	out, err = runResumedJSON("/workspace", "set", externalContext)
+	require.NoError(t, err)
+	var resumedWorkspaceSet workspaceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedWorkspaceSet))
+	require.Equal(t, "workspace", resumedWorkspaceSet.Kind)
+	require.Equal(t, "set", resumedWorkspaceSet.Action)
+	require.Equal(t, externalContext, resumedWorkspaceSet.Workspace)
+	require.Equal(t, expectedWorkspace, resumedWorkspaceSet.PreviousWorkspace)
+	require.True(t, resumedWorkspaceSet.Changed)
+	require.True(t, resumedWorkspaceSet.Exists)
+	require.True(t, resumedWorkspaceSet.IsDir)
 
 	out, err = runResumedJSON("/focus")
 	require.NoError(t, err)
@@ -3806,6 +3852,19 @@ func risky(value any) {
 	require.Equal(t, "format", resumedFormat.Kind)
 	require.False(t, resumedFormat.Write)
 
+	formatWritePath := filepath.Join(workspace, "format_write.go")
+	require.NoError(t, os.WriteFile(formatWritePath, []byte("package main\nfunc messy(){println(\"x\")}\n"), 0o644))
+	out, err = runResumedJSON("/format", "format_write.go", "--write")
+	require.NoError(t, err)
+	var resumedFormatWrite formatReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFormatWrite))
+	require.Equal(t, "format", resumedFormatWrite.Kind)
+	require.True(t, resumedFormatWrite.Write)
+	require.True(t, resumedFormatWrite.Result.Changed)
+	formattedData, err := os.ReadFile(formatWritePath)
+	require.NoError(t, err)
+	require.Contains(t, string(formattedData), "func messy() {")
+
 	out, err = runResumedJSON("/code-intel", "symbols")
 	require.NoError(t, err)
 	var resumedCodeIntelSymbols symbolsReport
@@ -4041,7 +4100,6 @@ func risky(value any) {
 		Args    []string
 		Report  string
 	}{
-		{Command: "/profile", Args: []string{"set", "work"}, Report: "/profile set"},
 		{Command: "/oauth", Args: []string{"pkce"}, Report: "/oauth pkce"},
 		{Command: "/oauth", Args: []string{"discover", "https://example.test"}, Report: "/oauth discover"},
 		{Command: "/oauth", Args: []string{"provider", "save", "work", "https://example.test", "client"}, Report: "/oauth provider save"},
@@ -4073,11 +4131,7 @@ func risky(value any) {
 		{Command: "/cron", Args: []string{"run-due"}, Report: "/cron run-due"},
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
-		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
-		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
-		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
-		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},

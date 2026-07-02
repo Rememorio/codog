@@ -24107,13 +24107,6 @@ func (a *App) runResumedPlanSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedFormatSlash(args []string, format string) error {
-	_, _, write, err := parseFormatArgs(args)
-	if err != nil {
-		return err
-	}
-	if write {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/format", "write"), format)
-	}
 	return a.Format(args)
 }
 
@@ -24167,13 +24160,6 @@ func (a *App) runResumedThinkBackSlash(command string, args []string, format str
 }
 
 func (a *App) runResumedIDESlash(args []string, format string) error {
-	req, err := parseIDEArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ide", req.Action), format)
-	}
 	return a.IDE(args)
 }
 
@@ -24200,24 +24186,10 @@ func (a *App) runResumedACPSlash(ctx context.Context, args []string, format stri
 }
 
 func (a *App) runResumedBridgeKickSlash(args []string, format string) error {
-	req, err := parseBridgeKickArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/bridge-kick", req.Action), format)
-	}
 	return a.BridgeKick(args)
 }
 
 func (a *App) runResumedWorkspaceSlash(args []string, format string) error {
-	req, err := parseWorkspaceArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/workspace", req.Action), format)
-	}
 	return a.WorkspaceCommand(args)
 }
 
@@ -24503,16 +24475,7 @@ func (a *App) runResumedOAuthSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedProfileSlash(args []string, format string) error {
-	req, err := parseProfileArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "show", "list":
-		return a.Profile(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/profile", req.Action), format)
-	}
+	return a.Profile(args)
 }
 
 func (a *App) runResumedBudgetSlash(args []string, format string) error {
