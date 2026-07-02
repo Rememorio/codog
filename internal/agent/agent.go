@@ -9871,9 +9871,106 @@ func renderProviderSetText(out io.Writer, report providerSetReport) {
 	fmt.Fprintf(out, "Config: %s\n", report.Path)
 }
 
+type oauthFlowStatusReport struct {
+	Kind         string                   `json:"kind"`
+	Action       string                   `json:"action"`
+	Status       string                   `json:"status"`
+	Flow         string                   `json:"flow"`
+	ProfileCount int                      `json:"profile_count"`
+	ReadyCount   int                      `json:"ready_count"`
+	Profiles     []oauthFlowProfileStatus `json:"profiles"`
+}
+
+type oauthFlowProfileStatus struct {
+	Name      string   `json:"name"`
+	Issuer    string   `json:"issuer"`
+	ClientID  string   `json:"client_id,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
+	Ready     bool     `json:"ready"`
+	Missing   []string `json:"missing,omitempty"`
+	Endpoints struct {
+		Authorization       string `json:"authorization,omitempty"`
+		DeviceAuthorization string `json:"device_authorization,omitempty"`
+		Token               string `json:"token,omitempty"`
+	} `json:"endpoints"`
+}
+
+func (a *App) oauthFlowStatus(flow string, profileName string) error {
+	var profiles []oauth.ProviderProfile
+	if strings.TrimSpace(profileName) != "" {
+		profile, err := oauth.LoadProviderProfile(a.Config.ConfigHome, profileName)
+		if err != nil {
+			return err
+		}
+		profiles = []oauth.ProviderProfile{profile}
+	} else {
+		listed, err := oauth.ListProviderProfiles(a.Config.ConfigHome)
+		if err != nil {
+			return err
+		}
+		profiles = listed
+	}
+	report := buildOAuthFlowStatusReport(flow, profiles)
+	data, _ := json.MarshalIndent(report, "", "  ")
+	fmt.Fprintln(a.Out, string(data))
+	return nil
+}
+
+func buildOAuthFlowStatusReport(flow string, profiles []oauth.ProviderProfile) oauthFlowStatusReport {
+	flow = strings.ToLower(strings.TrimSpace(flow))
+	report := oauthFlowStatusReport{
+		Kind:         "oauth",
+		Action:       "status",
+		Status:       "ok",
+		Flow:         flow,
+		ProfileCount: len(profiles),
+		Profiles:     []oauthFlowProfileStatus{},
+	}
+	for _, profile := range profiles {
+		item := oauthFlowProfileStatus{
+			Name:     profile.Name,
+			Issuer:   profile.Issuer,
+			ClientID: profile.ClientID,
+			Scopes:   append([]string(nil), profile.Scopes...),
+		}
+		item.Endpoints.Authorization = profile.Metadata.AuthorizationEndpoint
+		item.Endpoints.DeviceAuthorization = profile.Metadata.DeviceAuthorizationEndpoint
+		item.Endpoints.Token = profile.Metadata.TokenEndpoint
+		if strings.TrimSpace(profile.ClientID) == "" {
+			item.Missing = append(item.Missing, "client_id")
+		}
+		if strings.TrimSpace(profile.Metadata.TokenEndpoint) == "" {
+			item.Missing = append(item.Missing, "token_endpoint")
+		}
+		switch flow {
+		case "device":
+			if strings.TrimSpace(profile.Metadata.DeviceAuthorizationEndpoint) == "" {
+				item.Missing = append(item.Missing, "device_authorization_endpoint")
+			}
+		default:
+			if strings.TrimSpace(profile.Metadata.AuthorizationEndpoint) == "" {
+				item.Missing = append(item.Missing, "authorization_endpoint")
+			}
+		}
+		item.Ready = len(item.Missing) == 0
+		if item.Ready {
+			report.ReadyCount++
+		}
+		report.Profiles = append(report.Profiles, item)
+	}
+	return report
+}
+
 func (a *App) oauthBrowser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog oauth browser start PROFILE REDIRECT_URI [SCOPE...] | exchange PROFILE CODE CODE_VERIFIER REDIRECT_URI | login PROFILE [ADDR]")
+		return a.oauthFlowStatus("browser", "")
+	}
+	if args[0] == "status" {
+		profile := ""
+		if len(args) > 1 {
+			profile = args[1]
+		}
+		return a.oauthFlowStatus("browser", profile)
 	}
 	switch args[0] {
 	case "start":
@@ -9966,7 +10063,14 @@ func (a *App) oauthBrowser(args []string) error {
 
 func (a *App) oauthDevice(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: codog oauth device start ISSUER_URL CLIENT_ID [SCOPE...] | start PROFILE [SCOPE...] | poll ISSUER_URL CLIENT_ID DEVICE_CODE | poll PROFILE DEVICE_CODE | login ISSUER_URL CLIENT_ID [SCOPE...] | login PROFILE [SCOPE...]")
+		return a.oauthFlowStatus("device", "")
+	}
+	if args[0] == "status" {
+		profile := ""
+		if len(args) > 1 {
+			profile = args[1]
+		}
+		return a.oauthFlowStatus("device", profile)
 	}
 	switch args[0] {
 	case "start":

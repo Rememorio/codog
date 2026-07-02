@@ -15568,6 +15568,20 @@ func TestOAuthDeviceCommands(t *testing.T) {
 	}
 	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", server.URL, "client-1", []string{"profile"})
 	require.NoError(t, err)
+
+	require.NoError(t, app.OAuth([]string{"device"}))
+	require.Contains(t, out.String(), `"flow": "device"`)
+	require.Contains(t, out.String(), `"profile_count": 1`)
+	require.Contains(t, out.String(), `"ready_count": 1`)
+	require.Contains(t, out.String(), `"device_authorization": "`+server.URL+`/device"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"device", "status", "default"}))
+	require.Contains(t, out.String(), `"flow": "device"`)
+	require.Contains(t, out.String(), `"name": "default"`)
+	require.Contains(t, out.String(), `"ready": true`)
+	out.Reset()
+
 	require.NoError(t, app.OAuth([]string{"device", "start", server.URL, "client-1", "profile"}))
 	require.Contains(t, out.String(), `"user_code": "ABCD-EFGH"`)
 	out.Reset()
@@ -15894,6 +15908,19 @@ func TestOAuthBrowserCommands(t *testing.T) {
 		Config: config.Config{ConfigHome: configHome},
 		Out:    &out,
 	}
+	require.NoError(t, app.OAuth([]string{"browser"}))
+	require.Contains(t, out.String(), `"flow": "browser"`)
+	require.Contains(t, out.String(), `"profile_count": 1`)
+	require.Contains(t, out.String(), `"ready_count": 1`)
+	require.Contains(t, out.String(), `"authorization": "`+server.URL+`/authorize"`)
+	out.Reset()
+
+	require.NoError(t, app.OAuth([]string{"browser", "status", "default"}))
+	require.Contains(t, out.String(), `"flow": "browser"`)
+	require.Contains(t, out.String(), `"name": "default"`)
+	require.Contains(t, out.String(), `"ready": true`)
+	out.Reset()
+
 	require.NoError(t, app.OAuth([]string{"browser", "start", "default", "http://127.0.0.1:9999/oauth/callback"}))
 	require.Contains(t, out.String(), `"authorization_url":`)
 	require.Contains(t, out.String(), "client_id=client-1")
