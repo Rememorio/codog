@@ -214,6 +214,55 @@ func TestRunnerAppliesPreToolUseHookDecisionAndUpdatedInput(t *testing.T) {
 	require.Equal(t, "ok", string(data))
 }
 
+func TestRunnerReturnsPreToolUseMalformedJSONDiagnostic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type:  "tool_use",
+					ID:    "tool-1",
+					Name:  "bash",
+					Input: []byte(`{"command":"printf blocked","timeout":1000}`),
+				}},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			Hooks: config.HookConfig{
+				PreToolUseCommands: []config.HookCommand{{
+					Matcher: "bash",
+					Command: `printf '{not-json'; printf 'stderr warning' >&2; exit 1`,
+				}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Prompter:  &tools.Prompter{Mode: tools.PermissionAllow, Workspace: workspace},
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "run")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 1)
+	require.True(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "hook_invalid_json:")
+	require.Contains(t, result.ToolCalls[0].Output, "phase=PreToolUse")
+	require.Contains(t, result.ToolCalls[0].Output, "tool=bash")
+	require.Contains(t, result.ToolCalls[0].Output, "stderr_preview=stderr warning")
+}
+
 func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

@@ -540,10 +540,7 @@ func SessionStartOutputFromReport(report RunReport) SessionStartOutput {
 func PreToolUseOutputFromReport(report RunReport) PreToolUseOutput {
 	var out PreToolUseOutput
 	for _, result := range report.Results {
-		if !result.Success {
-			continue
-		}
-		parsed, ok := parsePreToolUseStdout(result.Stdout)
+		parsed, ok := parsePreToolUseStdout(report.Event, report.Tool, result.Command, result.Stdout, result.Stderr)
 		if !ok {
 			continue
 		}
@@ -566,13 +563,20 @@ func PreToolUseOutputFromReport(report RunReport) PreToolUseOutput {
 	return out
 }
 
-func parsePreToolUseStdout(stdout string) (PreToolUseOutput, bool) {
+func parsePreToolUseStdout(event string, tool string, command string, stdout string, stderr string) (PreToolUseOutput, bool) {
 	stdout = strings.TrimSpace(stdout)
 	if stdout == "" {
 		return PreToolUseOutput{}, false
 	}
-	if !strings.HasPrefix(stdout, "{") {
+	if !looksLikeJSONAttempt(stdout) {
 		return PreToolUseOutput{Messages: []string{stdout}}, true
+	}
+	var root any
+	if err := json.Unmarshal([]byte(stdout), &root); err != nil {
+		return PreToolUseOutput{Messages: []string{formatInvalidHookOutput(event, tool, command, err.Error(), stdout, stderr)}}, true
+	}
+	if _, ok := root.(map[string]any); !ok {
+		return PreToolUseOutput{Messages: []string{formatInvalidHookOutput(event, tool, command, "expected top-level JSON object, got "+jsonTypeName(root), stdout, stderr)}}, true
 	}
 	var raw struct {
 		SystemMessage      string          `json:"systemMessage"`
@@ -583,7 +587,7 @@ func parsePreToolUseStdout(stdout string) (PreToolUseOutput, bool) {
 		UpdatedInput       json.RawMessage `json:"updatedInput"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
-		return PreToolUseOutput{Messages: []string{stdout}}, true
+		return PreToolUseOutput{Messages: []string{formatInvalidHookOutput(event, tool, command, err.Error(), stdout, stderr)}}, true
 	}
 	output := PreToolUseOutput{
 		Messages: []string{raw.SystemMessage, raw.Reason},
@@ -619,6 +623,74 @@ func parsePreToolUseStdout(stdout string) (PreToolUseOutput, bool) {
 		output.Messages = []string{stdout}
 	}
 	return output, true
+}
+
+func formatInvalidHookOutput(event string, tool string, command string, detail string, stdout string, stderr string) string {
+	return fmt.Sprintf(
+		"hook_invalid_json: phase=%s tool=%s command=%s detail=%s stdout_preview=%s stderr_preview=%s",
+		claudeHookEventName(event),
+		firstNonEmpty(tool, "<empty>"),
+		boundedHookPreview(command),
+		detail,
+		boundedHookPreview(stdout),
+		boundedHookPreview(stderr),
+	)
+}
+
+func looksLikeJSONAttempt(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")
+}
+
+func jsonTypeName(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case float64:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "unknown"
+	}
+}
+
+func boundedHookPreview(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "<empty>"
+	}
+	const limit = 200
+	var out strings.Builder
+	count := 0
+	for _, r := range value {
+		if count == limit {
+			out.WriteString("...")
+			break
+		}
+		switch r {
+		case '\n':
+			out.WriteString(`\n`)
+		case '\r':
+			out.WriteString(`\r`)
+		case '\t':
+			out.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&out, `\u{%x}`, r)
+			} else {
+				out.WriteRune(r)
+			}
+		}
+		count++
+	}
+	return out.String()
 }
 
 type hookSpecific struct {
@@ -894,9 +966,28 @@ func (r Runner) runCommandHook(ctx context.Context, hook config.HookCommand, hoo
 		result.Success = false
 		result.ExitCode = hookExitCode(err)
 		result.Error = err.Error()
+		if diagnostic := invalidHookOutputDiagnostic(payload, command, result.Stdout, result.Stderr); diagnostic != "" {
+			result.Error = diagnostic
+			return result, errors.New(diagnostic)
+		}
 		return result, fmt.Errorf("hook failed: %s: %s", command, stderr.String())
 	}
 	return result, nil
+}
+
+func invalidHookOutputDiagnostic(payload Payload, command string, stdout string, stderr string) string {
+	stdout = strings.TrimSpace(stdout)
+	if !looksLikeJSONAttempt(stdout) {
+		return ""
+	}
+	var root any
+	if err := json.Unmarshal([]byte(stdout), &root); err != nil {
+		return formatInvalidHookOutput(payload.Event, firstNonEmpty(payload.ToolName, payload.Tool), command, err.Error(), stdout, stderr)
+	}
+	if _, ok := root.(map[string]any); !ok {
+		return formatInvalidHookOutput(payload.Event, firstNonEmpty(payload.ToolName, payload.Tool), command, "expected top-level JSON object, got "+jsonTypeName(root), stdout, stderr)
+	}
+	return ""
 }
 
 func (r Runner) runHTTPHook(ctx context.Context, hook config.HookCommand, data []byte, defaultTimeout time.Duration) (CommandResult, error) {

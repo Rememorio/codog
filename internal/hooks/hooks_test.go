@@ -243,6 +243,29 @@ func TestPreToolUseOutputFromReportParsesHookSpecificOutput(t *testing.T) {
 	require.JSONEq(t, `{"command":"git status"}`, string(output.UpdatedInput))
 }
 
+func TestPreToolUseMalformedJSONReportsDiagnostic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{Workspace: t.TempDir()}.RunPayload(context.Background(), []string{`printf '{not-json\nsecond line'; printf 'stderr warning' >&2; exit 1`}, Payload{
+		Event: "pre_tool_use",
+		Tool:  "Edit",
+		Input: `{"file":"src/lib.rs"}`,
+	})
+	require.Error(t, err)
+	output := PreToolUseOutputFromReport(report)
+	require.Len(t, output.Messages, 1)
+	rendered := output.Messages[0]
+	require.Contains(t, rendered, "hook_invalid_json:")
+	require.Contains(t, rendered, "phase=PreToolUse")
+	require.Contains(t, rendered, "tool=Edit")
+	require.Contains(t, rendered, "command=printf '{not-json")
+	require.Contains(t, rendered, "detail=")
+	require.Contains(t, rendered, `stdout_preview={not-json\nsecond line`)
+	require.Contains(t, rendered, "stderr_preview=stderr warning")
+	require.Equal(t, rendered, report.Results[0].Error)
+}
+
 func TestRunHooksPostsHTTPPayloadWithAllowedHeaders(t *testing.T) {
 	t.Setenv("HOOK_TOKEN", "secret-token")
 	t.Setenv("HOOK_IGNORED", "ignored")

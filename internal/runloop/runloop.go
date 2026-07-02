@@ -164,7 +164,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 			_, preToolOutput, err := hookRunner.PreToolUseReport(ctx, block.Name, effectiveInput)
 			if err != nil {
-				call.Output = err.Error()
+				call.Output = preToolUseErrorMessage(err, preToolOutput)
 				call.IsError = true
 				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
@@ -350,6 +350,13 @@ func preToolUseDeniedMessage(toolName string, output hooks.PreToolUseOutput) str
 		return fmt.Sprintf("pre_tool_use hook denied tool %s", toolName)
 	}
 	return fmt.Sprintf("pre_tool_use hook denied tool %s: %s", toolName, reason)
+}
+
+func preToolUseErrorMessage(err error, output hooks.PreToolUseOutput) string {
+	if len(output.Messages) > 0 {
+		return strings.Join(output.Messages, "\n")
+	}
+	return err.Error()
 }
 
 type fileChange struct {
