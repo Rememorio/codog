@@ -60,7 +60,7 @@ func TestValidateBytesAcceptsRAGConfig(t *testing.T) {
 }
 
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
-	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"extra":true}}}`)
+	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true,"extra":true}}}`)
 
 	result := ValidateBytes(source, "config.json")
 
@@ -85,13 +85,24 @@ func TestValidateBytesValidatesMCPRemoteHeaders(t *testing.T) {
 }
 
 func TestValidateBytesAcceptsMCPRemoteServer(t *testing.T) {
-	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"}}}}`)
+	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true}}}`)
 
 	result := ValidateBytes(source, "config.json")
 
 	require.Equal(t, "ok", result.Status)
 	require.Empty(t, result.Errors)
 	require.Empty(t, result.Warnings)
+}
+
+func TestValidateBytesValidatesMCPRequiredType(t *testing.T) {
+	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","required":"yes"}}}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "mcp_servers.remote.required", result.Errors[0].Field)
+	require.Equal(t, "a boolean", result.Errors[0].Expected)
 }
 
 func TestValidateFileRejectsTOMLAndReportSummarizes(t *testing.T) {

@@ -140,6 +140,7 @@ func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 		GitStatus: "## main",
 		MCPValidation: MCPValidationStatus{
 			TotalConfigured: 1,
+			RequiredCount:   1,
 			InvalidCount:    1,
 			InvalidServers: []ValidationIssue{{
 				Name:       "bad",
@@ -170,7 +171,7 @@ func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 
 	var out bytes.Buffer
 	RenderText(&out, snapshot)
-	require.Contains(t, out.String(), "MCP validation   valid=0 invalid=1")
+	require.Contains(t, out.String(), "MCP validation   valid=0 invalid=1 required=1 optional=0")
 	require.Contains(t, out.String(), "Hook validation  valid=1 invalid=1")
 }
 

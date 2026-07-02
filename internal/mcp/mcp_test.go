@@ -312,12 +312,19 @@ func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
 		Args:    []string{"mcp-server", "--verbose"},
 		Env:     []string{"TOKEN=secret", "MODE=stdio"},
 	}
+	required := config.MCPServerConfig{
+		Command:  "uvx",
+		Args:     []string{"mcp-server"},
+		Env:      []string{"TOKEN=secret", "MODE=stdio"},
+		Required: true,
+	}
 
 	hash := ServerConfigHash(base)
 	require.Len(t, hash, 16)
 	require.Equal(t, hash, ServerConfigHash(reorderedEnv))
 	require.NotEqual(t, hash, ServerConfigHash(changedEnv))
 	require.NotEqual(t, hash, ServerConfigHash(changedArgs))
+	require.NotEqual(t, hash, ServerConfigHash(required))
 	require.NotContains(t, hash, "secret")
 }
 
@@ -330,6 +337,7 @@ func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
 	description := DescribeServer("alpha", server)
 	require.Equal(t, "alpha", description.Name)
 	require.True(t, description.Valid)
+	require.False(t, description.Required)
 	require.Equal(t, "stdio", description.Transport.ID)
 	require.Equal(t, "uvx (2 args)", description.Summary)
 	require.Equal(t, "uvx", description.Details.Command)
@@ -339,6 +347,20 @@ func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "TOKEN=secret")
 	require.NotContains(t, string(data), "--token=secret")
+}
+
+func TestDescribeAndPreflightReportRequiredMCPServer(t *testing.T) {
+	server := config.MCPServerConfig{
+		Command:  filepath.Join(t.TempDir(), "missing-mcp"),
+		Required: true,
+	}
+
+	description := DescribeServer("critical", server)
+	require.True(t, description.Required)
+
+	status := Preflight(context.Background(), "critical", server)
+	require.True(t, status.Required)
+	require.Equal(t, "command_not_found", status.Status)
 }
 
 func TestMCPHelperProcess(t *testing.T) {

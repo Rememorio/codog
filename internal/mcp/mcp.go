@@ -29,6 +29,7 @@ var ccrProxyPathMarkers = []string{"/v2/session_ingress/shttp/mcp/", "/v2/ccr-se
 type ServerStatus struct {
 	Name            string          `json:"name"`
 	Status          string          `json:"status"`
+	Required        bool            `json:"required"`
 	Lifecycle       LifecycleStatus `json:"lifecycle"`
 	Command         string          `json:"command,omitempty"`
 	URL             string          `json:"url,omitempty"`
@@ -237,6 +238,7 @@ type ServerDetails struct {
 type ServerDescriptor struct {
 	Name      string          `json:"name"`
 	Valid     bool            `json:"valid"`
+	Required  bool            `json:"required"`
 	Transport ServerTransport `json:"transport"`
 	Summary   string          `json:"summary"`
 	Details   ServerDetails   `json:"details"`
@@ -327,7 +329,7 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 			UnwrapCCRProxyURL(server.URL),
 			renderHeaderSignature(server.Headers),
 		)
-		return stableHexHash("required:false|" + rendered)
+		return stableHexHash(fmt.Sprintf("required:%t|%s", server.Required, rendered))
 	}
 	rendered := fmt.Sprintf(
 		"stdio|%s|%s|%s|",
@@ -335,7 +337,7 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 		renderCommandSignature(server.Args),
 		renderEnvSignature(server.Env),
 	)
-	return stableHexHash("required:false|" + rendered)
+	return stableHexHash(fmt.Sprintf("required:%t|%s", server.Required, rendered))
 }
 
 // DescribeServer returns a redacted descriptor for one configured MCP server.
@@ -344,6 +346,7 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 		return ServerDescriptor{
 			Name:      name,
 			Valid:     strings.TrimSpace(server.URL) != "",
+			Required:  server.Required,
 			Transport: ServerTransport{ID: "http", Label: "http"},
 			Summary:   httpServerSummary(server),
 			Details: ServerDetails{
@@ -355,6 +358,7 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 	return ServerDescriptor{
 		Name:      name,
 		Valid:     strings.TrimSpace(server.Command) != "",
+		Required:  server.Required,
 		Transport: ServerTransport{ID: "stdio", Label: "stdio"},
 		Summary:   stdioServerSummary(server),
 		Details: ServerDetails{
@@ -580,6 +584,7 @@ func Inspect(ctx context.Context, name string, server config.MCPServerConfig) Se
 func Preflight(ctx context.Context, name string, server config.MCPServerConfig) ServerStatus {
 	status := ServerStatus{
 		Name:       name,
+		Required:   server.Required,
 		Lifecycle:  lifecycleReady("server_registration"),
 		Command:    server.Command,
 		URL:        redactedURL(server.URL),

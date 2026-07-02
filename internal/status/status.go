@@ -268,6 +268,8 @@ type RuntimeStatus struct {
 type MCPValidationStatus struct {
 	TotalConfigured int               `json:"total_configured"`
 	ValidCount      int               `json:"valid_count"`
+	RequiredCount   int               `json:"required_count"`
+	OptionalCount   int               `json:"optional_count"`
 	InvalidCount    int               `json:"invalid_count"`
 	InvalidServers  []ValidationIssue `json:"invalid_servers,omitempty"`
 }
@@ -515,7 +517,12 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		fmt.Fprintf(w, "  Git              unavailable: %s\n", snapshot.Git.Error)
 	}
 	if snapshot.MCPValidation.TotalConfigured > 0 || snapshot.MCPValidation.InvalidCount > 0 {
-		fmt.Fprintf(w, "  MCP validation   valid=%d invalid=%d\n", snapshot.MCPValidation.ValidCount, snapshot.MCPValidation.InvalidCount)
+		fmt.Fprintf(w, "  MCP validation   valid=%d invalid=%d required=%d optional=%d\n",
+			snapshot.MCPValidation.ValidCount,
+			snapshot.MCPValidation.InvalidCount,
+			snapshot.MCPValidation.RequiredCount,
+			snapshot.MCPValidation.OptionalCount,
+		)
 	}
 	if snapshot.HookValidation.ValidCount > 0 || snapshot.HookValidation.InvalidCount > 0 {
 		fmt.Fprintf(w, "  Hook validation  valid=%d invalid=%d\n", snapshot.HookValidation.ValidCount, snapshot.HookValidation.InvalidCount)

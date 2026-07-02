@@ -8196,6 +8196,8 @@ func TestStatusValidationReportsDegradedConfig(t *testing.T) {
 	require.Equal(t, "degraded", snapshot.Status)
 	require.Equal(t, 2, snapshot.MCPValidation.TotalConfigured)
 	require.Equal(t, 1, snapshot.MCPValidation.ValidCount)
+	require.Equal(t, 0, snapshot.MCPValidation.RequiredCount)
+	require.Equal(t, 2, snapshot.MCPValidation.OptionalCount)
 	require.Equal(t, 1, snapshot.MCPValidation.InvalidCount)
 	require.Len(t, snapshot.MCPValidation.InvalidServers, 1)
 	require.Equal(t, "missing", snapshot.MCPValidation.InvalidServers[0].Name)
@@ -8217,7 +8219,7 @@ func TestStatusValidationReportsDegradedConfig(t *testing.T) {
 	out.Reset()
 
 	require.NoError(t, app.Status(nil, config.FlagOverrides{}))
-	require.Contains(t, out.String(), "MCP validation   valid=1 invalid=1")
+	require.Contains(t, out.String(), "MCP validation   valid=1 invalid=1 required=0 optional=2")
 	require.Contains(t, out.String(), "Hook validation  valid=4 invalid=3")
 }
 
@@ -12624,9 +12626,10 @@ func TestPermissionHooksFromPrompter(t *testing.T) {
 
 func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	server := config.MCPServerConfig{
-		Command: os.Args[0],
-		Args:    []string{"-test.run=TestAgentMCPHelperProcess"},
-		Env:     []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
 	}
 	configHome := t.TempDir()
 	_, err := oauth.SaveToken(configHome, oauth.Token{AccessToken: "oauth-access-token"})
@@ -12643,6 +12646,8 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Contains(t, out.String(), "Working directory")
 	require.Contains(t, out.String(), "Configured servers 1")
 	require.Contains(t, out.String(), "Total entries     1")
+	require.Contains(t, out.String(), "Required entries  1")
+	require.Contains(t, out.String(), "Optional entries  0")
 	require.Contains(t, out.String(), "Invalid entries   0")
 	require.Contains(t, out.String(), "test")
 	require.Contains(t, out.String(), "stdio")
@@ -12658,8 +12663,13 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Equal(t, "ok", listReport.Status)
 	require.NotEmpty(t, listReport.WorkingDirectory)
 	require.Equal(t, 1, listReport.ServerCount)
+	require.Equal(t, 1, listReport.RequiredCount)
+	require.Equal(t, 0, listReport.OptionalCount)
+	require.Equal(t, 1, listReport.MCPValidation.RequiredCount)
+	require.Equal(t, 0, listReport.MCPValidation.OptionalCount)
 	require.Equal(t, "test", listReport.Servers[0].Name)
 	require.Equal(t, "ok", listReport.Servers[0].Status)
+	require.True(t, listReport.Servers[0].Required)
 	require.Equal(t, mcp.ServerSignature(server), listReport.Servers[0].Signature)
 	require.Equal(t, mcp.ServerConfigHash(server), listReport.Servers[0].ConfigHash)
 	out.Reset()
@@ -12814,14 +12824,16 @@ func TestMCPAddCommandCompatibility(t *testing.T) {
 	require.Contains(t, string(stored), `"A=B"`)
 
 	out, err = captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "add", "remote", "--url", "https://example.test/mcp", "--header", "Authorization=Bearer token"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "mcp", "add", "remote", "--url", "https://example.test/mcp", "--header", "Authorization=Bearer token", "--required"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, `"name": "remote"`)
+	require.Contains(t, out, `"required": true`)
 	stored, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.Contains(t, string(stored), `"url": "https://example.test/mcp"`)
 	require.Contains(t, string(stored), `"Authorization": "Bearer token"`)
+	require.Contains(t, string(stored), `"required": true`)
 }
 
 func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
@@ -12836,6 +12848,8 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 	require.Contains(t, out.String(), "MCP")
 	require.Contains(t, out.String(), "Configured servers 0")
 	require.Contains(t, out.String(), "Total entries     0")
+	require.Contains(t, out.String(), "Required entries  0")
+	require.Contains(t, out.String(), "Optional entries  0")
 	require.Contains(t, out.String(), "No valid MCP servers configured.")
 	out.Reset()
 
@@ -12846,6 +12860,8 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 	require.Equal(t, "list", report.Action)
 	require.Equal(t, 0, report.ServerCount)
 	require.Equal(t, 0, report.MCPValidation.TotalConfigured)
+	require.Equal(t, 0, report.MCPValidation.RequiredCount)
+	require.Equal(t, 0, report.MCPValidation.OptionalCount)
 	require.Equal(t, 0, report.MCPValidation.InvalidCount)
 	require.NotEmpty(t, report.WorkingDirectory)
 }
@@ -12853,7 +12869,7 @@ func TestMCPCommandAcceptsGlobalOutputFormatWithoutServers(t *testing.T) {
 func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	var out bytes.Buffer
 	app := &App{
-		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"missing": {}}},
+		Config: config.Config{MCPServers: map[string]config.MCPServerConfig{"missing": {Required: true}}},
 		Out:    &out,
 		Err:    io.Discard,
 	}
@@ -12863,6 +12879,8 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	require.Contains(t, out.String(), "Status           degraded")
 	require.Contains(t, out.String(), "Configured servers 0")
 	require.Contains(t, out.String(), "Total entries     1")
+	require.Contains(t, out.String(), "Required entries  1")
+	require.Contains(t, out.String(), "Optional entries  0")
 	require.Contains(t, out.String(), "Invalid entries   1")
 	require.Contains(t, out.String(), "missing")
 	require.Contains(t, out.String(), "missing_command")
@@ -12875,8 +12893,12 @@ func TestMCPListTextReportsInvalidServers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "degraded", report.Status)
 	require.Equal(t, 1, report.TotalConfigured)
+	require.Equal(t, 1, report.RequiredCount)
+	require.Equal(t, 0, report.OptionalCount)
 	require.Equal(t, 1, report.InvalidCount)
 	require.Equal(t, 1, report.MCPValidation.TotalConfigured)
+	require.Equal(t, 1, report.MCPValidation.RequiredCount)
+	require.Equal(t, 0, report.MCPValidation.OptionalCount)
 	require.Equal(t, 1, report.MCPValidation.InvalidCount)
 	require.Equal(t, "missing", report.MCPValidation.InvalidServers[0].Name)
 	require.Equal(t, "missing_command", report.MCPValidation.InvalidServers[0].Kind)
@@ -13231,19 +13253,22 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.Equal(t, "server_name", removeError.Argument)
 	out.Reset()
 
-	require.NoError(t, app.MCP(context.Background(), []string{"add", "demo", "demo-server", "--env", "A=B", "--env=C=D", "arg1", "arg2"}))
+	require.NoError(t, app.MCP(context.Background(), []string{"add", "demo", "demo-server", "--env", "A=B", "--env=C=D", "--required", "arg1", "arg2"}))
 	require.Contains(t, out.String(), `"action": "add"`)
 	require.Contains(t, out.String(), `"name": "demo"`)
-	require.Equal(t, config.MCPServerConfig{Command: "demo-server", Args: []string{"arg1", "arg2"}, Env: []string{"A=B", "C=D"}}, app.Config.MCPServers["demo"])
+	require.Contains(t, out.String(), `"required": true`)
+	require.Equal(t, config.MCPServerConfig{Command: "demo-server", Args: []string{"arg1", "arg2"}, Env: []string{"A=B", "C=D"}, Required: true}, app.Config.MCPServers["demo"])
 	configData, err := os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(configData), `"mcp_servers"`)
 	require.Contains(t, string(configData), `"demo-server"`)
+	require.Contains(t, string(configData), `"required": true`)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"show", "demo", "--json"}))
 	require.Contains(t, out.String(), `"action": "show"`)
 	require.Contains(t, out.String(), `"command": "demo-server"`)
+	require.Contains(t, out.String(), `"required": true`)
 	require.Contains(t, out.String(), `"signature": "stdio:[demo-server|arg1|arg2]"`)
 	require.Contains(t, out.String(), `"config_hash": "`)
 	require.Contains(t, out.String(), `"args_count": 2`)
@@ -13261,6 +13286,7 @@ func TestMCPConfigCommands(t *testing.T) {
 	require.True(t, aliasShow.Found)
 	require.NotNil(t, aliasShow.Server)
 	require.Equal(t, "demo", aliasShow.Server.Name)
+	require.True(t, aliasShow.Server.Required)
 	require.Equal(t, "stdio:[demo-server|arg1|arg2]", aliasShow.Signature)
 	out.Reset()
 

@@ -21798,6 +21798,11 @@ func buildMCPValidation(servers map[string]config.MCPServerConfig) localstatus.M
 	sort.Strings(names)
 	for _, name := range names {
 		server := servers[name]
+		if server.Required {
+			status.RequiredCount++
+		} else {
+			status.OptionalCount++
+		}
 		if strings.TrimSpace(server.Command) == "" && strings.TrimSpace(server.URL) == "" {
 			status.InvalidServers = append(status.InvalidServers, localstatus.ValidationIssue{
 				Name:       name,
@@ -38838,6 +38843,8 @@ type mcpListReport struct {
 	ConfiguredServers   int                             `json:"configured_servers"`
 	TotalConfigured     int                             `json:"total_configured"`
 	ValidCount          int                             `json:"valid_count"`
+	RequiredCount       int                             `json:"required_count"`
+	OptionalCount       int                             `json:"optional_count"`
 	InvalidCount        int                             `json:"invalid_count"`
 	MCPValidation       localstatus.MCPValidationStatus `json:"mcp_validation"`
 	ConfigLoadError     *string                         `json:"config_load_error"`
@@ -38936,6 +38943,8 @@ func buildMCPListReport(statuses []mcp.ServerStatus, validation localstatus.MCPV
 		ConfiguredServers:   validation.ValidCount,
 		TotalConfigured:     validation.TotalConfigured,
 		ValidCount:          validation.ValidCount,
+		RequiredCount:       validation.RequiredCount,
+		OptionalCount:       validation.OptionalCount,
 		InvalidCount:        validation.InvalidCount,
 		MCPValidation:       validation,
 		ConfigLoadError:     loadError,
@@ -39216,6 +39225,7 @@ func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
 		}
 		fmt.Fprintf(out, "  Name             %s\n", report.Server.Name)
 		fmt.Fprintf(out, "  Transport        %s\n", report.Server.Transport.Label)
+		fmt.Fprintf(out, "  Required         %t\n", report.Server.Required)
 		if report.Server.Details.URL != "" {
 			fmt.Fprintf(out, "  URL              %s\n", report.Server.Details.URL)
 		}
@@ -39244,6 +39254,8 @@ func renderMCPListReport(out io.Writer, format string, report mcpListReport) {
 		fmt.Fprintf(out, "  Status           %s\n", report.Status)
 		fmt.Fprintf(out, "  Configured servers %d\n", report.ConfiguredServers)
 		fmt.Fprintf(out, "  Total entries     %d\n", report.TotalConfigured)
+		fmt.Fprintf(out, "  Required entries  %d\n", report.RequiredCount)
+		fmt.Fprintf(out, "  Optional entries  %d\n", report.OptionalCount)
 		fmt.Fprintf(out, "  Invalid entries   %d\n", report.InvalidCount)
 		if report.ConfigLoadError != nil {
 			fmt.Fprintf(out, "  Config load      degraded: %s\n", *report.ConfigLoadError)
@@ -39305,7 +39317,7 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] | add NAME --url URL [--header KEY=VALUE] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] | add NAME --url URL [--header KEY=VALUE] [--required] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
 
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
@@ -39474,14 +39486,14 @@ func (a *App) mcpAdd(args []string, format string) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, errMCPAddMissingName):
-			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] or codog mcp add NAME --url URL [--header KEY=VALUE].", format)
+			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--required].", format)
 		case errors.Is(err, errMCPAddMissingCommand):
-			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] or codog mcp add NAME --url URL [--header KEY=VALUE].", format)
+			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--required].", format)
 		}
 		return err
 	}
 	path := filepath.Join(a.Config.ConfigHome, "config.json")
-	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers}
+	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers, Required: req.Required}
 	report, err := config.SetFileValue(path, "mcp_servers."+req.Name, server)
 	if err != nil {
 		return err
@@ -39712,12 +39724,13 @@ func renderXAAIDPReport(out io.Writer, report xaaIDPReport) {
 }
 
 type mcpAddRequest struct {
-	Name    string
-	Command string
-	Args    []string
-	Env     []string
-	URL     string
-	Headers map[string]string
+	Name     string
+	Command  string
+	Args     []string
+	Env      []string
+	URL      string
+	Headers  map[string]string
+	Required bool
 }
 
 var (
@@ -39760,6 +39773,10 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 			if err := addMCPHeader(req.Headers, strings.TrimPrefix(arg, "--header=")); err != nil {
 				return req, err
 			}
+		case arg == "--required":
+			req.Required = true
+		case arg == "--optional":
+			req.Required = false
 		case arg == "--env" || arg == "-e":
 			index++
 			if index >= len(args) {
@@ -45122,8 +45139,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"addCommand",
 			"addCommand",
-			"codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--output-format text|json]",
-			"addCommand\n\nUsage:\n  codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--output-format text|json]\n\nCompatibility entrypoint for the archived MCP add command. It delegates to `codog mcp add` and persists the MCP stdio server configuration in Codog config.\n",
+			"codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] [--output-format text|json]",
+			"addCommand\n\nUsage:\n  codog addCommand NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] [--output-format text|json]\n\nCompatibility entrypoint for the archived MCP add command. It delegates to `codog mcp add` and persists the MCP stdio server configuration in Codog config.\n",
 			[]string{"name", "path", "server"},
 			[]string{"ok", "error"},
 			true,
