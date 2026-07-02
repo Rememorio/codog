@@ -72,24 +72,33 @@ type SandboxRequestOptions struct {
 }
 
 type SandboxExecutionStatus struct {
-	Enabled             bool           `json:"enabled"`
-	Requested           SandboxRequest `json:"requested"`
-	Supported           bool           `json:"supported"`
-	Active              bool           `json:"active"`
-	Strategy            string         `json:"strategy,omitempty"`
-	NamespaceSupported  bool           `json:"namespace_supported"`
-	NamespaceActive     bool           `json:"namespace_active"`
-	NetworkSupported    bool           `json:"network_supported"`
-	NetworkActive       bool           `json:"network_active"`
-	FilesystemMode      string         `json:"filesystem_mode"`
-	FilesystemActive    bool           `json:"filesystem_active"`
-	AllowedMounts       []string       `json:"allowed_mounts"`
-	InContainer         bool           `json:"in_container"`
-	ContainerMarkers    []string       `json:"container_markers,omitempty"`
-	FallbackReason      string         `json:"fallback_reason,omitempty"`
-	ConfiguredStrategy  string         `json:"configured_strategy,omitempty"`
-	ResolutionStatus    string         `json:"resolution_status,omitempty"`
-	ResolutionAvailable bool           `json:"resolution_available"`
+	Enabled             bool            `json:"enabled"`
+	Requested           SandboxRequest  `json:"requested"`
+	Supported           bool            `json:"supported"`
+	Active              bool            `json:"active"`
+	Strategy            string          `json:"strategy,omitempty"`
+	NamespaceSupported  bool            `json:"namespace_supported"`
+	NamespaceActive     bool            `json:"namespace_active"`
+	NetworkSupported    bool            `json:"network_supported"`
+	NetworkActive       bool            `json:"network_active"`
+	FilesystemMode      string          `json:"filesystem_mode"`
+	FilesystemActive    bool            `json:"filesystem_active"`
+	AllowedMounts       []string        `json:"allowed_mounts"`
+	InContainer         bool            `json:"in_container"`
+	ContainerMarkers    []string        `json:"container_markers,omitempty"`
+	FallbackReason      string          `json:"fallback_reason,omitempty"`
+	CapabilityGaps      []CapabilityGap `json:"capability_gaps,omitempty"`
+	ConfiguredStrategy  string          `json:"configured_strategy,omitempty"`
+	ResolutionStatus    string          `json:"resolution_status,omitempty"`
+	ResolutionAvailable bool            `json:"resolution_available"`
+}
+
+type CapabilityGap struct {
+	Capability string `json:"capability"`
+	Requested  bool   `json:"requested"`
+	Supported  bool   `json:"supported"`
+	Active     bool   `json:"active"`
+	Reason     string `json:"reason"`
 }
 
 type DetectionInputs struct {
@@ -444,32 +453,62 @@ func sandboxExecutionStatusFromResolution(strategy, workspace string, request Sa
 	networkSupported := strategySupportsNetwork(effective) || strategyAvailable(detected.StrategyStatuses, "unshare") || strategyAvailable(detected.StrategyStatuses, "bwrap") || strategyAvailable(detected.StrategyStatuses, "sandbox-exec")
 	filesystemSupported := strategySupportsFilesystem(effective)
 
-	fallback := []string{}
+	gaps := []CapabilityGap{}
 	if request.Enabled && effective == "" {
-		fallback = append(fallback, firstNonEmptySandboxString(resolution.FallbackReason, detected.FallbackReason, "sandbox strategy unavailable"))
+		gaps = append(gaps, CapabilityGap{
+			Capability: "strategy",
+			Requested:  true,
+			Supported:  false,
+			Active:     false,
+			Reason:     firstNonEmptySandboxString(resolution.FallbackReason, detected.FallbackReason, "sandbox strategy unavailable"),
+		})
 	}
 	if request.Enabled && request.NamespaceRestrictions && !strategySupportsNamespace(effective) {
-		fallback = append(fallback, "namespace isolation unavailable for effective sandbox strategy")
+		gaps = append(gaps, CapabilityGap{
+			Capability: "namespace",
+			Requested:  true,
+			Supported:  namespaceSupported,
+			Active:     false,
+			Reason:     "namespace isolation unavailable for effective sandbox strategy",
+		})
 	}
 	if request.Enabled && request.NetworkIsolation && !strategySupportsNetwork(effective) {
-		fallback = append(fallback, "network isolation unavailable for effective sandbox strategy")
+		gaps = append(gaps, CapabilityGap{
+			Capability: "network",
+			Requested:  true,
+			Supported:  networkSupported,
+			Active:     false,
+			Reason:     "network isolation unavailable for effective sandbox strategy",
+		})
 	}
 	if request.Enabled && request.FilesystemMode != FilesystemIsolationOff && !filesystemSupported {
-		fallback = append(fallback, "filesystem isolation unavailable for effective sandbox strategy")
+		gaps = append(gaps, CapabilityGap{
+			Capability: "filesystem",
+			Requested:  true,
+			Supported:  false,
+			Active:     false,
+			Reason:     "filesystem isolation unavailable for effective sandbox strategy",
+		})
 	}
 	if request.Enabled && request.FilesystemMode == FilesystemIsolationAllowList && len(request.AllowedMounts) == 0 {
-		fallback = append(fallback, "filesystem allow-list requested without configured mounts")
+		gaps = append(gaps, CapabilityGap{
+			Capability: "filesystem_allow_list",
+			Requested:  true,
+			Supported:  filesystemSupported,
+			Active:     false,
+			Reason:     "filesystem allow-list requested without configured mounts",
+		})
 	}
 
 	namespaceActive := request.Enabled && request.NamespaceRestrictions && strategySupportsNamespace(effective)
 	networkActive := request.Enabled && request.NetworkIsolation && strategySupportsNetwork(effective)
 	filesystemActive := request.Enabled && request.FilesystemMode != FilesystemIsolationOff && filesystemSupported
-	active := request.Enabled && len(fallback) == 0 && effective != ""
+	active := request.Enabled && len(gaps) == 0 && effective != ""
 
 	return SandboxExecutionStatus{
 		Enabled:             request.Enabled,
 		Requested:           cloneSandboxRequest(request),
-		Supported:           !request.Enabled || len(fallback) == 0,
+		Supported:           !request.Enabled || len(gaps) == 0,
 		Active:              active,
 		Strategy:            effective,
 		NamespaceSupported:  namespaceSupported,
@@ -481,7 +520,8 @@ func sandboxExecutionStatusFromResolution(strategy, workspace string, request Sa
 		AllowedMounts:       normalizeMounts(request.AllowedMounts, workspace),
 		InContainer:         detected.Container.InContainer,
 		ContainerMarkers:    append([]string(nil), detected.Container.Markers...),
-		FallbackReason:      strings.Join(dedupeKeepOrder(fallback), "; "),
+		FallbackReason:      strings.Join(capabilityGapReasons(gaps), "; "),
+		CapabilityGaps:      gaps,
 		ConfiguredStrategy:  strings.TrimSpace(strategy),
 		ResolutionStatus:    resolution.Status,
 		ResolutionAvailable: resolution.Available,
@@ -728,6 +768,17 @@ func firstNonEmptySandboxString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func capabilityGapReasons(gaps []CapabilityGap) []string {
+	if len(gaps) == 0 {
+		return nil
+	}
+	reasons := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		reasons = append(reasons, gap.Reason)
+	}
+	return dedupeKeepOrder(reasons)
 }
 
 func dedupeKeepOrder(values []string) []string {

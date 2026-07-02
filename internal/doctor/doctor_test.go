@@ -671,6 +671,13 @@ func TestRunReportsSandboxRuntimeStatus(t *testing.T) {
 		InContainer:        true,
 		ContainerMarkers:   []string{"/.dockerenv"},
 		FallbackReason:     "sandbox strategy unavailable",
+		CapabilityGaps: []sandbox.CapabilityGap{{
+			Capability: "strategy",
+			Requested:  true,
+			Supported:  false,
+			Active:     false,
+			Reason:     "sandbox strategy unavailable",
+		}},
 	}
 	report := Run(Options{
 		Workspace:      t.TempDir(),
@@ -690,11 +697,13 @@ func TestRunReportsSandboxRuntimeStatus(t *testing.T) {
 	require.Contains(t, strings.Join(check.Details, "\n"), "Enabled: true")
 	require.Contains(t, strings.Join(check.Details, "\n"), "Filesystem mode: workspace-only")
 	require.Contains(t, strings.Join(check.Details, "\n"), "Fallback: sandbox strategy unavailable")
+	require.Contains(t, strings.Join(check.Details, "\n"), "Capability gap: strategy: sandbox strategy unavailable")
 	require.NotNil(t, check.Data)
 	require.Equal(t, true, check.Data["enabled"])
 	require.Equal(t, false, check.Data["active"])
 	require.Equal(t, "workspace-only", check.Data["filesystem_mode"])
 	require.Equal(t, []string{}, check.Data["allowed_mounts"])
+	require.Equal(t, status.CapabilityGaps, check.Data["capability_gaps"])
 	require.Contains(t, check.Hint, "supported sandbox strategy")
 }
 

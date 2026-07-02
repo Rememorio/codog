@@ -210,6 +210,32 @@ func TestResolveSandboxExecutionStatusForDisabledRequest(t *testing.T) {
 	require.True(t, status.Requested.NamespaceRestrictions)
 }
 
+func TestResolveSandboxExecutionStatusReportsStrategyGap(t *testing.T) {
+	status, effective, err := ResolveSandboxExecutionStatusFor("detect", t.TempDir(), SandboxRequestOptions{}, Status{
+		FallbackReason: "bwrap: command not found; unshare: command not found",
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, effective)
+	require.False(t, status.Active)
+	require.False(t, status.Supported)
+	require.Contains(t, status.FallbackReason, "bwrap: command not found")
+	require.Contains(t, status.CapabilityGaps, CapabilityGap{
+		Capability: "strategy",
+		Requested:  true,
+		Supported:  false,
+		Active:     false,
+		Reason:     "bwrap: command not found; unshare: command not found",
+	})
+	require.Contains(t, status.CapabilityGaps, CapabilityGap{
+		Capability: "namespace",
+		Requested:  true,
+		Supported:  false,
+		Active:     false,
+		Reason:     "namespace isolation unavailable for effective sandbox strategy",
+	})
+}
+
 func TestResolveSandboxExecutionStatusReportsUnsupportedCapabilities(t *testing.T) {
 	network := true
 	status, effective, err := ResolveSandboxExecutionStatusFor("restricted-token", t.TempDir(), SandboxRequestOptions{
@@ -229,4 +255,18 @@ func TestResolveSandboxExecutionStatusReportsUnsupportedCapabilities(t *testing.
 	require.False(t, status.NetworkActive)
 	require.Contains(t, status.FallbackReason, "network isolation unavailable")
 	require.Contains(t, status.FallbackReason, "namespace isolation unavailable")
+	require.Contains(t, status.CapabilityGaps, CapabilityGap{
+		Capability: "namespace",
+		Requested:  true,
+		Supported:  false,
+		Active:     false,
+		Reason:     "namespace isolation unavailable for effective sandbox strategy",
+	})
+	require.Contains(t, status.CapabilityGaps, CapabilityGap{
+		Capability: "network",
+		Requested:  true,
+		Supported:  false,
+		Active:     false,
+		Reason:     "network isolation unavailable for effective sandbox strategy",
+	})
 }

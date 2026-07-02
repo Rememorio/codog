@@ -1004,6 +1004,9 @@ func checkSandboxRuntime(status sandbox.SandboxExecutionStatus) Check {
 	if status.FallbackReason != "" {
 		details = append(details, "Fallback: "+status.FallbackReason)
 	}
+	for _, gap := range status.CapabilityGaps {
+		details = append(details, fmt.Sprintf("Capability gap: %s: %s", gap.Capability, gap.Reason))
+	}
 	if len(status.ContainerMarkers) != 0 {
 		details = append(details, "Container markers: "+strings.Join(status.ContainerMarkers, ", "))
 	}
@@ -1027,6 +1030,7 @@ func checkSandboxRuntime(status sandbox.SandboxExecutionStatus) Check {
 			"in_container":        status.InContainer,
 			"container_markers":   jsonDoctorStringSlice(status.ContainerMarkers),
 			"fallback_reason":     status.FallbackReason,
+			"capability_gaps":     status.CapabilityGaps,
 		},
 	}
 	switch {
