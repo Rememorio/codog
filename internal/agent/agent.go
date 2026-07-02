@@ -24946,6 +24946,16 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.GitCommit(resumeSlashArgs("commit", args, format), format)
 	case "/git":
 		return a.Git(resumeSlashArgs("git", args, format))
+	case "/run":
+		return a.RunCommand(ctx, resumeSlashArgs("run", args, format))
+	case "/node", "/python":
+		return a.LanguageCommand(ctx, strings.TrimPrefix(name, "/"), resumeSlashArgs(strings.TrimPrefix(name, "/"), args, format))
+	case "/test":
+		return a.ProjectCommand(ctx, "test", resumeSlashArgs("test", args, format))
+	case "/build":
+		return a.ProjectCommand(ctx, "build", resumeSlashArgs("build", args, format))
+	case "/lint":
+		return a.ProjectCommand(ctx, "lint", resumeSlashArgs("lint", args, format))
 	case "/log":
 		return a.GitLog(resumeSlashArgs("log", args, format))
 	case "/blame":

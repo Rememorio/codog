@@ -31,6 +31,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/codeintel"
+	"github.com/Rememorio/codog/internal/commandrun"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/contextview"
 	"github.com/Rememorio/codog/internal/control"
@@ -2524,6 +2525,7 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	})
 	require.NoError(t, err)
 	codePath := filepath.Join(workspace, "main.go")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.test/resume\n\ngo 1.22\n"), 0o644))
 	require.NoError(t, os.WriteFile(codePath, []byte(`package main
 
 func main() {
@@ -5299,6 +5301,48 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedDoctor))
 	require.Equal(t, "doctor", resumedDoctor.Kind)
 	require.NotEmpty(t, resumedDoctor.Checks)
+
+	out, err = runResumedJSON("/run", "go", "version")
+	require.NoError(t, err)
+	var resumedRun commandrun.Result
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRun))
+	require.Equal(t, "run", resumedRun.Kind)
+	require.Equal(t, 0, resumedRun.ExitCode)
+	require.Contains(t, strings.Join(resumedRun.Command, " "), "go version")
+
+	out, err = runResumedJSON("/test")
+	require.NoError(t, err)
+	var resumedTest commandrun.Result
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTest))
+	require.Equal(t, "test", resumedTest.Kind)
+	require.Equal(t, 0, resumedTest.ExitCode)
+	require.Equal(t, []string{"go", "test", "./..."}, resumedTest.Command)
+
+	out, err = runResumedJSON("/build")
+	require.NoError(t, err)
+	var resumedBuild commandrun.Result
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBuild))
+	require.Equal(t, "build", resumedBuild.Kind)
+	require.Equal(t, 0, resumedBuild.ExitCode)
+	require.Equal(t, []string{"go", "build", "./..."}, resumedBuild.Command)
+
+	out, err = runResumedJSON("/lint")
+	require.NoError(t, err)
+	var resumedLint commandrun.Result
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedLint))
+	require.Equal(t, "lint", resumedLint.Kind)
+	require.Equal(t, 0, resumedLint.ExitCode)
+	require.Equal(t, []string{"go", "vet", "./..."}, resumedLint.Command)
+
+	if _, lookupErr := exec.LookPath(pythonExecutable()); lookupErr == nil {
+		out, err = runResumedJSON("/python", "print('resume-python')")
+		require.NoError(t, err)
+		var resumedPython commandrun.Result
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedPython))
+		require.Equal(t, "python", resumedPython.Kind)
+		require.Equal(t, 0, resumedPython.ExitCode)
+		require.Contains(t, resumedPython.Stdout, "resume-python")
+	}
 
 	if gitAvailable {
 		out, err = runResumedJSON("/diff")
