@@ -2717,6 +2717,7 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		return errors.New("usage: codog updater check|verify|download|install|rollback")
 	}
 	var payload any
+	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch args[0] {
 	case "check":
 		if len(args) < 2 {
@@ -2803,9 +2804,22 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown updater command %q", args[0])
 	}
-	data, _ := json.MarshalIndent(payload, "", "  ")
+	report := updaterCommandReport{
+		Kind:   "updater",
+		Action: action,
+		Status: "ok",
+		Result: payload,
+	}
+	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+type updaterCommandReport struct {
+	Kind   string `json:"kind"`
+	Action string `json:"action"`
+	Status string `json:"status"`
+	Result any    `json:"result"`
 }
 
 func (a *App) Enterprise(args []string) error {

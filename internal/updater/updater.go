@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,6 +24,7 @@ type Manifest struct {
 	Downloads map[string]string `json:"downloads,omitempty"`
 	Checksums map[string]string `json:"checksums,omitempty"`
 	Signature string            `json:"signature,omitempty"`
+	Source    string            `json:"-"`
 }
 
 type CheckResult struct {
@@ -107,6 +109,7 @@ func FetchManifest(ctx context.Context, manifestURL string) (Manifest, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
 		return Manifest{}, err
 	}
+	manifest.Source = manifestURL
 	return manifest, nil
 }
 
@@ -148,6 +151,10 @@ func DownloadSigned(ctx context.Context, manifestURL, platform, destDir, publicK
 
 func DownloadManifest(ctx context.Context, manifest Manifest, platform, destDir string) (DownloadResult, error) {
 	key, url, checksum, err := selectDownload(manifest, platform)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	url, err = resolveDownloadURL(manifest.Source, url)
 	if err != nil {
 		return DownloadResult{}, err
 	}
@@ -315,6 +322,28 @@ func selectDownload(manifest Manifest, platform string) (string, string, string,
 		}
 	}
 	return "", "", "", fmt.Errorf("no download for platform %q", platform)
+}
+
+func resolveDownloadURL(manifestURL string, downloadURL string) (string, error) {
+	downloadURL = strings.TrimSpace(downloadURL)
+	if downloadURL == "" {
+		return "", fmt.Errorf("download URL is required")
+	}
+	parsed, err := url.Parse(downloadURL)
+	if err != nil {
+		return "", err
+	}
+	if parsed.IsAbs() {
+		return parsed.String(), nil
+	}
+	if strings.TrimSpace(manifestURL) == "" {
+		return "", fmt.Errorf("relative download URL %q requires manifest source URL", downloadURL)
+	}
+	base, err := url.Parse(manifestURL)
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(parsed).String(), nil
 }
 
 func normalizeChecksum(value string) string {

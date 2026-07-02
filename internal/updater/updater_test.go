@@ -55,6 +55,28 @@ func TestDownloadVerifiesChecksum(t *testing.T) {
 	require.Equal(t, hex.EncodeToString(sum[:]), result.SHA256)
 }
 
+func TestDownloadResolvesRelativeArtifactURL(t *testing.T) {
+	payload := []byte("codog relative binary")
+	sum := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases/latest/manifest.json":
+			_, _ = fmt.Fprintf(w, `{"version":"0.3.0","downloads":{"test":"codog-test"},"checksums":{"test":"%s"}}`, hex.EncodeToString(sum[:]))
+		case "/releases/latest/codog-test":
+			_, _ = w.Write(payload)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	result, err := Download(context.Background(), server.URL+"/releases/latest/manifest.json", "test", t.TempDir())
+	require.NoError(t, err)
+	require.True(t, result.Verified)
+	require.Equal(t, server.URL+"/releases/latest/codog-test", result.URL)
+	require.FileExists(t, result.Path)
+}
+
 func TestDownloadRejectsChecksumMismatch(t *testing.T) {
 	var serverURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

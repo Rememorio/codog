@@ -15731,6 +15731,40 @@ func TestUpdaterVerifyCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"signature_valid": true`)
 }
 
+func TestUpdaterDownloadCommandReportsStructuredResult(t *testing.T) {
+	payload := []byte("codog cli updater binary")
+	sum := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/manifest.json":
+			_, _ = fmt.Fprintf(w, `{"version":"0.4.0","downloads":{"test":"bin/codog"},"checksums":{"test":"sha256:%s"}}`, hex.EncodeToString(sum[:]))
+		case "/bin/codog":
+			_, _ = w.Write(payload)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{Config: config.Config{ConfigHome: t.TempDir()}, Out: &out}
+	require.NoError(t, app.Updater(context.Background(), []string{"download", server.URL + "/manifest.json", "test"}))
+	var report struct {
+		Kind   string                 `json:"kind"`
+		Action string                 `json:"action"`
+		Status string                 `json:"status"`
+		Result updater.DownloadResult `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "updater", report.Kind)
+	require.Equal(t, "download", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "0.4.0", report.Result.Version)
+	require.Equal(t, server.URL+"/bin/codog", report.Result.URL)
+	require.Equal(t, hex.EncodeToString(sum[:]), report.Result.SHA256)
+	require.FileExists(t, report.Result.Path)
+}
+
 func makeAgentPluginZip(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
