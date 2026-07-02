@@ -2462,6 +2462,17 @@ func risky(value any) {
 	require.Equal(t, "status", resumedVim.Action)
 	require.True(t, resumedVim.Enabled)
 
+	out, err = runResumedJSON("/vim", "toggle")
+	require.NoError(t, err)
+	var resumedVimToggle vimReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVimToggle))
+	require.Equal(t, "vim", resumedVimToggle.Kind)
+	require.Equal(t, "set", resumedVimToggle.Action)
+	require.False(t, resumedVimToggle.Enabled)
+	require.Equal(t, "default", resumedVimToggle.EditorMode)
+	require.Equal(t, "vim", resumedVimToggle.Previous)
+	require.NotEmpty(t, resumedVimToggle.Path)
+
 	out, err = runResumedJSON("/chrome", "permissions")
 	require.NoError(t, err)
 	var resumedChrome chromeReport
@@ -3445,7 +3456,6 @@ func risky(value any) {
 		{Command: "/speak", Args: []string{"test"}, Report: "/speak test"},
 		{Command: "/speak", Args: []string{"set-command", "say"}, Report: "/speak set-command"},
 		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
-		{Command: "/vim", Args: []string{"toggle"}, Report: "/vim toggle"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
 		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},

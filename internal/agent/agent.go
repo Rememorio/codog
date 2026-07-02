@@ -24653,13 +24653,6 @@ func (a *App) runResumedVimSlash(args []string, format string) error {
 	if len(routeMeaningfulArgs(args)) == 0 {
 		resumeArgs = append(append([]string(nil), args...), "status")
 	}
-	req, err := parseVimArgs(resumeArgs)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/vim", req.Action), format)
-	}
 	return a.Vim(resumeArgs)
 }
 
