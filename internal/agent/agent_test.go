@@ -3437,7 +3437,6 @@ func risky(value any) {
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
-		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
 		require.Error(t, err, guarded.Command)
@@ -3561,6 +3560,16 @@ func risky(value any) {
 		require.NoError(t, json.Unmarshal([]byte(out), &resumedReview))
 		require.Equal(t, "review", resumedReview.Kind)
 		require.GreaterOrEqual(t, resumedReview.Summary.Files, 1)
+
+		out, err = runResumedJSON("/stash", "push", "checkpoint")
+		require.NoError(t, err)
+		var resumedStashPush stashReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedStashPush))
+		require.Equal(t, "stash", resumedStashPush.Kind)
+		require.Equal(t, "push", resumedStashPush.Action)
+		require.GreaterOrEqual(t, resumedStashPush.Count, 1)
+		require.NotEmpty(t, resumedStashPush.Stashes)
+		require.Contains(t, resumedStashPush.Stashes[0].Subject, "checkpoint")
 	}
 
 	out, err = captureStdout(t, func() error {

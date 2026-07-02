@@ -24499,16 +24499,7 @@ func (a *App) runResumedTagSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedStashSlash(args []string, format string) error {
-	req, err := parseStashArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "list", "show":
-		return a.Stash(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/stash", req.Action), format)
-	}
+	return a.Stash(args)
 }
 
 func (a *App) runResumedAgentsSlash(args []string, overrides config.FlagOverrides, format string) error {
