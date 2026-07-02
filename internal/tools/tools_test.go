@@ -1540,6 +1540,7 @@ func TestUpdateBuiltinScopeRefreshesCompleteBuiltinRegistry(t *testing.T) {
 		SandboxStrategy: "none",
 		AdditionalDirs:  []string{extra},
 		ConfigHome:      configHome,
+		TrustedRoots:    []string{"repo-default"},
 		MCPServers:      servers,
 		QuestionIn:      questionIn,
 		QuestionOut:     io.Discard,
@@ -1564,6 +1565,9 @@ func TestUpdateBuiltinScopeRefreshesCompleteBuiltinRegistry(t *testing.T) {
 	_, tool, ok := registry.resolve("task_create")
 	require.True(t, ok)
 	require.Equal(t, configHome, tool.(TaskCreateTool).ConfigHome)
+	_, tool, ok = registry.resolve("worker_create")
+	require.True(t, ok)
+	require.Equal(t, []string{"repo-default"}, tool.(WorkerCreateTool).TrustedRoots)
 	_, tool, ok = registry.resolve("list_mcp_prompts")
 	require.True(t, ok)
 	require.Equal(t, servers, tool.(ListMCPPromptsTool).Servers)
@@ -3426,13 +3430,15 @@ func TestWorkerToolsManagePromptWorker(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "codog-shim")
 	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'worker:%s\\n' \"$*\"\n"), 0o755))
 
-	createOut, err := WorkerCreateTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"cwd":".","trusted_roots":["."],"auto_recover_prompt_misdelivery":false}`))
+	createOut, err := WorkerCreateTool{Workspace: workspace, ConfigHome: configHome, TrustedRoots: []string{"repo-default", "shared"}}.Execute(context.Background(), []byte(`{"cwd":".","trusted_roots":["shared","."],"auto_recover_prompt_misdelivery":false}`))
 	require.NoError(t, err)
 	var created struct {
-		WorkerID string `json:"worker_id"`
+		WorkerID     string   `json:"worker_id"`
+		TrustedRoots []string `json:"trusted_roots"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(createOut), &created))
 	require.NotEmpty(t, created.WorkerID)
+	require.Equal(t, []string{"repo-default", "shared", "."}, created.TrustedRoots)
 
 	listOut, err := WorkerListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"status":"ready_for_prompt"}`))
 	require.NoError(t, err)

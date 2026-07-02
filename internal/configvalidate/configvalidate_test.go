@@ -160,6 +160,17 @@ func TestValidateBytesValidatesProviderFallbacks(t *testing.T) {
 	require.Equal(t, "an array of strings", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesTrustedRoots(t *testing.T) {
+	source := []byte(`{"trustedRoots":["/repo",7]}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "trustedRoots", result.Errors[0].Field)
+	require.Equal(t, "an array of strings", result.Errors[0].Expected)
+}
+
 func TestValidateFileRejectsTOMLAndReportSummarizes(t *testing.T) {
 	dir := t.TempDir()
 	goodPath := filepath.Join(dir, "config.json")

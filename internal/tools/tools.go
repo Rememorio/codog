@@ -130,6 +130,7 @@ type RegistryOptions struct {
 	AdditionalDirs  []string
 	ConfigHome      string
 	ConfigEnv       map[string]string
+	TrustedRoots    []string
 	OAuthProfile    string
 	MCPServers      map[string]config.MCPServerConfig
 	PowerShell      string
@@ -608,7 +609,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(TeamListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
-	r.Register(WorkerCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(WorkerCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, TrustedRoots: opts.TrustedRoots})
 	r.Register(WorkerListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerObserveTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -6662,8 +6663,9 @@ func (t RecoveryStatusTool) Execute(_ context.Context, input json.RawMessage) (s
 }
 
 type WorkerCreateTool struct {
-	Workspace  string
-	ConfigHome string
+	Workspace    string
+	ConfigHome   string
+	TrustedRoots []string
 }
 
 func (WorkerCreateTool) Definition() anthropic.ToolDefinition {
@@ -6702,11 +6704,25 @@ func (t WorkerCreateTool) Execute(_ context.Context, input json.RawMessage) (str
 	if payload.AutoRecoverPromptMisdelivery != nil {
 		autoRecover = *payload.AutoRecoverPromptMisdelivery
 	}
-	worker, err := workerStore(t.ConfigHome, t.Workspace).Create(cwd, payload.TrustedRoots, autoRecover)
+	worker, err := workerStore(t.ConfigHome, t.Workspace).Create(cwd, mergeTrustedRoots(t.TrustedRoots, payload.TrustedRoots), autoRecover)
 	if err != nil {
 		return "", err
 	}
 	return pretty(worker), nil
+}
+
+func mergeTrustedRoots(configRoots []string, perCallRoots []string) []string {
+	out := make([]string, 0, len(configRoots)+len(perCallRoots))
+	seen := map[string]bool{}
+	for _, root := range append(append([]string(nil), configRoots...), perCallRoots...) {
+		root = strings.TrimSpace(root)
+		if root == "" || seen[root] {
+			continue
+		}
+		seen[root] = true
+		out = append(out, root)
+	}
+	return out
 }
 
 type WorkerListTool struct {

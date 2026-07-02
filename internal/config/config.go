@@ -448,6 +448,7 @@ type Config struct {
 	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
 	ProviderFallbacks   ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
 	Env                 map[string]string          `json:"env,omitempty"`
+	TrustedRoots        []string                   `json:"trustedRoots,omitempty"`
 	RAGBaseURL          string                     `json:"rag_base_url,omitempty"`
 	RAGTimeoutSeconds   int                        `json:"rag_timeout_seconds,omitempty"`
 	RAGTopKMax          int                        `json:"rag_top_k_max,omitempty"`
@@ -1149,6 +1150,9 @@ func merge(dst *Config, src Config) {
 			dst.Env[key] = value
 		}
 	}
+	if src.TrustedRoots != nil {
+		dst.TrustedRoots = mergeStringLists(dst.TrustedRoots, src.TrustedRoots)
+	}
 	if src.RAGBaseURL != "" {
 		dst.RAGBaseURL = src.RAGBaseURL
 	}
@@ -1393,6 +1397,23 @@ func mergeProviderFallbackConfig(dst *ProviderFallbackConfig, src ProviderFallba
 	if src.Fallbacks != nil {
 		dst.Fallbacks = append([]string(nil), src.Fallbacks...)
 	}
+}
+
+func mergeStringLists(base []string, overlay []string) []string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(base)+len(overlay))
+	seen := map[string]bool{}
+	for _, value := range append(append([]string(nil), base...), overlay...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func mergeHookConfig(dst *HookConfig, src HookConfig) {

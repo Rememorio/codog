@@ -98,6 +98,7 @@ var topLevelFields = []fieldSpec{
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},
 	{"env", FieldStringMap},
+	{"trustedRoots", FieldStringArray},
 	{"rag_base_url", FieldString},
 	{"rag_timeout_seconds", FieldNumber},
 	{"rag_top_k_max", FieldNumber},

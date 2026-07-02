@@ -200,6 +200,24 @@ func TestLoadMergesTopLevelEnvByConfigPrecedence(t *testing.T) {
 	}, cfg.Env)
 }
 
+func TestLoadMergesTrustedRootsByConfigPrecedence(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{"trustedRoots":["/repo/user","/repo/shared"]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{"trustedRoots":["/repo/shared","/repo/project"]}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.local.json"), []byte(`{"trustedRoots":["/repo/local"]}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"/repo/user", "/repo/shared", "/repo/project", "/repo/local"}, cfg.TrustedRoots)
+}
+
 func TestLoadRejectsInvalidAPITimeoutConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
