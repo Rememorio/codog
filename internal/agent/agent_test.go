@@ -1818,23 +1818,36 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/compact"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
-	require.Equal(t, "interactive_only", slashReport.ErrorKind)
-	require.Equal(t, "/compact", slashReport.Command)
-	require.Contains(t, slashReport.Hint, "--resume")
+	require.Contains(t, err.Error(), "no saved sessions")
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	store := session.NewWorkspaceStore(configHome, cwd)
+	require.NoError(t, store.Append("direct-compact", anthropic.TextMessage("user", "one")))
+	require.NoError(t, store.Append("direct-compact", anthropic.TextMessage("assistant", "two")))
+	require.NoError(t, store.Append("direct-compact", anthropic.TextMessage("user", "three")))
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/compact", "--session", "direct-compact", "--keep", "1"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var compactReport session.ReplaceResult
+	require.NoError(t, json.Unmarshal([]byte(out), &compactReport))
+	require.Equal(t, "direct-compact", compactReport.SessionID)
+	require.Equal(t, 3, compactReport.OriginalMessages)
+	require.Equal(t, 2, compactReport.RemainingMessages)
+	require.Equal(t, 1, compactReport.RemovedMessages)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/clear"}, config.FlagOverrides{})
 	})
-	require.Error(t, err)
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
-	require.Equal(t, "interactive_only", slashReport.ErrorKind)
-	require.Equal(t, "/clear", slashReport.Command)
-	require.Contains(t, slashReport.Hint, "--resume")
+	require.NoError(t, err)
+	var clearReport clearCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &clearReport))
+	require.Equal(t, "clear", clearReport.Kind)
+	require.Equal(t, "create_session", clearReport.Action)
+	require.Equal(t, "ok", clearReport.Status)
+	require.NotEmpty(t, clearReport.SessionID)
+	require.NotEmpty(t, clearReport.Path)
 }
 
 func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
