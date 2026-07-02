@@ -25381,10 +25381,8 @@ func (a *App) runResumedCodeIntelLSPSlash(args []string, format string) error {
 	}
 	action := strings.ToLower(strings.TrimSpace(args[0]))
 	switch action {
-	case "list", "actions", "capabilities", "discover", "status", "query", "request":
+	case "list", "actions", "capabilities", "discover", "status", "query", "request", "start", "stop":
 		return a.CodeIntelLSP(args)
-	case "start", "stop":
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/code-intel lsp", action), format)
 	default:
 		return fmt.Errorf("unknown code-intel lsp command %q", args[0])
 	}

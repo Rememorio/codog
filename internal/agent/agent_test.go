@@ -20976,6 +20976,39 @@ func TestCodeIntelLSPCommands(t *testing.T) {
 	require.Contains(t, out.String(), `"status": "stopped"`)
 }
 
+func TestResumedCodeIntelLSPStartAndStop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: t.TempDir(),
+		Out:       &out,
+	}
+
+	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"start", "go", "sleep", "30"}, "json"))
+	var started codeintel.LSPServerStatus
+	require.NoError(t, json.Unmarshal(out.Bytes(), &started))
+	require.Equal(t, "go", started.Language)
+	require.Equal(t, "running", started.Task.Status)
+	require.NotEmpty(t, started.TaskID)
+	t.Cleanup(func() { _, _ = background.NewStore(configHome).Stop(started.TaskID) })
+	out.Reset()
+
+	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"list"}, "json"))
+	require.Contains(t, out.String(), `"language": "go"`)
+	require.Contains(t, out.String(), started.TaskID)
+	out.Reset()
+
+	require.NoError(t, app.runResumedCodeIntelLSPSlash([]string{"stop", "go"}, "json"))
+	var stopped codeintel.LSPServerStatus
+	require.NoError(t, json.Unmarshal(out.Bytes(), &stopped))
+	require.Equal(t, started.TaskID, stopped.TaskID)
+	require.Equal(t, "stopped", stopped.Task.Status)
+}
+
 func lspActionExists(actions []codeintel.LSPActionInfo, name string, method string) bool {
 	for _, action := range actions {
 		if action.Name == name && action.Method == method {
