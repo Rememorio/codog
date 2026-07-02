@@ -272,19 +272,43 @@ func (r Runner) StopFailure(ctx context.Context, output string, reason string) e
 }
 
 func (r Runner) PreCompact(ctx context.Context, input string) error {
+	report, err := r.PreCompactReport(ctx, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// PreCompactReport runs PreCompact hooks and returns parsed hook feedback.
+func (r Runner) PreCompactReport(ctx context.Context, input string) (RunReport, error) {
 	payload := Payload{
 		Event: "pre_compact",
 		Input: input,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PostCompact(ctx context.Context, input string) error {
+	report, err := r.PostCompactReport(ctx, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// PostCompactReport runs PostCompact hooks and returns parsed hook feedback.
+func (r Runner) PostCompactReport(ctx context.Context, input string) (RunReport, error) {
 	payload := Payload{
 		Event: "post_compact",
 		Input: input,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) Notification(ctx context.Context, notificationType string, title string, message string) error {

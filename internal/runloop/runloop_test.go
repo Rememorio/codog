@@ -380,8 +380,12 @@ func TestRunnerExecutesPreCompactHook(t *testing.T) {
 			MaxTurns:            2,
 			AutoCompactMessages: 1,
 			Hooks: config.HookConfig{
-				PreCompactCommands:  []config.HookCommand{{Command: "cat > compact.json"}},
-				PostCompactCommands: []config.HookCommand{{Command: "cat > post-compact.json"}},
+				PreCompactCommands: []config.HookCommand{{
+					Command: `cat > compact.json; printf '%s' '{"systemMessage":"pre compact note","hookSpecificOutput":{"additionalContext":"pre compact context"}}'`,
+				}},
+				PostCompactCommands: []config.HookCommand{{
+					Command: `cat > post-compact.json; printf '%s' '{"systemMessage":"post compact note","hookSpecificOutput":{"additionalContext":"post compact context"}}'`,
+				}},
 			},
 		},
 		Client:    client,
@@ -410,6 +414,14 @@ func TestRunnerExecutesPreCompactHook(t *testing.T) {
 	require.Equal(t, "post_compact", postHookPayload.Event)
 	require.Contains(t, postHookPayload.Input, `"messages":4`)
 	require.Contains(t, postHookPayload.Input, `"keep":1`)
+	require.Len(t, client.requests, 1)
+	summary := client.requests[0].Messages[0].Content[0].Text
+	require.Contains(t, summary, "auto-compacted")
+	require.Contains(t, summary, "Compaction hook feedback:")
+	require.Contains(t, summary, "pre compact note")
+	require.Contains(t, summary, "pre compact context")
+	require.Contains(t, summary, "post compact note")
+	require.Contains(t, summary, "post compact context")
 }
 
 func TestRunnerExecutesFileChangedHookAfterWrite(t *testing.T) {

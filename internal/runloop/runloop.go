@@ -105,17 +105,29 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 	var messageUsages []MessageUsage
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
 		compactPayload := ""
+		compactFeedback := []string{}
 		if shouldCompactMessages(messages, r.Config.AutoCompactMessages) {
 			compactPayload = CompactHookPayload("auto", "", len(messages), r.Config.AutoCompactMessages)
-			if err := hookRunner.PreCompact(ctx, compactPayload); err != nil {
+			report, err := hookRunner.PreCompactReport(ctx, compactPayload)
+			if err != nil {
 				return TurnResult{}, err
+			}
+			compactFeedback = append(compactFeedback, hooks.MessagesFromReport(report)...)
+			if report.Denied {
+				return TurnResult{}, hookDeniedReportError("pre_compact", report)
 			}
 		}
 		requestMessages := CompactMessages(messages, r.Config.AutoCompactMessages)
 		if compactPayload != "" {
-			if err := hookRunner.PostCompact(ctx, compactPayload); err != nil {
+			report, err := hookRunner.PostCompactReport(ctx, compactPayload)
+			if err != nil {
 				return TurnResult{}, err
 			}
+			compactFeedback = append(compactFeedback, hooks.MessagesFromReport(report)...)
+			if report.Denied {
+				return TurnResult{}, hookDeniedReportError("post_compact", report)
+			}
+			requestMessages = appendCompactionHookFeedback(requestMessages, compactFeedback)
 		}
 		req := anthropic.Request{
 			Model:           r.Config.Model,
@@ -411,6 +423,29 @@ func mergeHookFeedback(messages []string, output string, isError bool) string {
 	}
 	sections = append(sections, label+":\n"+strings.Join(messages, "\n"))
 	return strings.Join(sections, "\n\n")
+}
+
+func appendCompactionHookFeedback(messages []anthropic.Message, feedback []string) []anthropic.Message {
+	feedback = compactHookFeedbackMessages(feedback)
+	if len(feedback) == 0 {
+		return messages
+	}
+	if len(messages) == 0 || len(messages[0].Content) == 0 || messages[0].Content[0].Type != "text" {
+		return append([]anthropic.Message{anthropic.TextMessage("user", "Compaction hook feedback:\n"+strings.Join(feedback, "\n"))}, messages...)
+	}
+	out := append([]anthropic.Message(nil), messages...)
+	out[0].Content = append([]anthropic.ContentBlock(nil), messages[0].Content...)
+	text := strings.TrimRight(out[0].Content[0].Text, "\n")
+	out[0].Content[0].Text = text + "\n\nCompaction hook feedback:\n" + strings.Join(feedback, "\n")
+	return out
+}
+
+func hookDeniedReportError(event string, report hooks.RunReport) error {
+	messages := hooks.MessagesFromReport(report)
+	if len(messages) > 0 {
+		return fmt.Errorf("%s hook denied: %s", event, strings.Join(messages, "\n"))
+	}
+	return fmt.Errorf("%s hook denied", event)
 }
 
 func compactHookFeedbackMessages(messages []string) []string {

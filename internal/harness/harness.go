@@ -474,6 +474,14 @@ func Run(ctx context.Context) (Report, error) {
 			},
 			prompt:              "trigger compact",
 			autoCompactMessages: 1,
+			hooks: config.HookConfig{
+				PreCompactCommands: []config.HookCommand{{
+					Command: `printf '%s' '{"systemMessage":"compact parity pre"}'`,
+				}},
+				PostCompactCommands: []config.HookCommand{{
+					Command: `printf '%s' '{"hookSpecificOutput":{"additionalContext":"compact parity post"}}'`,
+				}},
+			},
 			previous: []anthropic.Message{
 				anthropic.TextMessage("user", "one"),
 				anthropic.TextMessage("assistant", "two"),
@@ -495,6 +503,11 @@ func Run(ctx context.Context) (Report, error) {
 				if len(requests[0].Messages[0].Content) == 0 ||
 					!strings.Contains(requests[0].Messages[0].Content[0].Text, "auto-compacted") {
 					return fmt.Errorf("missing auto-compaction summary message")
+				}
+				summary := requests[0].Messages[0].Content[0].Text
+				if !strings.Contains(summary, "compact parity pre") ||
+					!strings.Contains(summary, "compact parity post") {
+					return fmt.Errorf("missing compaction hook feedback in summary")
 				}
 				return nil
 			},
