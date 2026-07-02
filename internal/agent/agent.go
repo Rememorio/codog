@@ -23247,6 +23247,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.IssueDraft(resumeSlashArgs("issue", args, format), resumed)
 	case "/review", "/ultrareview":
 		return a.Review(resumeSlashArgs("review", args, format))
+	case "/reviewremote", "/review-remote":
+		return a.ReviewRemote(ctx, resumeSlashArgs("reviewRemote", args, format))
 	case "/symbols":
 		return a.Symbols(resumeSlashArgs("symbols", args, format))
 	case "/diagnostics":

@@ -367,6 +367,8 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/rename":             true,
 	"/reset":              true,
 	"/review":             true,
+	"/review-remote":      true,
+	"/reviewremote":       true,
 	"/rewind":             true,
 	"/rc":                 true,
 	"/sandbox":            true,

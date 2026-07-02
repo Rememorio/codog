@@ -1056,6 +1056,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	issueSlash, ok := capabilityReportSlash(report, "/issue")
 	require.True(t, ok)
 	require.True(t, issueSlash.ResumeSupported)
+	reviewRemoteSlash, ok := capabilityReportSlash(report, "/reviewRemote")
+	require.True(t, ok)
+	require.True(t, reviewRemoteSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/new"))
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
@@ -10581,6 +10584,24 @@ exit 1
 	require.NoError(t, err)
 	require.Contains(t, cliOut, `"kind": "review_remote"`)
 	require.Contains(t, cliOut, `"remote_comments"`)
+	require.Contains(t, cliOut, `"total": 2`)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "latest", "--output-format", "json", "/reviewRemote", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var resumedRemote reviewRemoteReport
+	require.NoError(t, json.Unmarshal([]byte(cliOut), &resumedRemote))
+	require.Equal(t, "review_remote", resumedRemote.Kind)
+	require.Equal(t, "acme/widgets", resumedRemote.Repository)
+	require.Equal(t, 42, resumedRemote.PullRequest)
+	require.Equal(t, 2, resumedRemote.Remote.Total)
+
+	cliOut, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "latest", "--output-format", "json", "/review-remote", "42", "--repo", "acme/widgets"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "review_remote"`)
 	require.Contains(t, cliOut, `"total": 2`)
 
 	require.True(t, app.handleSlash(context.Background(), "/reviewRemote 42 --repo acme/widgets", &session.Session{ID: "session"}))

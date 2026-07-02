@@ -341,6 +341,8 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/code-intel")
 	require.Contains(t, names, "/notebook-edit")
 	require.Contains(t, names, "/notebook-read")
+	require.Contains(t, names, "/reviewRemote")
+	require.Contains(t, names, "/review-remote")
 	require.NotContains(t, names, "/commit")
 	require.NotContains(t, names, "/ultraplan")
 	require.NotContains(t, names, "/exit-plan")
