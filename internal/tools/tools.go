@@ -505,16 +505,17 @@ func toolAliasKey(name string) string {
 }
 
 type Prompter struct {
-	Mode        Permission
-	AllowRules  []string
-	DenyRules   []string
-	AskRules    []string
-	DeniedTools []string
-	Workspace   string
-	In          io.Reader
-	Err         io.Writer
-	OnRequest   func(PermissionDecision)
-	OnDecision  func(PermissionDecision)
+	Mode           Permission
+	AllowRules     []string
+	DenyRules      []string
+	AskRules       []string
+	DeniedTools    []string
+	Workspace      string
+	AdditionalDirs []string
+	In             io.Reader
+	Err            io.Writer
+	OnRequest      func(PermissionDecision)
+	OnDecision     func(PermissionDecision)
 }
 
 type PermissionDecision struct {
@@ -817,7 +818,7 @@ func (p *Prompter) Decide(name string, required Permission, input json.RawMessag
 	}
 	validationWarning := ""
 	if strings.EqualFold(name, "bash") {
-		result := bashvalidation.Validate(bashvalidation.CommandFromInput(input), string(mode), p.Workspace)
+		result := bashvalidation.ValidateWithAdditionalDirs(bashvalidation.CommandFromInput(input), string(mode), p.Workspace, p.AdditionalDirs)
 		switch result.Severity {
 		case bashvalidation.SeverityBlock:
 			decision.Reason = "bash_validation"

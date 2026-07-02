@@ -43147,17 +43147,26 @@ func (a *App) prompterWithAllowedTools(sessionID string, allowedTools []string) 
 		allowRules = addRuleValues(allowRules, skillAllowedToolRules(allowedTools))
 	}
 	return &tools.Prompter{
-		Mode:        tools.Permission(cfg.PermissionMode),
-		AllowRules:  allowRules,
-		DenyRules:   append([]string(nil), cfg.PermissionRules.Deny...),
-		AskRules:    append([]string(nil), cfg.PermissionRules.Ask...),
-		DeniedTools: append([]string(nil), cfg.PermissionRules.DeniedTools...),
-		Workspace:   a.Workspace,
-		In:          a.In,
-		Err:         a.Err,
-		OnRequest:   a.permissionRequestHook(sessionID),
-		OnDecision:  a.permissionDecisionHandler(sessionID),
+		Mode:           tools.Permission(cfg.PermissionMode),
+		AllowRules:     allowRules,
+		DenyRules:      append([]string(nil), cfg.PermissionRules.Deny...),
+		AskRules:       append([]string(nil), cfg.PermissionRules.Ask...),
+		DeniedTools:    append([]string(nil), cfg.PermissionRules.DeniedTools...),
+		Workspace:      a.Workspace,
+		AdditionalDirs: currentEffectiveAdditionalDirs(a.Workspace, cfg.AdditionalDirs),
+		In:             a.In,
+		Err:            a.Err,
+		OnRequest:      a.permissionRequestHook(sessionID),
+		OnDecision:     a.permissionDecisionHandler(sessionID),
 	}
+}
+
+func currentEffectiveAdditionalDirs(workspace string, configDirs []string) []string {
+	dirs, err := pathscope.EffectiveDirs(workspace, configDirs)
+	if err != nil {
+		return nil
+	}
+	return dirs
 }
 
 func (a *App) permissionRequestHook(sessionID string) func(tools.PermissionDecision) {

@@ -112,3 +112,74 @@ func TestValidateExistingAdditionalDirs(t *testing.T) {
 	require.Equal(t, 1, report.InvalidCount)
 	require.Equal(t, "workspace", report.Entries[0].Source)
 }
+
+func TestValidatePayloadScopeRejectsEscapes(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("readme"), 0o644))
+
+	decision := ValidatePayloadScope(workspace, nil, "cat ../outside/secret.txt", workspace)
+	require.False(t, decision.Allowed)
+	require.Contains(t, decision.Reason, "outside workspace")
+	require.Equal(t, "../outside/secret.txt", decision.Candidate)
+
+	decision = ValidatePayloadScope(workspace, nil, "cat "+filepath.Join(workspace, "README.md"), workspace)
+	require.True(t, decision.Allowed, decision.Reason)
+}
+
+func TestValidatePayloadScopeRejectsSymlinkAndGlobEscapes(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(workspace, "linked-outside")))
+
+	decision := ValidatePayloadScope(workspace, nil, "cat linked-outside/secret.txt", workspace)
+	require.False(t, decision.Allowed)
+	require.Contains(t, decision.Resolved, outside)
+
+	decision = ValidatePayloadScope(workspace, nil, "cat "+filepath.Join(outside, "*.txt"), workspace)
+	require.False(t, decision.Allowed)
+	resolvedOutsideSecret, err := filepath.EvalSymlinks(filepath.Join(outside, "secret.txt"))
+	require.NoError(t, err)
+	require.Equal(t, resolvedOutsideSecret, decision.Resolved)
+}
+
+func TestValidatePayloadScopeHandlesEnvRedirectionAndWindowsPaths(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	t.Setenv("CODOG_SCOPE_OUTSIDE", outside)
+
+	require.Equal(t, []string{filepath.Join(outside, "secret.txt")}, ExtractPathCandidates("cat $CODOG_SCOPE_OUTSIDE/secret.txt"))
+
+	decision := ValidatePayloadScope(workspace, nil, "cat $CODOG_SCOPE_OUTSIDE/secret.txt", workspace)
+	require.False(t, decision.Allowed)
+	require.Contains(t, decision.Resolved, outside)
+
+	decision = ValidatePayloadScope(workspace, nil, "cat <../outside/secret.txt 2>../outside/error.log", workspace)
+	require.False(t, decision.Allowed)
+	require.Equal(t, "../outside/secret.txt", decision.Candidate)
+
+	decision = ValidatePayloadScope(workspace, nil, `type C:\Users\other\secret.txt`, workspace)
+	require.False(t, decision.Allowed)
+	require.Contains(t, decision.Reason, "windows absolute path")
+}
+
+func TestValidatePayloadScopeAllowsAdditionalDirs(t *testing.T) {
+	workspace := t.TempDir()
+	extra := t.TempDir()
+	extraFile := filepath.Join(extra, "allowed.txt")
+	require.NoError(t, os.WriteFile(extraFile, []byte("ok"), 0o644))
+
+	decision := ValidatePayloadScope(workspace, []string{extra}, "cat "+extraFile, workspace)
+	require.True(t, decision.Allowed, decision.Reason)
+}

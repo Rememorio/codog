@@ -2276,12 +2276,19 @@ func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 	require.Contains(t, out, `"message": "bash command is not read-only"`)
 
 	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
 	prompter.Workspace = workspace
 	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"cat `+filepath.Join(outside, "secret.txt")+`"}}`), prompter)
 	require.NoError(t, err)
 	require.Contains(t, out, `"allowed": false`)
 	require.Contains(t, out, `"reason": "bash_validation"`)
 	require.Contains(t, out, `"message": "path resolves outside workspace scope"`)
+
+	prompter.AdditionalDirs = []string{outside}
+	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"bash","input":{"command":"cat `+filepath.Join(outside, "secret.txt")+`"}}`), prompter)
+	require.NoError(t, err)
+	require.Contains(t, out, `"allowed": true`)
+	require.Contains(t, out, `"reason": "bash_validation_read_only"`)
 
 	prompter = &Prompter{Mode: PermissionAllow, DeniedTools: []string{"write_file"}}
 	out, err = registry.Execute(context.Background(), "testing_permission", []byte(`{"target_tool":"write_file","input":{"path":"a.txt","content":"x"}}`), prompter)

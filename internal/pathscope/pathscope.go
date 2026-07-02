@@ -7,12 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 )
 
 const FileName = "additional-dirs.json"
+
+var windowsAbsolutePathPattern = regexp.MustCompile(`^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)`)
 
 type Entry struct {
 	Path   string `json:"path"`
@@ -55,6 +58,15 @@ type ValidationReport struct {
 	ValidCount   int               `json:"valid_count"`
 	InvalidCount int               `json:"invalid_count"`
 	Entries      []ValidationEntry `json:"entries"`
+}
+
+// PayloadScopeDecision records whether path-like payload operands stay within
+// the configured workspace scope.
+type PayloadScopeDecision struct {
+	Allowed   bool   `json:"allowed"`
+	Reason    string `json:"reason"`
+	Candidate string `json:"candidate,omitempty"`
+	Resolved  string `json:"resolved,omitempty"`
 }
 
 func Path(workspace string) string {
@@ -249,6 +261,67 @@ func Validate(workspace string, configDirs []string, paths []string) (Validation
 	return report, nil
 }
 
+// ValidatePayloadScope validates path-like shell/tool payload operands against
+// the workspace and explicitly allowed additional directories.
+func ValidatePayloadScope(workspace string, additionalDirs []string, payload string, cwd string) PayloadScopeDecision {
+	roots := scopeRoots(workspace, additionalDirs)
+	if len(roots) == 0 {
+		return PayloadScopeDecision{Allowed: true, Reason: "workspace path scope not configured"}
+	}
+	if strings.TrimSpace(cwd) != "" {
+		cwdDecision := validatePayloadPath(roots, cwd, roots[0])
+		if !cwdDecision.Allowed {
+			cwdDecision.Reason = "cwd outside workspace scope"
+			return cwdDecision
+		}
+	}
+	base := roots[0]
+	if strings.TrimSpace(cwd) != "" {
+		base = expandPath(cwd)
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(roots[0], base)
+		}
+		base, _ = filepath.Abs(base)
+	}
+	for _, candidate := range ExtractPathCandidates(payload) {
+		decision := validatePayloadPath(roots, candidate, base)
+		if !decision.Allowed {
+			return decision
+		}
+	}
+	return PayloadScopeDecision{Allowed: true, Reason: "all path candidates are inside workspace scope"}
+}
+
+// ExtractPathCandidates returns conservative path-like operands from a shell or
+// tool payload.
+func ExtractPathCandidates(payload string) []string {
+	fields := strings.Fields(payload)
+	candidates := make([]string, 0, len(fields))
+	for _, field := range fields {
+		for _, token := range splitAttachedShellPathTokens(field) {
+			token = strings.Trim(token, " \t\r\n'\"`")
+			token = strings.TrimRight(token, ",;)")
+			token = strings.TrimLeft(token, "(")
+			if token == "" || strings.HasPrefix(token, "-") || strings.Contains(token, "://") || isShellEnvAssignment(token) {
+				continue
+			}
+			token = stripRedirectionOperator(token)
+			if token == "" || strings.HasPrefix(token, "-") || strings.Contains(token, "://") {
+				continue
+			}
+			expanded := expandPath(token)
+			candidate := token
+			if looksPathLike(expanded) {
+				candidate = expanded
+			}
+			if looksPathLike(candidate) && !stringInSlice(candidates, candidate) {
+				candidates = append(candidates, candidate)
+			}
+		}
+	}
+	return candidates
+}
+
 func NormalizeDir(workspace, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
@@ -275,6 +348,161 @@ func NormalizeDir(workspace, requested string) (string, error) {
 		return "", fmt.Errorf("additional path is not a directory: %s", requested)
 	}
 	return filepath.Clean(resolved), nil
+}
+
+func scopeRoots(workspace string, additionalDirs []string) []string {
+	roots := []string{cleanWorkspace(workspace)}
+	for _, dir := range additionalDirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		candidate := expandPath(dir)
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(roots[0], candidate)
+		}
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = resolved
+		}
+		roots = append(roots, filepath.Clean(abs))
+	}
+	return roots
+}
+
+func validatePayloadPath(roots []string, candidate string, base string) PayloadScopeDecision {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return PayloadScopeDecision{Allowed: true, Reason: "empty path candidate"}
+	}
+	if windowsAbsolutePathPattern.MatchString(candidate) {
+		return PayloadScopeDecision{Allowed: false, Reason: "windows absolute path is outside workspace scope", Candidate: candidate, Resolved: candidate}
+	}
+	expanded := expandPath(candidate)
+	path := expanded
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(base, path)
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return PayloadScopeDecision{Allowed: false, Reason: err.Error(), Candidate: candidate}
+	}
+	for _, expandedPath := range expandGlobForScope(filepath.Clean(path)) {
+		resolved := resolveForScope(expandedPath)
+		if !pathWithinAny(resolved, roots) {
+			return PayloadScopeDecision{Allowed: false, Reason: "path resolves outside workspace scope", Candidate: candidate, Resolved: resolved}
+		}
+	}
+	return PayloadScopeDecision{Allowed: true, Reason: "path is inside workspace scope", Candidate: candidate, Resolved: resolveForScope(path)}
+}
+
+func expandGlobForScope(path string) []string {
+	if !strings.ContainsAny(path, "*?[") {
+		return []string{path}
+	}
+	matches, err := filepath.Glob(path)
+	if err == nil && len(matches) != 0 {
+		return matches
+	}
+	parts := strings.Split(filepath.Clean(path), string(os.PathSeparator))
+	stable := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.ContainsAny(part, "*?[") {
+			break
+		}
+		stable = append(stable, part)
+	}
+	if len(stable) == 0 {
+		return []string{path}
+	}
+	if filepath.IsAbs(path) && stable[0] == "" {
+		return []string{string(os.PathSeparator) + filepath.Join(stable[1:]...)}
+	}
+	return []string{filepath.Join(stable...)}
+}
+
+func resolveForScope(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	var missing []string
+	cursor := filepath.Clean(path)
+	for {
+		resolved, err := filepath.EvalSymlinks(cursor)
+		if err == nil {
+			parts := append([]string{resolved}, missing...)
+			return filepath.Clean(filepath.Join(parts...))
+		}
+		parent := filepath.Dir(cursor)
+		if parent == cursor {
+			return filepath.Clean(path)
+		}
+		missing = append([]string{filepath.Base(cursor)}, missing...)
+		cursor = parent
+	}
+}
+
+func splitAttachedShellPathTokens(field string) []string {
+	fields := []string{field}
+	for _, sep := range []string{"<", ">", ">>", "2>", "1>", "&>", "&>>"} {
+		next := make([]string, 0, len(fields))
+		for _, value := range fields {
+			parts := strings.Split(value, sep)
+			next = append(next, parts...)
+		}
+		fields = next
+	}
+	return fields
+}
+
+func stripRedirectionOperator(token string) string {
+	for _, prefix := range []string{"&>>", "&>", "2>", "1>", ">>", ">", "<"} {
+		if strings.HasPrefix(token, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(token, prefix))
+		}
+	}
+	return token
+}
+
+func looksPathLike(token string) bool {
+	return token == "." ||
+		token == ".." ||
+		strings.HasPrefix(token, "./") ||
+		strings.HasPrefix(token, "../") ||
+		strings.HasPrefix(token, "~/") ||
+		strings.HasPrefix(token, "$HOME/") ||
+		filepath.IsAbs(token) ||
+		windowsAbsolutePathPattern.MatchString(token) ||
+		strings.Contains(token, "/../") ||
+		strings.Contains(token, string(os.PathSeparator)) ||
+		strings.Contains(token, "\\") ||
+		strings.ContainsAny(token, "*?[")
+}
+
+func isShellEnvAssignment(token string) bool {
+	name, _, ok := strings.Cut(token, "=")
+	if !ok || name == "" {
+		return false
+	}
+	for i, r := range name {
+		if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func stringInSlice(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRequestedDir(workspace, requested string, allowed []string) ValidationEntry {

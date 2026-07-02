@@ -1,6 +1,7 @@
 package bashvalidation
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -38,6 +39,7 @@ func TestValidateReadOnlyBlocksExplicitPathsOutsideWorkspace(t *testing.T) {
 	outside := t.TempDir()
 	insideFile := filepath.Join(workspace, "README.md")
 	outsideFile := filepath.Join(outside, "secret.txt")
+	require.NoError(t, os.WriteFile(insideFile, []byte("readme"), 0o644))
 
 	result := Validate("cat "+insideFile, "read-only", workspace)
 	require.Equal(t, SeverityAllow, result.Severity)
@@ -57,6 +59,32 @@ func TestValidateReadOnlyBlocksExplicitPathsOutsideWorkspace(t *testing.T) {
 	require.Equal(t, SeverityBlock, result.Severity)
 	require.Equal(t, IntentReadOnly, result.Intent)
 	require.Contains(t, result.Reason, "outside workspace")
+}
+
+func TestValidateReadOnlyUsesWorkspaceScopeDetails(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	outside := filepath.Join(root, "outside")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(workspace, "linked-outside")))
+
+	result := Validate("cat linked-outside/secret.txt", "read-only", workspace)
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Contains(t, result.Reason, "outside workspace")
+
+	result = Validate("cat "+filepath.Join(outside, "*.txt"), "read-only", workspace)
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Contains(t, result.Reason, "outside workspace")
+
+	result = Validate("cat <../outside/secret.txt", "read-only", workspace)
+	require.Equal(t, SeverityBlock, result.Severity)
+	require.Contains(t, result.Reason, "outside workspace")
+
+	result = ValidateWithAdditionalDirs("cat "+filepath.Join(outside, "secret.txt"), "read-only", workspace, []string{outside})
+	require.Equal(t, SeverityAllow, result.Severity)
+	require.Equal(t, IntentReadOnly, result.Intent)
 }
 
 func TestValidateFlagsDestructiveCommands(t *testing.T) {
