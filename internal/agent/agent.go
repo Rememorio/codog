@@ -665,7 +665,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "ManageMarketplaces":
 		return app.Marketplace(append([]string{"sources"}, rest...))
 	case "BrowseMarketplace", "DiscoverPlugins":
-		return app.Marketplace(append([]string{"remote"}, rest...))
+		return app.Marketplace(append([]string{"browse"}, rest...))
 	case "ValidatePlugin":
 		return app.Marketplace(append([]string{"validate"}, rest...))
 	case "ManagePlugins":
@@ -6623,16 +6623,18 @@ type marketplaceRemotePlugin struct {
 }
 
 type marketplaceRemoteReport struct {
-	Kind       string                         `json:"kind"`
-	Action     string                         `json:"action"`
-	Status     string                         `json:"status"`
-	Query      string                         `json:"query,omitempty"`
-	ID         string                         `json:"id,omitempty"`
-	Sources    []marketplaceSourceInfo        `json:"sources"`
-	Plugins    []marketplaceRemotePlugin      `json:"plugins,omitempty"`
-	Plugin     *marketplaceRemotePlugin       `json:"plugin,omitempty"`
-	Pagination *pluginCompatibilityPagination `json:"pagination,omitempty"`
-	Total      int                            `json:"total"`
+	Kind        string                         `json:"kind"`
+	Action      string                         `json:"action"`
+	Status      string                         `json:"status"`
+	Message     string                         `json:"message,omitempty"`
+	NextCommand string                         `json:"next_command,omitempty"`
+	Query       string                         `json:"query,omitempty"`
+	ID          string                         `json:"id,omitempty"`
+	Sources     []marketplaceSourceInfo        `json:"sources"`
+	Plugins     []marketplaceRemotePlugin      `json:"plugins,omitempty"`
+	Plugin      *marketplaceRemotePlugin       `json:"plugin,omitempty"`
+	Pagination  *pluginCompatibilityPagination `json:"pagination,omitempty"`
+	Total       int                            `json:"total"`
 }
 
 type marketplaceSourcesRequest struct {
@@ -6744,7 +6746,11 @@ func (a *App) Marketplace(args []string) error {
 	case "settings":
 		return a.marketplaceSettings(format)
 	case "remote", "browse", "discover":
-		if marketplaceRemoteUsesStructuredReport(args[1:]) {
+		structuredRemote := marketplaceRemoteUsesStructuredReport(args[1:])
+		if args[0] != "remote" && len(args) == 1 {
+			structuredRemote = false
+		}
+		if structuredRemote {
 			report, err := a.marketplaceRemoteReport(args[1:])
 			if err != nil {
 				return err
@@ -8237,7 +8243,7 @@ func (a *App) marketplaceSettings(format string) error {
 
 func marketplaceRemoteUsesStructuredReport(args []string) bool {
 	if len(args) == 0 {
-		return false
+		return true
 	}
 	first := strings.ToLower(strings.TrimSpace(args[0]))
 	switch first {
@@ -8415,7 +8421,26 @@ func (a *App) marketplaceRemoteReport(args []string) (marketplaceRemoteReport, e
 		sources = []plugins.MarketplaceSource{source}
 	}
 	if len(sources) == 0 {
-		return marketplaceRemoteReport{}, errors.New("usage: codog marketplace remote list|search|show [--url URL] [--public-key KEY]")
+		return marketplaceRemoteReport{
+			Kind:        "marketplace",
+			Action:      "remote_" + req.Action,
+			Status:      "needs_source",
+			Message:     "No marketplace sources are configured.",
+			NextCommand: "codog marketplace sources add URL [PUBLIC_KEY]",
+			Query:       strings.TrimSpace(req.Query),
+			ID:          strings.TrimSpace(req.ID),
+			Sources:     []marketplaceSourceInfo{},
+			Plugins:     []marketplaceRemotePlugin{},
+			Total:       0,
+			Pagination: &pluginCompatibilityPagination{
+				Page:       req.Page,
+				PerPage:    req.PerPage,
+				Total:      0,
+				TotalPages: 0,
+				Start:      0,
+				End:        0,
+			},
+		}, nil
 	}
 	indexes := make([]plugins.MarketplaceIndex, 0, len(sources))
 	for _, source := range sources {

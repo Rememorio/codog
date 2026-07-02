@@ -16112,6 +16112,17 @@ func TestMarketplaceSourcesManageConfigAndBrowse(t *testing.T) {
 	out.Reset()
 
 	app.Config.Future.PluginMarketplaceKeys = nil
+	require.NoError(t, app.Marketplace([]string{"remote", "--json"}))
+	var remoteList marketplaceRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &remoteList))
+	require.Equal(t, "marketplace", remoteList.Kind)
+	require.Equal(t, "remote_list", remoteList.Action)
+	require.Equal(t, "ok", remoteList.Status)
+	require.Equal(t, 1, remoteList.Total)
+	require.Len(t, remoteList.Plugins, 1)
+	require.Equal(t, "demo", remoteList.Plugins[0].ID)
+	out.Reset()
+
 	require.NoError(t, app.Marketplace([]string{"browse"}))
 	var indexes []plugins.MarketplaceIndex
 	require.NoError(t, json.Unmarshal(out.Bytes(), &indexes))
@@ -16151,6 +16162,27 @@ func TestMarketplaceSourcesManageConfigAndBrowse(t *testing.T) {
 	require.True(t, removeReport.Removed)
 	require.Empty(t, removeReport.Sources)
 	require.Empty(t, app.Config.Future.PluginMarketplaces)
+}
+
+func TestMarketplaceRemoteWithoutSourcesReportsStatus(t *testing.T) {
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: t.TempDir(),
+		Out:       &out,
+	}
+	require.NoError(t, app.Marketplace([]string{"remote", "--json"}))
+	var report marketplaceRemoteReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "marketplace", report.Kind)
+	require.Equal(t, "remote_list", report.Action)
+	require.Equal(t, "needs_source", report.Status)
+	require.Equal(t, "No marketplace sources are configured.", report.Message)
+	require.Equal(t, "codog marketplace sources add URL [PUBLIC_KEY]", report.NextCommand)
+	require.Empty(t, report.Sources)
+	require.Empty(t, report.Plugins)
+	require.Zero(t, report.Total)
+	require.NotNil(t, report.Pagination)
 }
 
 func TestMarketplaceCompatibilityCommands(t *testing.T) {
