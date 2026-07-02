@@ -1047,6 +1047,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
 	require.True(t, capabilityReportHasSlash(report, "/checkpoint"))
 	require.True(t, capabilityReportHasSlash(report, "/bookmarks"))
+	feedbackSlash, ok := capabilityReportSlash(report, "/feedback")
+	require.True(t, ok)
+	require.True(t, feedbackSlash.ResumeSupported)
 	require.True(t, capabilityReportHasSlash(report, "/new"))
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
@@ -3027,6 +3030,28 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedBughunter))
 	require.Equal(t, "bughunter", resumedBughunter.Kind)
 	require.GreaterOrEqual(t, resumedBughunter.Total, 1)
+
+	out, err = runResumedJSON("/feedback", "resumed feedback")
+	require.NoError(t, err)
+	var resumedFeedback feedbackReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedFeedback))
+	require.Equal(t, "feedback", resumedFeedback.Kind)
+	require.Equal(t, "write", resumedFeedback.Action)
+	require.Equal(t, "resume-slash", resumedFeedback.SessionID)
+	require.Equal(t, 3, resumedFeedback.SessionMessages)
+	require.FileExists(t, resumedFeedback.File)
+	feedbackData, err := os.ReadFile(resumedFeedback.File)
+	require.NoError(t, err)
+	require.Contains(t, string(feedbackData), "resumed feedback")
+	require.Contains(t, string(feedbackData), "resume-slash")
+
+	out, err = runResumedJSON("/bug", "resumed bug report")
+	require.NoError(t, err)
+	var resumedBug feedbackReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedBug))
+	require.Equal(t, "feedback", resumedBug.Kind)
+	require.Equal(t, "resume-slash", resumedBug.SessionID)
+	require.FileExists(t, resumedBug.File)
 
 	out, err = runResumedJSON("/symbols")
 	require.NoError(t, err)

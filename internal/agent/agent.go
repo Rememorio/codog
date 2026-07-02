@@ -23239,6 +23239,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.SecurityReview(resumeSlashArgs("security-review", args, format))
 	case "/bughunter":
 		return a.Bughunter(resumeSlashArgs("bughunter", args, format))
+	case "/feedback", "/bug":
+		return a.Feedback(resumeSlashArgs("feedback", args, format), resumed)
 	case "/review", "/ultrareview":
 		return a.Review(resumeSlashArgs("review", args, format))
 	case "/symbols":
