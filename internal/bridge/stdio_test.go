@@ -46,6 +46,8 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"code/hover"`)
 	require.Contains(t, out.String(), `"code/completion"`)
 	require.Contains(t, out.String(), `"code/format"`)
+	require.Contains(t, out.String(), `"notebook/read"`)
+	require.Contains(t, out.String(), `"notebook/edit"`)
 	require.Contains(t, out.String(), `"background/list"`)
 	require.Contains(t, out.String(), `"background/run"`)
 	require.Contains(t, out.String(), `"background/logs"`)
@@ -212,6 +214,70 @@ func TestBridgeCodeIntelligence(t *testing.T) {
 	require.Contains(t, out.String(), `"kind":"format"`)
 	require.Contains(t, out.String(), `"changed":true`)
 	require.Contains(t, out.String(), `func messy()`)
+}
+
+func TestBridgeNotebookReadEdit(t *testing.T) {
+	workspace := t.TempDir()
+	notebook := `{
+  "cells": [
+    {"cell_type": "markdown", "id": "intro", "metadata": {}, "source": ["# Title\n"]},
+    {"cell_type": "code", "id": "calc", "metadata": {}, "source": ["print(1)\n"], "outputs": [{"output_type": "stream", "name": "stdout", "text": ["1\n"]}], "execution_count": 1}
+  ],
+  "metadata": {"kernelspec": {"language": "python"}},
+  "nbformat": 4,
+  "nbformat_minor": 5
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "analysis.ipynb"), []byte(notebook), 0o644))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"notebook/read","params":{"notebook_path":"analysis.ipynb","limit":1,"include_outputs":true}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"notebook/edit","params":{"notebook_path":"analysis.ipynb","cell_id":"intro","new_source":"# Renamed\n"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"notebook/edit","params":{"path":"analysis.ipynb","edit_mode":"insert","cell_id":"intro","cell_type":"markdown","source":"inserted note"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"notebook/edit","params":{"path":"analysis.ipynb","mode":"delete","cell_id":"calc"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"notebook/read","params":{"path":"analysis.ipynb","cell_index":0,"outputs":false}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"notebook_read"`)
+	require.Contains(t, out.String(), `"path":"analysis.ipynb"`)
+	require.Contains(t, out.String(), `"cell_count":2`)
+	require.Contains(t, out.String(), `"truncated":true`)
+	require.Contains(t, out.String(), `"mode":"replace"`)
+	require.Contains(t, out.String(), `"mode":"insert"`)
+	require.Contains(t, out.String(), `"mode":"delete"`)
+	require.Contains(t, out.String(), `"cell_count":2`)
+	require.Contains(t, out.String(), `# Renamed`)
+	require.NotContains(t, out.String(), `"cell_id":"calc","cell_type":"code","source":"print(1)`)
+
+	data, err := os.ReadFile(filepath.Join(workspace, "analysis.ipynb"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# Renamed")
+	require.Contains(t, string(data), "inserted note")
+	require.NotContains(t, string(data), "print(1)")
+}
+
+func TestBridgeNotebookRejectsInvalidInputs(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("not a notebook"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "outside.ipynb"), []byte(`{"cells":[]}`), 0o644))
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"notebook/read","params":{"path":"notes.txt"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"notebook/read","params":{"path":"../outside.ipynb"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"notebook/edit","params":{"path":"notes.txt","new_source":"x"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"notebook/edit","params":{"path":"notes.txt","mode":"replace"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), "notebook path must point to a .ipynb file")
+	require.Contains(t, out.String(), "escapes workspace")
+	require.Contains(t, out.String(), "new_source is required for insert and replace edits")
 }
 
 func TestBridgeEditorIdentifyOpenSelectionState(t *testing.T) {

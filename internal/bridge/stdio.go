@@ -114,6 +114,8 @@ func (s Server) handle(req Request) (any, *Error) {
 				"code/hover",
 				"code/completion",
 				"code/format",
+				"notebook/read",
+				"notebook/edit",
 				"background/list",
 				"background/run",
 				"background/get",
@@ -309,6 +311,18 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "code/format":
 		result, err := s.codeFormat(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "notebook/read":
+		result, err := s.notebookRead(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "notebook/edit":
+		result, err := s.notebookEdit(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -520,6 +534,115 @@ func (s Server) codeFormat(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"kind": "format", "write": payload.Write, "result": result}, nil
+}
+
+func (s Server) notebookRead(params json.RawMessage) (any, error) {
+	var payload struct {
+		Path           string `json:"path"`
+		NotebookPath   string `json:"notebook_path"`
+		CellIndex      *int   `json:"cell_index"`
+		Index          *int   `json:"index"`
+		Limit          int    `json:"limit"`
+		IncludeOutputs bool   `json:"include_outputs"`
+		Outputs        *bool  `json:"outputs"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	cellIndex := payload.CellIndex
+	if cellIndex == nil {
+		cellIndex = payload.Index
+	}
+	if cellIndex != nil && *cellIndex < 0 {
+		return nil, errors.New("cell_index must be non-negative")
+	}
+	includeOutputs := payload.IncludeOutputs
+	if payload.Outputs != nil {
+		includeOutputs = *payload.Outputs
+	}
+	absPath, relPath, err := s.resolveNotebookPath(firstNonEmpty(payload.NotebookPath, payload.Path))
+	if err != nil {
+		return nil, err
+	}
+	result, err := codeintel.ReadNotebook(absPath, codeintel.NotebookReadOptions{
+		CellIndex:      cellIndex,
+		Limit:          payload.Limit,
+		IncludeOutputs: includeOutputs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Path = relPath
+	return result, nil
+}
+
+func (s Server) notebookEdit(params json.RawMessage) (any, error) {
+	var payload struct {
+		Path         string  `json:"path"`
+		NotebookPath string  `json:"notebook_path"`
+		Mode         string  `json:"mode"`
+		EditMode     string  `json:"edit_mode"`
+		CellIndex    *int    `json:"cell_index"`
+		Index        *int    `json:"index"`
+		CellID       string  `json:"cell_id"`
+		CellType     string  `json:"cell_type"`
+		Type         string  `json:"type"`
+		Source       *string `json:"source"`
+		NewSource    *string `json:"new_source"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	cellIndex := payload.CellIndex
+	if cellIndex == nil {
+		cellIndex = payload.Index
+	}
+	if cellIndex != nil && *cellIndex < 0 {
+		return nil, errors.New("cell_index must be non-negative")
+	}
+	if cellIndex != nil && strings.TrimSpace(payload.CellID) != "" {
+		return nil, errors.New("notebook/edit accepts either cell_index or cell_id, not both")
+	}
+	mode := strings.ToLower(firstNonEmpty(payload.Mode, payload.EditMode))
+	if mode == "" {
+		mode = "replace"
+	}
+	switch mode {
+	case "replace", "insert", "delete":
+	default:
+		return nil, fmt.Errorf("unknown notebook edit mode %q", mode)
+	}
+	source, sourceSet := "", false
+	if payload.Source != nil {
+		source = *payload.Source
+		sourceSet = true
+	}
+	if payload.NewSource != nil {
+		source = *payload.NewSource
+		sourceSet = true
+	}
+	if (mode == "replace" || mode == "insert") && !sourceSet {
+		return nil, errors.New("new_source is required for insert and replace edits")
+	}
+	absPath, relPath, err := s.resolveNotebookPath(firstNonEmpty(payload.NotebookPath, payload.Path))
+	if err != nil {
+		return nil, err
+	}
+	index, err := codeintel.ResolveNotebookEditIndex(absPath, cellIndex, payload.CellID, mode)
+	if err != nil {
+		return nil, err
+	}
+	result, err := codeintel.EditNotebook(absPath, codeintel.NotebookEditOptions{
+		Index:    index,
+		CellType: firstNonEmpty(payload.CellType, payload.Type),
+		Source:   source,
+		Mode:     mode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Path = relPath
+	return result, nil
 }
 
 func (s Server) backgroundWatch(params json.RawMessage, encoder *json.Encoder) (any, *Error) {
@@ -1060,6 +1183,17 @@ func (s Server) diffFile(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return s.workspaceOps().Diff(payload)
+}
+
+func (s Server) resolveNotebookPath(requested string) (string, string, error) {
+	absPath, relPath, err := s.resolve(requested, false)
+	if err != nil {
+		return "", "", err
+	}
+	if !strings.EqualFold(filepath.Ext(absPath), ".ipynb") {
+		return "", "", errors.New("notebook path must point to a .ipynb file")
+	}
+	return absPath, relPath, nil
 }
 
 func (s Server) resolve(requested string, allowMissing bool) (string, string, error) {
