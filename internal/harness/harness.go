@@ -225,7 +225,7 @@ func Run(ctx context.Context) (Report, error) {
 				if err := expectToolCalls(result, 1, true); err != nil {
 					return err
 				}
-				if !strings.Contains(result.ToolCalls[0].Output, "PostToolUse hook denied tool write_file: post hook blocked result") {
+				if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback (error):\npost hook blocked result") {
 					return fmt.Errorf("post-tool hook denial was not surfaced: %s", result.ToolCalls[0].Output)
 				}
 				data, err := os.ReadFile(filepath.Join(workspace, "post-hook.txt"))
@@ -234,6 +234,39 @@ func Run(ctx context.Context) (Report, error) {
 				}
 				if string(data) != "written before post hook\n" {
 					return fmt.Errorf("unexpected post-hook file content %q", string(data))
+				}
+				return nil
+			},
+		},
+		{
+			name: "post_tool_hook_adds_feedback",
+			hooks: config.HookConfig{
+				PostToolUseCommands: []config.HookCommand{{
+					Matcher: "read_file",
+					Command: `printf '%s' '{"systemMessage":"post feedback"}'`,
+				}},
+			},
+			turns: []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  "read_file",
+					Input: json.RawMessage(`{"path":"feedback.txt"}`),
+				}}},
+				{Text: "post feedback harness ok"},
+			},
+			prompt: "read with post feedback",
+			setup: func(workspace string) error {
+				return os.WriteFile(filepath.Join(workspace, "feedback.txt"), []byte("feedback file\n"), 0o644)
+			},
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "post feedback harness ok") {
+					return fmt.Errorf("missing post feedback final response")
+				}
+				if err := expectToolCalls(result, 1, false); err != nil {
+					return err
+				}
+				if !strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\npost feedback") {
+					return fmt.Errorf("post-tool hook feedback was not surfaced: %s", result.ToolCalls[0].Output)
 				}
 				return nil
 			},

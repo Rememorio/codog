@@ -144,6 +144,17 @@ func (r Runner) PreToolUseReport(ctx context.Context, tool string, input []byte)
 }
 
 func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, output string, isError bool) error {
+	report, err := r.PostToolUseReport(ctx, tool, input, output, isError)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+func (r Runner) PostToolUseReport(ctx context.Context, tool string, input []byte, output string, isError bool) (RunReport, error) {
 	payload := Payload{
 		Event:    "post_tool_use",
 		Tool:     tool,
@@ -152,10 +163,21 @@ func (r Runner) PostToolUse(ctx context.Context, tool string, input []byte, outp
 		Output:   output,
 		IsError:  isError,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PostToolUseFailure(ctx context.Context, tool string, input []byte, output string) error {
+	report, err := r.PostToolUseFailureReport(ctx, tool, input, output)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+func (r Runner) PostToolUseFailureReport(ctx context.Context, tool string, input []byte, output string) (RunReport, error) {
 	payload := Payload{
 		Event:    "post_tool_use_failure",
 		Tool:     tool,
@@ -164,7 +186,7 @@ func (r Runner) PostToolUseFailure(ctx context.Context, tool string, input []byt
 		Output:   output,
 		IsError:  true,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PermissionRequest(ctx context.Context, tool string, input []byte) error {
@@ -581,6 +603,14 @@ func PreToolUseOutputFromReport(report RunReport) PreToolUseOutput {
 	}
 	out.Messages = compactStrings(out.Messages)
 	return out
+}
+
+func MessagesFromReport(report RunReport) []string {
+	messages := []string{}
+	for _, result := range report.Results {
+		messages = append(messages, result.Messages...)
+	}
+	return compactStrings(messages)
 }
 
 func parseHookStdout(event string, tool string, command string, stdout string, stderr string) (PreToolUseOutput, bool) {

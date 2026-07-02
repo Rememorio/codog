@@ -166,8 +166,10 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			if err != nil {
 				call.Output = preToolUseErrorMessage(err, preToolOutput)
 				call.IsError = true
-				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
+				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
+				} else {
+					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
 				}
 				toolCalls = append(toolCalls, call)
 				r.emitToolUse(call)
@@ -181,8 +183,10 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			if preToolOutput.Denied {
 				call.Output = preToolUseDeniedMessage(block.Name, preToolOutput)
 				call.IsError = true
-				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
+				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
+				} else {
+					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
 				}
 				toolCalls = append(toolCalls, call)
 				r.emitToolUse(call)
@@ -196,11 +200,10 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 				if info, ok := r.Tools.Info(block.Name); ok && !tools.ToolAllowedInPlanMode(info.Name, info.Permission) {
 					call.Output = fmt.Sprintf("plan mode blocked tool %s because it requires %s permission", info.Name, info.Permission)
 					call.IsError = true
-					if hookErr := hookRunner.PostToolUse(ctx, block.Name, effectiveInput, call.Output, call.IsError); hookErr != nil {
-						call.Output = hookErr.Error()
-					}
-					if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
+					if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 						call.Output = failureErr.Error()
+					} else {
+						call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
 					}
 					toolCalls = append(toolCalls, call)
 					r.emitToolUse(call)
@@ -222,6 +225,7 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			} else {
 				call.Output = output
 			}
+			call.Output = mergeHookFeedback(preToolOutput.Messages, call.Output, call.IsError)
 			if oldCWD != "" {
 				if newCWD, cwdErr := shellstate.CurrentCWD(r.Config.ConfigHome, r.SessionID, r.Workspace); cwdErr == nil && newCWD != oldCWD {
 					if hookErr := hookRunner.CwdChanged(ctx, oldCWD, newCWD, string(effectiveInput)); hookErr != nil && !call.IsError {
@@ -230,22 +234,39 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 					}
 				}
 			}
-			if hookErr := hookRunner.PostToolUse(ctx, block.Name, effectiveInput, call.Output, call.IsError); hookErr != nil && !call.IsError {
-				call.Output = hookErr.Error()
-				call.IsError = true
+			if call.IsError {
+				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
+					call.Output = failureErr.Error()
+				} else {
+					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
+				}
+			} else {
+				if postReport, hookErr := hookRunner.PostToolUseReport(ctx, block.Name, effectiveInput, call.Output, false); hookErr != nil {
+					call.Output = hookErr.Error()
+					call.IsError = true
+				} else {
+					if postReport.Denied {
+						call.IsError = true
+					}
+					call.Output = mergeHookFeedback(hooks.MessagesFromReport(postReport), call.Output, call.IsError)
+				}
 			}
+			fileChangedFailed := false
 			if !call.IsError {
 				for _, change := range fileChangesForTool(block.Name, effectiveInput) {
 					if hookErr := hookRunner.FileChanged(ctx, change.Path, change.Operation, effectiveInput); hookErr != nil {
 						call.Output = hookErr.Error()
 						call.IsError = true
+						fileChangedFailed = true
 						break
 					}
 				}
 			}
-			if call.IsError {
-				if failureErr := hookRunner.PostToolUseFailure(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
+			if fileChangedFailed {
+				if failureReport, failureErr := hookRunner.PostToolUseFailureReport(ctx, block.Name, effectiveInput, call.Output); failureErr != nil {
 					call.Output = failureErr.Error()
+				} else {
+					call.Output = mergeHookFeedback(hooks.MessagesFromReport(failureReport), call.Output, true)
 				}
 			}
 
@@ -357,6 +378,40 @@ func preToolUseErrorMessage(err error, output hooks.PreToolUseOutput) string {
 		return strings.Join(output.Messages, "\n")
 	}
 	return err.Error()
+}
+
+func mergeHookFeedback(messages []string, output string, isError bool) string {
+	messages = compactHookFeedbackMessages(messages)
+	if len(messages) == 0 {
+		return output
+	}
+	sections := []string{}
+	if strings.TrimSpace(output) != "" {
+		sections = append(sections, output)
+	}
+	label := "Hook feedback"
+	if isError {
+		label = "Hook feedback (error)"
+	}
+	sections = append(sections, label+":\n"+strings.Join(messages, "\n"))
+	return strings.Join(sections, "\n\n")
+}
+
+func compactHookFeedbackMessages(messages []string) []string {
+	out := make([]string, 0, len(messages))
+	seen := map[string]struct{}{}
+	for _, message := range messages {
+		message = strings.TrimSpace(message)
+		if message == "" {
+			continue
+		}
+		if _, ok := seen[message]; ok {
+			continue
+		}
+		seen[message] = struct{}{}
+		out = append(out, message)
+	}
+	return out
 }
 
 type fileChange struct {

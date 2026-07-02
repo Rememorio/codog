@@ -207,11 +207,62 @@ func TestRunnerAppliesPreToolUseHookDecisionAndUpdatedInput(t *testing.T) {
 	require.Len(t, result.ToolCalls, 1)
 	require.False(t, result.ToolCalls[0].IsError)
 	require.JSONEq(t, `{"path":"hooked.txt","content":"ok"}`, result.ToolCalls[0].Input)
+	require.Contains(t, result.ToolCalls[0].Output, "Hook feedback:\nupdated")
 	require.FileExists(t, filepath.Join(workspace, "hooked.txt"))
 	require.NoFileExists(t, filepath.Join(workspace, "original.txt"))
 	data, err := os.ReadFile(filepath.Join(workspace, "hooked.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "ok", string(data))
+}
+
+func TestRunnerMergesPostToolUseHookFeedback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("hello\n"), 0o644))
+	client := &scriptedClient{
+		responses: []anthropic.AssistantMessage{
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type:  "tool_use",
+					ID:    "tool-1",
+					Name:  "read_file",
+					Input: []byte(`{"path":"README.md"}`),
+				}},
+			},
+			{
+				Blocks: []anthropic.ContentBlock{{
+					Type: "text",
+					Text: "done",
+				}},
+			},
+		},
+	}
+	result, err := Runner{
+		Config: config.Config{
+			Model:     "mock",
+			MaxTokens: 128,
+			MaxTurns:  2,
+			Hooks: config.HookConfig{
+				PostToolUseCommands: []config.HookCommand{{
+					Matcher: "read_file",
+					Command: `printf '%s' '{"systemMessage":"post note","hookSpecificOutput":{"additionalContext":"ctx"}}'`,
+				}},
+			},
+		},
+		Client:    client,
+		Tools:     tools.NewRegistry(workspace),
+		Workspace: workspace,
+	}.Run(context.Background(), nil, "read")
+	require.NoError(t, err)
+	require.Len(t, result.ToolCalls, 1)
+	require.False(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "hello")
+	require.Contains(t, result.ToolCalls[0].Output, "Hook feedback:\npost note\nctx")
+	require.Len(t, client.requests, 2)
+	require.Len(t, client.requests[1].Messages, 3)
+	require.Contains(t, client.requests[1].Messages[2].Content[0].Content, "Hook feedback:\npost note\nctx")
 }
 
 func TestRunnerReturnsPreToolUseMalformedJSONDiagnostic(t *testing.T) {
@@ -575,7 +626,8 @@ func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {
 			MaxTokens: 128,
 			MaxTurns:  2,
 			Hooks: config.HookConfig{
-				PostToolUseFailureCommands: []config.HookCommand{{Command: "cat > failure.json"}},
+				PostToolUseCommands:        []config.HookCommand{{Command: "cat > post.json"}},
+				PostToolUseFailureCommands: []config.HookCommand{{Command: "cat > failure.json && printf '%s' '{\"systemMessage\":\"failure note\"}'"}},
 			},
 		},
 		Client:    client,
@@ -585,6 +637,8 @@ func TestRunnerExecutesPostToolUseFailureHook(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.ToolCalls, 1)
 	require.True(t, result.ToolCalls[0].IsError)
+	require.Contains(t, result.ToolCalls[0].Output, "Hook feedback (error):\nfailure note")
+	require.NoFileExists(t, filepath.Join(workspace, "post.json"))
 
 	payload, err := os.ReadFile(workspace + "/failure.json")
 	require.NoError(t, err)
