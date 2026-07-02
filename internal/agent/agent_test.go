@@ -7147,6 +7147,66 @@ func TestStatusValidationReportsDegradedConfig(t *testing.T) {
 	require.Contains(t, out.String(), "Hook validation  valid=4 invalid=3")
 }
 
+func TestStatuslineReadsClaudeStdinContract(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	fastMode := true
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     t.TempDir(),
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+			FastMode:       &fastMode,
+		},
+		Workspace: workspace,
+		Out:       &out,
+		In: strings.NewReader(`{
+			"session_id": "claude-session",
+			"session_name": "Readable Session",
+			"transcript_path": "/tmp/claude-session.jsonl",
+			"cwd": "` + filepath.ToSlash(workspace) + `",
+			"permission_mode": "acceptEdits",
+			"model": {"id": "claude-sonnet-4-5", "display_name": "Claude Sonnet 4.5"},
+			"workspace": {
+				"current_dir": "` + filepath.ToSlash(workspace) + `",
+				"project_dir": "` + filepath.ToSlash(workspace) + `",
+				"added_dirs": ["` + filepath.ToSlash(filepath.Join(workspace, "extra")) + `"]
+			},
+			"version": "1.0.71",
+			"output_style": {"name": "default"},
+			"cost": {"total_cost_usd": 0.1234},
+			"context_window": {
+				"total_input_tokens": 1200,
+				"total_output_tokens": 300,
+				"context_window_size": 200000,
+				"remaining_percentage": 88.5
+			},
+			"agent": {"name": "statusline-setup"},
+			"worktree": {"name": "feature-work", "branch": "feature/statusline"}
+		}`),
+	}
+
+	require.NoError(t, app.Statusline([]string{"--json"}, config.FlagOverrides{}))
+	jsonOut := out.String()
+	require.Contains(t, jsonOut, `"source": "claude_statusline_stdin"`)
+	require.Contains(t, jsonOut, `"session_id": "claude-session"`)
+	require.Contains(t, jsonOut, `"session_name": "Readable Session"`)
+	require.Contains(t, jsonOut, `"model": "Claude Sonnet 4.5"`)
+	require.Contains(t, jsonOut, `"permission_mode": "acceptEdits"`)
+	require.Contains(t, jsonOut, `"context_remaining_percentage": 88.5`)
+	require.Contains(t, jsonOut, `"total_cost_usd": 0.1234`)
+
+	out.Reset()
+	app.In = strings.NewReader(`{"session_id":"claude-session","transcript_path":"/tmp/claude-session.jsonl","cwd":"` + filepath.ToSlash(workspace) + `","model":{"display_name":"Claude Sonnet 4.5"},"context_window":{"remaining_percentage":88.5}}`)
+	require.NoError(t, app.Statusline(nil, config.FlagOverrides{}))
+	line := out.String()
+	require.Contains(t, line, "codog")
+	require.Contains(t, line, filepath.Base(workspace))
+	require.Contains(t, line, "Claude Sonnet 4.5")
+	require.Contains(t, line, "session=claude-session")
+	require.Contains(t, line, "context=88%-left")
+}
+
 func TestStatusDegradesOnMalformedConfigFile(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "broken.json")
 	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))

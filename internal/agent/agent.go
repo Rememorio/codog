@@ -18241,23 +18241,25 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 }
 
 type statuslineReport struct {
-	Kind            string `json:"kind"`
-	Line            string `json:"line"`
-	Status          string `json:"status"`
-	Workspace       string `json:"workspace"`
-	Model           string `json:"model"`
-	FastMode        bool   `json:"fast_mode"`
-	PermissionMode  string `json:"permission_mode"`
-	SessionActive   bool   `json:"session_active"`
-	SessionID       string `json:"session_id,omitempty"`
-	SessionMessages int    `json:"session_messages,omitempty"`
-	SessionCount    int    `json:"session_count"`
-	GitAvailable    bool   `json:"git_available"`
-	GitBranch       string `json:"git_branch,omitempty"`
-	GitClean        bool   `json:"git_clean"`
-	GitDirty        bool   `json:"git_dirty"`
-	GitConflicts    int    `json:"git_conflicts,omitempty"`
-	PlanActive      bool   `json:"plan_active"`
+	Kind                  string                   `json:"kind"`
+	Line                  string                   `json:"line"`
+	Status                string                   `json:"status"`
+	Source                string                   `json:"source"`
+	Workspace             string                   `json:"workspace"`
+	Model                 string                   `json:"model"`
+	FastMode              bool                     `json:"fast_mode"`
+	PermissionMode        string                   `json:"permission_mode"`
+	SessionActive         bool                     `json:"session_active"`
+	SessionID             string                   `json:"session_id,omitempty"`
+	SessionMessages       int                      `json:"session_messages,omitempty"`
+	SessionCount          int                      `json:"session_count"`
+	GitAvailable          bool                     `json:"git_available"`
+	GitBranch             string                   `json:"git_branch,omitempty"`
+	GitClean              bool                     `json:"git_clean"`
+	GitDirty              bool                     `json:"git_dirty"`
+	GitConflicts          int                      `json:"git_conflicts,omitempty"`
+	PlanActive            bool                     `json:"plan_active"`
+	ClaudeStatuslineInput *claudeStatuslineContext `json:"claude_statusline_input,omitempty"`
 }
 
 func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
@@ -18270,6 +18272,13 @@ func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
 		return err
 	}
 	report := buildStatuslineReport(a.statusSnapshot(active))
+	claudeInput, ok, err := readClaudeStatuslineInput(a.In)
+	if err != nil {
+		return err
+	}
+	if ok {
+		report = report.withClaudeStatuslineInput(claudeInput)
+	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -18277,6 +18286,122 @@ func (a *App) Statusline(args []string, overrides config.FlagOverrides) error {
 	}
 	fmt.Fprintln(a.Out, report.Line)
 	return nil
+}
+
+type claudeStatuslineInput struct {
+	SessionID       string                        `json:"session_id"`
+	SessionName     string                        `json:"session_name"`
+	TranscriptPath  string                        `json:"transcript_path"`
+	CWD             string                        `json:"cwd"`
+	PermissionMode  string                        `json:"permission_mode"`
+	Model           claudeStatuslineModel         `json:"model"`
+	Workspace       claudeStatuslineWorkspace     `json:"workspace"`
+	Version         string                        `json:"version"`
+	OutputStyle     claudeStatuslineOutputStyle   `json:"output_style"`
+	Cost            claudeStatuslineCost          `json:"cost"`
+	ContextWindow   claudeStatuslineContextWindow `json:"context_window"`
+	RateLimits      claudeStatuslineRateLimits    `json:"rate_limits"`
+	Vim             claudeStatuslineVim           `json:"vim"`
+	Agent           claudeStatuslineAgent         `json:"agent"`
+	Worktree        claudeStatuslineWorktree      `json:"worktree"`
+	Remote          map[string]any                `json:"remote"`
+	Exceeds200K     bool                          `json:"exceeds_200k_tokens"`
+	AdditionalInput map[string]json.RawMessage    `json:"-"`
+}
+
+type claudeStatuslineModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+type claudeStatuslineWorkspace struct {
+	CurrentDir string   `json:"current_dir"`
+	ProjectDir string   `json:"project_dir"`
+	AddedDirs  []string `json:"added_dirs"`
+}
+
+type claudeStatuslineOutputStyle struct {
+	Name string `json:"name"`
+}
+
+type claudeStatuslineCost struct {
+	TotalCostUSD       *float64 `json:"total_cost_usd,omitempty"`
+	TotalDurationMS    int64    `json:"total_duration_ms,omitempty"`
+	TotalAPIDurationMS int64    `json:"total_api_duration_ms,omitempty"`
+	TotalLinesAdded    int      `json:"total_lines_added,omitempty"`
+	TotalLinesRemoved  int      `json:"total_lines_removed,omitempty"`
+}
+
+type claudeStatuslineContextWindow struct {
+	TotalInputTokens    int                           `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens   int                           `json:"total_output_tokens,omitempty"`
+	ContextWindowSize   int                           `json:"context_window_size,omitempty"`
+	CurrentUsage        *claudeStatuslineCurrentUsage `json:"current_usage,omitempty"`
+	UsedPercentage      *float64                      `json:"used_percentage,omitempty"`
+	RemainingPercentage *float64                      `json:"remaining_percentage,omitempty"`
+}
+
+type claudeStatuslineCurrentUsage struct {
+	InputTokens              int `json:"input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+}
+
+type claudeStatuslineRateLimits struct {
+	FiveHour *claudeStatuslineRateLimit `json:"five_hour,omitempty"`
+	SevenDay *claudeStatuslineRateLimit `json:"seven_day,omitempty"`
+}
+
+type claudeStatuslineRateLimit struct {
+	UsedPercentage float64 `json:"used_percentage,omitempty"`
+	ResetsAt       int64   `json:"resets_at,omitempty"`
+}
+
+type claudeStatuslineVim struct {
+	Mode string `json:"mode"`
+}
+
+type claudeStatuslineAgent struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+type claudeStatuslineWorktree struct {
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	Branch         string `json:"branch"`
+	OriginalCWD    string `json:"original_cwd"`
+	OriginalBranch string `json:"original_branch"`
+}
+
+type claudeStatuslineContext struct {
+	SessionID             string                     `json:"session_id,omitempty"`
+	SessionName           string                     `json:"session_name,omitempty"`
+	TranscriptPath        string                     `json:"transcript_path,omitempty"`
+	CWD                   string                     `json:"cwd,omitempty"`
+	PermissionMode        string                     `json:"permission_mode,omitempty"`
+	ModelID               string                     `json:"model_id,omitempty"`
+	ModelDisplayName      string                     `json:"model_display_name,omitempty"`
+	WorkspaceCurrentDir   string                     `json:"workspace_current_dir,omitempty"`
+	WorkspaceProjectDir   string                     `json:"workspace_project_dir,omitempty"`
+	WorkspaceAddedDirs    []string                   `json:"workspace_added_dirs,omitempty"`
+	Version               string                     `json:"version,omitempty"`
+	OutputStyle           string                     `json:"output_style,omitempty"`
+	TotalCostUSD          *float64                   `json:"total_cost_usd,omitempty"`
+	TotalInputTokens      int                        `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens     int                        `json:"total_output_tokens,omitempty"`
+	ContextWindowSize     int                        `json:"context_window_size,omitempty"`
+	ContextUsedPercentage *float64                   `json:"context_used_percentage,omitempty"`
+	ContextRemainingPct   *float64                   `json:"context_remaining_percentage,omitempty"`
+	RateLimits            claudeStatuslineRateLimits `json:"rate_limits,omitempty"`
+	VimMode               string                     `json:"vim_mode,omitempty"`
+	AgentName             string                     `json:"agent_name,omitempty"`
+	AgentType             string                     `json:"agent_type,omitempty"`
+	WorktreeName          string                     `json:"worktree_name,omitempty"`
+	WorktreePath          string                     `json:"worktree_path,omitempty"`
+	WorktreeBranch        string                     `json:"worktree_branch,omitempty"`
+	Exceeds200K           bool                       `json:"exceeds_200k_tokens,omitempty"`
 }
 
 type terminalSetupRequest struct {
@@ -18797,6 +18922,7 @@ func buildStatuslineReport(snapshot localstatus.Snapshot) statuslineReport {
 		Kind:            "statusline",
 		Line:            line,
 		Status:          snapshot.Status,
+		Source:          "codog",
 		Workspace:       workspace,
 		Model:           snapshot.Config.Model,
 		FastMode:        snapshot.Config.FastMode,
@@ -18812,6 +18938,192 @@ func buildStatuslineReport(snapshot localstatus.Snapshot) statuslineReport {
 		GitConflicts:    snapshot.Git.Conflicts,
 		PlanActive:      snapshot.Plan.Active,
 	}
+}
+
+func readClaudeStatuslineInput(in io.Reader) (claudeStatuslineInput, bool, error) {
+	data, nonTerminal, err := readPromptInputState(in)
+	if err != nil {
+		return claudeStatuslineInput{}, false, err
+	}
+	if !nonTerminal || strings.TrimSpace(data) == "" {
+		return claudeStatuslineInput{}, false, nil
+	}
+	input, ok := parseClaudeStatuslineInput([]byte(data))
+	return input, ok, nil
+}
+
+func parseClaudeStatuslineInput(data []byte) (claudeStatuslineInput, bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil || len(raw) == 0 {
+		return claudeStatuslineInput{}, false
+	}
+	if !looksLikeClaudeStatuslineInput(raw) {
+		return claudeStatuslineInput{}, false
+	}
+	var input claudeStatuslineInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return claudeStatuslineInput{}, false
+	}
+	input.AdditionalInput = raw
+	return input, true
+}
+
+func looksLikeClaudeStatuslineInput(raw map[string]json.RawMessage) bool {
+	if _, ok := raw["transcript_path"]; ok {
+		return true
+	}
+	if _, ok := raw["context_window"]; ok {
+		return true
+	}
+	if _, ok := raw["rate_limits"]; ok {
+		return true
+	}
+	if _, ok := raw["output_style"]; ok {
+		return true
+	}
+	if _, ok := raw["workspace"]; ok {
+		if _, hasSession := raw["session_id"]; hasSession {
+			return true
+		}
+		if _, hasCWD := raw["cwd"]; hasCWD {
+			return true
+		}
+	}
+	return false
+}
+
+func (report statuslineReport) withClaudeStatuslineInput(input claudeStatuslineInput) statuslineReport {
+	ctx := claudeStatuslineContext{
+		SessionID:             strings.TrimSpace(input.SessionID),
+		SessionName:           strings.TrimSpace(input.SessionName),
+		TranscriptPath:        strings.TrimSpace(input.TranscriptPath),
+		CWD:                   strings.TrimSpace(input.CWD),
+		PermissionMode:        strings.TrimSpace(input.PermissionMode),
+		ModelID:               strings.TrimSpace(input.Model.ID),
+		ModelDisplayName:      strings.TrimSpace(input.Model.DisplayName),
+		WorkspaceCurrentDir:   strings.TrimSpace(input.Workspace.CurrentDir),
+		WorkspaceProjectDir:   strings.TrimSpace(input.Workspace.ProjectDir),
+		WorkspaceAddedDirs:    cleanedStrings(input.Workspace.AddedDirs),
+		Version:               strings.TrimSpace(input.Version),
+		OutputStyle:           strings.TrimSpace(input.OutputStyle.Name),
+		TotalCostUSD:          input.Cost.TotalCostUSD,
+		TotalInputTokens:      input.ContextWindow.TotalInputTokens,
+		TotalOutputTokens:     input.ContextWindow.TotalOutputTokens,
+		ContextWindowSize:     input.ContextWindow.ContextWindowSize,
+		ContextUsedPercentage: input.ContextWindow.UsedPercentage,
+		ContextRemainingPct:   input.ContextWindow.RemainingPercentage,
+		RateLimits:            input.RateLimits,
+		VimMode:               strings.TrimSpace(input.Vim.Mode),
+		AgentName:             strings.TrimSpace(input.Agent.Name),
+		AgentType:             strings.TrimSpace(input.Agent.Type),
+		WorktreeName:          strings.TrimSpace(input.Worktree.Name),
+		WorktreePath:          strings.TrimSpace(input.Worktree.Path),
+		WorktreeBranch:        strings.TrimSpace(input.Worktree.Branch),
+		Exceeds200K:           input.Exceeds200K,
+	}
+	report.Source = "claude_statusline_stdin"
+	report.ClaudeStatuslineInput = &ctx
+	report.SessionActive = true
+	if ctx.SessionID != "" {
+		report.SessionID = ctx.SessionID
+	}
+	if ctx.PermissionMode != "" {
+		report.PermissionMode = ctx.PermissionMode
+	}
+	if model := firstNonEmpty(ctx.ModelDisplayName, ctx.ModelID); model != "" {
+		report.Model = model
+	}
+	if workspace := statuslineWorkspaceFromClaude(ctx); workspace != "" {
+		report.Workspace = workspace
+	}
+	report.Line = renderClaudeStatuslineLine(report, ctx)
+	return report
+}
+
+func statuslineWorkspaceFromClaude(ctx claudeStatuslineContext) string {
+	path := firstNonEmpty(ctx.WorkspaceCurrentDir, ctx.CWD, ctx.WorkspaceProjectDir)
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	base := filepath.Base(path)
+	if base == "." || base == string(filepath.Separator) || strings.TrimSpace(base) == "" {
+		return path
+	}
+	return base
+}
+
+func renderClaudeStatuslineLine(report statuslineReport, ctx claudeStatuslineContext) string {
+	gitLabel := "no-git"
+	if report.GitAvailable {
+		gitLabel = emptyAs(report.GitBranch, "detached")
+		switch {
+		case report.GitConflicts > 0:
+			gitLabel += "!"
+		case report.GitDirty:
+			gitLabel += "*"
+		}
+	}
+	sessionLabel := "session=active"
+	if sessionName := firstNonEmpty(ctx.SessionName, ctx.SessionID); sessionName != "" {
+		sessionLabel = "session=" + sessionName
+	}
+	contextLabel := ""
+	switch {
+	case ctx.ContextRemainingPct != nil:
+		contextLabel = fmt.Sprintf("context=%.0f%%-left", *ctx.ContextRemainingPct)
+	case ctx.ContextUsedPercentage != nil:
+		contextLabel = fmt.Sprintf("context=%.0f%%-used", *ctx.ContextUsedPercentage)
+	case ctx.ContextWindowSize > 0 && (ctx.TotalInputTokens > 0 || ctx.TotalOutputTokens > 0):
+		used := float64(ctx.TotalInputTokens+ctx.TotalOutputTokens) / float64(ctx.ContextWindowSize) * 100
+		contextLabel = fmt.Sprintf("context=%.0f%%-used", used)
+	}
+	costLabel := ""
+	if ctx.TotalCostUSD != nil {
+		costLabel = fmt.Sprintf("cost=$%.4f", *ctx.TotalCostUSD)
+	}
+	agentLabel := ""
+	if agent := firstNonEmpty(ctx.AgentName, ctx.AgentType); agent != "" {
+		agentLabel = "agent=" + agent
+	}
+	worktreeLabel := ""
+	if worktree := firstNonEmpty(ctx.WorktreeName, ctx.WorktreeBranch); worktree != "" {
+		worktreeLabel = "worktree=" + worktree
+	}
+	parts := []string{
+		"codog",
+		emptyAs(report.Workspace, "workspace"),
+		gitLabel,
+		emptyAs(report.Model, "model=unset"),
+		emptyAs(report.PermissionMode, "permission=unset"),
+		sessionLabel,
+		contextLabel,
+		costLabel,
+		agentLabel,
+		worktreeLabel,
+	}
+	return strings.Join(nonEmptyStrings(parts), " ")
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func cleanedStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (a *App) Context(args []string, overrides config.FlagOverrides) error {
@@ -22079,7 +22391,7 @@ func unknownSlashCommandReport(command string, extraSuggestions []string) slashE
 func unknownSlashCompatibilityNote(command string) string {
 	name := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(command), "/"))
 	if strings.HasPrefix(name, "oh-my-claudecode:") {
-		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog loads compatible Markdown commands from project `.omc/commands` and explicit compatible config roots; Claude statusline stdin and OMC session hooks remain separate integrations."
+		return "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. Codog loads compatible Markdown commands from project `.omc/commands` and explicit compatible config roots; OMC session hooks remain a separate integration."
 	}
 	return ""
 }
@@ -39493,8 +39805,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"statusline",
 			"statusline",
 			"codog statusline [--output-format text|json]",
-			"Statusline\n\nUsage:\n  codog statusline [--output-format text|json]\n\nPrints a compact one-line local workspace status for shell prompts and editor integrations.\n",
-			[]string{"workspace", "session_id", "model", "permission_mode", "git_branch"},
+			"Statusline\n\nUsage:\n  codog statusline [--output-format text|json]\n\nPrints a compact one-line local workspace status for shell prompts and editor integrations. When Claude Code statusLine JSON is piped on stdin, Codog reads compatible session, model, workspace, context, cost, agent, and worktree fields before rendering the line.\n",
+			[]string{"source", "workspace", "session_id", "model", "permission_mode", "git_branch", "claude_statusline_input"},
 			[]string{"ok", "error"},
 			false,
 		), true
