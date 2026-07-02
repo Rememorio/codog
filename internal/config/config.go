@@ -451,6 +451,23 @@ type PermissionRules struct {
 	DeniedTools           []string `json:"denied_tools,omitempty"`
 }
 
+func (r *PermissionRules) UnmarshalJSON(data []byte) error {
+	type plain PermissionRules
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var aliases struct {
+		DeniedTools []string `json:"deniedTools,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aliases); err != nil {
+		return err
+	}
+	parsed.DeniedTools = mergeStringLists(parsed.DeniedTools, aliases.DeniedTools)
+	*r = PermissionRules(parsed)
+	return nil
+}
+
 type ManagedPolicy struct {
 	MaxPermissionMode string          `json:"max_permission_mode,omitempty"`
 	PermissionRules   PermissionRules `json:"permission_rules,omitempty"`
@@ -540,6 +557,8 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	var aliases struct {
 		PermissionModeCamel string                     `json:"permissionMode,omitempty"`
 		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
+		AllowedTools        []string                   `json:"allowedTools,omitempty"`
+		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
 		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
@@ -553,6 +572,8 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	if permissionRulesSet(aliases.PermissionRules) {
 		mergePermissionRules(&parsed.PermissionRules, aliases.PermissionRules)
 	}
+	parsed.PermissionRules.Allow = mergeStringLists(parsed.PermissionRules.Allow, aliases.AllowedTools)
+	parsed.PermissionRules.DeniedTools = mergeStringLists(parsed.PermissionRules.DeniedTools, aliases.DisallowedTools)
 	if parsed.PermissionMode == "" && parsed.PermissionRules.DefaultMode != "" {
 		mode, planMode, _, ok := mapClaudePermissionDefaultMode(parsed.PermissionRules.DefaultMode)
 		if ok {

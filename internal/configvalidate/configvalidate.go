@@ -97,6 +97,8 @@ var topLevelFields = []fieldSpec{
 	{"permissionMode", FieldString},
 	{"permission_rules", FieldObject},
 	{"permissions", FieldObject},
+	{"allowedTools", FieldStringArray},
+	{"disallowedTools", FieldStringArray},
 	{"privacy_settings", FieldObject},
 	{"auto_compact_messages", FieldNumber},
 	{"cleanupPeriodDays", FieldNumber},
@@ -132,6 +134,8 @@ var topLevelFields = []fieldSpec{
 var deprecatedTopLevelFields = []deprecatedField{
 	{"permissionMode", "permission_mode"},
 	{"permissions", "permission_rules"},
+	{"allowedTools", "permission_rules.allow"},
+	{"disallowedTools", "permission_rules.denied_tools"},
 	{"mcpServers", "mcp_servers"},
 	{"enabledPlugins", "enabled_skills"},
 	{"sandbox", "future.sandbox"},

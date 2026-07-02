@@ -143,6 +143,25 @@ func TestLoadPermissionModeOverridesDefaultModeAlias(t *testing.T) {
 	require.Equal(t, "plan", cfg.PermissionRules.DefaultMode)
 }
 
+func TestLoadClaudeAllowedToolsAliases(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"allowedTools": ["Bash(git *)"],
+		"disallowedTools": ["Bash(rm *)"],
+		"permissions": {
+			"allow": ["Read"],
+			"deniedTools": ["Write"]
+		}
+	}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"Read", "Bash(git *)"}, cfg.PermissionRules.Allow)
+	require.Equal(t, []string{"Write", "Bash(rm *)"}, cfg.PermissionRules.DeniedTools)
+}
+
 func TestLoadLaterPermissionDefaultModeClearsPlanMode(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

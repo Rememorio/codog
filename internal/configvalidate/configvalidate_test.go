@@ -8,6 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func diagnosticsByField(diagnostics []Diagnostic) map[string]Diagnostic {
+	out := map[string]Diagnostic{}
+	for _, diagnostic := range diagnostics {
+		out[diagnostic.Field] = diagnostic
+	}
+	return out
+}
+
 func TestValidateBytesReportsUnknownKeyWithSuggestion(t *testing.T) {
 	result := ValidateBytes([]byte(`{"modle":"opus"}`), "config.json")
 
@@ -67,6 +75,18 @@ func TestValidateBytesReportsDeprecatedCompatibilityAliases(t *testing.T) {
 	require.Equal(t, "permission_mode", result.Warnings[0].Replacement)
 	require.Equal(t, "mcpServers", result.Warnings[1].Field)
 	require.Equal(t, "mcp_servers", result.Warnings[1].Replacement)
+}
+
+func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
+	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
+
+	require.Equal(t, "warning", result.Status)
+	require.Empty(t, result.Errors)
+	require.Len(t, result.Warnings, 3)
+	warnings := diagnosticsByField(result.Warnings)
+	require.Equal(t, "permission_rules.allow", warnings["allowedTools"].Replacement)
+	require.Equal(t, "permission_rules.denied_tools", warnings["disallowedTools"].Replacement)
+	require.Equal(t, "permission_rules", warnings["permissions"].Replacement)
 }
 
 func TestValidateBytesAcceptsRAGConfig(t *testing.T) {
