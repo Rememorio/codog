@@ -102,6 +102,7 @@ var topLevelFields = []fieldSpec{
 	{"respectGitignore", FieldBool},
 	{"disableAllHooks", FieldBool},
 	{"statusLine", FieldObject},
+	{"worktree", FieldObject},
 	{"enableAllProjectMcpServers", FieldBool},
 	{"enabledMcpjsonServers", FieldStringArray},
 	{"disabledMcpjsonServers", FieldStringArray},
@@ -168,6 +169,11 @@ var statusLineFields = []fieldSpec{
 	{"type", FieldString},
 	{"command", FieldString},
 	{"padding", FieldNumber},
+}
+
+var worktreeFields = []fieldSpec{
+	{"symlinkDirectories", FieldStringArray},
+	{"sparsePaths", FieldStringArray},
 }
 
 var hookFields = []fieldSpec{
@@ -438,6 +444,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	if nested, ok := objectAt(object, "statusLine"); ok {
 		validateObject(result, nested, statusLineFields, "statusLine", source, path)
 		validateStatusLineObject(result, nested, source, path)
+	}
+	if nested, ok := objectAt(object, "worktree"); ok {
+		validateObject(result, nested, worktreeFields, "worktree", source, path)
 	}
 	if nested, ok := objectAt(object, "hooks"); ok {
 		validateObject(result, nested, hookFields, "hooks", source, path)

@@ -464,6 +464,11 @@ type StatusLineConfig struct {
 	Padding *float64 `json:"padding,omitempty"`
 }
 
+type WorktreeConfig struct {
+	SymlinkDirectories []string `json:"symlinkDirectories,omitempty"`
+	SparsePaths        []string `json:"sparsePaths,omitempty"`
+}
+
 type Config struct {
 	APIKey                     string                     `json:"api_key,omitempty"`
 	APIKeyHelper               string                     `json:"apiKeyHelper,omitempty"`
@@ -497,6 +502,7 @@ type Config struct {
 	RespectGitignore           *bool                      `json:"respectGitignore,omitempty"`
 	DisableAllHooks            *bool                      `json:"disableAllHooks,omitempty"`
 	StatusLine                 *StatusLineConfig          `json:"statusLine,omitempty"`
+	Worktree                   WorktreeConfig             `json:"worktree,omitempty"`
 	EnableAllProjectMCPServers *bool                      `json:"enableAllProjectMcpServers,omitempty"`
 	EnabledMCPJSONServers      []string                   `json:"enabledMcpjsonServers,omitempty"`
 	DisabledMCPJSONServers     []string                   `json:"disabledMcpjsonServers,omitempty"`
@@ -1380,6 +1386,12 @@ func merge(dst *Config, src Config) {
 	}
 	if src.StatusLine != nil {
 		dst.StatusLine = cloneStatusLineConfig(src.StatusLine)
+	}
+	if len(src.Worktree.SymlinkDirectories) != 0 {
+		dst.Worktree.SymlinkDirectories = mergeStringLists(dst.Worktree.SymlinkDirectories, src.Worktree.SymlinkDirectories)
+	}
+	if len(src.Worktree.SparsePaths) != 0 {
+		dst.Worktree.SparsePaths = mergeStringLists(dst.Worktree.SparsePaths, src.Worktree.SparsePaths)
 	}
 	if src.EnableAllProjectMCPServers != nil {
 		enabled := *src.EnableAllProjectMCPServers

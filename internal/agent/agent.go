@@ -6535,7 +6535,10 @@ func (a *App) AgentsWithOverrides(args []string, overrides config.FlagOverrides)
 	runWorkspace := a.Workspace
 	var allocation *worktree.Allocation
 	if req.Worktree {
-		next, err := worktree.Allocate(a.Workspace, selected.Name)
+		next, err := worktree.AllocateWithOptions(a.Workspace, selected.Name, worktree.Options{
+			SymlinkDirectories: a.Config.Worktree.SymlinkDirectories,
+			SparsePaths:        a.Config.Worktree.SparsePaths,
+		})
 		if err != nil {
 			return err
 		}

@@ -180,6 +180,19 @@ func TestValidateBytesRequiresStatusLineCommandShape(t *testing.T) {
 	require.Equal(t, "missing_required", errorsByField["statusLine.command"])
 }
 
+func TestValidateBytesValidatesWorktreeTypes(t *testing.T) {
+	result := ValidateBytes([]byte(`{"worktree":{"symlinkDirectories":"node_modules","sparsePaths":[42]}}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 2)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "an array of strings", errorsByField["worktree.symlinkDirectories"])
+	require.Equal(t, "an array of strings", errorsByField["worktree.sparsePaths"])
+}
+
 func TestValidateBytesValidatesProjectMCPTrustTypes(t *testing.T) {
 	result := ValidateBytes([]byte(`{"enableAllProjectMcpServers":"true","enabledMcpjsonServers":[42],"disabledMcpjsonServers":"demo"}`), "config.json")
 

@@ -870,6 +870,25 @@ func TestLoadRejectsInvalidStatusLineSettings(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid_status_line")
 }
 
+func TestLoadWorktreeSettings(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{"worktree":{"symlinkDirectories":["node_modules"],"sparsePaths":["cmd"]}}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{"worktree":{"symlinkDirectories":[".cache"],"sparsePaths":["internal","cmd"]}}`), 0o644))
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"node_modules", ".cache"}, cfg.Worktree.SymlinkDirectories)
+	require.Equal(t, []string{"cmd", "internal"}, cfg.Worktree.SparsePaths)
+}
+
 func unsetCredentialEnv(t *testing.T) {
 	unsetEnv(t, "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODOG_API_KEY", "CODOG_AUTH_TOKEN")
 	unsetProviderRoutingEnv(t)
