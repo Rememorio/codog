@@ -32,6 +32,15 @@ type Session struct {
 	Messages []anthropic.Message
 	Path     string
 	Identity SessionIdentity
+	Metadata SessionMetadata
+}
+
+type SessionMetadata struct {
+	CreatedAt       time.Time `json:"created_at,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	ModifiedAt      time.Time `json:"modified_at,omitempty"`
+	ParentSessionID string    `json:"parent_session_id,omitempty"`
+	BranchName      string    `json:"branch_name,omitempty"`
 }
 
 type SessionIdentity struct {
@@ -166,11 +175,11 @@ func (s *Store) Open(id string) (*Session, error) {
 		}
 		return s.createAtPath(id, path, SessionIdentity{})
 	}
-	messages, identity, err := s.readSession(path, id)
+	messages, identity, metadata, err := s.readSession(path, id)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
+	return &Session{ID: id, Messages: messages, Path: path, Identity: identity, Metadata: metadata}, nil
 }
 
 func (s *Store) OpenExisting(id string) (*Session, error) {
@@ -202,11 +211,11 @@ func (s *Store) OpenExisting(id string) (*Session, error) {
 	if info.IsDir() {
 		return nil, PathIsDirectoryError{Path: path}
 	}
-	messages, identity, err := s.readSession(path, id)
+	messages, identity, metadata, err := s.readSession(path, id)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
+	return &Session{ID: id, Messages: messages, Path: path, Identity: identity, Metadata: metadata}, nil
 }
 
 func (s *Store) openExistingPath(path string) (*Session, error) {
@@ -225,11 +234,11 @@ func (s *Store) openExistingPath(path string) (*Session, error) {
 	if strings.TrimSpace(id) == "" {
 		id = filepath.Base(path)
 	}
-	messages, identity, err := s.readSession(path, id)
+	messages, identity, metadata, err := s.readSession(path, id)
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Messages: messages, Path: path, Identity: identity}, nil
+	return &Session{ID: id, Messages: messages, Path: path, Identity: identity, Metadata: metadata}, nil
 }
 
 func looksLikeSessionPath(value string) bool {
@@ -270,9 +279,10 @@ func (s *Store) createAtPath(id string, path string, identity SessionIdentity) (
 		return nil, err
 	}
 	defer file.Close()
+	now := time.Now().UTC()
 	if err := writeRecord(file, Record{
 		Type:      "session",
-		Time:      time.Now().UTC(),
+		Time:      now,
 		SessionID: id,
 	}); err != nil {
 		return nil, err
@@ -280,13 +290,13 @@ func (s *Store) createAtPath(id string, path string, identity SessionIdentity) (
 	resolved := normalizeSessionIdentity(id, s.Workspace, identity)
 	if err := writeRecord(file, Record{
 		Type:      "session_identity",
-		Time:      time.Now().UTC(),
+		Time:      now,
 		SessionID: id,
 		Identity:  &resolved,
 	}); err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Path: path, Identity: resolved}, nil
+	return &Session{ID: id, Path: path, Identity: resolved, Metadata: SessionMetadata{CreatedAt: now, UpdatedAt: now, ModifiedAt: now}}, nil
 }
 
 func (s *Store) Append(id string, msg anthropic.Message) error {
@@ -535,7 +545,14 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 			return nil, err
 		}
 	}
-	return &Session{ID: forkID, Messages: append([]anthropic.Message(nil), source.Messages...), Path: path, Identity: identity}, nil
+	now := time.Now().UTC()
+	return &Session{ID: forkID, Messages: append([]anthropic.Message(nil), source.Messages...), Path: path, Identity: identity, Metadata: SessionMetadata{
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		ModifiedAt:      now,
+		ParentSessionID: source.ID,
+		BranchName:      branchName,
+	}}, nil
 }
 
 func (s *Store) List() ([]Session, error) {
@@ -561,11 +578,11 @@ func (s *Store) List() ([]Session, error) {
 				continue
 			}
 			path := filepath.Join(dir, entry.Name())
-			messages, identity, err := s.readSession(path, id)
+			messages, identity, metadata, err := s.readSession(path, id)
 			if err != nil {
 				return nil, err
 			}
-			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity})
+			sessions = append(sessions, Session{ID: id, Path: path, Messages: messages, Identity: identity, Metadata: metadata})
 			seen[id] = struct{}{}
 		}
 	}
@@ -1017,10 +1034,10 @@ func validateSessionID(id string) error {
 	return nil
 }
 
-func (s *Store) readSession(path string, id string) ([]anthropic.Message, SessionIdentity, error) {
+func (s *Store) readSession(path string, id string) ([]anthropic.Message, SessionIdentity, SessionMetadata, error) {
 	records, err := s.readRecords(path)
 	if err != nil {
-		return nil, SessionIdentity{}, err
+		return nil, SessionIdentity{}, SessionMetadata{}, err
 	}
 	var messages []anthropic.Message
 	for _, record := range records {
@@ -1028,7 +1045,39 @@ func (s *Store) readSession(path string, id string) ([]anthropic.Message, Sessio
 			messages = append(messages, *record.Message)
 		}
 	}
-	return messages, identityFromRecords(id, s.Workspace, records), nil
+	return messages, identityFromRecords(id, s.Workspace, records), metadataFromRecords(path, records), nil
+}
+
+func metadataFromRecords(path string, records []Record) SessionMetadata {
+	var metadata SessionMetadata
+	for _, record := range records {
+		if !record.Time.IsZero() {
+			at := record.Time.UTC()
+			if metadata.CreatedAt.IsZero() || at.Before(metadata.CreatedAt) {
+				metadata.CreatedAt = at
+			}
+			if metadata.UpdatedAt.IsZero() || at.After(metadata.UpdatedAt) {
+				metadata.UpdatedAt = at
+			}
+		}
+		if metadata.ParentSessionID == "" && strings.TrimSpace(record.ParentSessionID) != "" {
+			metadata.ParentSessionID = strings.TrimSpace(record.ParentSessionID)
+		}
+		if metadata.BranchName == "" && strings.TrimSpace(record.BranchName) != "" {
+			metadata.BranchName = strings.TrimSpace(record.BranchName)
+		}
+	}
+	if info, err := os.Stat(path); err == nil {
+		modified := info.ModTime().UTC()
+		metadata.ModifiedAt = modified
+		if metadata.CreatedAt.IsZero() {
+			metadata.CreatedAt = modified
+		}
+		if metadata.UpdatedAt.IsZero() {
+			metadata.UpdatedAt = modified
+		}
+	}
+	return metadata
 }
 
 func (s *Store) readMessages(path string) ([]anthropic.Message, error) {

@@ -34663,14 +34663,20 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 }
 
 type sessionShowReport struct {
-	Kind         string                  `json:"kind"`
-	Action       string                  `json:"action"`
-	Status       string                  `json:"status"`
-	SessionID    string                  `json:"session_id"`
-	Path         string                  `json:"path"`
-	MessageCount int                     `json:"message_count"`
-	Identity     session.SessionIdentity `json:"identity,omitempty"`
-	Messages     []anthropic.Message     `json:"messages"`
+	Kind                string                  `json:"kind"`
+	Action              string                  `json:"action"`
+	Status              string                  `json:"status"`
+	SessionID           string                  `json:"session_id"`
+	Path                string                  `json:"path"`
+	MessageCount        int                     `json:"message_count"`
+	CreatedAtMS         int64                   `json:"created_at_ms,omitempty"`
+	UpdatedAtMS         int64                   `json:"updated_at_ms,omitempty"`
+	ModifiedEpochMillis int64                   `json:"modified_epoch_millis,omitempty"`
+	ParentSessionID     string                  `json:"parent_session_id,omitempty"`
+	BranchName          string                  `json:"branch_name,omitempty"`
+	Lifecycle           sessionLifecycleReport  `json:"lifecycle"`
+	Identity            session.SessionIdentity `json:"identity,omitempty"`
+	Messages            []anthropic.Message     `json:"messages"`
 }
 
 func (a *App) SessionShow(args []string) error {
@@ -34700,14 +34706,20 @@ func (a *App) buildSessionShowReport(id string) (sessionShowReport, error) {
 		return sessionShowReport{}, err
 	}
 	return sessionShowReport{
-		Kind:         "session_show",
-		Action:       "show",
-		Status:       "ok",
-		SessionID:    sess.ID,
-		Path:         sess.Path,
-		MessageCount: len(sess.Messages),
-		Identity:     sess.Identity,
-		Messages:     append([]anthropic.Message(nil), sess.Messages...),
+		Kind:                "session_show",
+		Action:              "show",
+		Status:              "ok",
+		SessionID:           sess.ID,
+		Path:                sess.Path,
+		MessageCount:        len(sess.Messages),
+		CreatedAtMS:         timeMillis(sess.Metadata.CreatedAt),
+		UpdatedAtMS:         timeMillis(sess.Metadata.UpdatedAt),
+		ModifiedEpochMillis: timeMillis(sess.Metadata.ModifiedAt),
+		ParentSessionID:     sess.Metadata.ParentSessionID,
+		BranchName:          sess.Metadata.BranchName,
+		Lifecycle:           lifecycleForStoredSession(sess),
+		Identity:            sess.Identity,
+		Messages:            append([]anthropic.Message(nil), sess.Messages...),
 	}, nil
 }
 
@@ -34715,6 +34727,13 @@ func renderSessionShowText(out io.Writer, report sessionShowReport) {
 	fmt.Fprintln(out, "Session")
 	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
 	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  Lifecycle        %s\n", report.Lifecycle.Signal)
+	if report.ParentSessionID != "" {
+		fmt.Fprintf(out, "  Parent           %s\n", report.ParentSessionID)
+	}
+	if report.BranchName != "" {
+		fmt.Fprintf(out, "  Branch           %s\n", report.BranchName)
+	}
 	fmt.Fprintf(out, "  File             %s\n", report.Path)
 	if strings.TrimSpace(report.Identity.Title) != "" {
 		fmt.Fprintf(out, "  Title            %s\n", report.Identity.Title)
@@ -35400,11 +35419,24 @@ type sessionListReport struct {
 }
 
 type sessionListDetail struct {
-	ID           string                  `json:"id"`
-	Path         string                  `json:"path"`
-	MessageCount int                     `json:"message_count"`
-	Active       bool                    `json:"active,omitempty"`
-	Identity     session.SessionIdentity `json:"identity,omitempty"`
+	ID                  string                  `json:"id"`
+	Path                string                  `json:"path"`
+	MessageCount        int                     `json:"message_count"`
+	CreatedAtMS         int64                   `json:"created_at_ms,omitempty"`
+	UpdatedAtMS         int64                   `json:"updated_at_ms,omitempty"`
+	ModifiedEpochMillis int64                   `json:"modified_epoch_millis,omitempty"`
+	ParentSessionID     string                  `json:"parent_session_id,omitempty"`
+	BranchName          string                  `json:"branch_name,omitempty"`
+	Lifecycle           sessionLifecycleReport  `json:"lifecycle"`
+	Active              bool                    `json:"active,omitempty"`
+	Identity            session.SessionIdentity `json:"identity,omitempty"`
+}
+
+type sessionLifecycleReport struct {
+	Kind      string `json:"kind"`
+	Signal    string `json:"signal"`
+	Saved     bool   `json:"saved"`
+	Abandoned bool   `json:"abandoned"`
 }
 
 func (a *App) ListSessions() error {
@@ -35452,11 +35484,17 @@ func buildSessionListReport(sessions []session.Session, activeID string, workspa
 	for _, sess := range sessions {
 		report.Sessions = append(report.Sessions, sess.ID)
 		report.SessionDetails = append(report.SessionDetails, sessionListDetail{
-			ID:           sess.ID,
-			Path:         sess.Path,
-			MessageCount: len(sess.Messages),
-			Active:       activeID != "" && sess.ID == activeID,
-			Identity:     sess.Identity,
+			ID:                  sess.ID,
+			Path:                sess.Path,
+			MessageCount:        len(sess.Messages),
+			CreatedAtMS:         timeMillis(sess.Metadata.CreatedAt),
+			UpdatedAtMS:         timeMillis(sess.Metadata.UpdatedAt),
+			ModifiedEpochMillis: timeMillis(sess.Metadata.ModifiedAt),
+			ParentSessionID:     sess.Metadata.ParentSessionID,
+			BranchName:          sess.Metadata.BranchName,
+			Lifecycle:           lifecycleForStoredSession(&sess),
+			Active:              activeID != "" && sess.ID == activeID,
+			Identity:            sess.Identity,
 		})
 	}
 	return report
@@ -35468,8 +35506,38 @@ func renderSessionListText(out io.Writer, report sessionListReport) {
 		if sess.Active {
 			active = "\tactive"
 		}
-		fmt.Fprintf(out, "%s\t%d messages\t%s%s\n", sess.ID, sess.MessageCount, sess.Path, active)
+		lineage := ""
+		switch {
+		case sess.ParentSessionID != "" && sess.BranchName != "":
+			lineage = fmt.Sprintf("\tbranch=%s from=%s", sess.BranchName, sess.ParentSessionID)
+		case sess.ParentSessionID != "":
+			lineage = fmt.Sprintf("\tfrom=%s", sess.ParentSessionID)
+		case sess.BranchName != "":
+			lineage = fmt.Sprintf("\tbranch=%s", sess.BranchName)
+		}
+		fmt.Fprintf(out, "%s\t%d messages\tlifecycle=%s\t%s%s%s\n", sess.ID, sess.MessageCount, sess.Lifecycle.Signal, sess.Path, lineage, active)
 	}
+}
+
+func lifecycleForStoredSession(sess *session.Session) sessionLifecycleReport {
+	kind := "saved_only"
+	signal := "saved only"
+	if sess != nil && len(sess.Messages) == 0 {
+		kind = "empty"
+		signal = "empty saved session"
+	}
+	return sessionLifecycleReport{
+		Kind:   kind,
+		Signal: signal,
+		Saved:  true,
+	}
+}
+
+func timeMillis(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixMilli()
 }
 
 func (a *App) ListSkills() error {

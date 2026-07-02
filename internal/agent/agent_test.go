@@ -5092,25 +5092,36 @@ func TestSessionsShowJSONUsesStableReport(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
 	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "hello back")))
+	forked, err := store.Fork("source", "investigation")
+	require.NoError(t, err)
 	var out bytes.Buffer
 	app := &App{Sessions: store, Out: &out}
 
-	require.NoError(t, app.SessionsCommand([]string{"show", "source", "--json"}))
+	require.NoError(t, app.SessionsCommand([]string{"show", forked.ID, "--json"}))
 	var report sessionShowReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	require.Equal(t, "session_show", report.Kind)
 	require.Equal(t, "show", report.Action)
 	require.Equal(t, "ok", report.Status)
-	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, forked.ID, report.SessionID)
 	require.Equal(t, 2, report.MessageCount)
 	require.Len(t, report.Messages, 2)
 	require.NotEmpty(t, report.Path)
+	require.NotZero(t, report.CreatedAtMS)
+	require.NotZero(t, report.UpdatedAtMS)
+	require.NotZero(t, report.ModifiedEpochMillis)
+	require.Equal(t, "source", report.ParentSessionID)
+	require.Equal(t, "investigation", report.BranchName)
+	require.NotEmpty(t, report.Lifecycle.Kind)
+	require.True(t, report.Lifecycle.Saved)
 }
 
 func TestSessionsListJSONIncludesDetails(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
 	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "hello back")))
+	forked, err := store.Fork("source", "investigation")
+	require.NoError(t, err)
 	var out bytes.Buffer
 	app := &App{Sessions: store, Out: &out, Workspace: "/workspace"}
 
@@ -5120,13 +5131,25 @@ func TestSessionsListJSONIncludesDetails(t *testing.T) {
 	require.Equal(t, "sessions", report.Kind)
 	require.Equal(t, "ok", report.Status)
 	require.Equal(t, "list", report.Action)
-	require.Equal(t, []string{"source"}, report.Sessions)
-	require.Equal(t, 1, report.Count)
+	require.Contains(t, report.Sessions, "source")
+	require.Contains(t, report.Sessions, forked.ID)
+	require.Equal(t, 2, report.Count)
 	require.Equal(t, "/workspace", report.Workspace)
-	require.Len(t, report.SessionDetails, 1)
-	require.Equal(t, "source", report.SessionDetails[0].ID)
-	require.Equal(t, 2, report.SessionDetails[0].MessageCount)
-	require.NotEmpty(t, report.SessionDetails[0].Path)
+	require.Len(t, report.SessionDetails, 2)
+	details := map[string]sessionListDetail{}
+	for _, detail := range report.SessionDetails {
+		details[detail.ID] = detail
+		require.NotEmpty(t, detail.Path)
+		require.NotZero(t, detail.CreatedAtMS)
+		require.NotZero(t, detail.UpdatedAtMS)
+		require.NotZero(t, detail.ModifiedEpochMillis)
+		require.NotEmpty(t, detail.Lifecycle.Kind)
+		require.True(t, detail.Lifecycle.Saved)
+	}
+	require.Equal(t, 2, details["source"].MessageCount)
+	require.Equal(t, "source", details[forked.ID].ParentSessionID)
+	require.Equal(t, "investigation", details[forked.ID].BranchName)
+	require.Equal(t, 2, details[forked.ID].MessageCount)
 }
 
 func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
