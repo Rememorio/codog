@@ -12638,6 +12638,278 @@ func TestThemeErrorsHonorGlobalJSONFormat(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
 }
 
+func TestLanguageErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"language", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "language"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"language", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing target",
+			args:      []string{"language", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "language"`, `"option": "--target"`},
+		},
+		{
+			name:      "missing path",
+			args:      []string{"language", "--path", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "language"`, `"option": "--path"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"language", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "language"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "set missing name",
+			args:      []string{"language", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "language set"`, `"argument": "LANGUAGE"`},
+		},
+		{
+			name:      "clear extra",
+			args:      []string{"language", "clear", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "language clear"`, `"extra"`},
+		},
+		{
+			name:      "invalid target",
+			args:      []string{"language", "--target", "bogus", "Japanese"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--target"`, `"value": "bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
+func TestVimErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"vim", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "vim"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"vim", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing target",
+			args:      []string{"vim", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "vim"`, `"option": "--target"`},
+		},
+		{
+			name:      "missing path",
+			args:      []string{"vim", "--path", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "vim"`, `"option": "--path"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"vim", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "vim"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "set missing mode",
+			args:      []string{"vim", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "vim set"`, `"argument": "MODE"`},
+		},
+		{
+			name:      "invalid mode",
+			args:      []string{"vim", "maybe"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "mode"`, `"value": "maybe"`},
+		},
+		{
+			name:      "extra argument",
+			args:      []string{"vim", "on", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "vim on"`, `"extra"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
+func TestEffortReasoningErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "effort missing output format",
+			args:      []string{"effort", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "effort"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "reasoning invalid output format",
+			args:      []string{"reasoning", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "effort missing target",
+			args:      []string{"effort", "--target", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "effort"`, `"option": "--target"`},
+		},
+		{
+			name:      "reasoning missing path",
+			args:      []string{"reasoning", "--path", "--output-format", "json"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "reasoning"`, `"option": "--path"`},
+		},
+		{
+			name:      "effort unknown option",
+			args:      []string{"effort", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "effort"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "reasoning set missing level",
+			args:      []string{"reasoning", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "reasoning set"`, `"argument": "LEVEL"`},
+		},
+		{
+			name:      "effort invalid level",
+			args:      []string{"effort", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "effort"`, `"value": "bogus"`},
+		},
+		{
+			name:      "reasoning invalid level",
+			args:      []string{"reasoning", "bogus"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "reasoning"`, `"value": "bogus"`},
+		},
+		{
+			name:      "effort extra argument",
+			args:      []string{"effort", "high", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "effort"`, `"extra"`},
+		},
+		{
+			name:      "reasoning clear extra",
+			args:      []string{"reasoning", "clear", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "reasoning clear"`, `"extra"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
 func TestNotificationsCommandAndHookGate(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

@@ -530,7 +530,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "allowed-tools":
 		return app.AllowedTools(rest)
 	case "language":
-		return app.Language(rest)
+		if err := app.Language(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "theme":
 		if err := app.Theme(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -542,11 +545,20 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "vim":
-		return app.Vim(rest)
+		if err := app.Vim(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "effort":
-		return app.Effort(rest)
+		if err := app.Effort(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "reasoning":
-		return app.Reasoning(rest)
+		if err := app.Reasoning(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "fast":
 		return app.Fast(rest)
 	case "voice":
@@ -13648,6 +13660,8 @@ type languageReport struct {
 	Path       string `json:"path,omitempty"`
 }
 
+const languageUsage = "codog language [status|set|clear] [LANGUAGE] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Language(args []string) error {
 	req, err := parseLanguageArgs(args)
 	if err != nil {
@@ -13718,52 +13732,85 @@ func parseLanguageArgs(args []string) (languageRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("language output format is required")
+				return req, missingFlagValueError{
+					Command: "language",
+					Flag:    arg,
+					Usage:   languageUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("language target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "language",
+					Flag:    arg,
+					Usage:   languageUsage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("language config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "language",
+					Flag:    arg,
+					Usage:   languageUsage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: "language",
+					Option:  arg,
+					Usage:   languageUsage,
+				}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "language"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("language", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected language argument %q", rest[1])
+			return req, unexpectedExtraArgsError{
+				Command: "language " + strings.ToLower(rest[0]),
+				Args:    rest[1:],
+				Usage:   languageUsage,
+			}
 		}
 		req.Action = "status"
 	case "set":
 		if len(rest) < 2 {
-			return req, errors.New("language name is required")
+			return req, requiredArgumentError{
+				Command:  "language set",
+				Argument: "LANGUAGE",
+				Usage:    languageUsage,
+			}
 		}
 		req.Action = "set"
 		req.Language = strings.Join(rest[1:], " ")
 	case "clear", "reset", "unset", "default":
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected language argument %q", rest[1])
+			return req, unexpectedExtraArgsError{
+				Command: "language " + strings.ToLower(rest[0]),
+				Args:    rest[1:],
+				Usage:   languageUsage,
+			}
 		}
 		req.Action = "clear"
 	default:
@@ -13799,18 +13846,37 @@ func normalizeConfiguredLanguage(language string) string {
 func normalizeLanguageName(language string) (string, error) {
 	language = strings.TrimSpace(language)
 	if language == "" {
-		return "", errors.New("language name is required")
+		return "", requiredArgumentError{
+			Command:  "language set",
+			Argument: "LANGUAGE",
+			Usage:    languageUsage,
+		}
 	}
 	if strings.ContainsAny(language, "\r\n") {
-		return "", errors.New("language must be a single line")
+		return "", invalidFlagValueError{
+			Flag:    "language",
+			Value:   language,
+			Message: "language must be a single line",
+			Usage:   languageUsage,
+		}
 	}
 	if len(language) > 80 {
-		return "", errors.New("language must be 80 characters or fewer")
+		return "", invalidFlagValueError{
+			Flag:    "language",
+			Value:   language,
+			Message: "language must be 80 characters or fewer",
+			Usage:   languageUsage,
+		}
 	}
 	return language, nil
 }
 
 var availableEfforts = []string{"auto", "low", "medium", "high"}
+
+const (
+	effortUsage    = "codog effort [status|list|set|clear] [auto|low|medium|high] [--target user|project|local] [--path PATH] [--output-format text|json]"
+	reasoningUsage = "codog reasoning [status|list|set|clear] [auto|low|medium|high] [--target user|project|local] [--path PATH] [--output-format text|json]"
+)
 
 type effortRequest struct {
 	Action string
@@ -13853,7 +13919,7 @@ func (a *App) reasoningEffort(args []string, kind string, title string) error {
 	switch req.Action {
 	case "status", "list":
 	case "set":
-		if err := validateEffort(req.Level); err != nil {
+		if err := validateEffort(req.Level, kind); err != nil {
 			return err
 		}
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
@@ -13897,6 +13963,7 @@ func (a *App) reasoningEffort(args []string, kind string, title string) error {
 
 func parseEffortArgs(args []string, command string) (effortRequest, error) {
 	req := effortRequest{Action: "status", Format: "text", Target: "user"}
+	usage := effortCommandUsage(command)
 	var rest []string
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -13906,58 +13973,122 @@ func parseEffortArgs(args []string, command string) (effortRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, fmt.Errorf("%s output format is required", command)
+				return req, missingFlagValueError{
+					Command: command,
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, fmt.Errorf("%s target is required", command)
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: command,
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, fmt.Errorf("%s config path is required", command)
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: command,
+					Flag:    arg,
+					Usage:   usage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: command,
+					Option:  arg,
+					Usage:   usage,
+				}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, command); err != nil {
+	normalizedFormat, err := normalizeOutputFormat(command, req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: command + " " + strings.ToLower(rest[0]),
+				Args:    rest[1:],
+				Usage:   usage,
+			}
+		}
 		req.Action = "status"
 	case "list":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: command + " list",
+				Args:    rest[1:],
+				Usage:   usage,
+			}
+		}
 		req.Action = "list"
 	case "set":
 		if len(rest) < 2 {
-			return req, fmt.Errorf("%s level is required", command)
+			return req, requiredArgumentError{
+				Command:  command + " set",
+				Argument: "LEVEL",
+				Usage:    usage,
+			}
+		}
+		if len(rest) > 2 {
+			return req, unexpectedExtraArgsError{
+				Command: command + " set",
+				Args:    rest[2:],
+				Usage:   usage,
+			}
 		}
 		req.Action = "set"
 		req.Level = strings.ToLower(rest[1])
 	case "clear", "reset":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: command + " " + strings.ToLower(rest[0]),
+				Args:    rest[1:],
+				Usage:   usage,
+			}
+		}
 		req.Action = "clear"
 	default:
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected %s argument %q", command, rest[1])
+			return req, unexpectedExtraArgsError{
+				Command: command,
+				Args:    rest[1:],
+				Usage:   usage,
+			}
 		}
 		req.Action = "set"
 		req.Level = strings.ToLower(rest[0])
 	}
 	return req, nil
+}
+
+func effortCommandUsage(command string) string {
+	if command == "reasoning" {
+		return reasoningUsage
+	}
+	return effortUsage
 }
 
 func renderEffortReport(out io.Writer, title string, report effortReport) {
@@ -13980,14 +14111,19 @@ func effectiveEffort(level string) string {
 	return level
 }
 
-func validateEffort(level string) error {
+func validateEffort(level string, command string) error {
 	level = effectiveEffort(level)
 	for _, allowed := range availableEfforts {
 		if level == allowed {
 			return nil
 		}
 	}
-	return fmt.Errorf("unknown effort level %q", level)
+	return invalidFlagValueError{
+		Flag:    command,
+		Value:   level,
+		Message: command + " level must be one of auto, low, medium, or high",
+		Usage:   effortCommandUsage(command),
+	}
 }
 
 type fastRequest struct {
@@ -15366,6 +15502,8 @@ type vimReport struct {
 	Path       string `json:"path,omitempty"`
 }
 
+const vimUsage = "codog vim [status|on|off|toggle|clear] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Vim(args []string) error {
 	req, err := parseVimArgs(args)
 	if err != nil {
@@ -15403,6 +15541,20 @@ func (a *App) Vim(args []string) error {
 		report.EditorMode = nextMode
 		report.Previous = previous
 		report.Path = path
+	case "clear":
+		path, err := a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "editorMode"); err != nil {
+			return err
+		}
+		a.Config.EditorMode = ""
+		report.Action = "clear"
+		report.Enabled = false
+		report.EditorMode = effectiveEditorMode(a.Config.EditorMode)
+		report.Previous = previous
+		report.Path = path
 	default:
 		return fmt.Errorf("unknown vim command %q", req.Action)
 	}
@@ -15426,44 +15578,80 @@ func parseVimArgs(args []string) (vimRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("vim output format is required")
+				return req, missingFlagValueError{
+					Command: "vim",
+					Flag:    arg,
+					Usage:   vimUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("vim target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "vim",
+					Flag:    arg,
+					Usage:   vimUsage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("vim config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "vim",
+					Flag:    arg,
+					Usage:   vimUsage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: "vim",
+					Option:  arg,
+					Usage:   vimUsage,
+				}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "vim"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("vim", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	if len(rest) > 1 && strings.ToLower(rest[0]) != "set" {
-		return req, fmt.Errorf("unexpected vim argument %q", rest[1])
+		return req, unexpectedExtraArgsError{
+			Command: "vim " + strings.ToLower(rest[0]),
+			Args:    rest[1:],
+			Usage:   vimUsage,
+		}
 	}
 	action := strings.ToLower(rest[0])
 	if action == "set" {
 		if len(rest) < 2 {
-			return req, errors.New("vim mode is required")
+			return req, requiredArgumentError{
+				Command:  "vim set",
+				Argument: "MODE",
+				Usage:    vimUsage,
+			}
+		}
+		if len(rest) > 2 {
+			return req, unexpectedExtraArgsError{
+				Command: "vim set",
+				Args:    rest[2:],
+				Usage:   vimUsage,
+			}
 		}
 		action = strings.ToLower(rest[1])
 	}
@@ -15476,8 +15664,15 @@ func parseVimArgs(args []string) (vimRequest, error) {
 		req.Action = "off"
 	case "toggle":
 		req.Action = "toggle"
+	case "clear", "reset", "unset":
+		req.Action = "clear"
 	default:
-		return req, fmt.Errorf("unknown vim mode %q", action)
+		return req, invalidFlagValueError{
+			Flag:    "mode",
+			Value:   action,
+			Message: "vim mode must be one of on, off, toggle, status, or clear",
+			Usage:   vimUsage,
+		}
 	}
 	return req, nil
 }
@@ -15970,7 +16165,11 @@ func (a *App) preferenceConfigPath(target, path string) (string, error) {
 	case "local":
 		return a.resolveOutputPath(".codog.local.json"), nil
 	default:
-		return "", fmt.Errorf("unknown config target %q", target)
+		return "", invalidFlagValueError{
+			Flag:    "--target",
+			Value:   target,
+			Message: "target must be one of user, project, or local",
+		}
 	}
 }
 
