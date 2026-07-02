@@ -24677,13 +24677,6 @@ func (a *App) runResumedChromeSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedNotificationsSlash(args []string, format string) error {
-	req, err := parseNotificationsArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/notifications", req.Action), format)
-	}
 	return a.Notifications(args)
 }
 

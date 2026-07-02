@@ -2478,6 +2478,16 @@ func risky(value any) {
 	require.Equal(t, "status", resumedNotifications.Action)
 	require.False(t, resumedNotifications.Enabled)
 
+	out, err = runResumedJSON("/notifications", "on")
+	require.NoError(t, err)
+	var resumedNotificationsOn notificationsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedNotificationsOn))
+	require.Equal(t, "notifications", resumedNotificationsOn.Kind)
+	require.Equal(t, "set", resumedNotificationsOn.Action)
+	require.True(t, resumedNotificationsOn.Enabled)
+	require.False(t, resumedNotificationsOn.Previous)
+	require.NotEmpty(t, resumedNotificationsOn.Path)
+
 	out, err = runResumedJSON("/privacy-settings")
 	require.NoError(t, err)
 	var resumedPrivacy privacyReport
@@ -3415,7 +3425,6 @@ func risky(value any) {
 		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
 		{Command: "/vim", Args: []string{"toggle"}, Report: "/vim toggle"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
-		{Command: "/notifications", Args: []string{"on"}, Report: "/notifications on"},
 		{Command: "/privacy-settings", Args: []string{"set", "telemetry", "off"}, Report: "/privacy-settings set"},
 		{Command: "/telemetry", Args: []string{"on"}, Report: "/telemetry on"},
 		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
