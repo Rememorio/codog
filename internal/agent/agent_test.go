@@ -1505,6 +1505,43 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.Contains(t, report.Hint, "codog prompt")
 }
 
+func TestGlobalCWDFlagChangesWorkspaceAndConfigRoot(t *testing.T) {
+	originalCWD, err := os.Getwd()
+	require.NoError(t, err)
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	data, err := json.Marshal(map[string]string{
+		"config_home": configHome,
+		"model":       "cwd-model",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog.json"), data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--cwd", workspace, "--output-format", "json", "status"}, config.FlagOverrides{})
+	})
+
+	require.NoError(t, err)
+	currentCWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, originalCWD, currentCWD)
+	var report struct {
+		Workspace struct {
+			Path string `json:"path"`
+		} `json:"workspace"`
+		Config struct {
+			ConfigHome string `json:"config_home"`
+			Model      string `json:"model"`
+		} `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	require.Equal(t, expectedWorkspace, report.Workspace.Path)
+	require.Equal(t, configHome, report.Config.ConfigHome)
+	require.Equal(t, "cwd-model", report.Config.Model)
+}
+
 func TestApprovalSlashAliasesReturnInteractiveOnly(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")

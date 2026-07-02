@@ -173,6 +173,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
 	}
+	restoreCWD, err := applyGlobalCWD(overrides.CWD)
+	if err != nil {
+		return renderCLIError(os.Stdout, err, requestedOutputFormat(originalArgs))
+	}
+	defer restoreCWD()
 	if command == "" && hasExplicitEmptyPositional(originalArgs) {
 		return renderEmptyPrompt(os.Stdout, requestedOutputFormat(originalArgs))
 	}
@@ -44245,6 +44250,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
+	flags.StringVar(&base.CWD, "cwd", base.CWD, "run as if Codog was started in this directory")
 	flags.StringVar(&base.Model, "model", base.Model, "model name")
 	flags.StringVar(&base.BaseURL, "base-url", base.BaseURL, "Anthropic-compatible base URL")
 	flags.StringVar(&base.SystemPrompt, "system-prompt", base.SystemPrompt, "override the base system prompt")
@@ -44346,11 +44352,28 @@ func globalFlagTakesValue(arg string) bool {
 		name = before
 	}
 	switch name {
-	case "--config", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--max-turns", "--max-tokens", "--temperature":
+	case "--config", "--cwd", "--model", "--base-url", "--system-prompt", "--append-system-prompt", "--session", "--resume", "--output-format", "-o", "--permission-mode", "--allowed-tools", "--allowedTools", "--disallowed-tools", "--disallowedTools", "--max-turns", "--max-tokens", "--temperature":
 		return true
 	default:
 		return false
 	}
+}
+
+func applyGlobalCWD(path string) (func(), error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return func() {}, nil
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chdir(path); err != nil {
+		return nil, err
+	}
+	return func() {
+		_ = os.Chdir(previous)
+	}, nil
 }
 
 func isKnownNonPromptCommand(value string) bool {
@@ -45994,6 +46017,7 @@ Usage:
 
 Flags:
   --model NAME
+  --cwd PATH
   --base-url URL
   --system-prompt TEXT
   --append-system-prompt TEXT

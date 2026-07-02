@@ -612,6 +612,7 @@ type MutationReport struct {
 
 type FlagOverrides struct {
 	ConfigPath                     string
+	CWD                            string
 	SessionID                      string
 	Resume                         string
 	Model                          string
