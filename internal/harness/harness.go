@@ -60,6 +60,7 @@ type scenario struct {
 	previous            []anthropic.Message
 	autoCompactMessages int
 	permission          tools.Permission
+	configHome          bool
 	plugins             bool
 	setup               func(string) error
 	prepare             func(string) ([]mockanthropic.Turn, func(), error)
@@ -222,6 +223,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		bashOutputTruncationScenario(),
 		{
 			name:       "bash_permission_prompt_approved",
 			permission: tools.PermissionWorkspace,
@@ -429,7 +431,14 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	if autoCompactMessages == 0 {
 		autoCompactMessages = 20
 	}
-	registry, err := registryForScenario(workspace, item)
+	configHome := ""
+	if item.configHome {
+		configHome = filepath.Join(workspace, "config-home")
+		if err := os.MkdirAll(configHome, 0o755); err != nil {
+			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+		}
+	}
+	registry, err := registryForScenario(workspace, configHome, item)
 	if err != nil {
 		return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
 	}
@@ -600,6 +609,64 @@ func configPrecedenceScenario() scenario {
 			}
 			if strings.Join(loadedSessionStart, ",") != "echo user,echo project,echo local" {
 				return fmt.Errorf("unexpected loaded hook order: %v", loadedSessionStart)
+			}
+			return nil
+		},
+	}
+}
+
+func bashOutputTruncationScenario() scenario {
+	return scenario{
+		name:       "bash_output_truncation_roundtrip",
+		permission: tools.PermissionAllow,
+		configHome: true,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{{
+				ID:    "tool-1",
+				Name:  "bash",
+				Input: json.RawMessage(`{"command":"yes x | head -c 20000","timeout_ms":1000}`),
+			}}},
+			{Text: "bash truncation harness ok"},
+		},
+		prompt: "run large bash output",
+		verify: func(_ string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "bash truncation harness ok") {
+				return fmt.Errorf("missing bash truncation final response")
+			}
+			if err := expectToolCalls(result, 1, false); err != nil {
+				return err
+			}
+			var payload struct {
+				Stdout              string `json:"stdout"`
+				PersistedOutputPath string `json:"persistedOutputPath"`
+				PersistedOutputSize int64  `json:"persistedOutputSize"`
+			}
+			if err := json.Unmarshal([]byte(result.ToolCalls[0].Output), &payload); err != nil {
+				return err
+			}
+			if len(payload.Stdout) >= 20000 {
+				return fmt.Errorf("stdout was not truncated")
+			}
+			if !strings.Contains(payload.Stdout, "[output truncated - exceeded 16384 bytes]") {
+				return fmt.Errorf("missing truncation marker in stdout")
+			}
+			if payload.PersistedOutputPath == "" || payload.PersistedOutputSize <= 20000 {
+				return fmt.Errorf("missing persisted full output path/size: path=%q size=%d", payload.PersistedOutputPath, payload.PersistedOutputSize)
+			}
+			data, err := os.ReadFile(payload.PersistedOutputPath)
+			if err != nil {
+				return err
+			}
+			var persisted struct {
+				Kind            string   `json:"kind"`
+				Stdout          string   `json:"stdout"`
+				TruncatedFields []string `json:"truncated_fields"`
+			}
+			if err := json.Unmarshal(data, &persisted); err != nil {
+				return err
+			}
+			if persisted.Kind != "bash_output" || len(persisted.Stdout) != 20000 || strings.Join(persisted.TruncatedFields, ",") != "stdout" {
+				return fmt.Errorf("unexpected persisted bash output metadata: kind=%q stdout=%d fields=%v", persisted.Kind, len(persisted.Stdout), persisted.TruncatedFields)
 			}
 			return nil
 		},
@@ -790,8 +857,8 @@ func compactRequestCount(requests []anthropic.Request) int {
 	return count
 }
 
-func registryForScenario(workspace string, item scenario) (*tools.Registry, error) {
-	registry := tools.NewRegistry(workspace)
+func registryForScenario(workspace string, configHome string, item scenario) (*tools.Registry, error) {
+	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
 	if !item.plugins {
 		return registry, nil
 	}

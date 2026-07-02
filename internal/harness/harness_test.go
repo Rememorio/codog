@@ -12,7 +12,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
-	require.GreaterOrEqual(t, report.Total, 15)
+	require.GreaterOrEqual(t, report.Total, 16)
 	require.Equal(t, "actual", report.UsageSummary.Source)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 	require.Greater(t, report.EstimatedCost, 0.0)
@@ -41,6 +41,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, bashDenied.OK)
 	require.Equal(t, 1, bashDenied.ToolCalls)
 	require.Contains(t, bashDenied.Output, "bash denied harness ok")
+
+	bashTruncation := findScenario(t, report, "bash_output_truncation_roundtrip")
+	require.True(t, bashTruncation.OK)
+	require.Equal(t, 1, bashTruncation.ToolCalls)
+	require.Contains(t, bashTruncation.Output, "bash truncation harness ok")
 
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
