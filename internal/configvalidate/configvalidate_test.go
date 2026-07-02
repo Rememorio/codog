@@ -68,6 +68,15 @@ func TestValidateBytesValidatesCleanupPeriodDaysType(t *testing.T) {
 	require.Equal(t, "a number", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesRespectGitignoreType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"respectGitignore":"false"}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "respectGitignore", result.Errors[0].Field)
+	require.Equal(t, "a boolean", result.Errors[0].Expected)
+}
+
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
 	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true,"extra":true}}}`)
 

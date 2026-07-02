@@ -8409,6 +8409,8 @@ func TestFilesCommandAndSlash(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "README.md"), []byte("docs\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pkg", "main.go"), []byte("package main\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".hidden", "secret.go"), []byte("package hidden\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.go\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored.go"), []byte("package ignored\n"), 0o644))
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{Workspace: workspace, Out: &out, Err: &errOut}
@@ -8416,7 +8418,14 @@ func TestFilesCommandAndSlash(t *testing.T) {
 	require.NoError(t, app.Files([]string{"--glob", "*.go", "--json"}))
 	require.Contains(t, out.String(), `"kind": "files"`)
 	require.Contains(t, out.String(), `"path": "pkg/main.go"`)
+	require.NotContains(t, out.String(), "ignored.go")
 	require.NotContains(t, out.String(), "secret.go")
+	out.Reset()
+
+	respectGitignore := false
+	app.Config.RespectGitignore = &respectGitignore
+	require.NoError(t, app.Files([]string{"--glob", "*.go", "--json"}))
+	require.Contains(t, out.String(), `"path": "ignored.go"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/files --glob=*.md", &session.Session{ID: "session"}))

@@ -8,13 +8,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/gitignore"
 )
 
 type Options struct {
-	Path          string
-	Glob          string
-	Limit         int
-	IncludeHidden bool
+	Path             string
+	Glob             string
+	Limit            int
+	IncludeHidden    bool
+	RespectGitignore bool
 }
 
 type Entry struct {
@@ -25,16 +28,17 @@ type Entry struct {
 }
 
 type Report struct {
-	Kind      string  `json:"kind"`
-	Action    string  `json:"action"`
-	Root      string  `json:"root"`
-	Path      string  `json:"path,omitempty"`
-	Glob      string  `json:"glob,omitempty"`
-	Total     int     `json:"total"`
-	Limit     int     `json:"limit"`
-	Truncated bool    `json:"truncated"`
-	Bytes     int64   `json:"bytes"`
-	Files     []Entry `json:"files"`
+	Kind             string  `json:"kind"`
+	Action           string  `json:"action"`
+	Root             string  `json:"root"`
+	Path             string  `json:"path,omitempty"`
+	Glob             string  `json:"glob,omitempty"`
+	Total            int     `json:"total"`
+	Limit            int     `json:"limit"`
+	Truncated        bool    `json:"truncated"`
+	Bytes            int64   `json:"bytes"`
+	RespectGitignore bool    `json:"respect_gitignore"`
+	Files            []Entry `json:"files"`
 }
 
 func Build(workspace string, opts Options) (Report, error) {
@@ -61,13 +65,21 @@ func Build(workspace string, opts Options) (Report, error) {
 		limit = 200
 	}
 	report := Report{
-		Kind:   "files",
-		Action: "list",
-		Root:   root,
-		Path:   displayPath(root, start),
-		Glob:   opts.Glob,
-		Limit:  limit,
-		Files:  []Entry{},
+		Kind:             "files",
+		Action:           "list",
+		Root:             root,
+		Path:             displayPath(root, start),
+		Glob:             opts.Glob,
+		Limit:            limit,
+		RespectGitignore: opts.RespectGitignore,
+		Files:            []Entry{},
+	}
+	var ignoreMatcher *gitignore.Matcher
+	if opts.RespectGitignore {
+		ignoreMatcher, err = gitignore.New(root)
+		if err != nil {
+			return Report{}, err
+		}
 	}
 	err = filepath.WalkDir(start, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -80,9 +92,15 @@ func Build(workspace string, opts Options) (Report, error) {
 			if skipDir(entry.Name(), opts.IncludeHidden) {
 				return filepath.SkipDir
 			}
+			if ignoreMatcher != nil && ignoreMatcher.Ignored(path, true) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !opts.IncludeHidden && strings.HasPrefix(entry.Name(), ".") {
+			return nil
+		}
+		if ignoreMatcher != nil && ignoreMatcher.Ignored(path, false) {
 			return nil
 		}
 		rel := displayPath(root, path)
@@ -129,6 +147,7 @@ func RenderText(w io.Writer, report Report) {
 	fmt.Fprintf(w, "  Total            %d\n", report.Total)
 	fmt.Fprintf(w, "  Listed           %d\n", len(report.Files))
 	fmt.Fprintf(w, "  Bytes            %d\n", report.Bytes)
+	fmt.Fprintf(w, "  Respect gitignore %t\n", report.RespectGitignore)
 	fmt.Fprintf(w, "  Truncated        %t\n", report.Truncated)
 	if len(report.Files) == 0 {
 		return

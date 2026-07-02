@@ -1231,19 +1231,20 @@ func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, q
 		ragTimeout = time.Duration(cfg.RAGTimeoutSeconds) * time.Second
 	}
 	return tools.RegistryOptions{
-		SandboxStrategy: cfg.Future.SandboxStrategy,
-		Sandbox:         cfg.Future.Sandbox,
-		AdditionalDirs:  additionalDirs,
-		ConfigHome:      cfg.ConfigHome,
-		ConfigEnv:       cfg.Env,
-		TrustedRoots:    cfg.TrustedRoots,
-		OAuthProfile:    cfg.OAuthProfile,
-		MCPServers:      cfg.MCPServers,
-		RAGBaseURL:      cfg.RAGBaseURL,
-		RAGTimeout:      ragTimeout,
-		RAGTopKMax:      cfg.RAGTopKMax,
-		QuestionIn:      questionIn,
-		QuestionOut:     questionOut,
+		SandboxStrategy:  cfg.Future.SandboxStrategy,
+		Sandbox:          cfg.Future.Sandbox,
+		AdditionalDirs:   additionalDirs,
+		ConfigHome:       cfg.ConfigHome,
+		ConfigEnv:        cfg.Env,
+		TrustedRoots:     cfg.TrustedRoots,
+		RespectGitignore: cfg.EffectiveRespectGitignore(),
+		OAuthProfile:     cfg.OAuthProfile,
+		MCPServers:       cfg.MCPServers,
+		RAGBaseURL:       cfg.RAGBaseURL,
+		RAGTimeout:       ragTimeout,
+		RAGTopKMax:       cfg.RAGTopKMax,
+		QuestionIn:       questionIn,
+		QuestionOut:      questionOut,
 	}
 }
 
@@ -16516,10 +16517,11 @@ func (a *App) Files(args []string) error {
 		return err
 	}
 	report, err := fileinventory.Build(a.Workspace, fileinventory.Options{
-		Path:          req.Path,
-		Glob:          req.Glob,
-		Limit:         req.Limit,
-		IncludeHidden: req.IncludeHidden,
+		Path:             req.Path,
+		Glob:             req.Glob,
+		Limit:            req.Limit,
+		IncludeHidden:    req.IncludeHidden,
+		RespectGitignore: a.Config.EffectiveRespectGitignore(),
 	})
 	if err != nil {
 		return err
@@ -16560,7 +16562,7 @@ func (a *App) searchReport(ctx context.Context, req searchRequest) (searchReport
 		"ignore_case": req.IgnoreCase,
 		"limit":       req.Limit,
 	})
-	raw, err := tools.GrepTool{Workspace: a.Workspace}.Execute(ctx, payload)
+	raw, err := tools.GrepTool{Workspace: a.Workspace, RespectGitignore: a.Config.EffectiveRespectGitignore()}.Execute(ctx, payload)
 	if err != nil {
 		return searchReport{}, err
 	}

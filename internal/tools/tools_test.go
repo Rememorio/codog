@@ -962,6 +962,38 @@ func TestGrepAndGlobSupportRecursiveGlobstar(t *testing.T) {
 	require.Contains(t, out, filepath.ToSlash(filepath.Join("src", "pkg", "notes.md")))
 }
 
+func TestGrepAndGlobRespectGitignoreWhenConfigured(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "ignored-dir"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.txt\n*.log\nignored-dir/\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "kept.txt"), []byte("needle kept\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored.txt"), []byte("needle ignored\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "trace.log"), []byte("needle log\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored-dir", "nested.txt"), []byte("needle nested\n"), 0o644))
+
+	registry := NewRegistryWithOptions(workspace, RegistryOptions{RespectGitignore: true})
+	out, err := registry.Execute(context.Background(), "Glob", []byte(`{"pattern":"**/*"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "kept.txt")
+	require.NotContains(t, out, "ignored.txt")
+	require.NotContains(t, out, "trace.log")
+	require.NotContains(t, out, "ignored-dir")
+
+	out, err = registry.Execute(context.Background(), "Grep", []byte(`{"pattern":"needle","output_mode":"files_with_matches"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "kept.txt")
+	require.NotContains(t, out, "ignored.txt")
+	require.NotContains(t, out, "trace.log")
+	require.NotContains(t, out, "ignored-dir")
+
+	registry = NewRegistryWithOptions(workspace, RegistryOptions{RespectGitignore: false})
+	out, err = registry.Execute(context.Background(), "Glob", []byte(`{"pattern":"**/*"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, "ignored.txt")
+	require.Contains(t, out, "trace.log")
+	require.Contains(t, out, filepath.ToSlash(filepath.Join("ignored-dir", "nested.txt")))
+}
+
 func TestGlobToolReportsCompatibilityMetadataAndRealTruncation(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "a.go"), []byte("package a\n"), 0o644))
@@ -1537,13 +1569,14 @@ func TestUpdateBuiltinScopeRefreshesCompleteBuiltinRegistry(t *testing.T) {
 	})
 
 	registry.UpdateBuiltinScope(workspace, RegistryOptions{
-		SandboxStrategy: "none",
-		AdditionalDirs:  []string{extra},
-		ConfigHome:      configHome,
-		TrustedRoots:    []string{"repo-default"},
-		MCPServers:      servers,
-		QuestionIn:      questionIn,
-		QuestionOut:     io.Discard,
+		SandboxStrategy:  "none",
+		AdditionalDirs:   []string{extra},
+		ConfigHome:       configHome,
+		TrustedRoots:     []string{"repo-default"},
+		RespectGitignore: true,
+		MCPServers:       servers,
+		QuestionIn:       questionIn,
+		QuestionOut:      io.Discard,
 	})
 
 	require.True(t, registry.Has("plugin_demo"))
@@ -1568,6 +1601,12 @@ func TestUpdateBuiltinScopeRefreshesCompleteBuiltinRegistry(t *testing.T) {
 	_, tool, ok = registry.resolve("worker_create")
 	require.True(t, ok)
 	require.Equal(t, []string{"repo-default"}, tool.(WorkerCreateTool).TrustedRoots)
+	_, tool, ok = registry.resolve("grep")
+	require.True(t, ok)
+	require.True(t, tool.(GrepTool).RespectGitignore)
+	_, tool, ok = registry.resolve("glob")
+	require.True(t, ok)
+	require.True(t, tool.(GlobTool).RespectGitignore)
 	_, tool, ok = registry.resolve("list_mcp_prompts")
 	require.True(t, ok)
 	require.Equal(t, servers, tool.(ListMCPPromptsTool).Servers)

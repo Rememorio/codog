@@ -38,6 +38,36 @@ func TestBuildListsFilesWithGlobLimitAndHiddenPolicy(t *testing.T) {
 	require.Contains(t, out.String(), "Listed           1")
 }
 
+func TestBuildRespectsGitignoreWhenEnabled(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "ignored-dir"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.txt\n*.log\nignored-dir/\n!important.log\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "kept.txt"), []byte("kept"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored.txt"), []byte("ignored"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "trace.log"), []byte("ignored"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "important.log"), []byte("kept"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "ignored-dir", "nested.txt"), []byte("ignored"), 0o644))
+
+	report, err := Build(workspace, Options{Limit: 20, RespectGitignore: true})
+	require.NoError(t, err)
+	require.True(t, report.RespectGitignore)
+	require.Equal(t, []Entry{
+		{Path: "important.log", Size: 4, Ext: "log", Depth: 1},
+		{Path: "kept.txt", Size: 4, Ext: "txt", Depth: 1},
+	}, report.Files)
+
+	report, err = Build(workspace, Options{Limit: 20, RespectGitignore: false})
+	require.NoError(t, err)
+	require.False(t, report.RespectGitignore)
+	paths := make([]string, 0, len(report.Files))
+	for _, file := range report.Files {
+		paths = append(paths, file.Path)
+	}
+	require.Contains(t, paths, "ignored.txt")
+	require.Contains(t, paths, "trace.log")
+	require.Contains(t, paths, "ignored-dir/nested.txt")
+}
+
 func TestBuildRejectsWorkspaceEscape(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()

@@ -446,6 +446,7 @@ type Config struct {
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	CleanupPeriodDays   *int                       `json:"cleanupPeriodDays,omitempty"`
+	RespectGitignore    *bool                      `json:"respectGitignore,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
 	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
 	ProviderFallbacks   ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
@@ -568,6 +569,14 @@ func (c Config) EffectiveCleanupPeriodDays() int {
 		return sessionDefaultCleanupPeriodDays
 	}
 	return *c.CleanupPeriodDays
+}
+
+// EffectiveRespectGitignore reports whether file enumeration should honor .gitignore.
+func (c Config) EffectiveRespectGitignore() bool {
+	if c.RespectGitignore == nil {
+		return true
+	}
+	return *c.RespectGitignore
 }
 
 func defaultConfig() (Config, error) {
@@ -1146,6 +1155,10 @@ func merge(dst *Config, src Config) {
 	if src.CleanupPeriodDays != nil {
 		days := *src.CleanupPeriodDays
 		dst.CleanupPeriodDays = &days
+	}
+	if src.RespectGitignore != nil {
+		respect := *src.RespectGitignore
+		dst.RespectGitignore = &respect
 	}
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)

@@ -38,6 +38,7 @@ import (
 	"github.com/Rememorio/codog/internal/codeintel"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/cron"
+	"github.com/Rememorio/codog/internal/gitignore"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
@@ -125,20 +126,21 @@ type ToolInfo struct {
 
 // RegistryOptions controls optional tool integrations and execution defaults.
 type RegistryOptions struct {
-	SandboxStrategy string
-	Sandbox         config.SandboxConfig
-	AdditionalDirs  []string
-	ConfigHome      string
-	ConfigEnv       map[string]string
-	TrustedRoots    []string
-	OAuthProfile    string
-	MCPServers      map[string]config.MCPServerConfig
-	PowerShell      string
-	RAGBaseURL      string
-	RAGTimeout      time.Duration
-	RAGTopKMax      int
-	QuestionIn      io.Reader
-	QuestionOut     io.Writer
+	SandboxStrategy  string
+	Sandbox          config.SandboxConfig
+	AdditionalDirs   []string
+	ConfigHome       string
+	ConfigEnv        map[string]string
+	TrustedRoots     []string
+	RespectGitignore bool
+	OAuthProfile     string
+	MCPServers       map[string]config.MCPServerConfig
+	PowerShell       string
+	RAGBaseURL       string
+	RAGTimeout       time.Duration
+	RAGTopKMax       int
+	QuestionIn       io.Reader
+	QuestionOut      io.Writer
 }
 
 var claudeToolAliases = map[string]string{
@@ -578,8 +580,8 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(EditFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(MultiEditTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(ApplyPatchTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
-	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
-	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
+	r.Register(GrepTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, RespectGitignore: opts.RespectGitignore})
+	r.Register(GlobTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs, RespectGitignore: opts.RespectGitignore})
 	r.Register(LSTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(WebFetchTool{})
 	r.Register(WebSearchTool{})
@@ -4010,8 +4012,9 @@ func pathOrFilePathRequirement() []map[string]any {
 }
 
 type GrepTool struct {
-	Workspace      string
-	AdditionalDirs []string
+	Workspace        string
+	AdditionalDirs   []string
+	RespectGitignore bool
 }
 
 func (GrepTool) Definition() anthropic.ToolDefinition {
@@ -4134,6 +4137,13 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	if payload.Glob != "" {
 		walkRoot = deriveGlobWalkRoot(root, payload.Glob)
 	}
+	var ignoreMatcher *gitignore.Matcher
+	if t.RespectGitignore {
+		ignoreMatcher, err = gitignore.New(t.Workspace)
+		if err != nil {
+			return "", err
+		}
+	}
 	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -4142,6 +4152,12 @@ func (t GrepTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			if ignoredDir(entry.Name()) && path != root {
 				return filepath.SkipDir
 			}
+			if ignoreMatcher != nil && ignoreMatcher.Ignored(path, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if ignoreMatcher != nil && ignoreMatcher.Ignored(path, false) {
 			return nil
 		}
 		if payload.Glob != "" {
@@ -4495,8 +4511,9 @@ func grepCountTotal(counts map[string]int) int {
 }
 
 type GlobTool struct {
-	Workspace      string
-	AdditionalDirs []string
+	Workspace        string
+	AdditionalDirs   []string
+	RespectGitignore bool
 }
 
 func (GlobTool) Definition() anthropic.ToolDefinition {
@@ -4546,6 +4563,13 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 	started := time.Now()
 	walkRoot := deriveGlobWalkRoot(root, payload.Pattern)
 	collectLimit := limit + 1
+	var ignoreMatcher *gitignore.Matcher
+	if t.RespectGitignore {
+		ignoreMatcher, err = gitignore.New(t.Workspace)
+		if err != nil {
+			return "", err
+		}
+	}
 	err = filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -4557,6 +4581,12 @@ func (t GlobTool) Execute(_ context.Context, input json.RawMessage) (string, err
 			if ignoredDir(entry.Name()) && path != root {
 				return filepath.SkipDir
 			}
+			if ignoreMatcher != nil && ignoreMatcher.Ignored(path, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if ignoreMatcher != nil && ignoreMatcher.Ignored(path, false) {
 			return nil
 		}
 		rel, _ := filepath.Rel(root, path)
