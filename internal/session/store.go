@@ -759,9 +759,7 @@ func (s *Store) List() ([]Session, error) {
 			seen[id] = struct{}{}
 		}
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].ID > sessions[j].ID
-	})
+	sortSessions(sessions)
 	return sessions, nil
 }
 
@@ -1697,9 +1695,7 @@ func (s *Store) globalWorkspaceSessions() ([]Session, error) {
 		}
 		sessions = append(sessions, items...)
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].ID > sessions[j].ID
-	})
+	sortSessions(sessions)
 	return sessions, nil
 }
 
@@ -1748,6 +1744,20 @@ func visibleSessionCount(sessions []Session, excludeID string) int {
 		count++
 	}
 	return count
+}
+
+func sortSessions(sessions []Session) {
+	sort.Slice(sessions, func(i, j int) bool {
+		left := sessions[i]
+		right := sessions[j]
+		if !left.Metadata.UpdatedAt.Equal(right.Metadata.UpdatedAt) {
+			return left.Metadata.UpdatedAt.After(right.Metadata.UpdatedAt)
+		}
+		if !left.Metadata.ModifiedAt.Equal(right.Metadata.ModifiedAt) {
+			return left.Metadata.ModifiedAt.After(right.Metadata.ModifiedAt)
+		}
+		return left.ID > right.ID
+	})
 }
 
 func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {

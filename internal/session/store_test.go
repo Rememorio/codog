@@ -85,6 +85,23 @@ func TestLatestIDSkipsEmptySessions(t *testing.T) {
 	require.Equal(t, "real-session", latest)
 }
 
+func TestLatestIDPrefersSemanticUpdatedAtOverIDAndFileMtime(t *testing.T) {
+	store := NewStore(t.TempDir())
+	olderFileTime := time.Unix(100, 0).UTC()
+	newerFileTime := time.Unix(200, 0).UTC()
+	writeTestSessionRecord(t, store, "zz-older-session", time.Unix(20, 0).UTC(), newerFileTime)
+	writeTestSessionRecord(t, store, "aa-newer-session", time.Unix(30, 0).UTC(), olderFileTime)
+
+	sessions, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+	require.Equal(t, "aa-newer-session", sessions[0].ID)
+
+	latest, err := store.LatestID()
+	require.NoError(t, err)
+	require.Equal(t, "aa-newer-session", latest)
+}
+
 func TestLatestIDExcludingSkipsExcludedSession(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("older-session", anthropic.TextMessage("user", "older")))
@@ -137,6 +154,24 @@ func TestLatestIDReportsAllSessionsEmpty(t *testing.T) {
 
 	_, err = store.LatestID()
 	require.ErrorIs(t, err, ErrAllSessionsEmpty)
+}
+
+func writeTestSessionRecord(t *testing.T, store *Store, id string, recordTime time.Time, fileTime time.Time) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(store.Dir, 0o755))
+	path := store.pathFor(id)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	writeErr := writeRecord(file, Record{
+		Type:      "message",
+		Time:      recordTime,
+		Message:   &anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: id}}},
+		SessionID: id,
+	})
+	closeErr := file.Close()
+	require.NoError(t, writeErr)
+	require.NoError(t, closeErr)
+	require.NoError(t, os.Chtimes(path, fileTime, fileTime))
 }
 
 func TestWorkspaceStoreCleanupRemovesExpiredCurrentAndLegacySessions(t *testing.T) {
