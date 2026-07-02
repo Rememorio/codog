@@ -39,6 +39,7 @@ import (
 	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/doctor"
 	"github.com/Rememorio/codog/internal/focus"
+	"github.com/Rememorio/codog/internal/githubsetup"
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
@@ -4867,6 +4868,17 @@ func risky(value any) {
 	require.Contains(t, string(prData), "# Pull Request Draft")
 	require.Contains(t, string(prData), "PR: ship resumed changes")
 	require.Contains(t, string(prData), "resume-slash")
+
+	out, err = runResumedJSON("/install-github-app", "--workflow", "claude", "--dry-run")
+	require.NoError(t, err)
+	var resumedGitHubApp githubsetup.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedGitHubApp))
+	require.Equal(t, "install_github_app", resumedGitHubApp.Kind)
+	require.Equal(t, "setup", resumedGitHubApp.Action)
+	require.True(t, resumedGitHubApp.DryRun)
+	require.Len(t, resumedGitHubApp.Workflows, 1)
+	require.Equal(t, "claude", resumedGitHubApp.Workflows[0].Name)
+	require.NoFileExists(t, filepath.Join(workspace, ".github", "workflows", "claude.yml"))
 
 	out, err = runResumedJSON("/issue", "track resumed issue")
 	require.NoError(t, err)

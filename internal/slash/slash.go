@@ -327,6 +327,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/ide":                true,
 	"/init":               true,
 	"/init-verifiers":     true,
+	"/install-github-app": true,
 	"/install-slack-app":  true,
 	"/insights":           true,
 	"/ios":                true,

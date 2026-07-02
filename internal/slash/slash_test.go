@@ -344,6 +344,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/generateSessionName")
 	require.Contains(t, names, "/generate-session-name")
 	require.Contains(t, names, "/init-verifiers")
+	require.Contains(t, names, "/install-github-app")
 	require.Contains(t, names, "/install-slack-app")
 	require.Contains(t, names, "/issue")
 	require.Contains(t, names, "/stickers")
