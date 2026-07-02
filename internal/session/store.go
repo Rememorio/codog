@@ -145,8 +145,14 @@ type Store struct {
 	PersistenceDisabled bool
 }
 
+// ErrNoSessions reports that no saved session files are visible to the store.
 var ErrNoSessions = errors.New("no saved sessions")
+
+// ErrSessionNotFound reports that a requested saved session does not exist.
 var ErrSessionNotFound = errors.New("session not found")
+
+// ErrAllSessionsEmpty reports that saved sessions exist but none contain messages.
+var ErrAllSessionsEmpty = errors.New("all saved sessions are empty")
 
 // DefaultCleanupPeriodDays matches Claude Code's default transcript retention.
 const DefaultCleanupPeriodDays = 30
@@ -759,7 +765,25 @@ func (s *Store) List() ([]Session, error) {
 	return sessions, nil
 }
 
+// LatestID returns the newest visible session that contains at least one message.
 func (s *Store) LatestID() (string, error) {
+	sessions, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	if len(sessions) == 0 {
+		return "", ErrNoSessions
+	}
+	for _, sess := range sessions {
+		if len(sess.Messages) > 0 {
+			return sess.ID, nil
+		}
+	}
+	return "", ErrAllSessionsEmpty
+}
+
+// LatestAnyID returns the newest visible session, including empty transcripts.
+func (s *Store) LatestAnyID() (string, error) {
 	sessions, err := s.List()
 	if err != nil {
 		return "", err

@@ -74,6 +74,39 @@ func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	require.Equal(t, "legacy-session", latest)
 }
 
+func TestLatestIDSkipsEmptySessions(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("real-session", anthropic.TextMessage("user", "hello")))
+	_, err := store.Create("zz-empty-session")
+	require.NoError(t, err)
+
+	latest, err := store.LatestID()
+	require.NoError(t, err)
+	require.Equal(t, "real-session", latest)
+}
+
+func TestLatestAnyIDIncludesEmptySessions(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("real-session", anthropic.TextMessage("user", "hello")))
+	_, err := store.Create("zz-empty-session")
+	require.NoError(t, err)
+
+	latest, err := store.LatestAnyID()
+	require.NoError(t, err)
+	require.Equal(t, "zz-empty-session", latest)
+}
+
+func TestLatestIDReportsAllSessionsEmpty(t *testing.T) {
+	store := NewStore(t.TempDir())
+	_, err := store.Create("empty-a")
+	require.NoError(t, err)
+	_, err = store.Create("empty-b")
+	require.NoError(t, err)
+
+	_, err = store.LatestID()
+	require.ErrorIs(t, err, ErrAllSessionsEmpty)
+}
+
 func TestWorkspaceStoreCleanupRemovesExpiredCurrentAndLegacySessions(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()

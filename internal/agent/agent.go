@@ -36841,7 +36841,15 @@ func parseConversationArgs(args []string, overrides config.FlagOverrides) (conve
 }
 
 func (a *App) buildConversationReport(req conversationRequest) (conversationReport, error) {
-	sess, err := a.Sessions.OpenExisting(req.SessionID)
+	openID := req.SessionID
+	if strings.TrimSpace(openID) == "latest" {
+		latest, err := a.Sessions.LatestAnyID()
+		if err != nil {
+			return conversationReport{}, err
+		}
+		openID = latest
+	}
+	sess, err := a.Sessions.OpenExisting(openID)
 	if err != nil {
 		return conversationReport{}, err
 	}
