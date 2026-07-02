@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Rememorio/codog/internal/anthropic"
@@ -306,6 +307,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		configPrecedenceScenario(),
 		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
 		{
@@ -474,6 +476,134 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport.OK = true
 	return scenarioReport
+}
+
+func configPrecedenceScenario() scenario {
+	var loadedModel string
+	var loadedPermission string
+	var loadedSessionStart []string
+	var loadedMCPShared string
+	return scenario{
+		name:   "config_precedence_roundtrip",
+		turns:  []mockanthropic.Turn{{Text: "config precedence harness ok"}},
+		prompt: "verify config precedence",
+		prepare: func(workspace string) ([]mockanthropic.Turn, func(), error) {
+			previousCWD, err := os.Getwd()
+			if err != nil {
+				return nil, nil, err
+			}
+			previousConfigHome, hadConfigHome := os.LookupEnv("CODOG_CONFIG_HOME")
+			cleanup := func() {
+				_ = os.Chdir(previousCWD)
+				if hadConfigHome {
+					_ = os.Setenv("CODOG_CONFIG_HOME", previousConfigHome)
+				} else {
+					_ = os.Unsetenv("CODOG_CONFIG_HOME")
+				}
+			}
+			configHome := filepath.Join(workspace, "config-home")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			if err := os.Setenv("CODOG_CONFIG_HOME", configHome); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			if err := os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{
+				"model":"user-model",
+				"permission_mode":"read-only",
+				"additional_dirs":["user-dir"],
+				"hooks":{"session_start":["echo user"]},
+				"mcp_servers":{"shared":{"command":"user-shared"},"user_only":{"command":"user-only"}}
+			}`), 0o644); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, ".codog.json"), []byte(`{
+				"model":"project-model",
+				"permission_mode":"workspace-write",
+				"additional_dirs":["project-dir"],
+				"hooks":{"SessionStart":[{"command":"echo project"}]},
+				"mcp_servers":{"shared":{"command":"project-shared"},"project_only":{"command":"project-only"}}
+			}`), 0o644); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, ".codog.local.json"), []byte(`{
+				"model":"local-model",
+				"max_tokens":777,
+				"additional_dirs":["local-dir"],
+				"hooks":{"session_start":["echo local"]},
+				"mcp_servers":{"shared":{"command":"local-shared"},"local_only":{"command":"local-only"}}
+			}`), 0o644); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			if err := os.Chdir(workspace); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			cfg, paths, err := config.LoadForInspection(config.FlagOverrides{})
+			if err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			for _, expected := range []string{filepath.Join(configHome, "config.json"), ".codog.json", ".codog.local.json"} {
+				if !slices.Contains(paths, expected) {
+					cleanup()
+					return nil, nil, fmt.Errorf("config path %q was not loaded; paths=%v", expected, paths)
+				}
+			}
+			loadedModel = cfg.Model
+			loadedPermission = cfg.PermissionMode
+			loadedSessionStart = append([]string(nil), cfg.Hooks.SessionStart...)
+			loadedMCPShared = cfg.MCPServers["shared"].Command
+			if cfg.Model != "local-model" {
+				cleanup()
+				return nil, nil, fmt.Errorf("expected local model override, got %q", cfg.Model)
+			}
+			if cfg.PermissionMode != "workspace-write" {
+				cleanup()
+				return nil, nil, fmt.Errorf("expected project permission to survive, got %q", cfg.PermissionMode)
+			}
+			if cfg.MaxTokens != 777 {
+				cleanup()
+				return nil, nil, fmt.Errorf("expected local max_tokens override, got %d", cfg.MaxTokens)
+			}
+			if strings.Join(cfg.AdditionalDirs, ",") != "local-dir" {
+				cleanup()
+				return nil, nil, fmt.Errorf("expected local additional_dirs replacement, got %v", cfg.AdditionalDirs)
+			}
+			if strings.Join(cfg.Hooks.SessionStart, ",") != "echo user,echo project,echo local" {
+				cleanup()
+				return nil, nil, fmt.Errorf("unexpected hook merge order: %v", cfg.Hooks.SessionStart)
+			}
+			if cfg.MCPServers["shared"].Command != "local-shared" ||
+				cfg.MCPServers["user_only"].Command != "user-only" ||
+				cfg.MCPServers["project_only"].Command != "project-only" ||
+				cfg.MCPServers["local_only"].Command != "local-only" {
+				cleanup()
+				return nil, nil, fmt.Errorf("unexpected mcp server merge: %#v", cfg.MCPServers)
+			}
+			return []mockanthropic.Turn{{Text: "config precedence harness ok"}}, cleanup, nil
+		},
+		verify: func(_ string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "config precedence harness ok") {
+				return fmt.Errorf("missing config precedence final response")
+			}
+			if err := expectToolCalls(result, 0, false); err != nil {
+				return err
+			}
+			if loadedModel != "local-model" || loadedPermission != "workspace-write" || loadedMCPShared != "local-shared" {
+				return fmt.Errorf("unexpected loaded config model=%q permission=%q shared_mcp=%q", loadedModel, loadedPermission, loadedMCPShared)
+			}
+			if strings.Join(loadedSessionStart, ",") != "echo user,echo project,echo local" {
+				return fmt.Errorf("unexpected loaded hook order: %v", loadedSessionStart)
+			}
+			return nil
+		},
+	}
 }
 
 func pluginLifecycleScenario() scenario {

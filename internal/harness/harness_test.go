@@ -12,7 +12,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
-	require.GreaterOrEqual(t, report.Total, 14)
+	require.GreaterOrEqual(t, report.Total, 15)
 	require.Equal(t, "actual", report.UsageSummary.Source)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 	require.Greater(t, report.EstimatedCost, 0.0)
@@ -46,6 +46,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
 	require.Contains(t, pluginTool.Output, "plugin harness ok")
+
+	configPrecedence := findScenario(t, report, "config_precedence_roundtrip")
+	require.True(t, configPrecedence.OK)
+	require.Equal(t, 0, configPrecedence.ToolCalls)
+	require.Contains(t, configPrecedence.Output, "config precedence harness ok")
 
 	pluginLifecycle := findScenario(t, report, "plugin_lifecycle_roundtrip")
 	require.True(t, pluginLifecycle.OK)
