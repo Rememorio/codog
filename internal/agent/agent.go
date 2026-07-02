@@ -3690,20 +3690,20 @@ type dumpManifestsRequest struct {
 func (a *App) DumpManifests(args []string) error {
 	req, err := parseDumpManifestsArgs(args)
 	if err != nil {
-		return err
+		return renderCLIErrorWhenStructured(a.Out, err, req.Format)
 	}
 	workspace := a.Workspace
 	registry := a.Tools
 	if req.ManifestsDir != "" {
 		workspace, err = resolveManifestDiscoveryRoot(req.ManifestsDir)
 		if err != nil {
-			return err
+			return renderCLIErrorWhenStructured(a.Out, err, req.Format)
 		}
 		registry = tools.NewRegistry(workspace)
 	}
 	report, err := manifests.Build(workspace, a.Config.ConfigHome, registry)
 	if err != nil {
-		return err
+		return renderCLIErrorWhenStructured(a.Out, err, req.Format)
 	}
 	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -3716,6 +3716,9 @@ func (a *App) DumpManifests(args []string) error {
 
 func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 	req := dumpManifestsRequest{Format: "text"}
+	if format, ok := scanDumpManifestsOutputFormat(args); ok {
+		req.Format = format
+	}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -3731,14 +3734,22 @@ func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--manifests-dir":
 			index++
-			if index >= len(args) || strings.TrimSpace(args[index]) == "" {
-				return req, errors.New("missing_flag_value: --manifests-dir requires a path")
+			if index >= len(args) || strings.TrimSpace(args[index]) == "" || isDumpManifestsOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "dump-manifests",
+					Flag:    "--manifests-dir",
+					Usage:   "codog dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]",
+				}
 			}
 			req.ManifestsDir = args[index]
 		case strings.HasPrefix(arg, "--manifests-dir="):
 			value := strings.TrimPrefix(arg, "--manifests-dir=")
 			if strings.TrimSpace(value) == "" {
-				return req, errors.New("missing_flag_value: --manifests-dir requires a path")
+				return req, missingFlagValueError{
+					Command: "dump-manifests",
+					Flag:    "--manifests-dir",
+					Usage:   "codog dump-manifests [--manifests-dir PATH] [--json|--output-format text|json]",
+				}
 			}
 			req.ManifestsDir = value
 		default:
@@ -3751,6 +3762,34 @@ func parseDumpManifestsArgs(args []string) (dumpManifestsRequest, error) {
 	default:
 		return req, fmt.Errorf("unknown dump-manifests output format %q", req.Format)
 	}
+}
+
+func scanDumpManifestsOutputFormat(args []string) (string, bool) {
+	format := ""
+	ok := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		switch {
+		case arg == "--json":
+			format = "json"
+			ok = true
+		case arg == "--output-format" || arg == "-o":
+			if index+1 >= len(args) {
+				continue
+			}
+			index++
+			format = args[index]
+			ok = true
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+			ok = true
+		}
+	}
+	return format, ok
+}
+
+func isDumpManifestsOutputFormatFlag(arg string) bool {
+	return arg == "--json" || arg == "--output-format" || arg == "-o" || strings.HasPrefix(arg, "--output-format=")
 }
 
 func resolveManifestDiscoveryRoot(path string) (string, error) {
@@ -23556,6 +23595,20 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Message:   message,
 			Hint:      "Provide the required flag value.",
+		}
+	}
+	if rest, ok := strings.CutPrefix(message, "missing_manifests:"); ok {
+		message = strings.TrimSpace(rest)
+		if message == "" {
+			message = "manifest discovery directory is missing"
+		}
+		return cliErrorReport{
+			Kind:      "missing_manifests",
+			ErrorKind: "missing_manifests",
+			Status:    "error",
+			Command:   "dump-manifests",
+			Message:   message,
+			Hint:      "Pass an existing workspace directory with --manifests-dir, or omit the flag to inspect the current workspace.",
 		}
 	}
 	var duplicateFlagErr duplicateFlagError

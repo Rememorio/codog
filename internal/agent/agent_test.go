@@ -6698,9 +6698,44 @@ func TestDumpManifestsCommand(t *testing.T) {
 	otherWorkspace := t.TempDir()
 	require.NoError(t, app.DumpManifests([]string{"--manifests-dir", otherWorkspace, "--json"}))
 	require.Contains(t, out.String(), otherWorkspace)
+	out.Reset()
 
 	err := app.DumpManifests([]string{"--manifests-dir", filepath.Join(t.TempDir(), "missing")})
 	require.ErrorContains(t, err, "missing_manifests")
+
+	err = app.DumpManifests([]string{"--manifests-dir", filepath.Join(t.TempDir(), "missing"), "--json"})
+	requireStructuredCLIError(t, err, out.Bytes(), "missing_manifests", "missing_manifests")
+}
+
+func TestDumpManifestsMissingDirHonorsGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "dump-manifests", "--manifests-dir"}, config.FlagOverrides{})
+	})
+	requireStructuredCLIError(t, err, []byte(out), "missing_flag_value", "missing_flag_value")
+	require.Contains(t, out, `"command": "dump-manifests"`)
+	require.Contains(t, out, `"option": "--manifests-dir"`)
+}
+
+func requireStructuredCLIError(t *testing.T, err error, data []byte, kind string, errorKind string) {
+	t.Helper()
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report cliErrorReport
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.Equal(t, kind, report.Kind)
+	require.Equal(t, errorKind, report.ErrorKind)
+	require.Equal(t, "error", report.Status)
+	require.NotEmpty(t, report.Message)
+	require.NotEmpty(t, report.Hint)
 }
 
 func TestSystemPromptCommand(t *testing.T) {
