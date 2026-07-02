@@ -2618,6 +2618,25 @@ func TestTestingPermissionToolReturnsReceipt(t *testing.T) {
 	require.Contains(t, err.Error(), "through the tool registry")
 }
 
+func TestMCPAuthToolReportsRecoveryActions(t *testing.T) {
+	configHome := t.TempDir()
+	tool := MCPAuthTool{Servers: map[string]config.MCPServerConfig{}, ConfigHome: configHome, OAuthProfile: "work"}
+	properties := tool.Definition().InputSchema["properties"].(map[string]any)
+	require.Contains(t, properties, "action")
+
+	out, err := tool.Execute(context.Background(), []byte(`{"server":"missing"}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"server": "missing"`)
+	require.Contains(t, out, `"status": "unknown"`)
+	require.Contains(t, out, `"oauth_profile": "work"`)
+	require.Contains(t, out, `"profile_configured": false`)
+	require.Contains(t, out, `"command": "codog oauth provider save work ISSUER_URL CLIENT_ID [SCOPE...]"`)
+
+	_, err = tool.Execute(context.Background(), []byte(`{"server":"missing","action":"bogus"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported mcp_auth action")
+}
+
 func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "analysis.ipynb")

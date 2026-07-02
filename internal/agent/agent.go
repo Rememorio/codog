@@ -60,6 +60,7 @@ import (
 	"github.com/Rememorio/codog/internal/insights"
 	"github.com/Rememorio/codog/internal/manifests"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/mcpauthdiag"
 	"github.com/Rememorio/codog/internal/mcpserver"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
@@ -40169,7 +40170,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 		})
 	}
 	if len(args) == 1 && mcpAggregateRemoteAction(args[0]) {
-		payload := buildMCPAggregateRemoteReport(ctx, canonicalMCPAggregateAction(args[0]), a.Config.MCPServers)
+		payload := buildMCPAggregateRemoteReport(ctx, canonicalMCPAggregateAction(args[0]), a.Config.MCPServers, a.Config.ConfigHome, a.Config.OAuthProfile)
 		data, _ := json.MarshalIndent(payload, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
@@ -40199,7 +40200,7 @@ func (a *App) MCP(ctx context.Context, args []string) error {
 	case "tools", "list-tools":
 		payload = mcp.ListTools(ctx, serverName, server)
 	case "auth":
-		payload = mcp.InspectAuth(ctx, serverName, server)
+		payload = mcpauthdiag.Build(mcp.InspectAuth(ctx, serverName, server), a.Config.ConfigHome, a.Config.OAuthProfile, time.Now().UTC())
 	case "call":
 		if len(args) < 3 {
 			return renderMCPRemoteActionError(a.Out, format, buildMCPRemoteMissingArgumentReport(args[0], strings.Join(args, " "), "tool"))
@@ -40273,13 +40274,13 @@ type mcpAggregateRemoteReport struct {
 	Total             int                              `json:"total"`
 	ErrorCount        int                              `json:"error_count"`
 	Tools             []mcp.ToolListResult             `json:"tools,omitempty"`
-	AuthStatuses      []mcp.AuthStatusResult           `json:"auth_statuses,omitempty"`
+	AuthStatuses      []mcpauthdiag.Report             `json:"auth_statuses,omitempty"`
 	Resources         []mcp.ResourceListResult         `json:"resources,omitempty"`
 	ResourceTemplates []mcp.ResourceTemplateListResult `json:"resource_templates,omitempty"`
 	Prompts           []mcp.PromptListResult           `json:"prompts,omitempty"`
 }
 
-func buildMCPAggregateRemoteReport(ctx context.Context, action string, servers map[string]config.MCPServerConfig) mcpAggregateRemoteReport {
+func buildMCPAggregateRemoteReport(ctx context.Context, action string, servers map[string]config.MCPServerConfig, configHome string, oauthProfile string) mcpAggregateRemoteReport {
 	report := mcpAggregateRemoteReport{
 		Kind:        "mcp",
 		Action:      action,
@@ -40297,7 +40298,7 @@ func buildMCPAggregateRemoteReport(ctx context.Context, action string, servers m
 				report.ErrorCount++
 			}
 		case "auth":
-			result := mcp.InspectAuth(ctx, name, server)
+			result := mcpauthdiag.Build(mcp.InspectAuth(ctx, name, server), configHome, oauthProfile, time.Now().UTC())
 			report.AuthStatuses = append(report.AuthStatuses, result)
 			if result.Error != "" {
 				report.ErrorCount++
@@ -41083,7 +41084,7 @@ type xaaIDPReport struct {
 	Command            string                 `json:"command"`
 	ConfiguredServers  []string               `json:"configured_servers"`
 	ServerCount        int                    `json:"server_count"`
-	AuthStatuses       []mcp.AuthStatusResult `json:"auth_statuses,omitempty"`
+	AuthStatuses       []mcpauthdiag.Report   `json:"auth_statuses,omitempty"`
 	ErrorCount         int                    `json:"error_count,omitempty"`
 	ConfigHome         string                 `json:"config_home,omitempty"`
 	ProviderConfigured bool                   `json:"provider_configured"`
@@ -41114,18 +41115,18 @@ func (a *App) XAAIDPCommand(ctx context.Context, args []string) error {
 		return a.MCP(ctx, mcpArgs)
 	}
 	configuredServers := sortedMCPServerNames(a.Config.MCPServers)
-	authStatuses := make([]mcp.AuthStatusResult, 0, len(configuredServers))
+	authStatuses := make([]mcpauthdiag.Report, 0, len(configuredServers))
 	errorCount := 0
+	profileName := strings.TrimSpace(req.Profile)
+	if profileName == "" {
+		profileName = a.Config.OAuthProfile
+	}
 	for _, name := range configuredServers {
-		status := mcp.InspectAuth(ctx, name, a.Config.MCPServers[name])
+		status := mcpauthdiag.Build(mcp.InspectAuth(ctx, name, a.Config.MCPServers[name]), a.Config.ConfigHome, profileName, time.Now().UTC())
 		if status.Status == "error" || status.Error != "" {
 			errorCount++
 		}
 		authStatuses = append(authStatuses, status)
-	}
-	profileName := strings.TrimSpace(req.Profile)
-	if profileName == "" {
-		profileName = a.Config.OAuthProfile
 	}
 	oauthStatus, oauthProfiles := a.xaaOAuthStatus(profileName)
 	report := xaaIDPReport{

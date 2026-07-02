@@ -42,6 +42,7 @@ import (
 	"github.com/Rememorio/codog/internal/harness"
 	"github.com/Rememorio/codog/internal/hooks"
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/mcpauthdiag"
 	"github.com/Rememorio/codog/internal/memory"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/mocklimits"
@@ -16616,6 +16617,9 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.NoError(t, app.MCP(context.Background(), []string{"auth", "test"}))
 	require.Contains(t, out.String(), `"status": "ok"`)
 	require.Contains(t, out.String(), `"tool_count": 1`)
+	require.Contains(t, out.String(), `"oauth_status"`)
+	require.Contains(t, out.String(), `"next_actions"`)
+	require.Contains(t, out.String(), `"codog mcp tools test"`)
 	out.Reset()
 
 	require.NoError(t, app.MCP(context.Background(), []string{"auth"}))
@@ -16627,6 +16631,9 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 	require.Len(t, aggregateAuth.AuthStatuses, 1)
 	require.Equal(t, "test", aggregateAuth.AuthStatuses[0].Server)
 	require.Equal(t, "ok", aggregateAuth.AuthStatuses[0].Status)
+	require.NotNil(t, aggregateAuth.AuthStatuses[0].OAuthStatus)
+	require.True(t, aggregateAuth.AuthStatuses[0].OAuthStatus.TokenPresent)
+	require.Contains(t, actionCommandsFromMCPReport(aggregateAuth.AuthStatuses[0].NextActions), "codog mcp tools test")
 	out.Reset()
 
 	require.NoError(t, app.XAAIDPCommand(context.Background(), []string{"--json"}))
@@ -16711,6 +16718,14 @@ func TestMCPCommandToolsCallAndResources(t *testing.T) {
 
 	require.NoError(t, app.MCP(context.Background(), []string{"prompt", "test", "review", `{"topic":"hooks"}`}))
 	require.Contains(t, out.String(), "Review hooks")
+}
+
+func actionCommandsFromMCPReport(actions []mcpauthdiag.NextAction) []string {
+	commands := make([]string, 0, len(actions))
+	for _, action := range actions {
+		commands = append(commands, action.Command)
+	}
+	return commands
 }
 
 func TestMCPAddCommandCompatibility(t *testing.T) {

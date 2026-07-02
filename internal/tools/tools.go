@@ -42,7 +42,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/hookenv"
 	"github.com/Rememorio/codog/internal/mcp"
-	"github.com/Rememorio/codog/internal/oauth"
+	"github.com/Rememorio/codog/internal/mcpauthdiag"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/powershellvalidation"
@@ -1303,18 +1303,13 @@ type MCPAuthTool struct {
 
 type mcpAuthInput struct {
 	Server string `json:"server"`
-}
-
-type mcpAuthToolReport struct {
-	mcp.AuthStatusResult
-	OAuthProfile string        `json:"oauth_profile,omitempty"`
-	OAuthStatus  *oauth.Status `json:"oauth_status,omitempty"`
+	Action string `json:"action,omitempty"`
 }
 
 func (MCPAuthTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "mcp_auth",
-		Description: "Inspect authentication and readiness status for a configured MCP server.",
+		Description: "Inspect or refresh authentication and readiness status for a configured MCP server.",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -1322,6 +1317,11 @@ func (MCPAuthTool) Definition() anthropic.ToolDefinition {
 				"server": map[string]any{
 					"type":        "string",
 					"description": "Configured MCP server name.",
+				},
+				"action": map[string]any{
+					"type":        "string",
+					"enum":        []string{"status", "refresh"},
+					"description": "status inspects readiness; refresh refreshes a saved OAuth token when possible.",
 				},
 			},
 			"required": []string{"server"},
@@ -1341,30 +1341,31 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 	if strings.TrimSpace(payload.Server) == "" {
 		return "", errors.New("server is required")
 	}
+	action := strings.ToLower(strings.TrimSpace(payload.Action))
+	if action == "" {
+		action = "status"
+	}
+	if action != "status" && action != "refresh" {
+		return "", fmt.Errorf("unsupported mcp_auth action %q", payload.Action)
+	}
+	now := time.Now().UTC()
 	server, ok := t.Servers[payload.Server]
 	if !ok {
-		return pretty(t.withOAuthStatus(mcp.AuthStatusResult{
+		report := mcpauthdiag.Build(mcp.AuthStatusResult{
 			Server: payload.Server,
 			Status: "unknown",
 			Error:  "server is not configured",
-		})), nil
-	}
-	return pretty(t.withOAuthStatus(mcp.InspectAuth(ctx, payload.Server, server))), nil
-}
-
-func (t MCPAuthTool) withOAuthStatus(result mcp.AuthStatusResult) mcpAuthToolReport {
-	report := mcpAuthToolReport{AuthStatusResult: result}
-	if strings.TrimSpace(t.OAuthProfile) != "" {
-		report.OAuthProfile = strings.TrimSpace(t.OAuthProfile)
-	}
-	if strings.TrimSpace(t.ConfigHome) != "" || strings.TrimSpace(t.OAuthProfile) != "" {
-		status := oauth.InspectStatus(t.ConfigHome, t.OAuthProfile, time.Now().UTC())
-		report.OAuthStatus = &status
-		if report.OAuthProfile == "" {
-			report.OAuthProfile = status.ProfileName
+		}, t.ConfigHome, t.OAuthProfile, now)
+		if action == "refresh" {
+			report = mcpauthdiag.Refresh(ctx, report.AuthStatusResult, t.ConfigHome, t.OAuthProfile, now)
 		}
+		return pretty(report), nil
 	}
-	return report
+	result := mcp.InspectAuth(ctx, payload.Server, server)
+	if action == "refresh" {
+		return pretty(mcpauthdiag.Refresh(ctx, result, t.ConfigHome, t.OAuthProfile, now)), nil
+	}
+	return pretty(mcpauthdiag.Build(result, t.ConfigHome, t.OAuthProfile, now)), nil
 }
 
 type ListMCPResourcesTool struct {
