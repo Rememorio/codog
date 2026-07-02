@@ -35,6 +35,7 @@ import (
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
+	"github.com/Rememorio/codog/internal/bookmarks"
 	"github.com/Rememorio/codog/internal/branchlock"
 	"github.com/Rememorio/codog/internal/bridge"
 	"github.com/Rememorio/codog/internal/bughunt"
@@ -532,6 +533,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.Usage(rest, overrides)
 	case "stats":
 		return app.Usage(rest, overrides)
+	case "bookmarks":
+		return app.Bookmarks(rest, overrides)
 	case "metrics":
 		return app.Metrics(rest, overrides)
 	case "perf-issue":
@@ -22065,6 +22068,7 @@ func builtInCommandNames() []string {
 		"bashes",
 		"base-check",
 		"blame",
+		"bookmarks",
 		"branch",
 		"branch-lock",
 		"branchlock",
@@ -23381,6 +23385,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Cache(resumeSlashArgs("cache", args, format), resumed)
 	case "/break-cache":
 		return a.BreakCache(resumeSlashArgs("break-cache", args, format), resumed)
+	case "/bookmarks":
+		return a.Bookmarks(resumeSlashArgs("bookmarks", args, format), resumed)
 	case "/rename":
 		return a.Rename(resumeSlashArgs("rename", args, format), resumed)
 	default:
@@ -28181,6 +28187,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/session":
 		a.handleSessionSlash(fields[1:], sess)
+	case "/bookmarks":
+		if err := a.Bookmarks(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
 	case "/backfill-sessions":
 		if err := a.BackfillSessions(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -36447,6 +36457,331 @@ func trimSingleLine(value string, limit int) string {
 	return value[:limit-3] + "..."
 }
 
+type bookmarksRequest struct {
+	Action       string
+	Format       string
+	Name         string
+	Ref          string
+	SessionID    string
+	MessageIndex int
+	Note         string
+	All          bool
+}
+
+type bookmarksReport struct {
+	Kind          string               `json:"kind"`
+	Action        string               `json:"action"`
+	Status        string               `json:"status"`
+	Workspace     string               `json:"workspace,omitempty"`
+	Path          string               `json:"path,omitempty"`
+	Count         int                  `json:"count"`
+	Removed       int                  `json:"removed,omitempty"`
+	Bookmark      *bookmarks.Bookmark  `json:"bookmark,omitempty"`
+	Bookmarks     []bookmarks.Bookmark `json:"bookmarks,omitempty"`
+	ResumeCommand string               `json:"resume_command,omitempty"`
+	Message       string               `json:"message,omitempty"`
+}
+
+func (a *App) Bookmarks(args []string, overrides config.FlagOverrides) error {
+	req, err := parseBookmarksArgs(args, overrides)
+	if err != nil {
+		return err
+	}
+	store := bookmarks.NewStore(a.Config.ConfigHome)
+	path, err := store.Path()
+	if err != nil {
+		return err
+	}
+	report := bookmarksReport{
+		Kind:      "bookmarks",
+		Action:    req.Action,
+		Status:    "ok",
+		Workspace: a.Workspace,
+		Path:      path,
+	}
+	switch req.Action {
+	case "list":
+		items, err := store.List(bookmarks.ListOptions{Workspace: a.Workspace, All: req.All})
+		if err != nil {
+			return err
+		}
+		report.Bookmarks = items
+		report.Count = len(items)
+	case "add":
+		bookmark, err := a.buildBookmark(req)
+		if err != nil {
+			return err
+		}
+		created, err := store.Add(bookmark)
+		if err != nil {
+			return err
+		}
+		report.Bookmark = &created
+		report.Count = 1
+		report.Message = "Bookmark added"
+		report.ResumeCommand = bookmarkResumeCommand(created)
+	case "show":
+		bookmark, err := store.Get(req.Ref)
+		if err != nil {
+			return err
+		}
+		report.Bookmark = &bookmark
+		report.Count = 1
+		report.ResumeCommand = bookmarkResumeCommand(bookmark)
+	case "delete":
+		bookmark, err := store.Delete(req.Ref)
+		if err != nil {
+			return err
+		}
+		report.Bookmark = &bookmark
+		report.Count = 1
+		report.Removed = 1
+		report.Message = "Bookmark deleted"
+	case "clear":
+		removed, err := store.Clear(bookmarks.ListOptions{Workspace: a.Workspace, All: req.All})
+		if err != nil {
+			return err
+		}
+		report.Removed = removed
+		report.Message = fmt.Sprintf("Removed %d bookmark(s).", removed)
+	default:
+		return fmt.Errorf("unknown bookmarks action %q", req.Action)
+	}
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBookmarksReport(a.Out, report)
+	return nil
+}
+
+func parseBookmarksArgs(args []string, overrides config.FlagOverrides) (bookmarksRequest, error) {
+	req := bookmarksRequest{Action: "list", Format: "text", SessionID: "latest", MessageIndex: -1}
+	if strings.TrimSpace(overrides.Resume) != "" {
+		req.SessionID = overrides.Resume
+	}
+	if strings.TrimSpace(overrides.SessionID) != "" {
+		req.SessionID = overrides.SessionID
+	}
+	positionals := []string{}
+	actionSet := false
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, errors.New("bookmarks output format is required")
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--all":
+			req.All = true
+		case arg == "--session" || arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, errors.New("bookmarks session id is required")
+			}
+			req.SessionID = args[index]
+		case strings.HasPrefix(arg, "--session="):
+			req.SessionID = strings.TrimPrefix(arg, "--session=")
+		case strings.HasPrefix(arg, "--resume="):
+			req.SessionID = strings.TrimPrefix(arg, "--resume=")
+		case arg == "--message" || arg == "--message-index":
+			index++
+			if index >= len(args) {
+				return req, errors.New("bookmarks message index is required")
+			}
+			messageIndex, err := parseBookmarkMessageIndex(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.MessageIndex = messageIndex
+		case strings.HasPrefix(arg, "--message="):
+			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message="))
+			if err != nil {
+				return req, err
+			}
+			req.MessageIndex = messageIndex
+		case strings.HasPrefix(arg, "--message-index="):
+			messageIndex, err := parseBookmarkMessageIndex(strings.TrimPrefix(arg, "--message-index="))
+			if err != nil {
+				return req, err
+			}
+			req.MessageIndex = messageIndex
+		case arg == "--note":
+			index++
+			if index >= len(args) {
+				return req, errors.New("bookmarks note is required")
+			}
+			req.Note = args[index]
+		case strings.HasPrefix(arg, "--note="):
+			req.Note = strings.TrimPrefix(arg, "--note=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{
+				Command: "bookmarks",
+				Option:  arg,
+				Usage:   "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID] [--message N|last] [--json|--output-format text|json]",
+			}
+		default:
+			if !actionSet && isBookmarksAction(arg) {
+				req.Action = normalizeBookmarksAction(arg)
+				actionSet = true
+				continue
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "bookmarks"); err != nil {
+		return req, err
+	}
+	switch req.Action {
+	case "list", "clear":
+		if len(positionals) != 0 {
+			return req, fmt.Errorf("unexpected bookmarks argument %q", positionals[0])
+		}
+	case "add":
+		if len(positionals) == 0 {
+			return req, errors.New("usage: codog bookmarks add NAME [--session ID] [--message N|last] [--note TEXT]")
+		}
+		req.Name = strings.Join(positionals, " ")
+	case "show", "delete":
+		if len(positionals) != 1 {
+			return req, fmt.Errorf("usage: codog bookmarks %s ID_OR_NAME [--json|--output-format text|json]", req.Action)
+		}
+		req.Ref = positionals[0]
+	default:
+		return req, fmt.Errorf("unknown bookmarks action %q", req.Action)
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		req.SessionID = "latest"
+	}
+	return req, nil
+}
+
+func isBookmarksAction(value string) bool {
+	switch normalizeBookmarksAction(value) {
+	case "list", "add", "show", "delete", "clear":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeBookmarksAction(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "list", "ls":
+		return "list"
+	case "add", "create", "new", "mark":
+		return "add"
+	case "show", "get", "jump", "open":
+		return "show"
+	case "delete", "del", "remove", "rm":
+		return "delete"
+	case "clear", "reset":
+		return "clear"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func parseBookmarkMessageIndex(value string) (int, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", "last", "latest":
+		return -1, nil
+	}
+	index, err := strconv.Atoi(value)
+	if err != nil || index <= 0 {
+		return 0, fmt.Errorf("bookmarks message index must be a positive integer or last, got %q", value)
+	}
+	return index - 1, nil
+}
+
+func (a *App) buildBookmark(req bookmarksRequest) (bookmarks.Bookmark, error) {
+	sessionID := strings.TrimSpace(req.SessionID)
+	messageIndex := req.MessageIndex
+	var bookmarkMessageIndex *int
+	if sessionID != "" {
+		sess, err := a.Sessions.OpenExisting(sessionID)
+		if err != nil {
+			return bookmarks.Bookmark{}, err
+		}
+		sessionID = sess.ID
+		if messageIndex < 0 && len(sess.Messages) > 0 {
+			messageIndex = len(sess.Messages) - 1
+		}
+		if messageIndex >= len(sess.Messages) {
+			return bookmarks.Bookmark{}, fmt.Errorf("message index %d out of range for %d messages", messageIndex, len(sess.Messages))
+		}
+		if messageIndex >= 0 {
+			bookmarkMessageIndex = &messageIndex
+		}
+	}
+	return bookmarks.Bookmark{
+		Name:         req.Name,
+		Workspace:    a.Workspace,
+		SessionID:    sessionID,
+		MessageIndex: bookmarkMessageIndex,
+		Note:         req.Note,
+	}, nil
+}
+
+func bookmarkResumeCommand(bookmark bookmarks.Bookmark) string {
+	if strings.TrimSpace(bookmark.SessionID) == "" {
+		return ""
+	}
+	return strings.Join([]string{"codog", "--resume", shellQuote(bookmark.SessionID), "repl"}, " ")
+}
+
+func renderBookmarksReport(out io.Writer, report bookmarksReport) {
+	fmt.Fprintln(out, "Bookmarks")
+	switch report.Action {
+	case "list":
+		fmt.Fprintf(out, "  Count            %d\n", report.Count)
+		for _, bookmark := range report.Bookmarks {
+			renderBookmarkLine(out, bookmark)
+		}
+	case "add", "show", "delete":
+		if report.Bookmark != nil {
+			renderBookmarkLine(out, *report.Bookmark)
+		}
+		if report.ResumeCommand != "" {
+			fmt.Fprintf(out, "  Resume           %s\n", report.ResumeCommand)
+		}
+		if report.Message != "" {
+			fmt.Fprintf(out, "  Message          %s\n", report.Message)
+		}
+	case "clear":
+		fmt.Fprintf(out, "  Removed          %d\n", report.Removed)
+		if report.Message != "" {
+			fmt.Fprintf(out, "  Message          %s\n", report.Message)
+		}
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  File             %s\n", report.Path)
+	}
+}
+
+func renderBookmarkLine(out io.Writer, bookmark bookmarks.Bookmark) {
+	fmt.Fprintf(out, "  %s  %s", bookmark.ID, bookmark.Name)
+	if bookmark.SessionID != "" {
+		fmt.Fprintf(out, "  session=%s", bookmark.SessionID)
+	}
+	if bookmark.MessageIndex != nil {
+		fmt.Fprintf(out, "  message=%d", *bookmark.MessageIndex+1)
+	}
+	if bookmark.Note != "" {
+		fmt.Fprintf(out, "  note=%s", bookmark.Note)
+	}
+	fmt.Fprintln(out)
+}
+
 func (a *App) ClearCommand(args []string) error {
 	format, err := parseClearCommandFormat(args)
 	if err != nil {
@@ -43518,7 +43853,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
-	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
+	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
 		"break-cache", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
@@ -44768,6 +45103,20 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			OutputFields:            []string{"id", "messages", "created_at", "updated_at"},
 			StatusValues:            []string{"ok", "error"},
 		}, true
+	case "bookmarks":
+		return commandHelpSpec{
+			Topic:                   "bookmarks",
+			Command:                 "bookmarks",
+			Usage:                   "codog bookmarks [list|add|show|delete|clear] [NAME|ID] [--session ID|latest] [--message N|last] [--all] [--output-format text|json]",
+			Text:                    "Bookmarks\n\nUsage:\n  codog bookmarks list [--all] [--output-format text|json]\n  codog bookmarks add NAME [--session ID|latest] [--message N|last] [--note TEXT] [--output-format text|json]\n  codog bookmarks show ID_OR_NAME [--output-format text|json]\n  codog bookmarks delete ID_OR_NAME [--output-format text|json]\n  codog bookmarks clear [--all] [--output-format text|json]\n  /bookmarks [list|add|show|delete|clear]\n\nStores local named pointers to workspace sessions. `add` defaults to the latest/current session and its last message; message indexes are entered as 1-based numbers. `--all` lists or clears bookmarks across all workspaces.\n",
+			LocalOnly:               true,
+			RequiresCredentials:     false,
+			RequiresProviderRequest: false,
+			RequiresSessionResume:   false,
+			MutatesWorkspace:        false,
+			OutputFields:            []string{"bookmarks", "bookmark", "session_id", "message_index", "path", "resume_command"},
+			StatusValues:            []string{"ok", "error"},
+		}, true
 	case "sessions":
 		spec, _ := commandHelpSpecFor("session")
 		spec.Topic = "sessions"
@@ -44820,7 +45169,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			Topic:                   "resume",
 			Command:                 "resume",
 			Usage:                   "codog --resume ID|latest [prompt TEXT|repl|/slash-command]",
-			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, or /session. Help is local and does not open a session.\n",
+			Text:                    "Resume\n\nUsage:\n  codog --resume ID|latest [prompt TEXT|repl|/slash-command]\n\nSelects an existing session before running prompt, REPL, or a resume-safe slash command such as /status, /clear, /compact, /summary, /usage, /cache, /context, /history, /rewind, /export, /share, /copy, /paste, /bookmarks, or /session. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,

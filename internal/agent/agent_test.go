@@ -738,6 +738,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			args:  []string{"--config", configPath, "state", "--help", "--output-format", "json"},
 			topic: "state",
 		},
+		{
+			name:  "bookmarks local help",
+			args:  []string{"--config", configPath, "bookmarks", "--help", "--output-format", "json"},
+			topic: "bookmarks",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1041,6 +1046,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, capabilityReportHasSlash(report, "/onboarding"))
 	require.True(t, capabilityReportHasSlash(report, "/capabilities"))
 	require.True(t, capabilityReportHasSlash(report, "/checkpoint"))
+	require.True(t, capabilityReportHasSlash(report, "/bookmarks"))
 	require.True(t, capabilityReportHasSlash(report, "/new"))
 	require.True(t, capabilityReportHasSlash(report, "/quit"))
 	require.True(t, capabilityReportHasSlash(report, "/rc"))
@@ -1075,6 +1081,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("ultrareviewEnabled"))
 	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
+	require.True(t, commandAcceptsGlobalOutputFormat("bookmarks"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
@@ -7309,6 +7316,73 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	require.Contains(t, candidates, "/permissions workspace-write")
 	require.Contains(t, candidates, "/team/review ")
 	require.Contains(t, candidates, "/team/audit ")
+}
+
+func TestBookmarksCommandAndSlash(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "first prompt")))
+	require.NoError(t, store.Append("source", anthropic.TextMessage("assistant", "first answer")))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.NoError(t, app.Bookmarks([]string{"add", "checkpoint", "--session", "source", "--message", "1", "--note", "first", "--json"}, config.FlagOverrides{}))
+	var report bookmarksReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "bookmarks", report.Kind)
+	require.Equal(t, "add", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.NotNil(t, report.Bookmark)
+	require.Equal(t, "checkpoint", report.Bookmark.Name)
+	require.Equal(t, "source", report.Bookmark.SessionID)
+	require.NotNil(t, report.Bookmark.MessageIndex)
+	require.Equal(t, 0, *report.Bookmark.MessageIndex)
+	require.Contains(t, report.ResumeCommand, "--resume")
+
+	out.Reset()
+	require.NoError(t, app.Bookmarks([]string{"list", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "list", report.Action)
+	require.Len(t, report.Bookmarks, 1)
+
+	out.Reset()
+	handled := app.handleSlash(context.Background(), "/bookmarks add slash-mark --json", &session.Session{ID: "source"})
+	require.True(t, handled)
+	require.Empty(t, errOut.String())
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "add", report.Action)
+	require.NotNil(t, report.Bookmark)
+	require.Equal(t, "slash-mark", report.Bookmark.Name)
+	require.NotNil(t, report.Bookmark.MessageIndex)
+	require.Equal(t, 1, *report.Bookmark.MessageIndex)
+
+	out.Reset()
+	require.NoError(t, app.Bookmarks([]string{"show", "slash-mark", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "show", report.Action)
+	require.NotNil(t, report.Bookmark)
+	require.Equal(t, "slash-mark", report.Bookmark.Name)
+
+	out.Reset()
+	require.NoError(t, app.Bookmarks([]string{"delete", "checkpoint", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "delete", report.Action)
+	require.Equal(t, 1, report.Removed)
+
+	out.Reset()
+	require.NoError(t, app.Bookmarks([]string{"clear", "--json"}, config.FlagOverrides{}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "clear", report.Action)
+	require.Equal(t, 1, report.Removed)
 }
 
 func TestSlashHelpIncludesRuntimeCommands(t *testing.T) {

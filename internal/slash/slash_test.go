@@ -300,6 +300,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	names := ResumeSupportedNames()
 	require.Contains(t, names, "/acp")
 	require.Contains(t, names, "/advisor")
+	require.Contains(t, names, "/bookmarks")
 	require.Contains(t, names, "/capabilities")
 	require.Contains(t, names, "/status")
 	require.Contains(t, names, "/compact")
