@@ -34,6 +34,12 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/budget")
 	require.Contains(t, out.String(), "/permissions")
 	require.Contains(t, out.String(), "/allowed-tools")
+	require.Contains(t, out.String(), "/approve")
+	require.Contains(t, out.String(), "/yes")
+	require.Contains(t, out.String(), "/y")
+	require.Contains(t, out.String(), "/deny")
+	require.Contains(t, out.String(), "/no")
+	require.Contains(t, out.String(), "/n")
 	require.Contains(t, out.String(), "/clear")
 	require.Contains(t, out.String(), "/new")
 	require.Contains(t, out.String(), "/doctor")
@@ -167,6 +173,15 @@ func TestRenderHelpIncludesCoreCommands(t *testing.T) {
 	require.Contains(t, out.String(), "/debug-tool-call")
 }
 
+func TestLookupIncludesApprovalAliases(t *testing.T) {
+	for _, name := range []string{"/approve", "/yes", "/y", "/deny", "/no", "/n"} {
+		spec, ok := Lookup(name)
+		require.True(t, ok, name)
+		require.Equal(t, name, spec.Name)
+		require.False(t, spec.ResumeSupported)
+	}
+}
+
 func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, Candidates("/ac"), "/acp")
 	require.Contains(t, Candidates("/an"), "/ant-trace --no-request")
@@ -217,6 +232,7 @@ func TestCandidatesFiltersSlashCommands(t *testing.T) {
 	require.Contains(t, Candidates("/pe"), "/perf-issue --write")
 	require.Contains(t, Candidates("/ne"), "/new")
 	require.Contains(t, Candidates("/ne"), "/new --confirm")
+	require.Contains(t, Candidates("/no"), "/no")
 	require.Contains(t, Candidates("/no"), "/notebook-read ")
 	require.Contains(t, Candidates("/no"), "/notebook-edit ")
 	require.Contains(t, Candidates("/on"), "/onboarding")

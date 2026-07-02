@@ -1221,6 +1221,65 @@ func TestUnknownCommandOutputContract(t *testing.T) {
 	require.False(t, exitErr.Silent)
 	require.Contains(t, err.Error(), "command_not_found")
 	require.Contains(t, err.Error(), "codog prompt")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "no", "thanks"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "command_not_found", report.Kind)
+	require.Equal(t, "no", report.Command)
+	require.Equal(t, []string{"thanks"}, report.Args)
+	require.Contains(t, report.Hint, "codog prompt")
+}
+
+func TestApprovalSlashAliasesReturnInteractiveOnly(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	cases := []struct {
+		name    string
+		command string
+		slash   string
+	}{
+		{name: "bare approve", command: "approve", slash: "/approve"},
+		{name: "bare yes", command: "yes", slash: "/yes"},
+		{name: "bare y", command: "y", slash: "/y"},
+		{name: "bare deny", command: "deny", slash: "/deny"},
+		{name: "bare no", command: "no", slash: "/no"},
+		{name: "bare n", command: "n", slash: "/n"},
+		{name: "slash approve", command: "/approve", slash: "/approve"},
+		{name: "slash yes", command: "/yes", slash: "/yes"},
+		{name: "slash y", command: "/y", slash: "/y"},
+		{name: "slash deny", command: "/deny", slash: "/deny"},
+		{name: "slash no", command: "/no", slash: "/no"},
+		{name: "slash n", command: "/n", slash: "/n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", tc.command}, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 1, exitErr.Code)
+			require.True(t, exitErr.Silent)
+			var report slashErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "interactive_only", report.Kind)
+			require.Equal(t, "interactive_only", report.ErrorKind)
+			require.Equal(t, "error", report.Status)
+			require.Equal(t, tc.slash, report.Command)
+			require.Contains(t, report.Hint, "codog repl")
+			require.NotContains(t, out, "command_not_found")
+		})
+	}
 }
 
 func TestMockParityCommandAndHelp(t *testing.T) {

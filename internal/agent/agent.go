@@ -754,6 +754,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return app.ToolDetails(rest)
 	default:
 		if command != "" {
+			if len(rest) == 0 {
+				if slashName := bareApprovalSlashName(command); slashName != "" {
+					return renderInteractiveOnlySlash(os.Stdout, slashName, requestedOutputFormat(originalArgs))
+				}
+			}
 			return renderCommandNotFound(os.Stdout, command, rest, requestedOutputFormat(originalArgs))
 		}
 		return app.REPL(ctx, overrides)
@@ -21442,10 +21447,20 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/deny", "/no", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/commit", "/pr", "/issue", "/bughunter", "/ultraplan":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/commit", "/pr", "/issue", "/bughunter", "/ultraplan":
 		return true
 	default:
 		return false
+	}
+}
+
+func bareApprovalSlashName(command string) string {
+	name := strings.ToLower(strings.TrimSpace(command))
+	switch name {
+	case "approve", "yes", "y", "deny", "no", "n":
+		return "/" + name
+	default:
+		return ""
 	}
 }
 
