@@ -22966,6 +22966,16 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "exists":
 		return a.SessionExists(args[1:], overrides.Resume)
+	case "switch", "fork":
+		format := "text"
+		if argsHaveOutputFormat(args[1:]) {
+			parsed, _, err := parseTemplateOutputArgs("sessions "+args[0], args[1:])
+			if err != nil {
+				return err
+			}
+			format = parsed
+		}
+		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/session", args[0]), format)
 	case "delete":
 		req, err := parseSessionDeleteArgs("codog sessions delete", args[1:])
 		if err != nil {
@@ -22983,7 +22993,7 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 			return fmt.Errorf("delete: refusing to delete the active session %q", target.ID)
 		}
 		return a.SessionsCommand(args)
-	case "show", "fork", "rename":
+	case "show", "rename":
 		if len(args) == 1 || strings.HasPrefix(strings.TrimSpace(args[1]), "-") {
 			withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
 			return a.SessionsCommand(withSession)
