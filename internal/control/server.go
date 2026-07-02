@@ -48,7 +48,10 @@ func RouteSpecs() []RouteSpec {
 		{Path: "/health", Methods: []string{http.MethodGet}, Description: "Health check.", Public: true},
 		{Path: "/state", Methods: []string{http.MethodGet, http.MethodPost}, Description: "Read or update remote client heartbeat, failure, and lease state."},
 		{Path: "/sessions", Methods: []string{http.MethodGet, http.MethodPost}, Description: "List sessions or create a new session."},
-		{Path: "/sessions/{id}", Methods: []string{http.MethodGet}, Description: "Read one session."},
+		{Path: "/sessions/{id}", Methods: []string{http.MethodGet, http.MethodDelete}, Description: "Read or delete one session."},
+		{Path: "/sessions/{id}/history", Methods: []string{http.MethodGet}, Description: "Read prompt history for a session."},
+		{Path: "/sessions/{id}/fork", Methods: []string{http.MethodPost}, Description: "Fork a session."},
+		{Path: "/sessions/{id}/rename", Methods: []string{http.MethodPost}, Description: "Rename a session."},
 		{Path: "/sessions/{id}/messages", Methods: []string{http.MethodPost}, Description: "Append a message to a session."},
 		{Path: "/sessions/{id}/input", Methods: []string{http.MethodPost}, Description: "Append raw user input to a session."},
 		{Path: "/sessions/{id}/rewind", Methods: []string{http.MethodPost}, Description: "Rewind recent session messages."},
@@ -324,6 +327,18 @@ func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, background.FilterBySession(tasks, id))
 		return
 	}
+	if len(parts) > 1 && parts[1] == "history" {
+		s.sessionHistory(w, r, id)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "fork" {
+		s.sessionFork(w, r, id)
+		return
+	}
+	if len(parts) > 1 && parts[1] == "rename" {
+		s.sessionRename(w, r, id)
+		return
+	}
 	if len(parts) > 1 && parts[1] == "messages" {
 		s.sessionMessages(w, r, id)
 		return
@@ -344,12 +359,142 @@ func (s Server) sessionByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.ErrMissingFile, http.StatusNotFound)
 		return
 	}
+	if r.Method == http.MethodDelete {
+		s.sessionDelete(w, r, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	sess, err := s.Sessions.Open(id)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, sess)
+}
+
+func (s Server) sessionHistory(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	entries, err := s.Sessions.PromptHistory(id)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 0 {
+			writeError(w, errors.New("limit must be a non-negative integer"), http.StatusBadRequest)
+			return
+		}
+		if limit > 0 && len(entries) > limit {
+			entries = entries[len(entries)-limit:]
+		}
+	}
+	writeJSON(w, map[string]any{
+		"kind":    "session_history",
+		"id":      id,
+		"count":   len(entries),
+		"entries": entries,
+	})
+}
+
+func (s Server) sessionFork(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Branch     string `json:"branch"`
+		BranchName string `json:"branch_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	branchName := strings.TrimSpace(payload.BranchName)
+	if branchName == "" {
+		branchName = strings.TrimSpace(payload.Branch)
+	}
+	forked, err := s.Sessions.Fork(id, branchName)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"kind":        "session_mutation",
+		"action":      "fork",
+		"status":      "ok",
+		"parent_id":   id,
+		"branch_name": branchName,
+		"session":     forked,
+	})
+}
+
+func (s Server) sessionRename(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		NewID        string `json:"new_id"`
+		NewSessionID string `json:"new_session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	newID := strings.TrimSpace(payload.NewID)
+	if newID == "" {
+		newID = strings.TrimSpace(payload.NewSessionID)
+	}
+	if newID == "" {
+		writeError(w, errors.New("new_id is required"), http.StatusBadRequest)
+		return
+	}
+	result, err := s.Sessions.Rename(id, newID)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"kind":          "session_mutation",
+		"action":        "rename",
+		"status":        "ok",
+		"old_id":        result.OldID,
+		"new_id":        result.NewID,
+		"old_path":      result.OldPath,
+		"new_path":      result.NewPath,
+		"message_count": result.MessageCount,
+	})
+}
+
+func (s Server) sessionDelete(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	sess, err := s.Sessions.Open(id)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.Sessions.Delete(id); err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"kind":          "session_mutation",
+		"action":        "delete",
+		"status":        "ok",
+		"id":            sess.ID,
+		"path":          sess.Path,
+		"message_count": len(sess.Messages),
+	})
 }
 
 func (s Server) sessionMessages(w http.ResponseWriter, r *http.Request, id string) {

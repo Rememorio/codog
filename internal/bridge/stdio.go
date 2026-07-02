@@ -94,6 +94,7 @@ func (s Server) handle(req Request) (any, *Error) {
 				"sessions/append_input",
 				"sessions/rewind",
 				"sessions/history",
+				"sessions/fork",
 				"sessions/rename",
 				"sessions/delete",
 				"sessions/prompt",
@@ -206,6 +207,12 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "sessions/history":
 		result, err := s.sessionHistory(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/fork":
+		result, err := s.sessionFork(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -1499,6 +1506,35 @@ func (s Server) sessionHistory(params json.RawMessage) (any, error) {
 		"id":      id,
 		"count":   len(entries),
 		"entries": entries,
+	}, nil
+}
+
+func (s Server) sessionFork(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID         string `json:"id"`
+		SessionID  string `json:"session_id"`
+		Branch     string `json:"branch"`
+		BranchName string `json:"branch_name"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := firstNonEmpty(payload.ID, payload.SessionID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	branchName := firstNonEmpty(payload.BranchName, payload.Branch)
+	forked, err := s.Sessions.Fork(id, branchName)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"kind":        "session_mutation",
+		"action":      "fork",
+		"status":      "ok",
+		"parent_id":   id,
+		"branch_name": branchName,
+		"session":     forked,
 	}, nil
 }
 
