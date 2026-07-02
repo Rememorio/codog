@@ -321,11 +321,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err != nil {
 		return err
 	}
+	sessionStore, err := session.NewWorkspaceStoreWithCleanup(cfg.ConfigHome, workspace, cfg.EffectiveCleanupPeriodDays())
+	if err != nil {
+		return err
+	}
 	app := &App{
 		Config:    cfg,
 		Client:    anthropicClientFromConfig(cfg),
 		Tools:     tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
-		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Sessions:  sessionStore,
 		Workspace: workspace,
 		Out:       os.Stdout,
 		Err:       os.Stderr,
@@ -12633,7 +12637,11 @@ func (a *App) WorkspaceCommand(args []string) error {
 			return err
 		}
 		a.Workspace = next
-		a.Sessions = session.NewWorkspaceStore(a.Config.ConfigHome, next)
+		store, err := session.NewWorkspaceStoreWithCleanup(a.Config.ConfigHome, next, a.Config.EffectiveCleanupPeriodDays())
+		if err != nil {
+			return err
+		}
+		a.Sessions = store
 		if err := a.refreshBuiltinToolScope(); err != nil {
 			return err
 		}

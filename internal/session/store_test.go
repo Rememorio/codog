@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,53 @@ func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	latest, err := store.LatestID()
 	require.NoError(t, err)
 	require.Equal(t, "legacy-session", latest)
+}
+
+func TestWorkspaceStoreCleanupRemovesExpiredCurrentAndLegacySessions(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := NewWorkspaceStore(configHome, workspace)
+	legacy := NewStore(configHome)
+
+	require.NoError(t, store.Append("old-current", anthropic.TextMessage("user", "old current")))
+	require.NoError(t, store.Append("new-current", anthropic.TextMessage("user", "new current")))
+	require.NoError(t, legacy.Append("old-legacy", anthropic.TextMessage("user", "old legacy")))
+
+	oldTime := time.Now().Add(-45 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(store.Dir, "old-current.jsonl"), oldTime, oldTime))
+	require.NoError(t, os.Chtimes(filepath.Join(legacy.Dir, "old-legacy.jsonl"), oldTime, oldTime))
+
+	cleaned, err := NewWorkspaceStoreWithCleanup(configHome, workspace, 30)
+	require.NoError(t, err)
+	require.False(t, cleaned.PersistenceDisabled)
+	require.NoFileExists(t, filepath.Join(store.Dir, "old-current.jsonl"))
+	require.NoFileExists(t, filepath.Join(legacy.Dir, "old-legacy.jsonl"))
+	require.FileExists(t, filepath.Join(store.Dir, "new-current.jsonl"))
+}
+
+func TestWorkspaceStoreCleanupZeroDisablesPersistenceAndRemovesSessions(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("kept-before-disable", anthropic.TextMessage("user", "private")))
+	require.FileExists(t, filepath.Join(store.Dir, "kept-before-disable.jsonl"))
+
+	disabled, err := NewWorkspaceStoreWithCleanup(configHome, workspace, 0)
+	require.NoError(t, err)
+	require.True(t, disabled.PersistenceDisabled)
+	require.NoFileExists(t, filepath.Join(store.Dir, "kept-before-disable.jsonl"))
+
+	sess, err := disabled.Open("")
+	require.NoError(t, err)
+	require.NotEmpty(t, sess.ID)
+	require.Empty(t, sess.Path)
+	require.NoError(t, disabled.Append(sess.ID, anthropic.TextMessage("user", "not persisted")))
+	require.NoFileExists(t, filepath.Join(disabled.Dir, sess.ID+".jsonl"))
+	sessions, err := disabled.List()
+	require.NoError(t, err)
+	require.Empty(t, sessions)
+	_, err = disabled.LatestID()
+	require.ErrorIs(t, err, ErrNoSessions)
 }
 
 func TestOpenExistingDoesNotCreateAndReportsDirectoryPaths(t *testing.T) {

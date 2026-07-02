@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	DefaultBaseURL = modelrouting.DefaultAnthropicBaseURL
-	DefaultModel   = "claude-sonnet-4-5"
+	DefaultBaseURL                  = modelrouting.DefaultAnthropicBaseURL
+	DefaultModel                    = "claude-sonnet-4-5"
+	sessionDefaultCleanupPeriodDays = 30
 )
 
 type HookConfig struct {
@@ -444,6 +445,7 @@ type Config struct {
 	PermissionRules     PermissionRules            `json:"permission_rules,omitempty"`
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
+	CleanupPeriodDays   *int                       `json:"cleanupPeriodDays,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
 	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
 	ProviderFallbacks   ProviderFallbackConfig     `json:"providerFallbacks,omitempty"`
@@ -560,6 +562,14 @@ func Default(overrides FlagOverrides) (Config, error) {
 	return cfg, nil
 }
 
+// EffectiveCleanupPeriodDays returns the configured transcript retention window.
+func (c Config) EffectiveCleanupPeriodDays() int {
+	if c.CleanupPeriodDays == nil {
+		return sessionDefaultCleanupPeriodDays
+	}
+	return *c.CleanupPeriodDays
+}
+
 func defaultConfig() (Config, error) {
 	cfg := Config{
 		BaseURL:             DefaultBaseURL,
@@ -588,6 +598,9 @@ func finalizeConfig(cfg *Config) error {
 	}
 	if cfg.AutoCompactMessages <= 0 {
 		cfg.AutoCompactMessages = 40
+	}
+	if cfg.CleanupPeriodDays != nil && *cfg.CleanupPeriodDays < 0 {
+		return errors.New("cleanupPeriodDays must be non-negative")
 	}
 	if err := validateTemperature(cfg); err != nil {
 		return err
@@ -1129,6 +1142,10 @@ func merge(dst *Config, src Config) {
 	}
 	if src.AutoCompactMessages != 0 {
 		dst.AutoCompactMessages = src.AutoCompactMessages
+	}
+	if src.CleanupPeriodDays != nil {
+		days := *src.CleanupPeriodDays
+		dst.CleanupPeriodDays = &days
 	}
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)

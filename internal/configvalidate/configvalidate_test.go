@@ -59,6 +59,15 @@ func TestValidateBytesAcceptsRAGConfig(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesValidatesCleanupPeriodDaysType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"cleanupPeriodDays":"30"}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "cleanupPeriodDays", result.Errors[0].Field)
+	require.Equal(t, "a number", result.Errors[0].Expected)
+}
+
 func TestValidateBytesValidatesMCPServerObjects(t *testing.T) {
 	source := []byte(`{"mcp_servers":{"demo":{"command":"uvx","args":["server"],"env":[42],"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"required":true,"extra":true}}}`)
 

@@ -94,6 +94,7 @@ var topLevelFields = []fieldSpec{
 	{"permissions", FieldObject},
 	{"privacy_settings", FieldObject},
 	{"auto_compact_messages", FieldNumber},
+	{"cleanupPeriodDays", FieldNumber},
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},

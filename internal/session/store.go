@@ -139,13 +139,17 @@ type messageRecordInfo struct {
 }
 
 type Store struct {
-	Dir       string
-	LegacyDir string
-	Workspace string
+	Dir                 string
+	LegacyDir           string
+	Workspace           string
+	PersistenceDisabled bool
 }
 
 var ErrNoSessions = errors.New("no saved sessions")
 var ErrSessionNotFound = errors.New("session not found")
+
+// DefaultCleanupPeriodDays matches Claude Code's default transcript retention.
+const DefaultCleanupPeriodDays = 30
 
 type PathIsDirectoryError struct {
 	Path string
@@ -169,7 +173,56 @@ func NewWorkspaceStore(configHome string, workspace string) *Store {
 	}
 }
 
+// NewWorkspaceStoreWithCleanup opens a workspace store and applies transcript retention.
+func NewWorkspaceStoreWithCleanup(configHome string, workspace string, cleanupPeriodDays int) (*Store, error) {
+	store := NewWorkspaceStore(configHome, workspace)
+	if err := store.ApplyCleanupPeriodDays(cleanupPeriodDays); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// ApplyCleanupPeriodDays removes expired transcripts or disables persistence when days is zero.
+func (s *Store) ApplyCleanupPeriodDays(days int) error {
+	if days < 0 {
+		return errors.New("cleanup period days must be non-negative")
+	}
+	if days == 0 {
+		s.PersistenceDisabled = true
+		return s.RemoveAll()
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	return s.RemoveOlderThan(cutoff)
+}
+
+// RemoveOlderThan deletes transcript files whose modified time is older than cutoff.
+func (s *Store) RemoveOlderThan(cutoff time.Time) error {
+	return s.removeSessionFiles(func(info os.FileInfo) bool {
+		return info.ModTime().UTC().Before(cutoff)
+	})
+}
+
+// RemoveAll deletes all transcript files visible to the store.
+func (s *Store) RemoveAll() error {
+	return s.removeSessionFiles(func(os.FileInfo) bool { return true })
+}
+
 func (s *Store) Open(id string) (*Session, error) {
+	if s.PersistenceDisabled {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			id = newID()
+		}
+		if id == "latest" {
+			return nil, ErrNoSessions
+		}
+		if err := validateSessionID(id); err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		identity := normalizeSessionIdentity(id, s.Workspace, SessionIdentity{})
+		return &Session{ID: id, Identity: identity, Metadata: SessionMetadata{CreatedAt: now, UpdatedAt: now, ModifiedAt: now}}, nil
+	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -198,6 +251,9 @@ func (s *Store) Open(id string) (*Session, error) {
 }
 
 func (s *Store) OpenExisting(id string) (*Session, error) {
+	if s.PersistenceDisabled {
+		return nil, ErrNoSessions
+	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -269,6 +325,18 @@ func (s *Store) Create(id string) (*Session, error) {
 }
 
 func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Session, error) {
+	if s.PersistenceDisabled {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			id = newID()
+		}
+		if err := validateSessionID(id); err != nil {
+			return nil, err
+		}
+		now := time.Now().UTC()
+		resolved := normalizeSessionIdentity(id, s.Workspace, identity)
+		return &Session{ID: id, Identity: resolved, Metadata: SessionMetadata{CreatedAt: now, UpdatedAt: now, ModifiedAt: now}}, nil
+	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -319,6 +387,9 @@ func (s *Store) Append(id string, msg anthropic.Message) error {
 }
 
 func (s *Store) AppendWithUsage(id string, msg anthropic.Message, usage *anthropic.Usage) error {
+	if s.PersistenceDisabled {
+		return nil
+	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
@@ -339,6 +410,9 @@ func (s *Store) AppendWithUsage(id string, msg anthropic.Message, usage *anthrop
 }
 
 func (s *Store) AppendInput(id string, input string) error {
+	if s.PersistenceDisabled {
+		return nil
+	}
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil
@@ -361,6 +435,9 @@ func (s *Store) AppendInput(id string, input string) error {
 }
 
 func (s *Store) AppendPromptHistoryDisabled(id string) error {
+	if s.PersistenceDisabled {
+		return nil
+	}
 	if strings.TrimSpace(id) == "" {
 		return errors.New("session id is required")
 	}
@@ -382,6 +459,9 @@ func (s *Store) AppendPromptHistoryDisabled(id string) error {
 }
 
 func (s *Store) Exists(id string) (bool, error) {
+	if s.PersistenceDisabled {
+		return false, nil
+	}
 	if strings.TrimSpace(id) == "" {
 		return false, errors.New("session id is required")
 	}
@@ -403,6 +483,9 @@ func (s *Store) Exists(id string) (bool, error) {
 }
 
 func (s *Store) Delete(id string) error {
+	if s.PersistenceDisabled {
+		return nil
+	}
 	if strings.TrimSpace(id) == "" {
 		return errors.New("session id is required")
 	}
@@ -637,6 +720,9 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 }
 
 func (s *Store) List() ([]Session, error) {
+	if s.PersistenceDisabled {
+		return nil, nil
+	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -1525,6 +1611,57 @@ func (s *Store) sessionDirs() []string {
 		dirs = append(dirs, s.LegacyDir)
 	}
 	return dirs
+}
+
+func (s *Store) removeSessionFiles(shouldRemove func(os.FileInfo) bool) error {
+	if shouldRemove == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	for _, root := range s.sessionDirs() {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(entry.Name(), ".jsonl") {
+				return nil
+			}
+			clean := filepath.Clean(path)
+			if _, ok := seen[clean]; ok {
+				return nil
+			}
+			seen[clean] = struct{}{}
+			info, err := entry.Info()
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if shouldRemove(info) {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func sameDir(left string, right string) bool {
