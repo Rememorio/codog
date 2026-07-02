@@ -1310,6 +1310,61 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("models"))
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "aliases", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var aliases modelAliasesInventoryReport
+	require.NoError(t, json.Unmarshal([]byte(out), &aliases))
+	require.Equal(t, "models", aliases.Kind)
+	require.Equal(t, "aliases", aliases.Action)
+	require.Equal(t, "ok", aliases.Status)
+	require.Equal(t, len(aliases.Aliases), aliases.Count)
+	require.True(t, modelAliasExists(aliases.Aliases, "kimi", "kimi-k2.5", modelrouting.ProviderDashScope))
+	require.False(t, aliases.RequiresProviderRequest)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "routes", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var routes modelRoutesInventoryReport
+	require.NoError(t, json.Unmarshal([]byte(out), &routes))
+	require.Equal(t, "models", routes.Kind)
+	require.Equal(t, "routes", routes.Action)
+	require.Equal(t, "ok", routes.Status)
+	require.Equal(t, len(routes.Routes), routes.Count)
+	require.True(t, modelRouteExists(routes.Routes, "qwen/ or qwen-", modelrouting.ProviderDashScope))
+	require.False(t, routes.RequiresProviderRequest)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "show", "kimi", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var kimiDetail modelDetailReport
+	require.NoError(t, json.Unmarshal([]byte(out), &kimiDetail))
+	require.Equal(t, "models", kimiDetail.Kind)
+	require.Equal(t, "show", kimiDetail.Action)
+	require.Equal(t, "ok", kimiDetail.Status)
+	require.Equal(t, "kimi", kimiDetail.RequestedModel)
+	require.Equal(t, "kimi-k2.5", kimiDetail.ResolvedModel)
+	require.Equal(t, "kimi", kimiDetail.Alias)
+	require.Equal(t, modelrouting.ProviderDashScope, kimiDetail.Provider)
+	require.Equal(t, "openai_chat_completions", kimiDetail.WireProtocol)
+	require.Equal(t, "kimi-k2.5", kimiDetail.WireModel)
+	require.True(t, kimiDetail.OpenAICompatible)
+	require.True(t, kimiDetail.RejectsToolResultIsErrorField)
+	require.False(t, kimiDetail.RequiresProviderRequest)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "current", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var currentDetail modelDetailReport
+	require.NoError(t, json.Unmarshal([]byte(out), &currentDetail))
+	require.Equal(t, "show", currentDetail.Action)
+	require.NotEmpty(t, currentDetail.RequestedModel)
+	require.Equal(t, currentDetail.ResolvedModel, currentDetail.WireModel)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "model", "help", "--json"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
@@ -1317,6 +1372,9 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &modelHelp))
 	require.Equal(t, "models", modelHelp.Topic)
 	require.Equal(t, "models", modelHelp.Command)
+	require.Contains(t, modelHelp.Usage, "aliases")
+	require.Contains(t, modelHelp.Usage, "routes")
+	require.Contains(t, modelHelp.Usage, "show")
 	require.NotNil(t, modelHelp.RequiresProviderRequest)
 	require.False(t, *modelHelp.RequiresProviderRequest)
 
@@ -1329,6 +1387,9 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "models", modelsError.Kind)
 	require.Equal(t, "bogus", modelsError.Action)
 	require.Equal(t, "unsupported_models_action", modelsError.ErrorKind)
+	require.Contains(t, modelsError.Hint, "aliases")
+	require.Contains(t, modelsError.Hint, "routes")
+	require.Contains(t, modelsError.Hint, "show")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/max-tokens"}, config.FlagOverrides{})

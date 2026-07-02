@@ -25095,6 +25095,12 @@ type modelRequest struct {
 	Model  string
 }
 
+type modelsRequest struct {
+	Format string
+	Action string
+	Model  string
+}
+
 type modelReport struct {
 	Kind           string `json:"kind"`
 	Action         string `json:"action"`
@@ -25139,6 +25145,53 @@ type modelsReport struct {
 	Message                 string             `json:"message"`
 }
 
+type modelAliasesInventoryReport struct {
+	Kind                    string             `json:"kind"`
+	Action                  string             `json:"action"`
+	Status                  string             `json:"status"`
+	Count                   int                `json:"count"`
+	Aliases                 []modelAliasReport `json:"aliases"`
+	LocalOnly               bool               `json:"local_only"`
+	RequiresProviderRequest bool               `json:"requires_provider_request"`
+	Message                 string             `json:"message"`
+}
+
+type modelRoutesInventoryReport struct {
+	Kind                    string             `json:"kind"`
+	Action                  string             `json:"action"`
+	Status                  string             `json:"status"`
+	Count                   int                `json:"count"`
+	Routes                  []modelRouteReport `json:"routes"`
+	LocalOnly               bool               `json:"local_only"`
+	RequiresProviderRequest bool               `json:"requires_provider_request"`
+	Message                 string             `json:"message"`
+}
+
+type modelDetailReport struct {
+	Kind                            string `json:"kind"`
+	Action                          string `json:"action"`
+	Status                          string `json:"status"`
+	RequestedModel                  string `json:"requested_model"`
+	ResolvedModel                   string `json:"resolved_model"`
+	Alias                           string `json:"alias,omitempty"`
+	Provider                        string `json:"provider"`
+	WireProtocol                    string `json:"wire_protocol"`
+	BaseURL                         string `json:"base_url"`
+	WireModel                       string `json:"wire_model"`
+	AuthEnv                         string `json:"auth_env"`
+	BaseURLEnv                      string `json:"base_url_env"`
+	MaxOutputTokens                 int    `json:"max_output_tokens,omitempty"`
+	ContextWindowTokens             int    `json:"context_window_tokens,omitempty"`
+	OpenAICompatible                bool   `json:"openai_compatible"`
+	ReasoningModel                  bool   `json:"reasoning_model"`
+	UsesMaxCompletionTokens         bool   `json:"uses_max_completion_tokens"`
+	RejectsToolResultIsErrorField   bool   `json:"rejects_tool_result_is_error_field"`
+	RequiresReasoningContentHistory bool   `json:"requires_reasoning_content_history"`
+	LocalOnly                       bool   `json:"local_only"`
+	RequiresProviderRequest         bool   `json:"requires_provider_request"`
+	Message                         string `json:"message"`
+}
+
 func (a *App) Model(args []string) error {
 	if modelHelpRequested(args) {
 		return renderCommandHelpTopic(a.Out, "models", modelHelpArgsWithoutHelp(args), "text")
@@ -25167,23 +25220,51 @@ func (a *App) Model(args []string) error {
 }
 
 func (a *App) Models(args []string) error {
-	format, action, err := parseModelsArgs(args)
+	req, err := parseModelsArgs(args)
 	if err != nil {
 		return err
 	}
-	if action == "help" {
-		return renderCommandHelpTopic(a.Out, "models", modelHelpArgsWithoutHelp(args), format)
+	if req.Action == "help" {
+		return renderCommandHelpTopic(a.Out, "models", modelHelpArgsWithoutHelp(args), req.Format)
 	}
-	if action != "" {
+	switch req.Action {
+	case "list":
+		return renderModelsReport(a.Out, a.buildModelsReport(), req.Format)
+	case "aliases":
+		return renderModelAliasesInventoryReport(a.Out, modelAliasesInventoryReport{
+			Kind:                    "models",
+			Action:                  "aliases",
+			Status:                  "ok",
+			Aliases:                 modelAliases(),
+			LocalOnly:               true,
+			RequiresProviderRequest: false,
+			Message:                 "Built-in aliases are resolved locally before provider routing.",
+		}, req.Format)
+	case "routes":
+		return renderModelRoutesInventoryReport(a.Out, modelRoutesInventoryReport{
+			Kind:                    "models",
+			Action:                  "routes",
+			Status:                  "ok",
+			Routes:                  modelRoutes(),
+			LocalOnly:               true,
+			RequiresProviderRequest: false,
+			Message:                 "Routes are selected from the resolved model name without making a provider request.",
+		}, req.Format)
+	case "show":
+		return renderModelDetailReport(a.Out, a.buildModelDetailReport(req.Model), req.Format)
+	default:
 		return renderActionError(a.Out, actionErrorReport{
 			Kind:      "models",
-			Action:    action,
+			Action:    req.Action,
 			Status:    "error",
 			ErrorKind: "unsupported_models_action",
-			Message:   fmt.Sprintf("unsupported models action %q", action),
-			Hint:      "Usage: codog models [help] [--output-format text|json].",
-		}, format)
+			Message:   fmt.Sprintf("unsupported models action %q", req.Action),
+			Hint:      "Usage: codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json].",
+		}, req.Format)
 	}
+}
+
+func (a *App) buildModelsReport() modelsReport {
 	report := modelsReport{
 		Kind:                    "models",
 		Action:                  "list",
@@ -25204,7 +25285,7 @@ func (a *App) Models(args []string) error {
 		report.ConfiguredModel = config.DefaultModel
 		report.ResolvedConfiguredModel = config.DefaultModel
 	}
-	return renderModelsReport(a.Out, report, format)
+	return report
 }
 
 func (a *App) ResumedModel(args []string) error {
@@ -25251,38 +25332,69 @@ func parseModelArgs(args []string) (modelRequest, error) {
 	return req, nil
 }
 
-func parseModelsArgs(args []string) (string, string, error) {
-	format := "text"
+func parseModelsArgs(args []string) (modelsRequest, error) {
+	req := modelsRequest{Format: "text", Action: "list"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
 		case arg == "--json":
-			format = "json"
+			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return "", "", errors.New("models output format is required")
+				return req, errors.New("models output format is required")
 			}
-			format = args[index]
+			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
-			format = strings.TrimPrefix(arg, "--output-format=")
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case strings.HasPrefix(arg, "-"):
-			return "", "", fmt.Errorf("unknown models flag %q", arg)
+			return req, fmt.Errorf("unknown models flag %q", arg)
 		default:
-			positionals = append(positionals, strings.ToLower(strings.TrimSpace(arg)))
+			positionals = append(positionals, strings.TrimSpace(arg))
 		}
 	}
-	if err := validateTextOrJSON(format, "models"); err != nil {
-		return "", "", err
+	if err := validateTextOrJSON(req.Format, "models"); err != nil {
+		return req, err
 	}
 	if len(positionals) == 0 {
-		return format, "", nil
+		return req, nil
 	}
-	if len(positionals) == 1 {
-		return format, positionals[0], nil
+	action := strings.ToLower(positionals[0])
+	switch action {
+	case "list", "ls":
+		req.Action = "list"
+	case "alias", "aliases":
+		req.Action = "aliases"
+	case "route", "routes":
+		req.Action = "routes"
+	case "show", "info", "describe", "resolve", "current":
+		req.Action = "show"
+	default:
+		req.Action = action
 	}
-	return format, strings.Join(positionals, " "), nil
+	if req.Action == "show" {
+		if action == "current" {
+			if len(positionals) > 1 {
+				return req, unexpectedExtraArgsError{
+					Command: "models current",
+					Args:    append([]string(nil), positionals[1:]...),
+					Usage:   "codog models current [--output-format text|json]",
+				}
+			}
+			return req, nil
+		}
+		req.Model = strings.TrimSpace(strings.Join(positionals[1:], " "))
+		return req, nil
+	}
+	if len(positionals) > 1 {
+		return req, unexpectedExtraArgsError{
+			Command: "models " + req.Action,
+			Args:    append([]string(nil), positionals[1:]...),
+			Usage:   "codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]",
+		}
+	}
+	return req, nil
 }
 
 func modelHelpRequested(args []string) bool {
@@ -25378,6 +25490,98 @@ func modelRoutes() []modelRouteReport {
 	}
 }
 
+func (a *App) buildModelDetailReport(model string) modelDetailReport {
+	requested := strings.TrimSpace(model)
+	if requested == "" {
+		requested = strings.TrimSpace(a.Config.Model)
+	}
+	if requested == "" {
+		requested = config.DefaultModel
+	}
+	resolved := resolveModelAlias(requested)
+	provider := modelrouting.ProviderForModel(resolved)
+	baseURL := a.modelDiagnosticsBaseURL(provider)
+	protocol := modelWireProtocol(provider)
+	authEnv, baseURLEnv := modelProviderEnv(provider)
+	wireModel := resolved
+	if modelrouting.IsOpenAICompatibleModel(resolved) {
+		wireModel = modelrouting.WireModelForBaseURL(resolved, baseURL)
+	}
+	report := modelDetailReport{
+		Kind:                            "models",
+		Action:                          "show",
+		Status:                          "ok",
+		RequestedModel:                  requested,
+		ResolvedModel:                   resolved,
+		Alias:                           modelAliasName(requested),
+		Provider:                        provider,
+		WireProtocol:                    protocol,
+		BaseURL:                         baseURL,
+		WireModel:                       wireModel,
+		AuthEnv:                         authEnv,
+		BaseURLEnv:                      baseURLEnv,
+		OpenAICompatible:                modelrouting.IsOpenAICompatibleModel(resolved),
+		ReasoningModel:                  modelrouting.IsReasoningModel(resolved),
+		UsesMaxCompletionTokens:         modelrouting.UsesMaxCompletionTokens(resolved),
+		RejectsToolResultIsErrorField:   modelrouting.ModelRejectsIsErrorField(resolved),
+		RequiresReasoningContentHistory: modelrouting.RequiresReasoningContentHistory(resolved),
+		LocalOnly:                       true,
+		RequiresProviderRequest:         false,
+		Message:                         "Model details are resolved locally; no provider request was made.",
+	}
+	if limit, ok := modelrouting.TokenLimitForModel(resolved); ok {
+		report.MaxOutputTokens = limit.MaxOutputTokens
+		report.ContextWindowTokens = limit.ContextWindowTokens
+	}
+	return report
+}
+
+func (a *App) modelDiagnosticsBaseURL(provider string) string {
+	if provider == modelrouting.ProviderForModel(a.Config.Model) && strings.TrimSpace(a.Config.BaseURL) != "" {
+		return a.Config.BaseURL
+	}
+	switch provider {
+	case modelrouting.ProviderOpenAI:
+		return modelrouting.DefaultOpenAIBaseURL
+	case modelrouting.ProviderXAI:
+		return modelrouting.DefaultXAIBaseURL
+	case modelrouting.ProviderDashScope:
+		return modelrouting.DefaultDashScopeBaseURL
+	default:
+		return config.DefaultBaseURL
+	}
+}
+
+func modelWireProtocol(provider string) string {
+	if provider == modelrouting.ProviderOpenAI || provider == modelrouting.ProviderXAI || provider == modelrouting.ProviderDashScope {
+		return "openai_chat_completions"
+	}
+	return "anthropic_messages"
+}
+
+func modelProviderEnv(provider string) (string, string) {
+	switch provider {
+	case modelrouting.ProviderOpenAI:
+		return "OPENAI_API_KEY", "OPENAI_BASE_URL or OLLAMA_HOST"
+	case modelrouting.ProviderXAI:
+		return "XAI_API_KEY", "XAI_BASE_URL"
+	case modelrouting.ProviderDashScope:
+		return "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"
+	default:
+		return "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"
+	}
+}
+
+func modelAliasName(model string) string {
+	model = strings.TrimSpace(model)
+	for _, alias := range modelrouting.BuiltInAliases() {
+		if strings.EqualFold(model, alias.Name) && !strings.EqualFold(alias.Name, alias.Model) {
+			return alias.Name
+		}
+	}
+	return ""
+}
+
 func resolveModelAlias(model string) string {
 	return modelrouting.ResolveAlias(model)
 }
@@ -25419,6 +25623,87 @@ func renderModelsReport(out io.Writer, report modelsReport, format string) error
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "  Usage            %s\n", report.ModelCommand)
+	return nil
+}
+
+func renderModelAliasesInventoryReport(out io.Writer, report modelAliasesInventoryReport, format string) error {
+	report.Count = len(report.Aliases)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Model Aliases")
+	if len(report.Aliases) == 0 {
+		fmt.Fprintln(out, "  none")
+		return nil
+	}
+	for _, alias := range report.Aliases {
+		limits := ""
+		if alias.MaxOutputTokens > 0 || alias.ContextWindowTokens > 0 {
+			limits = fmt.Sprintf(" max=%d context=%d", alias.MaxOutputTokens, alias.ContextWindowTokens)
+		}
+		fmt.Fprintf(out, "  %-14s -> %-28s provider=%s%s\n", alias.Name, alias.Model, alias.Provider, limits)
+	}
+	return nil
+}
+
+func renderModelRoutesInventoryReport(out io.Writer, report modelRoutesInventoryReport, format string) error {
+	report.Count = len(report.Routes)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Model Routes")
+	if len(report.Routes) == 0 {
+		fmt.Fprintln(out, "  none")
+		return nil
+	}
+	for _, route := range report.Routes {
+		fmt.Fprintf(out, "  %-18s -> %-10s protocol=%s env=%s\n", route.Prefix, route.Provider, route.WireProtocol, route.AuthEnv)
+	}
+	return nil
+}
+
+func renderModelDetailReport(out io.Writer, report modelDetailReport, format string) error {
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Model")
+	fmt.Fprintf(out, "  Requested        %s\n", report.RequestedModel)
+	if report.Alias != "" {
+		fmt.Fprintf(out, "  Alias            %s\n", report.Alias)
+	}
+	fmt.Fprintf(out, "  Resolved         %s\n", report.ResolvedModel)
+	fmt.Fprintf(out, "  Provider         %s\n", report.Provider)
+	fmt.Fprintf(out, "  Wire protocol    %s\n", report.WireProtocol)
+	fmt.Fprintf(out, "  Wire model       %s\n", report.WireModel)
+	fmt.Fprintf(out, "  Base URL         %s\n", report.BaseURL)
+	if report.MaxOutputTokens > 0 || report.ContextWindowTokens > 0 {
+		fmt.Fprintf(out, "  Token limits     max=%d context=%d\n", report.MaxOutputTokens, report.ContextWindowTokens)
+	}
+	flags := []string{}
+	if report.OpenAICompatible {
+		flags = append(flags, "openai-compatible")
+	}
+	if report.ReasoningModel {
+		flags = append(flags, "reasoning")
+	}
+	if report.UsesMaxCompletionTokens {
+		flags = append(flags, "max-completion-tokens")
+	}
+	if report.RejectsToolResultIsErrorField {
+		flags = append(flags, "no-tool-is-error")
+	}
+	if report.RequiresReasoningContentHistory {
+		flags = append(flags, "reasoning-content-history")
+	}
+	if len(flags) != 0 {
+		fmt.Fprintf(out, "  Compatibility    %s\n", strings.Join(flags, ", "))
+	}
 	return nil
 }
 
@@ -38088,9 +38373,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"models",
 			"models",
-			"codog models [help] [--output-format text|json]",
-			"Models\n\nUsage:\n  codog models [help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, and the current configured model without making a provider request.\n",
-			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "requires_provider_request"},
+			"codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]",
+			"Models\n\nUsage:\n  codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, and local model diagnostics without making a provider request.\n",
+			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "provider", "wire_model", "requires_provider_request"},
 			[]string{"ok", "error"},
 			false,
 		)
@@ -38729,7 +39014,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] model [NAME] | models [help] [--json|--output-format text|json]
+  %s [flags] model [NAME] | models [list|aliases|routes|show [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]
