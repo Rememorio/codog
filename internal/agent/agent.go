@@ -550,11 +550,20 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "notifications":
 		return app.Notifications(rest)
 	case "skill", "skills":
-		return app.Skills(rest)
+		if err := app.Skills(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "commands":
-		return app.Commands(rest)
+		if err := app.Commands(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "templates":
-		return app.Templates(rest)
+		if err := app.Templates(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "hooks":
 		return app.Hooks(ctx, rest)
 	case "mcp":
@@ -23460,6 +23469,10 @@ func renderCLIError(out io.Writer, err error, format string) error {
 }
 
 func renderCLIErrorWhenStructured(out io.Writer, err error, format string) error {
+	var exitErr *ExitError
+	if errors.As(err, &exitErr) {
+		return err
+	}
 	var formatErr outputFormatError
 	if strings.EqualFold(format, "json") || errors.As(err, &formatErr) {
 		return renderCLIError(out, err, format)
@@ -25427,7 +25440,7 @@ func parseSimpleOutputFormat(command string, args []string) (string, error) {
 	case "text", "json":
 		return format, nil
 	default:
-		return "", fmt.Errorf("unknown %s output format %q", command, format)
+		return "", outputFormatError{Command: command, Value: format, Expected: []string{"text", "json"}}
 	}
 }
 
@@ -38875,7 +38888,11 @@ func (a *App) Commands(args []string) error {
 			fmt.Fprintln(a.Out)
 		}
 	default:
-		return fmt.Errorf("unknown commands action %q", action)
+		return unexpectedExtraArgsError{
+			Command: "commands",
+			Args:    []string{action},
+			Usage:   "codog commands [list|sources|show|run] [ARGS...] [--json|--output-format text|json]",
+		}
 	}
 	return nil
 }
@@ -39025,7 +39042,11 @@ func (a *App) Templates(args []string) error {
 			fmt.Fprintln(a.Out)
 		}
 	default:
-		return fmt.Errorf("unknown templates action %q", action)
+		return unexpectedExtraArgsError{
+			Command: "templates",
+			Args:    []string{action},
+			Usage:   "codog templates [list|show|apply] [ARGS...] [--json|--output-format text|json]",
+		}
 	}
 	return nil
 }

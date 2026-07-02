@@ -16999,6 +16999,69 @@ func TestCommandsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestResourceCatalogErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "commands unknown action",
+			args:      []string{"commands", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "commands"`, `"bogus"`},
+		},
+		{
+			name:      "templates unknown action",
+			args:      []string{"templates", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "templates"`, `"bogus"`},
+		},
+		{
+			name:      "commands sources extra",
+			args:      []string{"commands", "sources", "bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "commands sources"`, `"option": "bogus"`},
+		},
+		{
+			name:      "skills sources extra",
+			args:      []string{"skills", "sources", "bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "skills sources"`, `"option": "bogus"`},
+		},
+		{
+			name:      "skills sources invalid format",
+			args:      []string{"skills", "sources", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`, `"text"`, `"json"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func commandReportEntry(commands []customcommands.Command, name string, source string) customcommands.Command {
 	for _, command := range commands {
 		if command.Name == name && command.Source == source {
