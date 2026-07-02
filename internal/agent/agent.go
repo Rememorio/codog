@@ -30318,6 +30318,14 @@ type permissionsRequest struct {
 	Action string
 	Format string
 	Mode   string
+	Target string
+	Path   string
+}
+
+type permissionModeReport struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Current     bool   `json:"current"`
 }
 
 type permissionsReport struct {
@@ -30327,6 +30335,8 @@ type permissionsReport struct {
 	PermissionMode  string                 `json:"permission_mode"`
 	PermissionRules config.PermissionRules `json:"permission_rules"`
 	PreviousMode    string                 `json:"previous_mode,omitempty"`
+	Path            string                 `json:"path,omitempty"`
+	Modes           []permissionModeReport `json:"modes"`
 }
 
 func (a *App) Permissions(args []string) error {
@@ -30335,8 +30345,26 @@ func (a *App) Permissions(args []string) error {
 		return err
 	}
 	previous := a.Config.PermissionMode
-	if req.Action == "set" {
+	path := ""
+	switch req.Action {
+	case "set":
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.SetFileValue(path, "permission_mode", req.Mode); err != nil {
+			return err
+		}
 		a.Config.PermissionMode = req.Mode
+	case "clear":
+		path, err = a.preferenceConfigPath(req.Target, req.Path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "permission_mode"); err != nil {
+			return err
+		}
+		a.Config.PermissionMode = "workspace-write"
 	}
 	report := permissionsReport{
 		Kind:            "permissions",
@@ -30344,15 +30372,17 @@ func (a *App) Permissions(args []string) error {
 		Status:          "ok",
 		PermissionMode:  a.Config.PermissionMode,
 		PermissionRules: a.Config.PermissionRules,
+		Path:            path,
+		Modes:           permissionModeReports(a.Config.PermissionMode),
 	}
-	if req.Action == "set" {
+	if req.Action == "set" || req.Action == "clear" {
 		report.PreviousMode = previous
 	}
 	return renderPermissionsReport(a.Out, report, req.Format)
 }
 
 func parsePermissionsArgs(args []string) (permissionsRequest, error) {
-	req := permissionsRequest{Action: "show"}
+	req := permissionsRequest{Action: "show", Target: "user"}
 	positionals := []string{}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -30367,6 +30397,22 @@ func parsePermissionsArgs(args []string) (permissionsRequest, error) {
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--target":
+			index++
+			if index >= len(args) {
+				return req, errors.New("permissions target is required")
+			}
+			req.Target = args[index]
+		case strings.HasPrefix(arg, "--target="):
+			req.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--path":
+			index++
+			if index >= len(args) {
+				return req, errors.New("permissions config path is required")
+			}
+			req.Path = args[index]
+		case strings.HasPrefix(arg, "--path="):
+			req.Path = strings.TrimPrefix(arg, "--path=")
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown permissions flag %q", arg)
 		default:
@@ -30388,13 +30434,18 @@ func parsePermissionsArgs(args []string) (permissionsRequest, error) {
 		req.Action = "show"
 	case "mode", "set":
 		if len(positionals) < 2 {
-			return req, errors.New("usage: codog permissions [read-only|workspace-write|danger-full-access|prompt|allow]")
+			return req, errors.New("usage: codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--json|--output-format text|json]")
 		}
 		if len(positionals) > 2 {
 			return req, fmt.Errorf("unexpected permissions argument %q", positionals[2])
 		}
 		req.Action = "set"
 		req.Mode = positionals[1]
+	case "clear", "reset", "unset", "default":
+		if len(positionals) > 1 {
+			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
+		}
+		req.Action = "clear"
 	default:
 		if len(positionals) > 1 {
 			return req, fmt.Errorf("unexpected permissions argument %q", positionals[1])
@@ -30424,44 +30475,62 @@ func renderPermissionsReport(out io.Writer, report permissionsReport, format str
 		fmt.Fprintln(out, string(data))
 		return nil
 	}
-	if report.Action == "set" {
-		fmt.Fprintf(out, "permission_mode=%s\n", report.PermissionMode)
+	if report.Action == "set" || report.Action == "clear" {
+		fmt.Fprintln(out, "Permissions updated")
+		fmt.Fprintf(out, "  Result           mode %s\n", report.Action)
+		if report.PreviousMode != "" {
+			fmt.Fprintf(out, "  Previous mode    %s\n", report.PreviousMode)
+		}
+		fmt.Fprintf(out, "  Active mode      %s\n", report.PermissionMode)
+		if report.Path != "" {
+			fmt.Fprintf(out, "  Config path      %s\n", report.Path)
+		}
+		fmt.Fprintln(out, "  Applies to       subsequent tool calls")
 		return nil
 	}
 	fmt.Fprintln(out, "Permissions")
-	fmt.Fprintf(out, "  Mode             %s\n", report.PermissionMode)
+	fmt.Fprintf(out, "  Active mode      %s\n", report.PermissionMode)
+	fmt.Fprintln(out, "  Mode status      live session default")
 	if len(report.PermissionRules.Allow) > 0 {
 		fmt.Fprintf(out, "  Allow rules      %s\n", strings.Join(report.PermissionRules.Allow, ", "))
 	}
 	if len(report.PermissionRules.Deny) > 0 {
 		fmt.Fprintf(out, "  Deny rules       %s\n", strings.Join(report.PermissionRules.Deny, ", "))
 	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Modes")
+	for _, mode := range report.Modes {
+		marker := "○ available"
+		if mode.Current {
+			marker = "● current"
+		}
+		fmt.Fprintf(out, "  %-18s %-11s %s\n", mode.Name, marker, mode.Description)
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Usage")
+	fmt.Fprintln(out, "  Inspect current mode with /permissions")
+	fmt.Fprintln(out, "  Switch modes with /permissions <mode>")
 	return nil
 }
 
+func permissionModeReports(current string) []permissionModeReport {
+	modes := []permissionModeReport{
+		{Name: string(tools.PermissionReadOnly), Description: "Read/search tools only"},
+		{Name: string(tools.PermissionWorkspace), Description: "Edit files inside the workspace"},
+		{Name: string(tools.PermissionDanger), Description: "Unrestricted tool access"},
+		{Name: string(tools.PermissionPrompt), Description: "Ask before tool calls that need approval"},
+		{Name: string(tools.PermissionAllow), Description: "Allow tool calls without prompting"},
+	}
+	for index := range modes {
+		modes[index].Current = strings.EqualFold(modes[index].Name, strings.TrimSpace(current))
+	}
+	return modes
+}
+
 func (a *App) handlePermissionsSlash(args []string) {
-	if len(args) == 0 || args[0] == "show" {
-		data, _ := json.MarshalIndent(map[string]any{
-			"permission_mode":  a.Config.PermissionMode,
-			"permission_rules": a.Config.PermissionRules,
-		}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
-		return
+	if err := a.Permissions(args); err != nil {
+		fmt.Fprintln(a.Err, "error:", err)
 	}
-	mode := args[0]
-	if args[0] == "mode" || args[0] == "set" {
-		if len(args) < 2 {
-			fmt.Fprintln(a.Err, "usage: /permissions [read-only|workspace-write|danger-full-access|prompt|allow]")
-			return
-		}
-		mode = args[1]
-	}
-	if !validPermissionMode(mode) {
-		fmt.Fprintf(a.Err, "unknown permission mode: %s\n", mode)
-		return
-	}
-	a.Config.PermissionMode = mode
-	fmt.Fprintf(a.Err, "permission_mode=%s\n", a.Config.PermissionMode)
 }
 
 type allowedToolsRequest struct {
@@ -43455,7 +43524,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "init", "init-verifiers", "insights", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "pr",
-		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
+		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
@@ -44183,9 +44252,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"permissions",
 			"permissions",
-			"codog permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]",
-			"Permissions\n\nUsage:\n  codog permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]\n\nShows or changes the default tool permission mode.\n",
-			[]string{"permission_mode", "previous", "path"},
+			"codog permissions [show|MODE|set MODE|clear] [--target user|project|local] [--output-format text|json]",
+			"Permissions\n\nUsage:\n  codog permissions [show|read-only|workspace-write|danger-full-access|prompt|allow]\n  codog permissions set MODE [--target user|project|local|--path PATH]\n  codog permissions clear [--target user|project|local|--path PATH]\n\nShows, stores, or clears the default tool permission mode used for subsequent tool calls. Text output lists available modes and marks the current mode.\n",
+			[]string{"permission_mode", "previous_mode", "path", "modes", "permission_rules"},
 			[]string{"ok", "error"},
 			true,
 		), true

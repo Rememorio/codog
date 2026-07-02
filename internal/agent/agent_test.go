@@ -1210,6 +1210,51 @@ func TestLanguageCommandPersistsPreference(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("language"))
 }
 
+func TestPermissionsCommandPersistsPreference(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "permissions", "read-only", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report permissionsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "permissions", report.Kind)
+	require.Equal(t, "set", report.Action)
+	require.Equal(t, "read-only", report.PermissionMode)
+	require.Equal(t, filepath.Join(configHome, "config.json"), report.Path)
+	require.NotEmpty(t, report.Modes)
+
+	storedConfigPath := filepath.Join(configHome, "config.json")
+	stored, err := os.ReadFile(storedConfigPath)
+	require.NoError(t, err)
+	require.Contains(t, string(stored), `"permission_mode": "read-only"`)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", storedConfigPath, "--output-format", "text", "permissions", "show"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Permissions")
+	require.Contains(t, out, "read-only")
+	require.Contains(t, out, "● current")
+	require.Contains(t, out, "workspace-write")
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", storedConfigPath, "permissions", "clear", "--path", storedConfigPath, "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "clear", report.Action)
+	require.Equal(t, "workspace-write", report.PermissionMode)
+	stored, err = os.ReadFile(storedConfigPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(stored), "permission_mode")
+}
+
 func TestRateLimitCommandSetsShowsAndResetsConfig(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -6930,10 +6975,12 @@ func TestTagCommandAndSlash(t *testing.T) {
 }
 
 func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
+	configHome := t.TempDir()
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	app := &App{
 		Config: config.Config{
+			ConfigHome:     configHome,
 			APIKey:         "api-key-secret",
 			AuthToken:      "auth-token-secret",
 			BaseURL:        "https://api.example.test",
@@ -6979,8 +7026,12 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/permissions read-only", sess))
 	require.Equal(t, "read-only", app.Config.PermissionMode)
-	require.Contains(t, errOut.String(), "permission_mode=read-only")
-	errOut.Reset()
+	require.Contains(t, out.String(), "Permissions updated")
+	require.Contains(t, out.String(), "Active mode      read-only")
+	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"permission_mode": "read-only"`)
+	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/permissions invalid", sess))
 	require.Equal(t, "read-only", app.Config.PermissionMode)
@@ -7004,7 +7055,23 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 
 	require.NoError(t, app.Permissions([]string{"workspace-write"}))
 	require.Equal(t, "workspace-write", app.Config.PermissionMode)
-	require.Contains(t, out.String(), "permission_mode=workspace-write")
+	require.Contains(t, out.String(), "Permissions updated")
+	require.Contains(t, out.String(), "Previous mode    read-only")
+	require.Contains(t, out.String(), "Active mode      workspace-write")
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"permission_mode": "workspace-write"`)
+	out.Reset()
+
+	require.NoError(t, app.Permissions([]string{"clear", "--json"}))
+	var permissions permissionsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &permissions))
+	require.Equal(t, "clear", permissions.Action)
+	require.Equal(t, "workspace-write", permissions.PermissionMode)
+	require.Equal(t, filepath.Join(configHome, "config.json"), permissions.Path)
+	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "permission_mode")
 	out.Reset()
 
 	require.NoError(t, app.AllowedTools([]string{"add", "grep"}))
@@ -7018,7 +7085,7 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Contains(t, app.Config.PermissionRules.Allow, "mcp__playwright__*")
 	out.Reset()
 
-	err := app.AllowedTools([]string{"add", "teleport"})
+	err = app.AllowedTools([]string{"add", "teleport"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid_tool_name")
 	require.NotContains(t, app.Config.PermissionRules.Allow, "teleport")
