@@ -14,6 +14,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 )
 
+// LSPCandidate describes a language-server command Codog can discover.
 type LSPCandidate struct {
 	Language    string   `json:"language"`
 	Command     string   `json:"command"`
@@ -23,6 +24,7 @@ type LSPCandidate struct {
 	Description string   `json:"description,omitempty"`
 }
 
+// LSPServer records a configured background language-server process.
 type LSPServer struct {
 	Language  string    `json:"language"`
 	Command   string    `json:"command"`
@@ -31,20 +33,24 @@ type LSPServer struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
+// LSPServerStatus combines persisted server metadata with task state.
 type LSPServerStatus struct {
 	LSPServer
 	Task background.Task `json:"task"`
 }
 
+// LSPStore persists language-server metadata under the Codog config home.
 type LSPStore struct {
 	ConfigHome string
 	Workspace  string
 }
 
+// NewLSPStore returns a store for workspace language-server metadata.
 func NewLSPStore(configHome, workspace string) LSPStore {
 	return LSPStore{ConfigHome: configHome, Workspace: workspace}
 }
 
+// DefaultLSPCandidates returns common language-server commands and install state.
 func DefaultLSPCandidates() []LSPCandidate {
 	candidates := []LSPCandidate{
 		{Language: "go", Command: "gopls", Description: "Go language server"},
@@ -62,6 +68,7 @@ func DefaultLSPCandidates() []LSPCandidate {
 	return candidates
 }
 
+// Start launches and records a background language server for a language.
 func (s LSPStore) Start(language string, commandArgs []string) (LSPServerStatus, error) {
 	language, err := normalizeLanguage(language)
 	if err != nil {
@@ -99,6 +106,7 @@ func (s LSPStore) Start(language string, commandArgs []string) (LSPServerStatus,
 	return LSPServerStatus{LSPServer: server, Task: task}, nil
 }
 
+// List returns all persisted language-server statuses.
 func (s LSPStore) List() ([]LSPServerStatus, error) {
 	entries, err := os.ReadDir(s.dir())
 	if err != nil {
@@ -125,6 +133,7 @@ func (s LSPStore) List() ([]LSPServerStatus, error) {
 	return statuses, nil
 }
 
+// Status returns persisted metadata and task state for a language server.
 func (s LSPStore) Status(language string) (LSPServerStatus, error) {
 	language, err := normalizeLanguage(language)
 	if err != nil {
@@ -141,6 +150,7 @@ func (s LSPStore) Status(language string) (LSPServerStatus, error) {
 	return LSPServerStatus{LSPServer: server, Task: task}, nil
 }
 
+// Stop stops the background language server for a language.
 func (s LSPStore) Stop(language string) (LSPServerStatus, error) {
 	status, err := s.Status(language)
 	if err != nil {

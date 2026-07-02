@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 )
 
+// LSPQueryRequest describes one language-server query against a document.
 type LSPQueryRequest struct {
 	Action    string `json:"action"`
 	Path      string `json:"path"`
@@ -26,6 +27,7 @@ type LSPQueryRequest struct {
 	Character int    `json:"character,omitempty"`
 }
 
+// LSPQueryResult is the normalized result of an LSP JSON-RPC request.
 type LSPQueryResult struct {
 	Kind        string          `json:"kind"`
 	Language    string          `json:"language"`
@@ -68,11 +70,13 @@ type lspTextEdit struct {
 	NewText string `json:"newText"`
 }
 
+// LSPPosition is a zero-based language-server document position.
 type LSPPosition struct {
 	Line      int `json:"line"`
 	Character int `json:"character"`
 }
 
+// LSPDiagnostic describes a language-server diagnostic entry.
 type LSPDiagnostic struct {
 	Range struct {
 		Start LSPPosition `json:"start"`
@@ -89,6 +93,7 @@ type lspPublishDiagnosticsParams struct {
 	Diagnostics []LSPDiagnostic `json:"diagnostics"`
 }
 
+// LSPActionInfo describes a supported high-level language-server action.
 type LSPActionInfo struct {
 	Name             string   `json:"name"`
 	Method           string   `json:"method,omitempty"`
@@ -152,6 +157,7 @@ var lspActionInfos = []LSPActionInfo{
 	},
 }
 
+// SupportedLSPActions returns supported LSP actions and aliases.
 func SupportedLSPActions() []LSPActionInfo {
 	out := make([]LSPActionInfo, len(lspActionInfos))
 	for i, info := range lspActionInfos {
@@ -161,6 +167,7 @@ func SupportedLSPActions() []LSPActionInfo {
 	return out
 }
 
+// NormalizeLSPAction returns the canonical name for an LSP action alias.
 func NormalizeLSPAction(action string) (string, error) {
 	normalized := normalizeLSPActionToken(action)
 	for _, info := range lspActionInfos {
@@ -200,6 +207,7 @@ func normalizeLSPActionToken(action string) string {
 	return strings.ToLower(b.String())
 }
 
+// Query starts a configured stdio LSP command and runs one document query.
 func (s LSPStore) Query(ctx context.Context, language string, request LSPQueryRequest) (LSPQueryResult, error) {
 	language, err := normalizeLanguage(language)
 	if err != nil {
@@ -602,6 +610,7 @@ func fileURI(path string) string {
 	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
 }
 
+// InferLanguageID returns an LSP language identifier for a file path.
 func InferLanguageID(path string) string {
 	return languageID("", path)
 }

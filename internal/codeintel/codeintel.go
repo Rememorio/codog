@@ -18,6 +18,7 @@ import (
 	"time"
 )
 
+// Symbol describes a Go declaration discovered in the workspace.
 type Symbol struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
@@ -25,6 +26,7 @@ type Symbol struct {
 	Line int    `json:"line"`
 }
 
+// Reference describes one textual symbol reference in a Go source file.
 type Reference struct {
 	Symbol string `json:"symbol"`
 	Path   string `json:"path"`
@@ -32,6 +34,7 @@ type Reference struct {
 	Text   string `json:"text"`
 }
 
+// Hover contains static hover context for a discovered symbol.
 type Hover struct {
 	Symbol  string   `json:"symbol"`
 	Found   bool     `json:"found"`
@@ -41,6 +44,7 @@ type Hover struct {
 	Snippet []string `json:"snippet,omitempty"`
 }
 
+// Completion describes a static completion candidate.
 type Completion struct {
 	Label  string `json:"label"`
 	Kind   string `json:"kind"`
@@ -49,6 +53,7 @@ type Completion struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// FormatResult reports the result of formatting a source file.
 type FormatResult struct {
 	Kind    string `json:"kind"`
 	Path    string `json:"path"`
@@ -57,12 +62,14 @@ type FormatResult struct {
 	Content string `json:"content,omitempty"`
 }
 
+// MapEntry describes one file or directory in a workspace code map.
 type MapEntry struct {
 	Path  string `json:"path"`
 	Type  string `json:"type"`
 	Depth int    `json:"depth"`
 }
 
+// Diagnostic describes a build, test, or parser issue in a source file.
 type Diagnostic struct {
 	Path    string `json:"path,omitempty"`
 	Line    int    `json:"line,omitempty"`
@@ -73,6 +80,7 @@ type Diagnostic struct {
 	Message string `json:"message"`
 }
 
+// GoSymbols returns function and type declarations found in Go files.
 func GoSymbols(workspace string) ([]Symbol, error) {
 	var symbols []Symbol
 	funcRe := regexp.MustCompile(`^\s*func\s+(\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
@@ -111,6 +119,7 @@ func GoSymbols(workspace string) ([]Symbol, error) {
 	return symbols, err
 }
 
+// Definition returns the first discovered definition for a Go symbol.
 func Definition(workspace string, symbol string) (Symbol, bool, error) {
 	symbol = strings.TrimSpace(symbol)
 	if symbol == "" {
@@ -128,6 +137,7 @@ func Definition(workspace string, symbol string) (Symbol, bool, error) {
 	return Symbol{}, false, nil
 }
 
+// References returns textual Go references for a symbol.
 func References(workspace string, symbol string, limit int) ([]Reference, error) {
 	symbol = strings.TrimSpace(symbol)
 	if symbol == "" {
@@ -176,6 +186,7 @@ func References(workspace string, symbol string, limit int) ([]Reference, error)
 	return refs, err
 }
 
+// HoverInfo returns static hover context around a symbol definition.
 func HoverInfo(workspace string, symbol string, contextLines int) (Hover, error) {
 	if contextLines <= 0 {
 		contextLines = 2
@@ -208,6 +219,7 @@ func HoverInfo(workspace string, symbol string, contextLines int) (Hover, error)
 	}, nil
 }
 
+// Completions returns static Go symbol and keyword completions for a prefix.
 func Completions(workspace string, prefix string, limit int) ([]Completion, error) {
 	prefix = strings.TrimSpace(prefix)
 	if limit <= 0 {
@@ -267,6 +279,7 @@ func Completions(workspace string, prefix string, limit int) ([]Completion, erro
 	return completions, nil
 }
 
+// FormatGoFile formats a Go file and optionally writes the formatted content.
 func FormatGoFile(workspace string, requested string, write bool) (FormatResult, error) {
 	if strings.TrimSpace(requested) == "" {
 		return FormatResult{}, errors.New("path is required")
@@ -306,6 +319,7 @@ func FormatGoFile(workspace string, requested string, write bool) (FormatResult,
 	}, nil
 }
 
+// CodeMap returns a bounded map of files and directories in the workspace.
 func CodeMap(workspace string, depthLimit int, limit int) ([]MapEntry, error) {
 	if depthLimit <= 0 {
 		depthLimit = 3
@@ -350,6 +364,7 @@ func CodeMap(workspace string, depthLimit int, limit int) ([]MapEntry, error) {
 	return entries, err
 }
 
+// GoDiagnostics returns diagnostics from `go test -json` for the workspace.
 func GoDiagnostics(ctx context.Context, workspace string, patterns []string) ([]Diagnostic, error) {
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
@@ -380,6 +395,7 @@ func GoDiagnostics(ctx context.Context, workspace string, patterns []string) ([]
 	return diagnostics, nil
 }
 
+// ParseGoTestJSON converts `go test -json` output into diagnostics.
 func ParseGoTestJSON(workspace string, data []byte) ([]Diagnostic, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -575,21 +591,25 @@ func pathDepth(path string) int {
 	return strings.Count(path, "/") + 1
 }
 
+// Notebook contains the cells from a Jupyter notebook document.
 type Notebook struct {
 	Cells []NotebookCell `json:"cells"`
 }
 
+// NotebookCell contains the source for one notebook cell.
 type NotebookCell struct {
 	CellType string   `json:"cell_type"`
 	Source   []string `json:"source"`
 }
 
+// NotebookReadOptions controls notebook read filtering and output expansion.
 type NotebookReadOptions struct {
 	CellIndex      *int
 	Limit          int
 	IncludeOutputs bool
 }
 
+// NotebookReadCell is a JSON-safe view of one notebook cell.
 type NotebookReadCell struct {
 	Index          int    `json:"index"`
 	CellID         string `json:"cell_id,omitempty"`
@@ -600,6 +620,7 @@ type NotebookReadCell struct {
 	Outputs        any    `json:"outputs,omitempty"`
 }
 
+// NotebookReadResult reports notebook metadata and selected cells.
 type NotebookReadResult struct {
 	Kind      string             `json:"kind"`
 	Path      string             `json:"path"`
@@ -609,6 +630,7 @@ type NotebookReadResult struct {
 	Truncated bool               `json:"truncated"`
 }
 
+// NotebookEditOptions describes a notebook cell edit operation.
 type NotebookEditOptions struct {
 	Index    int
 	CellType string
@@ -616,6 +638,7 @@ type NotebookEditOptions struct {
 	Mode     string
 }
 
+// NotebookEditResult reports the applied notebook cell edit.
 type NotebookEditResult struct {
 	Path        string `json:"path"`
 	Mode        string `json:"mode"`
@@ -627,11 +650,13 @@ type NotebookEditResult struct {
 	SourceLines int    `json:"source_lines,omitempty"`
 }
 
+// EditNotebookCell replaces one notebook cell with source and type.
 func EditNotebookCell(path string, index int, cellType string, source string) error {
 	_, err := EditNotebook(path, NotebookEditOptions{Index: index, CellType: cellType, Source: source, Mode: "replace"})
 	return err
 }
 
+// ReadNotebook reads selected cells from a Jupyter notebook file.
 func ReadNotebook(path string, options NotebookReadOptions) (NotebookReadResult, error) {
 	if options.CellIndex != nil && *options.CellIndex < 0 {
 		return NotebookReadResult{}, errors.New("cell index must be non-negative")
@@ -693,6 +718,7 @@ func ReadNotebook(path string, options NotebookReadOptions) (NotebookReadResult,
 	}, nil
 }
 
+// ResolveNotebookEditIndex resolves an index for a notebook edit request.
 func ResolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode string) (int, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
@@ -743,6 +769,7 @@ func ResolveNotebookEditIndex(path string, cellIndex *int, cellID string, mode s
 	return 0, fmt.Errorf("cell_id %q not found", cellID)
 }
 
+// EditNotebook applies a replace, insert, or delete operation to a notebook.
 func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult, error) {
 	if options.Index < 0 {
 		return NotebookEditResult{}, errors.New("cell index must be non-negative")
