@@ -13430,7 +13430,9 @@ func TestNotificationsCommandAndHookGate(t *testing.T) {
 		Config: config.Config{
 			ConfigHome: configHome,
 			Hooks: config.HookConfig{
-				Notification: []string{"cat > " + shellQuote(notificationPath)},
+				Notification: []string{
+					"cat > " + shellQuote(notificationPath) + `; printf '%s' '{"systemMessage":"notification note","hookSpecificOutput":{"additionalContext":"notification context"}}'`,
+				},
 			},
 		},
 		Workspace: workspace,
@@ -13478,7 +13480,11 @@ func TestNotificationsCommandAndHookGate(t *testing.T) {
 	require.Equal(t, "background_task_started", payload.NotificationType)
 	require.Equal(t, "Started", payload.Title)
 	require.Equal(t, "task started", payload.Message)
+	require.Contains(t, errOut.String(), "notification hook feedback:")
+	require.Contains(t, errOut.String(), "notification note")
+	require.Contains(t, errOut.String(), "notification context")
 	out.Reset()
+	errOut.Reset()
 
 	require.NoError(t, app.Notifications([]string{"clear", "--json"}))
 	require.Contains(t, out.String(), `"configured": false`)

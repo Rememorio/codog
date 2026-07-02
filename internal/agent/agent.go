@@ -44298,8 +44298,13 @@ func (a *App) runNotificationHook(ctx context.Context, notificationType string, 
 	if message == "" {
 		return
 	}
-	if err := a.lifecycleHookRunner().Notification(ctx, notificationType, title, message); err != nil && a.Err != nil {
+	report, err := a.lifecycleHookRunner().NotificationReport(ctx, notificationType, title, message)
+	if err != nil && a.Err != nil {
 		fmt.Fprintf(a.Err, "notification hook error: %v\n", err)
+	}
+	a.renderLifecycleHookFeedback("notification", report)
+	if report.Denied && a.Err != nil {
+		fmt.Fprintf(a.Err, "notification hook denied: %s\n", hookReportDeniedMessage(report))
 	}
 }
 

@@ -385,6 +385,18 @@ func (r Runner) PostCompactReport(ctx context.Context, input string) (RunReport,
 }
 
 func (r Runner) Notification(ctx context.Context, notificationType string, title string, message string) error {
+	report, err := r.NotificationReport(ctx, notificationType, title, message)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// NotificationReport runs Notification hooks and returns parsed hook feedback.
+func (r Runner) NotificationReport(ctx context.Context, notificationType string, title string, message string) (RunReport, error) {
 	notificationType = strings.TrimSpace(notificationType)
 	if notificationType == "" {
 		notificationType = "generic"
@@ -397,7 +409,7 @@ func (r Runner) Notification(ctx context.Context, notificationType string, title
 		Title:            title,
 		NotificationType: notificationType,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) SubagentStart(ctx context.Context, agentID string, agentType string) error {

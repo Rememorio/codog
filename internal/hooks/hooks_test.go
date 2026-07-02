@@ -722,3 +722,20 @@ func TestHooksForPayloadFiltersNotificationMatchersAndConditions(t *testing.T) {
 	})
 	require.Empty(t, matched)
 }
+
+func TestNotificationReportParsesHookFeedback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{
+		Workspace: t.TempDir(),
+		Config: config.HookConfig{
+			NotificationCommands: []config.HookCommand{{
+				Matcher: "background_*",
+				Command: `printf '%s' '{"systemMessage":"notification note","hookSpecificOutput":{"additionalContext":"notification context"}}'`,
+			}},
+		},
+	}.NotificationReport(context.Background(), "background_task_started", "Started", "task started")
+	require.NoError(t, err)
+	require.Equal(t, []string{"notification note", "notification context"}, MessagesFromReport(report))
+}
