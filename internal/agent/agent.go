@@ -24948,6 +24948,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Diff(resumeSlashArgs("diff", args, format))
 	case "/commit":
 		return a.GitCommit(resumeSlashArgs("commit", args, format), format)
+	case "/commit-push-pr":
+		return a.CommitPushPR(ctx, resumeSlashArgs("commit-push-pr", args, format))
 	case "/git":
 		return a.Git(resumeSlashArgs("git", args, format))
 	case "/run":

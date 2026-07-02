@@ -311,6 +311,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/bug")
 	require.Contains(t, names, "/capabilities")
 	require.Contains(t, names, "/commit")
+	require.Contains(t, names, "/commit-push-pr")
 	require.Contains(t, names, "/status")
 	require.Contains(t, names, "/compact")
 	require.Contains(t, names, "/session")

@@ -56,6 +56,7 @@ import (
 	"github.com/Rememorio/codog/internal/perfissue"
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
@@ -4868,6 +4869,19 @@ func risky(value any) {
 	require.Contains(t, string(prData), "# Pull Request Draft")
 	require.Contains(t, string(prData), "PR: ship resumed changes")
 	require.Contains(t, string(prData), "resume-slash")
+
+	if gitAvailable {
+		out, err = runResumedJSON("/commit-push-pr", "resumed dry run", "--dry-run", "--no-pr")
+		require.NoError(t, err)
+		var resumedCommitPushPR prworkflow.Report
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedCommitPushPR))
+		require.Equal(t, "commit_push_pr", resumedCommitPushPR.Kind)
+		require.Equal(t, "planned", resumedCommitPushPR.Status)
+		require.True(t, resumedCommitPushPR.DryRun)
+		require.Equal(t, "resumed dry run", resumedCommitPushPR.Message)
+		require.Empty(t, resumedCommitPushPR.PRURL)
+		require.NotContains(t, commitPushPRStepNames(resumedCommitPushPR.Steps), "pull_request")
+	}
 
 	out, err = runResumedJSON("/install-github-app", "--workflow", "claude", "--dry-run")
 	require.NoError(t, err)
@@ -15126,6 +15140,14 @@ func TestCommitPushPRDryRunCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Dry run          true")
 	require.NotContains(t, out.String(), "pull_request")
 	require.Empty(t, errOut.String())
+}
+
+func commitPushPRStepNames(steps []prworkflow.Step) []string {
+	names := make([]string, 0, len(steps))
+	for _, step := range steps {
+		names = append(names, step.Name)
+	}
+	return names
 }
 
 func TestInstallGitHubAppCommandAndSlash(t *testing.T) {
