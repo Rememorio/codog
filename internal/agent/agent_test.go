@@ -3704,7 +3704,10 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
 
 	cases := [][]string{
+		{"session", "bogus"},
+		{"session", "nuke"},
 		{"cost", "breakdown"},
+		{"clear", "--force"},
 		{"memory", "reset"},
 		{"ultraplan", "bogus"},
 		{"usage", "extra"},
@@ -3848,6 +3851,14 @@ func TestLocalSubcommandErrorContracts(t *testing.T) {
 			action:    "bogus",
 			errorKind: "unknown_plugins_action",
 			hintPart:  "plugins list",
+		},
+		{
+			name:      "sessions unknown",
+			args:      []string{"--config", configPath, "--output-format", "json", "sessions", "bogus"},
+			kind:      "sessions",
+			action:    "bogus",
+			errorKind: "unsupported_sessions_action",
+			hintPart:  "sessions list",
 		},
 		{
 			name:      "mcp unknown",

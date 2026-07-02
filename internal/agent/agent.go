@@ -385,7 +385,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "config":
 		return app.ConfigCommand(rest)
 	case "session", "sessions":
-		return app.SessionsCommand(rest)
+		if err := app.SessionsCommand(rest); err != nil {
+			return renderSessionsCommandError(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "resume":
 		return app.ResumeCommand(rest)
 	case "clear", "conversation":
@@ -21575,6 +21578,10 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	slashName := "/" + lower
 	hint := fmt.Sprintf("Run `codog repl` and use `%s` there.", slashName)
 	switch lower {
+	case "session":
+		interactive = len(meaningful) > 0 && !isSessionAction(meaningful[0])
+	case "clear":
+		interactive = len(meaningful) > 0 && !clearArgsAreLocal(meaningful)
 	case "fork":
 		interactive = len(meaningful) > 0
 	case "cost", "usage", "stats":
@@ -21593,6 +21600,27 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 	}
 	message := fmt.Sprintf("%s is only available in an interactive REPL session", invocation)
 	return true, renderInteractiveOnlyWithHint(out, invocation, message, hint, format)
+}
+
+func isSessionAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "list", "show", "exists", "fork", "rename", "delete":
+		return true
+	default:
+		return false
+	}
+}
+
+func clearArgsAreLocal(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	for _, arg := range args {
+		if !strings.EqualFold(strings.TrimSpace(arg), "--confirm") {
+			return false
+		}
+	}
+	return true
 }
 
 func routeMeaningfulArgs(args []string) []string {
@@ -31795,9 +31823,40 @@ func (a *App) SessionsCommand(args []string) error {
 		data, _ := json.MarshalIndent(map[string]any{"deleted": true, "id": args[1]}, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 	default:
-		return fmt.Errorf("unknown sessions command %q", args[0])
+		return sessionsActionError{Action: args[0]}
 	}
 	return nil
+}
+
+type sessionsActionError struct {
+	Action string
+}
+
+func (e sessionsActionError) Error() string {
+	action := strings.TrimSpace(e.Action)
+	if action == "" {
+		action = "unknown"
+	}
+	return fmt.Sprintf("unsupported_sessions_action: unsupported sessions action %q", action)
+}
+
+func renderSessionsCommandError(out io.Writer, err error, format string) error {
+	var actionErr sessionsActionError
+	if errors.As(err, &actionErr) {
+		action := strings.TrimSpace(actionErr.Action)
+		if action == "" {
+			action = "unknown"
+		}
+		return renderActionError(out, actionErrorReport{
+			Kind:      "sessions",
+			Action:    action,
+			Status:    "error",
+			ErrorKind: "unsupported_sessions_action",
+			Message:   fmt.Sprintf("unsupported sessions action %q", action),
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, or `codog sessions delete ID`.",
+		}, format)
+	}
+	return renderCLIError(out, err, format)
 }
 
 type resumeCommandReport struct {
