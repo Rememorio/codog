@@ -87,6 +87,27 @@ func TestWireModelForBaseURLStripsRoutingPrefixes(t *testing.T) {
 	require.Equal(t, "vendor/model", WireModelForBaseURL("vendor/model", "https://gateway.example/v1"))
 }
 
+func TestIsLocalBaseURL(t *testing.T) {
+	for _, baseURL := range []string{
+		"http://127.0.0.1:11434/v1",
+		"http://localhost:8080/v1",
+		"http://[::1]:8000/v1",
+		"http://192.168.1.20:8000/v1",
+		"http://10.0.0.2:8000/v1",
+		"http://172.16.1.10:8000/v1",
+	} {
+		require.True(t, IsLocalBaseURL(baseURL), baseURL)
+	}
+	for _, baseURL := range []string{
+		DefaultOpenAIBaseURL,
+		"https://openrouter.ai/api/v1",
+		"https://example.com/v1",
+		"",
+	} {
+		require.False(t, IsLocalBaseURL(baseURL), baseURL)
+	}
+}
+
 func TestModelRejectsIsErrorFieldOnlyForKimiFamily(t *testing.T) {
 	require.True(t, ModelRejectsIsErrorField("kimi"))
 	require.True(t, ModelRejectsIsErrorField("kimi-k2.5"))

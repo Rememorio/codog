@@ -285,14 +285,14 @@ func checkConfigLoad(opts Options) Check {
 
 func checkAuth(opts Options) Check {
 	provider := selectedProvider(opts)
-	requiredKeyEnv, requiredAuthEnvs, authOptional := providerAuthRequirements(provider, opts.RuntimeProviderSource)
+	requiredKeyEnv, requiredAuthEnvs, authOptional := providerAuthRequirements(provider, opts.RuntimeProviderSource, opts.BaseURL)
 	apiKeyConfigured := strings.TrimSpace(opts.APIKey) != ""
 	authTokenConfigured := strings.TrimSpace(opts.AuthToken) != ""
 	authOK := apiKeyConfigured || authTokenConfigured || authOptional
 	authSource := "none"
 	switch {
 	case authOptional:
-		authSource = strings.TrimSpace(opts.RuntimeProviderSource)
+		authSource = optionalAuthSource(opts.RuntimeProviderSource, opts.BaseURL)
 		if authSource == "" {
 			authSource = "provider_does_not_require_auth"
 		}
@@ -315,7 +315,7 @@ func checkAuth(opts Options) Check {
 	if strings.TrimSpace(opts.RuntimeProviderSource) != "" {
 		details = append(details, "Provider source: "+strings.TrimSpace(opts.RuntimeProviderSource))
 	}
-	data := providerAuthData(provider, opts.RuntimeProviderSource, requiredKeyEnv, requiredAuthEnvs, apiKeyConfigured, authTokenConfigured, authSource)
+	data := providerAuthData(provider, opts.RuntimeProviderSource, opts.BaseURL, requiredKeyEnv, requiredAuthEnvs, apiKeyConfigured, authTokenConfigured, authOptional, authSource)
 	if authOK {
 		summary := providerDisplayName(provider) + " credentials are configured."
 		if authOptional {
@@ -340,9 +340,11 @@ func selectedProvider(opts Options) string {
 	return modelrouting.ProviderForModel(opts.Model)
 }
 
-func providerAuthRequirements(provider string, source string) (string, []string, bool) {
-	if provider == modelrouting.ProviderOpenAI && strings.EqualFold(strings.TrimSpace(source), "OLLAMA_HOST") {
-		return "", nil, true
+func providerAuthRequirements(provider string, source string, baseURL string) (string, []string, bool) {
+	if provider == modelrouting.ProviderOpenAI {
+		if strings.EqualFold(strings.TrimSpace(source), "OLLAMA_HOST") || modelrouting.IsLocalBaseURL(baseURL) {
+			return "", nil, true
+		}
 	}
 	switch provider {
 	case modelrouting.ProviderOpenAI:
@@ -356,14 +358,26 @@ func providerAuthRequirements(provider string, source string) (string, []string,
 	}
 }
 
-func providerAuthData(provider string, source string, requiredKeyEnv string, requiredAuthEnvs []string, apiKeyConfigured bool, authTokenConfigured bool, authSource string) map[string]any {
+func optionalAuthSource(source string, baseURL string) string {
+	source = strings.TrimSpace(source)
+	if source != "" {
+		return source
+	}
+	if modelrouting.IsLocalBaseURL(baseURL) {
+		return "local_base_url"
+	}
+	return ""
+}
+
+func providerAuthData(provider string, source string, baseURL string, requiredKeyEnv string, requiredAuthEnvs []string, apiKeyConfigured bool, authTokenConfigured bool, authOptional bool, authSource string) map[string]any {
 	return map[string]any{
 		"selected_provider":                 provider,
 		"runtime_provider_source":           strings.TrimSpace(source),
 		"required_api_key_env":              requiredKeyEnv,
 		"required_auth_envs":                append([]string(nil), requiredAuthEnvs...),
 		"selected_provider_api_key_present": apiKeyConfigured,
-		"selected_provider_auth_present":    apiKeyConfigured || authTokenConfigured || authSource == "OLLAMA_HOST",
+		"selected_provider_auth_present":    apiKeyConfigured || authTokenConfigured || authOptional,
+		"local_base_url":                    modelrouting.IsLocalBaseURL(baseURL),
 		"anthropic_api_key_present":         strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) != "",
 		"anthropic_auth_token_present":      strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")) != "",
 		"openai_api_key_present":            strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != "",
@@ -376,7 +390,7 @@ func providerAuthData(provider string, source string, requiredKeyEnv string, req
 
 func providerAuthHint(provider string, requiredKeyEnv string, requiredAuthEnvs []string) string {
 	if provider == modelrouting.ProviderOpenAI && requiredKeyEnv == "" {
-		return "OLLAMA_HOST routes to a local OpenAI-compatible endpoint without an API key."
+		return "Local OpenAI-compatible routes such as OLLAMA_HOST or a loopback/private OPENAI_BASE_URL can run without an API key."
 	}
 	if len(requiredAuthEnvs) > 1 {
 		return "Set " + strings.Join(requiredAuthEnvs, ", ") + ", or save an OAuth token before making provider requests."

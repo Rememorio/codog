@@ -140,6 +140,56 @@ func TestRunTreatsOllamaRouteAsCredentialOptional(t *testing.T) {
 	require.Equal(t, "OLLAMA_HOST", auth.Data["effective_auth_source"])
 }
 
+func TestRunTreatsLocalOpenAIBaseURLAsCredentialOptional(t *testing.T) {
+	clearProviderAuthEnv(t)
+	report := Run(Options{
+		Workspace:             t.TempDir(),
+		ConfigHome:            t.TempDir(),
+		Model:                 "qwen3:8b",
+		RuntimeProvider:       "openai",
+		RuntimeProviderSource: "OPENAI_BASE_URL",
+		BaseURL:               "http://127.0.0.1:8080/v1",
+		PermissionMode:        "workspace-write",
+		ToolCount:             6,
+		SessionCount:          0,
+		SandboxDefault:        "test-sandbox",
+		SandboxOK:             true,
+	})
+
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusOK, auth.Status)
+	require.Contains(t, auth.Summary, "does not require credentials")
+	require.Equal(t, "openai", auth.Data["selected_provider"])
+	require.Equal(t, "OPENAI_BASE_URL", auth.Data["runtime_provider_source"])
+	require.Equal(t, "", auth.Data["required_api_key_env"])
+	require.Equal(t, true, auth.Data["local_base_url"])
+	require.Equal(t, true, auth.Data["selected_provider_auth_present"])
+	require.Equal(t, "OPENAI_BASE_URL", auth.Data["effective_auth_source"])
+}
+
+func TestRunStillRequiresOpenAIAPIKeyForRemoteBaseURL(t *testing.T) {
+	clearProviderAuthEnv(t)
+	report := Run(Options{
+		Workspace:       t.TempDir(),
+		ConfigHome:      t.TempDir(),
+		Model:           "openai/gpt-4.1-mini",
+		RuntimeProvider: "openai",
+		BaseURL:         "https://openrouter.ai/api/v1",
+		PermissionMode:  "workspace-write",
+		ToolCount:       6,
+		SessionCount:    0,
+		SandboxDefault:  "test-sandbox",
+		SandboxOK:       true,
+	})
+
+	auth := findCheck(t, report, "Auth")
+	require.Equal(t, StatusWarn, auth.Status)
+	require.Contains(t, auth.Summary, "No OpenAI-compatible credentials")
+	require.Equal(t, "OPENAI_API_KEY", auth.Data["required_api_key_env"])
+	require.Equal(t, false, auth.Data["local_base_url"])
+	require.Equal(t, false, auth.Data["selected_provider_auth_present"])
+}
+
 func TestNewReportSurfacesStableMetadata(t *testing.T) {
 	report := NewReport([]Check{
 		{Name: "Auth", Status: StatusOK, Summary: "ready"},

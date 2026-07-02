@@ -178,7 +178,7 @@ func shouldStripOpenAIPrefix(baseURL string) bool {
 	if normalized == "" || strings.EqualFold(normalized, normalizeBaseURL(DefaultOpenAIBaseURL)) {
 		return true
 	}
-	return isLocalBaseURL(baseURL)
+	return IsLocalBaseURL(baseURL)
 }
 
 func normalizeBaseURL(baseURL string) string {
@@ -187,7 +187,8 @@ func normalizeBaseURL(baseURL string) string {
 	return trimmed
 }
 
-func isLocalBaseURL(baseURL string) bool {
+// IsLocalBaseURL reports whether baseURL points at loopback or private-network host.
+func IsLocalBaseURL(baseURL string) bool {
 	host := urlHost(baseURL)
 	if strings.EqualFold(host, "localhost") || host == "::1" {
 		return true
