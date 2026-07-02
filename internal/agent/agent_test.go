@@ -245,8 +245,8 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, resumeLine, "/status")
 	require.Contains(t, resumeLine, "/mcp")
 	require.Contains(t, resumeLine, "/capabilities")
+	require.Contains(t, resumeLine, "/commit")
 	require.Contains(t, resumeLine, "/notebook-edit")
-	require.NotContains(t, resumeLine, "/commit")
 	require.NotContains(t, resumeLine, "/new")
 	require.NotContains(t, resumeLine, "/approve")
 	require.NotContains(t, resumeLine, "/quit")
@@ -1019,7 +1019,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, heapdumpSlash.ResumeSupported)
 	commitSlash, ok := capabilityReportSlash(report, "/commit")
 	require.True(t, ok)
-	require.False(t, commitSlash.ResumeSupported)
+	require.True(t, commitSlash.ResumeSupported)
 	require.Equal(t, len(report.ToolAliases), report.ToolAliasCount)
 	require.Equal(t, "read_file", report.ToolAliases["Read"])
 	require.Equal(t, "read_file", report.ToolAliases["FileReadTool"])
@@ -1795,7 +1795,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
-	for _, command := range []string{"/commit", "/pr", "/issue", "/bughunter", "/new", "/quit", "/ultraplan"} {
+	for _, command := range []string{"/pr", "/issue", "/bughunter", "/new", "/quit", "/ultraplan"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
@@ -1807,6 +1807,12 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 		require.Equal(t, command, slashReport.Command, command)
 		require.NotContains(t, slashReport.Hint, "--resume", command)
 	}
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/commit"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "commit")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/compact"}, config.FlagOverrides{})
@@ -4680,6 +4686,17 @@ func risky(value any) {
 		require.GreaterOrEqual(t, resumedStashPush.Count, 1)
 		require.NotEmpty(t, resumedStashPush.Stashes)
 		require.Contains(t, resumedStashPush.Stashes[0].Subject, "checkpoint")
+
+		require.NoError(t, os.WriteFile(filepath.Join(workspace, "resumed-commit.txt"), []byte("resume commit\n"), 0o644))
+		out, err = runResumedJSON("/commit", "--all", "resumed", "commit")
+		require.NoError(t, err)
+		var resumedCommit commitReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedCommit))
+		require.Equal(t, "commit", resumedCommit.Kind)
+		require.Equal(t, "create", resumedCommit.Action)
+		require.Equal(t, "ok", resumedCommit.Status)
+		require.True(t, resumedCommit.All)
+		require.Contains(t, resumedCommit.Summary, "resumed commit")
 	}
 
 	out, err = captureStdout(t, func() error {
@@ -4720,15 +4737,7 @@ func risky(value any) {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/commit"}, config.FlagOverrides{})
 	})
 	require.Error(t, err)
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	require.NoError(t, json.Unmarshal([]byte(out), &slashReport))
-	require.Equal(t, "unsupported_resumed_slash_command", slashReport.ErrorKind)
-	require.Equal(t, "/commit", slashReport.Command)
-	require.Contains(t, slashReport.Hint, "/help")
-	require.Contains(t, slashReport.Hint, "/model")
-	require.Contains(t, slashReport.Hint, "/status")
-	require.NotContains(t, slashReport.Hint, "/commit")
+	require.Contains(t, err.Error(), "commit")
 }
 
 func TestInvalidPermissionModeJSONContract(t *testing.T) {

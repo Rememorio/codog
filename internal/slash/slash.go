@@ -283,6 +283,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/clear":              true,
 	"/code-intel":         true,
 	"/color":              true,
+	"/commit":             true,
 	"/commands":           true,
 	"/compact":            true,
 	"/conversation":       true,

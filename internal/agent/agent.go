@@ -23771,6 +23771,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedHeapDumpSlash(resumeSlashArgs("heapdump", args, format), format)
 	case "/diff":
 		return a.Diff(resumeSlashArgs("diff", args, format))
+	case "/commit":
+		return a.GitCommit(resumeSlashArgs("commit", args, format), format)
 	case "/git":
 		return a.Git(resumeSlashArgs("git", args, format))
 	case "/log":
@@ -24753,7 +24755,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/commit", "/pr", "/issue", "/bughunter", "/ultraplan":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/clear", "/new", "/resume", "/exit", "/quit", "/compact", "/pr", "/issue", "/bughunter", "/ultraplan":
 		return true
 	default:
 		return false
