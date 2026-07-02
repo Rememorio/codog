@@ -5507,6 +5507,12 @@ func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
 	require.Contains(t, out.String(), "Resume Session")
 	require.Contains(t, out.String(), "Session ID        source")
 	require.Contains(t, out.String(), "Messages          2")
+	out.Reset()
+
+	require.NoError(t, app.ResumeCommand([]string{"recent", "--json"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "recent", report.RequestedSession)
+	require.Equal(t, "source", report.SessionID)
 }
 
 func TestClearCommandReportsFreshSessionWithoutDeletingHistory(t *testing.T) {

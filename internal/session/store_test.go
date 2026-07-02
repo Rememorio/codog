@@ -114,6 +114,30 @@ func TestLatestIDSkipsEmptySessions(t *testing.T) {
 	require.Equal(t, "real-session", latest)
 }
 
+func TestSessionReferenceAliasesResolveLatestSession(t *testing.T) {
+	store := NewStore(t.TempDir())
+	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello")))
+
+	for _, alias := range []string{"latest", "last", "recent"} {
+		require.True(t, IsSessionReferenceAlias(alias))
+		opened, err := store.OpenExisting(alias)
+		require.NoError(t, err)
+		require.Equal(t, "source", opened.ID)
+		exists, err := store.Exists(alias)
+		require.NoError(t, err)
+		require.True(t, exists)
+	}
+}
+
+func TestCreateRejectsSessionReferenceAliases(t *testing.T) {
+	store := NewStore(t.TempDir())
+	for _, alias := range []string{"latest", "last", "recent"} {
+		_, err := store.Create(alias)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "session alias")
+	}
+}
+
 func TestLatestIDPrefersSemanticUpdatedAtOverIDAndFileMtime(t *testing.T) {
 	store := NewStore(t.TempDir())
 	olderFileTime := time.Unix(100, 0).UTC()

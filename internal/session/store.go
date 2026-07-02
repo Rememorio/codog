@@ -161,6 +161,17 @@ const primarySessionExtension = ".jsonl"
 const legacySessionExtension = ".json"
 
 var sessionFileExtensions = []string{primarySessionExtension, legacySessionExtension}
+var sessionReferenceAliases = map[string]struct{}{
+	"latest": {},
+	"last":   {},
+	"recent": {},
+}
+
+// IsSessionReferenceAlias reports whether reference selects the newest session.
+func IsSessionReferenceAlias(reference string) bool {
+	_, ok := sessionReferenceAliases[strings.ToLower(strings.TrimSpace(reference))]
+	return ok
+}
 
 type PathIsDirectoryError struct {
 	Path string
@@ -235,7 +246,7 @@ func (s *Store) Open(id string) (*Session, error) {
 		if id == "" {
 			id = newID()
 		}
-		if id == "latest" {
+		if IsSessionReferenceAlias(id) {
 			return nil, ErrNoSessions
 		}
 		if err := validateSessionID(id); err != nil {
@@ -251,7 +262,7 @@ func (s *Store) Open(id string) (*Session, error) {
 	if id == "" {
 		id = newID()
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestSessionExcluding("")
 		if err != nil {
 			return nil, err
@@ -283,7 +294,7 @@ func (s *Store) OpenExisting(id string) (*Session, error) {
 	if id == "" {
 		return nil, errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestSessionExcluding("")
 		if err != nil {
 			return nil, err
@@ -352,6 +363,9 @@ func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Sessio
 		if id == "" {
 			id = newID()
 		}
+		if IsSessionReferenceAlias(id) {
+			return nil, fmt.Errorf("session id cannot be session alias %q", id)
+		}
 		if err := validateSessionID(id); err != nil {
 			return nil, err
 		}
@@ -365,6 +379,9 @@ func (s *Store) CreateWithIdentity(id string, identity SessionIdentity) (*Sessio
 	id = strings.TrimSpace(id)
 	if id == "" {
 		id = newID()
+	}
+	if IsSessionReferenceAlias(id) {
+		return nil, fmt.Errorf("session id cannot be session alias %q", id)
 	}
 	if err := validateSessionID(id); err != nil {
 		return nil, err
@@ -487,7 +504,7 @@ func (s *Store) Exists(id string) (bool, error) {
 	if strings.TrimSpace(id) == "" {
 		return false, errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		_, err := s.LatestID()
 		if errors.Is(err, ErrNoSessions) {
 			return false, nil
@@ -511,7 +528,7 @@ func (s *Store) Delete(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return err
@@ -588,7 +605,7 @@ func (s *Store) Rename(oldID string, newID string) (RenameResult, error) {
 	if newID == "" {
 		return RenameResult{}, errors.New("new session id is required")
 	}
-	if oldID == "latest" {
+	if IsSessionReferenceAlias(oldID) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return RenameResult{}, err
@@ -598,8 +615,8 @@ func (s *Store) Rename(oldID string, newID string) (RenameResult, error) {
 	if err := validateSessionID(oldID); err != nil {
 		return RenameResult{}, err
 	}
-	if newID == "latest" {
-		return RenameResult{}, errors.New(`new session id cannot be "latest"`)
+	if IsSessionReferenceAlias(newID) {
+		return RenameResult{}, fmt.Errorf("new session id cannot be session alias %q", newID)
 	}
 	if err := validateSessionID(newID); err != nil {
 		return RenameResult{}, err
@@ -851,7 +868,7 @@ func (s *Store) PromptHistory(id string) ([]PromptEntry, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return nil, err
@@ -905,7 +922,7 @@ func (s *Store) Identity(id string) (SessionIdentity, error) {
 	if strings.TrimSpace(id) == "" {
 		return SessionIdentity{}, errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return SessionIdentity{}, err
@@ -924,7 +941,7 @@ func (s *Store) UpdateIdentity(id string, update SessionIdentity) (SessionIdenti
 	if id == "" {
 		return SessionIdentity{}, errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return SessionIdentity{}, err
@@ -965,7 +982,7 @@ func (s *Store) Usage(id string) ([]UsageEntry, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("session id is required")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return nil, err
@@ -1065,7 +1082,7 @@ func (s *Store) Rewind(id string, removeMessages int) (RewindResult, error) {
 	if removeMessages <= 0 {
 		return RewindResult{}, errors.New("rewind message count must be positive")
 	}
-	if id == "latest" {
+	if IsSessionReferenceAlias(id) {
 		latest, err := s.LatestID()
 		if err != nil {
 			return RewindResult{}, err

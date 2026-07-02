@@ -2833,7 +2833,7 @@ func resolveHandoffSessionID(store *session.Store, id string) (string, error) {
 	if id == "" {
 		return "", nil
 	}
-	if id != "latest" {
+	if !session.IsSessionReferenceAlias(id) {
 		return id, nil
 	}
 	if store == nil {
@@ -20044,7 +20044,7 @@ func (a *App) serveACP(ctx context.Context) error {
 				return acpserver.SessionHistory{}, errors.New("session store is unavailable")
 			}
 			sessionID := strings.TrimSpace(req.SessionID)
-			if sessionID == "" || sessionID == "latest" {
+			if sessionID == "" || session.IsSessionReferenceAlias(sessionID) {
 				latest, err := a.Sessions.LatestID()
 				if err != nil {
 					return acpserver.SessionHistory{}, err
@@ -20086,7 +20086,7 @@ func (a *App) serveACP(ctx context.Context) error {
 				return acpserver.SessionMutationResult{}, errors.New("session store is unavailable")
 			}
 			sessionID := strings.TrimSpace(req.SessionID)
-			if sessionID == "" || sessionID == "latest" {
+			if sessionID == "" || session.IsSessionReferenceAlias(sessionID) {
 				latest, err := a.Sessions.LatestID()
 				if err != nil {
 					return acpserver.SessionMutationResult{}, err
@@ -21724,7 +21724,7 @@ func (a *App) History(args []string, overrides config.FlagOverrides) error {
 		return err
 	}
 	sessionID := req.SessionID
-	if sessionID == "latest" {
+	if session.IsSessionReferenceAlias(sessionID) {
 		latest, err := a.Sessions.LatestID()
 		if errors.Is(err, session.ErrNoSessions) {
 			return a.renderPromptHistory(req.Format, "", nil, req.Limit)
@@ -25411,7 +25411,7 @@ func parseHistoryArgs(args []string, overrides config.FlagOverrides) (historyReq
 				req.Limit = limit
 				continue
 			}
-			if req.SessionID == "" || req.SessionID == "latest" {
+			if req.SessionID == "" || session.IsSessionReferenceAlias(req.SessionID) {
 				req.SessionID = arg
 				continue
 			}
@@ -25483,7 +25483,7 @@ func parseSummaryArgs(args []string, overrides config.FlagOverrides) (summaryReq
 		case strings.HasPrefix(arg, "-"):
 			return req, fmt.Errorf("unknown summary flag %q", arg)
 		default:
-			if req.SessionID == "" || req.SessionID == "latest" {
+			if req.SessionID == "" || session.IsSessionReferenceAlias(req.SessionID) {
 				req.SessionID = arg
 				continue
 			}
@@ -25568,7 +25568,7 @@ func parseRewindArgs(args []string, overrides config.FlagOverrides, defaultSessi
 				req.Messages = count
 				continue
 			}
-			if req.SessionID == "" || req.SessionID == "latest" {
+			if req.SessionID == "" || session.IsSessionReferenceAlias(req.SessionID) {
 				req.SessionID = arg
 				continue
 			}
@@ -27453,7 +27453,7 @@ func (a *App) btwSourceSession(sessionID string, active *session.Session) (*sess
 	if sessionID == "" {
 		return nil, nil
 	}
-	if sessionID == "latest" {
+	if session.IsSessionReferenceAlias(sessionID) {
 		latest, err := a.Sessions.LatestID()
 		if err != nil {
 			return nil, err
@@ -28743,7 +28743,7 @@ func (a *App) handleResumeSlash(ctx context.Context, args []string, sess *sessio
 	}
 	var next *session.Session
 	var err error
-	if id == "latest" && sess != nil {
+	if session.IsSessionReferenceAlias(id) && sess != nil {
 		next, err = a.Sessions.LatestSessionExcluding(sess.ID)
 		if err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
@@ -36852,7 +36852,7 @@ func parseConversationArgs(args []string, overrides config.FlagOverrides) (conve
 
 func (a *App) buildConversationReport(req conversationRequest) (conversationReport, error) {
 	openID := req.SessionID
-	if strings.TrimSpace(openID) == "latest" {
+	if session.IsSessionReferenceAlias(openID) {
 		latest, err := a.Sessions.LatestAnyID()
 		if err != nil {
 			return conversationReport{}, err
@@ -40847,7 +40847,7 @@ func (a *App) breakCacheSession(id string) (*session.Session, bool, error) {
 	if id == "" {
 		id = "latest"
 	}
-	if id == "latest" {
+	if session.IsSessionReferenceAlias(id) {
 		latest, err := a.Sessions.LatestID()
 		if errors.Is(err, session.ErrNoSessions) {
 			created, createErr := a.Sessions.CreateWithIdentity("", session.SessionIdentity{
@@ -43443,7 +43443,7 @@ func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, er
 			id = "latest"
 		}
 	}
-	if id == "latest" {
+	if session.IsSessionReferenceAlias(id) {
 		return a.Sessions.LatestID()
 	}
 	return id, nil
