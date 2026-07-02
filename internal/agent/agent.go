@@ -32,6 +32,7 @@ import (
 	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/anttrace"
+	"github.com/Rememorio/codog/internal/argsub"
 	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/autofixpr"
 	"github.com/Rememorio/codog/internal/background"
@@ -5810,13 +5811,17 @@ func (a *App) RegisterPluginTools() error {
 			if a.Tools.Has(name) {
 				return fmt.Errorf("plugin tool %q conflicts with an existing tool", name)
 			}
+			variables := map[string]string{
+				"CLAUDE_PLUGIN_ROOT": filepath.ToSlash(manifest.Root),
+				"CLAUDE_PLUGIN_DATA": filepath.ToSlash(plugins.DataDirForManifest(manifest)),
+			}
 			a.Tools.Register(tools.CommandTool{
 				Name:        name,
 				Description: tool.Description,
 				Schema:      tool.InputSchema,
 				Required:    tools.Permission(tool.Permission),
-				Command:     tool.Command,
-				Args:        tool.Args,
+				Command:     argsub.SubstituteVariables(tool.Command, variables),
+				Args:        argsub.SubstituteVariablesInList(tool.Args, variables),
 				Workspace:   manifest.Root,
 			})
 		}
@@ -41598,31 +41603,42 @@ func (a *App) scaffoldMovedToPluginCommand(req movedToPluginRequest) (simpleComp
 	pluginRoot := filepath.Join(plugins.Root(a.Workspace), pluginID)
 	manifestFile := filepath.Join(pluginRoot, "plugin.json")
 	commandFile := filepath.Join(pluginRoot, "commands", commandName+".md")
-	manifestData, commandData, err := movedPluginDraftFiles(req.Command, pluginID, commandName)
+	skillFile := filepath.Join(pluginRoot, "skills", commandName, "SKILL.md")
+	scriptFile := filepath.Join(pluginRoot, "bin", "moved-command-event.sh")
+	draft, err := movedPluginDraftFiles(req.Command, pluginID, commandName)
 	if err != nil {
 		return simpleCompatibilityReport{}, err
 	}
-	bytes := len(manifestData) + len(commandData)
+	bytes := len(draft.Manifest) + len(draft.Command) + len(draft.Skill) + len(draft.Script)
 	created := false
 	status := "ok"
-	message := "Local plugin migration draft was created."
+	message := "Local plugin migration bridge was created."
 	workspaceWillMutate := !req.DryRun
 	if req.DryRun {
-		message = "Local plugin migration draft was planned; no files were written."
+		message = "Local plugin migration bridge was planned; no files were written."
 		workspaceWillMutate = false
-	} else if movedPluginDraftExists(manifestFile, commandFile) && !req.Force {
+	} else if movedPluginDraftExists(manifestFile, commandFile, skillFile, scriptFile) && !req.Force {
 		status = "exists"
-		message = "Local plugin migration draft already exists; use --force to overwrite it."
+		message = "Local plugin migration bridge already exists; use --force to overwrite it."
 		workspaceWillMutate = false
 	} else {
-		if err := os.MkdirAll(filepath.Dir(commandFile), 0o755); err != nil {
-			return simpleCompatibilityReport{}, err
+		files := []struct {
+			path string
+			data []byte
+			mode os.FileMode
+		}{
+			{path: manifestFile, data: draft.Manifest, mode: 0o644},
+			{path: commandFile, data: draft.Command, mode: 0o644},
+			{path: skillFile, data: draft.Skill, mode: 0o644},
+			{path: scriptFile, data: draft.Script, mode: 0o755},
 		}
-		if err := os.WriteFile(manifestFile, manifestData, 0o644); err != nil {
-			return simpleCompatibilityReport{}, err
-		}
-		if err := os.WriteFile(commandFile, commandData, 0o644); err != nil {
-			return simpleCompatibilityReport{}, err
+		for _, file := range files {
+			if err := os.MkdirAll(filepath.Dir(file.path), 0o755); err != nil {
+				return simpleCompatibilityReport{}, err
+			}
+			if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
+				return simpleCompatibilityReport{}, err
+			}
 		}
 		result, err := plugins.Validate(pluginRoot)
 		if err != nil {
@@ -41694,53 +41710,132 @@ func movedPluginSlug(value string) string {
 	return out
 }
 
-func movedPluginDraftFiles(command string, pluginID string, commandName string) ([]byte, []byte, error) {
+type movedPluginDraft struct {
+	Manifest []byte
+	Command  []byte
+	Skill    []byte
+	Script   []byte
+}
+
+func movedPluginDraftFiles(command string, pluginID string, commandName string) (movedPluginDraft, error) {
 	displayName := strings.TrimSpace(command)
 	if displayName == "" {
 		displayName = commandName
 	}
+	toolName := movedPluginToolName(commandName)
 	manifest := struct {
-		ID          string   `json:"id"`
-		Name        string   `json:"name"`
-		Version     string   `json:"version"`
-		Description string   `json:"description"`
-		Commands    []string `json:"commands"`
+		ID          string                 `json:"id"`
+		Name        string                 `json:"name"`
+		Version     string                 `json:"version"`
+		Description string                 `json:"description"`
+		Commands    []string               `json:"commands"`
+		Skills      []string               `json:"skills"`
+		Tools       []plugins.ToolManifest `json:"tools"`
 	}{
 		ID:          pluginID,
 		Name:        pluginID,
 		Version:     "0.1.0",
-		Description: fmt.Sprintf("Local migration draft for archived command %q.", displayName),
+		Description: fmt.Sprintf("Local migration bridge for archived command %q.", displayName),
 		Commands:    []string{"./commands/" + commandName + ".md"},
+		Skills:      []string{"./skills/" + commandName},
+		Tools: []plugins.ToolManifest{{
+			Name:        toolName,
+			Description: "Record a structured invocation event for the migrated command " + displayName + ".",
+			Command:     "${CLAUDE_PLUGIN_ROOT}/bin/moved-command-event.sh",
+			Args:        []string{"${CLAUDE_PLUGIN_DATA}", displayName, pluginID},
+			Permission:  string(tools.PermissionWorkspace),
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"arguments": map[string]any{"type": "string"},
+					"intent":    map[string]any{"type": "string"},
+				},
+			},
+		}},
 	}
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return nil, nil, err
+		return movedPluginDraft{}, err
 	}
 	manifestData = append(manifestData, '\n')
-	description, _ := json.Marshal("Migration adapter for archived command " + displayName + ".")
+	description, _ := json.Marshal("Bridge archived command " + displayName + " to a concrete Codog plugin workflow.")
 	argumentHint, _ := json.Marshal("[arguments]")
 	commandDoc := fmt.Sprintf(`---
 description: %s
 argument-hint: %s
 ---
 
-# Migrated command: %s
+# Plugin bridge: %s
 
-This command is a local migration adapter for the archived command '%s'.
+This command is the local bridge for the archived command '%s'.
 
-Use the installed Codog plugin '%s' as the authoritative replacement surface.
-Treat $ARGUMENTS as the user arguments for '%s'.
+Treat $ARGUMENTS as the exact user arguments for '%s'. Preserve them when routing to tools, skills, hooks, or MCP servers declared by plugin '%s'.
 
 Execution workflow:
 
-1. Resolve plugin command '%s:%s' with 'codog commands show %s:%s' when command details are needed.
-2. Prefer tools, skills, hooks, and MCP servers declared by plugin '%s' when they match the request.
-3. If the plugin only contains this adapter and no concrete implementation is available, report the missing plugin implementation instead of inventing behavior.
-4. Preserve user arguments exactly unless a plugin command or tool documents a stricter schema.
+1. Inspect this plugin with 'codog commands show %s:%s' or 'codog skills show %s:%s' when command details are needed.
+2. Call the '%s' tool with {"arguments":"$ARGUMENTS","intent":"%s"} to record a structured migration event before acting.
+3. Use plugin '%s' as the authoritative replacement surface for this archived command.
+4. Preserve user arguments exactly unless a plugin tool or skill documents a stricter schema.
 
 Arguments: $ARGUMENTS
-`, string(description), string(argumentHint), displayName, displayName, pluginID, displayName, pluginID, commandName, pluginID, commandName, pluginID)
-	return manifestData, []byte(commandDoc), nil
+`, string(description), string(argumentHint), displayName, displayName, displayName, pluginID, pluginID, commandName, pluginID, commandName, toolName, displayName, pluginID)
+	skillDescription, _ := json.Marshal("Use the migrated plugin bridge for archived command " + displayName + ".")
+	skillDoc := fmt.Sprintf(`---
+description: %s
+allowed-tools:
+  - %s
+argument-hint: [arguments]
+---
+# %s Plugin Bridge
+
+Use this skill when a request maps to archived command '%s'.
+
+First record the invocation with tool '%s'. Then route the request through the plugin's declared commands, tools, skills, hooks, or MCP servers. Keep user arguments intact and explain any unsupported operation with the structured event returned by the tool.
+`, string(skillDescription), toolName, displayName, displayName, toolName)
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+data_dir=${1:-.}
+command_name=${2:-%s}
+plugin_id=${3:-%s}
+mkdir -p "$data_dir"
+payload=$(cat)
+stamp=$(date -u +"%%Y%%m%%dT%%H%%M%%SZ" 2>/dev/null || printf 'unknown')
+raw_file="$data_dir/moved-command-$stamp-$$.json"
+event_file="$data_dir/moved-command-events.jsonl"
+printf '%%s' "$payload" > "$raw_file"
+bytes=$(wc -c < "$raw_file" | tr -d ' ')
+escape_json_string() {
+  printf '%%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+raw_path=$(escape_json_string "$raw_file")
+command_name_json=$(escape_json_string "$command_name")
+plugin_json=$(escape_json_string "$plugin_id")
+recorded_at=$(date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ" 2>/dev/null || printf 'unknown')
+event=$(printf '{"kind":"moved_command_event","status":"ok","command":%s,"plugin_id":%s,"command_name":"%%s","plugin":"%%s","bytes":%%s,"raw_path":"%%s","recorded_at":"%%s"}\n' "$command_name_json" "$plugin_json" "$bytes" "$raw_path" "$recorded_at")
+printf '%%s' "$event" >> "$event_file"
+printf '%%s' "$event"
+`, jsonStringLiteral(displayName), jsonStringLiteral(pluginID), jsonStringLiteral(displayName), jsonStringLiteral(pluginID))
+	return movedPluginDraft{
+		Manifest: manifestData,
+		Command:  []byte(commandDoc),
+		Skill:    []byte(skillDoc),
+		Script:   []byte(script),
+	}, nil
+}
+
+func movedPluginToolName(commandName string) string {
+	name := strings.ReplaceAll(movedPluginSlug(commandName), "-", "_")
+	if name == "" {
+		name = "moved_command"
+	}
+	return name + "_moved_command_event"
+}
+
+func jsonStringLiteral(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
 }
 
 func pluginValidationSummary(result plugins.ValidationResult) string {
