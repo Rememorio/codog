@@ -398,6 +398,12 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			return err
 		}
 	}
+	wrapStructured := func(err error) error {
+		if err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
+	}
 
 	switch command {
 	case "help":
@@ -777,15 +783,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "share":
-		return app.Share(rest, overrides)
+		return wrapStructured(app.Share(rest, overrides))
 	case "copy":
-		return app.Copy(ctx, rest, overrides)
+		return wrapStructured(app.Copy(ctx, rest, overrides))
 	case "paste":
-		return app.Paste(ctx, rest, overrides)
+		return wrapStructured(app.Paste(ctx, rest, overrides))
 	case "pin":
-		return app.Pin(rest, overrides)
+		return wrapStructured(app.Pin(rest, overrides))
 	case "unpin":
-		return app.Unpin(rest, overrides)
+		return wrapStructured(app.Unpin(rest, overrides))
 	case "git":
 		if err := app.Git(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -797,57 +803,57 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "branch":
-		return app.Branch(rest)
+		return wrapStructured(app.Branch(rest))
 	case "branch-lock", "branchlock":
-		return app.BranchLock(rest)
+		return wrapStructured(app.BranchLock(rest))
 	case "stale-base", "base-check":
-		return app.StaleBase(rest)
+		return wrapStructured(app.StaleBase(rest))
 	case "green-contract", "green":
-		return app.GreenContract(rest)
+		return wrapStructured(app.GreenContract(rest))
 	case "g004-conformance", "g004":
-		return app.G004Conformance(rest)
+		return wrapStructured(app.G004Conformance(rest))
 	case "report-schema":
-		return app.ReportSchema(rest)
+		return wrapStructured(app.ReportSchema(rest))
 	case "trust":
-		return app.Trust(rest)
+		return wrapStructured(app.Trust(rest))
 	case "tag":
-		return app.Tag(rest)
+		return wrapStructured(app.Tag(rest))
 	case "stash":
-		return app.Stash(rest)
+		return wrapStructured(app.Stash(rest))
 	case "changelog":
-		return app.Changelog(rest)
+		return wrapStructured(app.Changelog(rest))
 	case "release-notes":
-		return app.ReleaseNotes(rest)
+		return wrapStructured(app.ReleaseNotes(rest))
 	case "review", "ultrareview":
-		return app.Review(rest)
+		return wrapStructured(app.Review(rest))
 	case "ultrareviewCommand":
-		return app.Review(rest)
+		return wrapStructured(app.Review(rest))
 	case "ultrareviewEnabled", "UltrareviewOverageDialog":
-		return app.ReviewCompatibility(command, rest)
+		return wrapStructured(app.ReviewCompatibility(command, rest))
 	case "reviewRemote", "review-remote":
-		return app.ReviewRemote(ctx, rest)
+		return wrapStructured(app.ReviewRemote(ctx, rest))
 	case "feedback", "bug":
-		return app.Feedback(rest, overrides)
+		return wrapStructured(app.Feedback(rest, overrides))
 	case "pr":
-		return app.PullRequestDraft(rest, overrides)
+		return wrapStructured(app.PullRequestDraft(rest, overrides))
 	case "commit-push-pr":
-		return app.CommitPushPR(ctx, rest)
+		return wrapStructured(app.CommitPushPR(ctx, rest))
 	case "autofix-pr":
-		return app.AutofixPR(ctx, rest)
+		return wrapStructured(app.AutofixPR(ctx, rest))
 	case "pr-comments", "pr_comments":
-		return app.PRComments(ctx, rest)
+		return wrapStructured(app.PRComments(ctx, rest))
 	case "install-github-app", "setupGitHubActions":
-		return app.InstallGitHubApp(rest)
+		return wrapStructured(app.InstallGitHubApp(rest))
 	case "ApiKeyStep", "CheckExistingSecretStep", "CheckGitHubStep", "ChooseRepoStep", "CreatingStep", "ErrorStep", "ExistingWorkflowStep", "InstallAppStep", "OAuthFlowStep", "SuccessStep", "WarningsStep":
-		return app.InstallGitHubAppStep(command, rest)
+		return wrapStructured(app.InstallGitHubAppStep(command, rest))
 	case "install-slack-app":
-		return app.InstallSlackApp(rest)
+		return wrapStructured(app.InstallSlackApp(rest))
 	case "stickers":
-		return app.Stickers(rest)
+		return wrapStructured(app.Stickers(rest))
 	case "passes":
-		return app.Passes(rest)
+		return wrapStructured(app.Passes(rest))
 	case "issue":
-		return app.IssueDraft(rest, overrides)
+		return wrapStructured(app.IssueDraft(rest, overrides))
 	case "run":
 		return app.RunCommand(ctx, rest)
 	case "node", "python":
@@ -33722,6 +33728,7 @@ func (a *App) Branch(args []string) error {
 }
 
 func parseBranchArgs(args []string) (branchRequest, error) {
+	const usage = "codog branch [list|current|create NAME [START]|switch NAME|delete NAME|rename [OLD] NEW|freshness [BRANCH] [BASE]] [--json|--output-format text|json]"
 	req := branchRequest{Format: "text", Action: "list"}
 	var positionals []string
 	for i := 0; i < len(args); i++ {
@@ -33732,7 +33739,7 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return req, errors.New("branch output format is required")
+				return req, missingFlagValueError{Command: "branch", Flag: arg, Usage: usage}
 			}
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -33744,20 +33751,22 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 		case arg == "--base":
 			i++
 			if i >= len(args) {
-				return req, errors.New("branch base is required")
+				return req, missingFlagValueError{Command: "branch", Flag: arg, Usage: usage}
 			}
 			req.Base = args[i]
 		case strings.HasPrefix(arg, "--base="):
 			req.Base = strings.TrimPrefix(arg, "--base=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "branch", Option: arg, Usage: usage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown branch output format %q", req.Format)
+	format, err := normalizeOutputFormat("branch", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = format
 	if len(positionals) == 0 {
 		return req, nil
 	}
@@ -33770,7 +33779,7 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 	case "create", "new":
 		req.Action = "create"
 		if len(rest) == 0 {
-			return req, errors.New("branch create requires a name")
+			return req, requiredArgumentError{Command: "branch create", Argument: "NAME", Usage: usage}
 		}
 		req.Name = rest[0]
 		if len(rest) > 1 {
@@ -33779,20 +33788,20 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 	case "switch", "checkout":
 		req.Action = "switch"
 		if len(rest) == 0 {
-			return req, errors.New("branch switch requires a name")
+			return req, requiredArgumentError{Command: "branch switch", Argument: "NAME", Usage: usage}
 		}
 		req.Name = rest[0]
 	case "delete", "del", "remove", "rm":
 		req.Action = "delete"
 		if len(rest) == 0 {
-			return req, errors.New("branch delete requires a name")
+			return req, requiredArgumentError{Command: "branch delete", Argument: "NAME", Usage: usage}
 		}
 		req.Name = rest[0]
 	case "rename", "mv":
 		req.Action = "rename"
 		switch len(rest) {
 		case 0:
-			return req, errors.New("branch rename requires a new name")
+			return req, requiredArgumentError{Command: "branch rename", Argument: "NEW", Usage: usage}
 		case 1:
 			req.NewName = rest[0]
 		default:
@@ -33808,7 +33817,7 @@ func parseBranchArgs(args []string) (branchRequest, error) {
 			req.Base = rest[1]
 		}
 	default:
-		return req, fmt.Errorf("unknown branch action %q", positionals[0])
+		return req, unexpectedExtraArgsError{Command: "branch", Args: []string{positionals[0]}, Usage: usage}
 	}
 	return req, nil
 }
@@ -35071,6 +35080,7 @@ func (a *App) Tag(args []string) error {
 }
 
 func parseTagArgs(args []string) (tagRequest, error) {
+	const usage = "codog tag [list [PATTERN]|create NAME [REF]|show NAME|delete NAME] [--limit N] [--message TEXT] [--json|--output-format text|json]"
 	req := tagRequest{Format: "text", Action: "list", Limit: 50}
 	var positionals []string
 	for i := 0; i < len(args); i++ {
@@ -35081,7 +35091,7 @@ func parseTagArgs(args []string) (tagRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			i++
 			if i >= len(args) {
-				return req, errors.New("tag output format is required")
+				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
 			}
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -35089,36 +35099,39 @@ func parseTagArgs(args []string) (tagRequest, error) {
 		case arg == "--limit":
 			i++
 			if i >= len(args) {
-				return req, errors.New("tag limit is required")
+				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
 			}
 			limit, err := strconv.Atoi(args[i])
 			if err != nil || limit < 0 {
-				return req, errors.New("tag limit must be a non-negative integer")
+				return req, invalidFlagValueError{Flag: "--limit", Value: args[i], Message: "tag limit must be a non-negative integer", Usage: usage}
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			value := strings.TrimPrefix(arg, "--limit=")
+			limit, err := strconv.Atoi(value)
 			if err != nil || limit < 0 {
-				return req, errors.New("tag limit must be a non-negative integer")
+				return req, invalidFlagValueError{Flag: "--limit", Value: value, Message: "tag limit must be a non-negative integer", Usage: usage}
 			}
 			req.Limit = limit
 		case arg == "--message" || arg == "-m":
 			i++
 			if i >= len(args) {
-				return req, errors.New("tag message is required")
+				return req, missingFlagValueError{Command: "tag", Flag: arg, Usage: usage}
 			}
 			req.Message = args[i]
 		case strings.HasPrefix(arg, "--message="):
 			req.Message = strings.TrimPrefix(arg, "--message=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "tag", Option: arg, Usage: usage}
 		default:
 			positionals = append(positionals, arg)
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown tag output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("tag", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(positionals) == 0 {
 		return req, nil
 	}
@@ -35133,7 +35146,7 @@ func parseTagArgs(args []string) (tagRequest, error) {
 	case "create", "add":
 		req.Action = "create"
 		if len(rest) == 0 {
-			return req, errors.New("tag create requires a name")
+			return req, requiredArgumentError{Command: "tag create", Argument: "NAME", Usage: usage}
 		}
 		req.Name = rest[0]
 		if len(rest) > 1 {
@@ -35141,17 +35154,17 @@ func parseTagArgs(args []string) (tagRequest, error) {
 		}
 	case "show":
 		if len(rest) == 0 {
-			return req, errors.New("tag show requires a name")
+			return req, requiredArgumentError{Command: "tag show", Argument: "NAME", Usage: usage}
 		}
 		req.Name = rest[0]
 	case "delete", "del", "remove", "rm":
 		req.Action = "delete"
 		if len(rest) == 0 {
-			return req, errors.New("tag delete requires a name")
+			return req, requiredArgumentError{Command: "tag delete", Argument: "NAME", Usage: usage}
 		}
 		req.Name = rest[0]
 	default:
-		return req, fmt.Errorf("unknown tag action %q", positionals[0])
+		return req, unexpectedExtraArgsError{Command: "tag", Args: []string{positionals[0]}, Usage: usage}
 	}
 	return req, nil
 }
@@ -36266,6 +36279,7 @@ func (a *App) Share(args []string, overrides config.FlagOverrides) error {
 }
 
 func parseShareArgs(args []string, overrides config.FlagOverrides) (shareRequest, error) {
+	const usage = "codog share [OUTPUT_DIR] [--session ID] [--format markdown|json|jsonl|html] [--json]"
 	req := shareRequest{SessionID: "latest", Format: session.ExportMarkdown}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -36281,7 +36295,7 @@ func parseShareArgs(args []string, overrides config.FlagOverrides) (shareRequest
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("share session id is required")
+				return req, missingFlagValueError{Command: "share", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -36289,7 +36303,7 @@ func parseShareArgs(args []string, overrides config.FlagOverrides) (shareRequest
 		case arg == "--format":
 			index++
 			if index >= len(args) {
-				return req, errors.New("share format is required")
+				return req, missingFlagValueError{Command: "share", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--format="):
@@ -36297,7 +36311,7 @@ func parseShareArgs(args []string, overrides config.FlagOverrides) (shareRequest
 		case arg == "--output" || arg == "--output-dir":
 			index++
 			if index >= len(args) {
-				return req, errors.New("share output directory is required")
+				return req, missingFlagValueError{Command: "share", Flag: arg, Usage: usage}
 			}
 			req.OutputDir = args[index]
 		case strings.HasPrefix(arg, "--output="):
@@ -36305,10 +36319,10 @@ func parseShareArgs(args []string, overrides config.FlagOverrides) (shareRequest
 		case strings.HasPrefix(arg, "--output-dir="):
 			req.OutputDir = strings.TrimPrefix(arg, "--output-dir=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown share option %q", arg)
+			return req, unknownOptionError{Command: "share", Option: arg, Usage: usage}
 		default:
 			if req.OutputDir != "" {
-				return req, fmt.Errorf("unexpected share argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "share", Args: []string{arg}, Usage: usage}
 			}
 			req.OutputDir = arg
 		}
@@ -36499,6 +36513,7 @@ func (a *App) setPin(action string, args []string, overrides config.FlagOverride
 }
 
 func parsePinArgs(command string, args []string, overrides config.FlagOverrides) (pinRequest, error) {
+	usage := "codog " + command + " [message-index|last] [--session ID] [--json|--output-format text|json]"
 	req := pinRequest{SessionID: "latest", Format: "text", MessageIndex: -1}
 	if strings.TrimSpace(overrides.Resume) != "" {
 		req.SessionID = overrides.Resume
@@ -36516,7 +36531,7 @@ func parsePinArgs(command string, args []string, overrides config.FlagOverrides)
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, fmt.Errorf("%s output format is required", command)
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
@@ -36524,7 +36539,7 @@ func parsePinArgs(command string, args []string, overrides config.FlagOverrides)
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, fmt.Errorf("%s session id is required", command)
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -36532,7 +36547,7 @@ func parsePinArgs(command string, args []string, overrides config.FlagOverrides)
 		case arg == "--resume":
 			index++
 			if index >= len(args) {
-				return req, fmt.Errorf("%s resume id is required", command)
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
@@ -36541,7 +36556,7 @@ func parsePinArgs(command string, args []string, overrides config.FlagOverrides)
 			return req, unknownOptionError{
 				Command: command,
 				Option:  arg,
-				Usage:   "codog " + command + " [message-index|last] [--session ID] [--json|--output-format text|json]",
+				Usage:   usage,
 			}
 		default:
 			positionals = append(positionals, arg)
@@ -36551,7 +36566,7 @@ func parsePinArgs(command string, args []string, overrides config.FlagOverrides)
 		return req, unexpectedExtraArgsError{
 			Command: command,
 			Args:    append([]string(nil), positionals[1:]...),
-			Usage:   "codog " + command + " [message-index|last] [--session ID] [--json|--output-format text|json]",
+			Usage:   usage,
 		}
 	}
 	if len(positionals) == 1 {
@@ -36561,9 +36576,11 @@ func parsePinArgs(command string, args []string, overrides config.FlagOverrides)
 		}
 		req.MessageIndex = index
 	}
-	if err := validateTextOrJSON(req.Format, command); err != nil {
+	normalizedFormat, err := normalizeOutputFormat(command, req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if strings.TrimSpace(req.SessionID) == "" {
 		req.SessionID = "latest"
 	}
@@ -36661,6 +36678,7 @@ func (a *App) copyPayload(req copyRequest) ([]byte, *session.Session, string, er
 }
 
 func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, error) {
+	const usage = "codog copy [last|N|all] [--session ID|--resume ID] [--format markdown|json|jsonl|html] [--json]"
 	req := copyRequest{Scope: "last", Nth: 1, SessionID: "latest"}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -36676,7 +36694,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog copy [last|N|all] [--session ID] [--format markdown|json|jsonl|html] [--json]")
+				return req, missingFlagValueError{Command: "copy", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -36684,7 +36702,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--resume":
 			index++
 			if index >= len(args) {
-				return req, errors.New("usage: codog copy [last|N|all] [--resume ID|latest] [--format markdown|json|jsonl|html] [--json]")
+				return req, missingFlagValueError{Command: "copy", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
@@ -36692,7 +36710,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 		case arg == "--format" || arg == "--output-format":
 			index++
 			if index >= len(args) {
-				return req, errors.New("copy format is required")
+				return req, missingFlagValueError{Command: "copy", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--format="):
@@ -36706,19 +36724,22 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 			req.Scope = "all"
 			req.Nth = 0
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "copy", Option: arg, Usage: usage}
+			}
 			nth, err := strconv.Atoi(arg)
 			if err != nil {
-				return req, fmt.Errorf("unknown copy argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "copy", Args: []string{arg}, Usage: usage}
 			}
 			if nth < 1 {
-				return req, errors.New("copy response index must be greater than zero")
+				return req, invalidFlagValueError{Flag: "response-index", Value: arg, Message: "copy response index must be greater than zero", Usage: usage}
 			}
 			req.Scope = "nth"
 			req.Nth = nth
 		}
 	}
 	if req.Scope != "all" && strings.TrimSpace(req.Format) != "" && req.Format != "text" {
-		return req, errors.New("copy response only supports text format")
+		return req, invalidFlagValueError{Flag: "--format", Value: req.Format, Message: "copy response only supports text format", Usage: usage}
 	}
 	if req.Scope == "all" {
 		if _, err := session.NormalizeExportFormat(req.Format); err != nil {
@@ -36729,6 +36750,7 @@ func parseCopyArgs(args []string, overrides config.FlagOverrides) (copyRequest, 
 }
 
 func parsePasteArgs(args []string, overrides config.FlagOverrides) (pasteRequest, error) {
+	const usage = "codog paste [--print] [--session ID|--resume ID] [--max-bytes N] [--json|--output-format text|json]"
 	req := pasteRequest{SessionID: "latest", Format: "text", MaxBytes: 1024 * 1024}
 	if overrides.Resume != "" {
 		req.SessionID = overrides.Resume
@@ -36747,7 +36769,7 @@ func parsePasteArgs(args []string, overrides config.FlagOverrides) (pasteRequest
 		case arg == "--session":
 			index++
 			if index >= len(args) {
-				return req, errors.New("paste session id is required")
+				return req, missingFlagValueError{Command: "paste", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--session="):
@@ -36755,15 +36777,15 @@ func parsePasteArgs(args []string, overrides config.FlagOverrides) (pasteRequest
 		case arg == "--resume":
 			index++
 			if index >= len(args) {
-				return req, errors.New("paste resume id is required")
+				return req, missingFlagValueError{Command: "paste", Flag: arg, Usage: usage}
 			}
 			req.SessionID = args[index]
 		case strings.HasPrefix(arg, "--resume="):
 			req.SessionID = strings.TrimPrefix(arg, "--resume=")
 		case arg == "--max-bytes":
 			index++
-			if index >= len(args) {
-				return req, errors.New("paste max bytes is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "paste", Flag: arg, Usage: usage}
 			}
 			value, err := parsePositiveInt(args[index], "paste max bytes")
 			if err != nil {
@@ -36779,20 +36801,33 @@ func parsePasteArgs(args []string, overrides config.FlagOverrides) (pasteRequest
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("paste output format is required")
+				return req, missingFlagValueError{Command: "paste", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		default:
-			return req, fmt.Errorf("unknown paste argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "paste", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "paste", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "paste"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("paste", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	req.JSON = req.Format == "json"
 	return req, nil
+}
+
+func missingFlagValueAt(args []string, index int) bool {
+	if index >= len(args) {
+		return true
+	}
+	next := strings.TrimSpace(args[index])
+	return next == "" || next == "--output-format" || next == "-o" || strings.HasPrefix(next, "--output-format=")
 }
 
 func copyScopeLabel(req copyRequest) string {

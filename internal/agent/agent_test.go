@@ -20140,6 +20140,127 @@ func TestManagementCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
 	}
 }
 
+func TestWorkflowCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		kind     string
+		contains []string
+	}{
+		{
+			name:     "share missing session",
+			args:     []string{"share", "--session"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "share"`, `"option": "--session"`},
+		},
+		{
+			name:     "copy missing format",
+			args:     []string{"copy", "--format"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "copy"`, `"option": "--format"`},
+		},
+		{
+			name:     "paste missing max bytes",
+			args:     []string{"paste", "--max-bytes"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "paste"`, `"option": "--max-bytes"`},
+		},
+		{
+			name:     "pin missing output format",
+			args:     []string{"pin", "--output-format"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "pin"`, `"option": "--output-format"`},
+		},
+		{
+			name:     "branch missing name",
+			args:     []string{"branch", "create"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "branch create"`, `"argument": "NAME"`},
+		},
+		{
+			name:     "branch unknown option",
+			args:     []string{"branch", "--bogus"},
+			kind:     "unknown_option",
+			contains: []string{`"command": "branch"`, `"option": "--bogus"`},
+		},
+		{
+			name:     "tag invalid limit",
+			args:     []string{"tag", "--limit", "many"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--limit"`, `"value": "many"`},
+		},
+		{
+			name:     "tag missing name",
+			args:     []string{"tag", "show"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "tag show"`, `"argument": "NAME"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.kind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
+func TestWorkflowCommandFallbackErrorsAreStructured(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "branch lock missing file", args: []string{"branch-lock", "--file"}},
+		{name: "stale base missing base", args: []string{"stale-base", "--base-commit"}},
+		{name: "green contract missing required level", args: []string{"green-contract", "--required-level"}},
+		{name: "g004 missing input", args: []string{"g004-conformance", "--input"}},
+		{name: "report schema missing consumer", args: []string{"report-schema", "--consumer"}},
+		{name: "trust unknown flag", args: []string{"trust", "--bogus"}},
+		{name: "stash unknown action", args: []string{"stash", "bogus"}},
+		{name: "changelog bad count", args: []string{"changelog", "0"}},
+		{name: "release notes bad format", args: []string{"release-notes", "--format", "xml"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			require.Error(t, err)
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, 1, exitErr.Code)
+			require.True(t, exitErr.Silent)
+			var report cliErrorReport
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Equal(t, "error", report.Status)
+			require.NotEmpty(t, report.Kind)
+			require.NotEmpty(t, report.ErrorKind)
+			require.NotEmpty(t, report.Message)
+			require.NotEmpty(t, report.Hint)
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)
