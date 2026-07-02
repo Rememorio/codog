@@ -7035,6 +7035,18 @@ func TestRunCLISessionAliasAndResumeCommand(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.Equal(t, "source", report.SessionID)
 	require.Equal(t, 1, report.MessageCount)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "resume", "source"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NotContains(t, out, "Resume Session")
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "resume", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "source", report.SessionID)
+	require.Equal(t, 1, report.MessageCount)
 }
 
 func TestResumeMissingSessionReportsTypedError(t *testing.T) {
@@ -7067,6 +7079,17 @@ func TestResumeMissingSessionReportsTypedError(t *testing.T) {
 	require.Contains(t, report.Hint, "codog sessions list")
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoFileExists(t, filepath.Join(store.Dir, "missing-session.jsonl"))
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "resume", "missing-session"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "session_not_found", report.ErrorKind)
+	require.Equal(t, "missing-session", report.RequestedSession)
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "resume", "missing-session"}, config.FlagOverrides{})

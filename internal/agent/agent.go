@@ -44727,7 +44727,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"help", "ide", "init", "init-verifiers", "insights", "install", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
 		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
-		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "review", "reviewremote", "review-remote", "sandbox-toggle",
+		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
