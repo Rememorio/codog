@@ -1112,9 +1112,15 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("xaaIdpCommand"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bug"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bookmarks"))
+	require.True(t, commandAcceptsGlobalOutputFormat("bridge"))
+	require.True(t, commandAcceptsGlobalOutputFormat("bridge-kick"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ide"))
+	require.True(t, commandAcceptsGlobalOutputFormat("install"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
+	require.True(t, commandAcceptsGlobalOutputFormat("teleport"))
+	require.True(t, commandAcceptsGlobalOutputFormat("upgrade"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
 }
@@ -4782,6 +4788,13 @@ func TestParseFlagsSupportsGlobalOutputFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "help", command)
 	require.Equal(t, []string{"doctor", "--output-format", "json"}, rest)
+
+	for _, name := range []string{"bridge", "bridge-kick", "ide", "install", "teleport", "upgrade"} {
+		_, command, rest, err = parseFlags([]string{"--output-format", "json", name, "arg"}, config.FlagOverrides{})
+		require.NoError(t, err)
+		require.Equal(t, name, command)
+		require.Equal(t, []string{"arg", "--output-format", "json"}, rest)
+	}
 }
 
 func TestParseFlagsSupportsOutputFormatEnv(t *testing.T) {
