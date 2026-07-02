@@ -231,6 +231,25 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		{
+			name: "stop_hook_adds_feedback",
+			hooks: config.HookConfig{
+				StopCommands: []config.HookCommand{{
+					Command: `printf '%s' '{"systemMessage":"stop parity note","hookSpecificOutput":{"additionalContext":"stop parity context"}}'`,
+				}},
+			},
+			turns:  []mockanthropic.Turn{{Text: "stop hook harness ok"}},
+			prompt: "stop hook feedback",
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "stop hook harness ok") {
+					return fmt.Errorf("missing stop hook final response")
+				}
+				if !slices.Equal(result.StopHookFeedback, []string{"stop parity note", "stop parity context"}) {
+					return fmt.Errorf("unexpected stop hook feedback: %#v", result.StopHookFeedback)
+				}
+				return nil
+			},
+		},
+		{
 			name:       "post_tool_hook_blocks_result",
 			permission: tools.PermissionWorkspace,
 			hooks: config.HookConfig{

@@ -35,10 +35,11 @@ type ToolCall struct {
 
 // TurnResult is the complete state produced by one runner invocation.
 type TurnResult struct {
-	Messages      []anthropic.Message `json:"messages"`
-	MessageUsages []MessageUsage      `json:"message_usages,omitempty"`
-	ToolCalls     []ToolCall          `json:"tool_calls,omitempty"`
-	Iterations    int                 `json:"iterations"`
+	Messages         []anthropic.Message `json:"messages"`
+	MessageUsages    []MessageUsage      `json:"message_usages,omitempty"`
+	ToolCalls        []ToolCall          `json:"tool_calls,omitempty"`
+	StopHookFeedback []string            `json:"stop_hook_feedback,omitempty"`
+	Iterations       int                 `json:"iterations"`
 }
 
 // MessageUsage links provider usage metadata to the assistant message that
@@ -149,8 +150,12 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			}
 		})
 		if err != nil {
-			if hookErr := hookRunner.StopFailure(ctx, err.Error(), "model_error"); hookErr != nil {
+			stopReport, hookErr := hookRunner.StopFailureReport(ctx, err.Error(), "model_error")
+			if hookErr != nil {
 				return TurnResult{}, fmt.Errorf("%w; stop failure hook: %v", err, hookErr)
+			}
+			if stopReport.Denied {
+				return TurnResult{}, fmt.Errorf("%w; stop failure hook: %v", err, hookDeniedReportError("stop_failure", stopReport))
 			}
 			return TurnResult{}, err
 		}
@@ -161,14 +166,20 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 
 		blocks := toolUseBlocks(assistant.Blocks)
 		if len(blocks) == 0 {
-			if err := hookRunner.Stop(ctx, assistantText(assistant.Blocks), false); err != nil {
+			stopReport, err := hookRunner.StopReport(ctx, assistantText(assistant.Blocks), false)
+			if err != nil {
 				return TurnResult{}, err
 			}
+			stopFeedback := hooks.MessagesFromReport(stopReport)
+			if stopReport.Denied {
+				return TurnResult{}, hookDeniedReportError("stop", stopReport)
+			}
 			return TurnResult{
-				Messages:      messages,
-				MessageUsages: messageUsages,
-				ToolCalls:     toolCalls,
-				Iterations:    turn + 1,
+				Messages:         messages,
+				MessageUsages:    messageUsages,
+				ToolCalls:        toolCalls,
+				StopHookFeedback: stopFeedback,
+				Iterations:       turn + 1,
 			}, nil
 		}
 
@@ -308,15 +319,20 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 			messages = append(messages, anthropic.ToolResultMessage(block.ID, call.Output, call.IsError))
 		}
 	}
-	result := TurnResult{
-		Messages:      messages,
-		MessageUsages: messageUsages,
-		ToolCalls:     toolCalls,
-		Iterations:    r.Config.MaxTurns,
-	}
 	maxTurnsErr := errors.New("conversation exceeded max turns")
-	if hookErr := hookRunner.StopFailure(ctx, maxTurnsErr.Error(), "max_turns"); hookErr != nil {
+	stopReport, hookErr := hookRunner.StopFailureReport(ctx, maxTurnsErr.Error(), "max_turns")
+	result := TurnResult{
+		Messages:         messages,
+		MessageUsages:    messageUsages,
+		ToolCalls:        toolCalls,
+		StopHookFeedback: hooks.MessagesFromReport(stopReport),
+		Iterations:       r.Config.MaxTurns,
+	}
+	if hookErr != nil {
 		return result, fmt.Errorf("%w; stop failure hook: %v", maxTurnsErr, hookErr)
+	}
+	if stopReport.Denied {
+		return result, fmt.Errorf("%w; stop failure hook: %v", maxTurnsErr, hookDeniedReportError("stop_failure", stopReport))
 	}
 	return result, maxTurnsErr
 }

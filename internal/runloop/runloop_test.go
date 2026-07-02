@@ -336,7 +336,9 @@ func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 				UserPromptSubmitCommands: []config.HookCommand{{
 					Command: `cat > prompt.json; printf '%s' '{"systemMessage":"prompt note","hookSpecificOutput":{"additionalContext":"prompt context"}}'`,
 				}},
-				StopCommands: []config.HookCommand{{Command: "cat > stop.json"}},
+				StopCommands: []config.HookCommand{{
+					Command: `cat > stop.json; printf '%s' '{"systemMessage":"stop note","hookSpecificOutput":{"additionalContext":"stop context"}}'`,
+				}},
 			},
 		},
 		Client:    client,
@@ -362,6 +364,7 @@ func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(stopPayload), `"event":"stop"`)
 	require.Contains(t, string(stopPayload), `"output":"done"`)
+	require.Equal(t, []string{"stop note", "stop context"}, result.StopHookFeedback)
 }
 
 func TestRunnerExecutesPreCompactHook(t *testing.T) {

@@ -290,22 +290,46 @@ func (r Runner) Setup(ctx context.Context, input string) error {
 }
 
 func (r Runner) Stop(ctx context.Context, output string, isError bool) error {
+	report, err := r.StopReport(ctx, output, isError)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// StopReport runs Stop hooks and returns parsed hook feedback.
+func (r Runner) StopReport(ctx context.Context, output string, isError bool) (RunReport, error) {
 	payload := Payload{
 		Event:   "stop",
 		Output:  output,
 		IsError: isError,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) StopFailure(ctx context.Context, output string, reason string) error {
+	report, err := r.StopFailureReport(ctx, output, reason)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// StopFailureReport runs StopFailure hooks and returns parsed hook feedback.
+func (r Runner) StopFailureReport(ctx context.Context, output string, reason string) (RunReport, error) {
 	payload := Payload{
 		Event:   "stop_failure",
 		Output:  output,
 		IsError: true,
 		Reason:  reason,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) PreCompact(ctx context.Context, input string) error {
