@@ -130,6 +130,7 @@ var deprecatedTopLevelFields = []deprecatedField{
 }
 
 var permissionRuleFields = []fieldSpec{
+	{"defaultMode", FieldString},
 	{"allow", FieldStringArray},
 	{"deny", FieldStringArray},
 	{"ask", FieldStringArray},

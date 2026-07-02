@@ -81,6 +81,19 @@ func TestValidateBytesValidatesForceLoginTypes(t *testing.T) {
 	require.Equal(t, "a string", errorsByField["forceLoginOrgUUID"])
 }
 
+func TestValidateBytesValidatesPermissionsDefaultModeType(t *testing.T) {
+	result := ValidateBytes([]byte(`{"permissions":{"defaultMode":42},"permission_rules":{"defaultMode":false}}`), "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 2)
+	errorsByField := map[string]string{}
+	for _, diagnostic := range result.Errors {
+		errorsByField[diagnostic.Field] = diagnostic.Expected
+	}
+	require.Equal(t, "a string", errorsByField["permissions.defaultMode"])
+	require.Equal(t, "a string", errorsByField["permission_rules.defaultMode"])
+}
+
 func TestValidateBytesValidatesRespectGitignoreType(t *testing.T) {
 	result := ValidateBytes([]byte(`{"respectGitignore":"false"}`), "config.json")
 

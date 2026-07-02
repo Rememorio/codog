@@ -14225,6 +14225,25 @@ func TestSkillAllowedToolsDoNotBypassPlanMode(t *testing.T) {
 	require.Error(t, prompter.Authorize("bash", tools.PermissionDanger, []byte(`{"command":"go test ./..."}`)))
 }
 
+func TestConfiguredPlanModeRestrictsSkillAllowedTools(t *testing.T) {
+	workspace := t.TempDir()
+	app := &App{
+		Config: config.Config{
+			PermissionMode: "workspace-write",
+			PlanMode:       true,
+		},
+		Workspace: workspace,
+		Err:       io.Discard,
+	}
+	active := &skills.Skill{AllowedTools: []string{"Bash(go test:*)"}}
+
+	prompter := app.prompterWithSkill("session", active)
+
+	require.True(t, app.planModeActive())
+	require.Equal(t, tools.PermissionReadOnly, prompter.Mode)
+	require.NotContains(t, prompter.AllowRules, "bash:go test")
+}
+
 func TestSkillsCommandSlashAndBareInvocation(t *testing.T) {
 	server := httptest.NewServer(mockanthropic.Server{Text: "skill done"}.Handler())
 	defer server.Close()

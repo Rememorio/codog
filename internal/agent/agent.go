@@ -43568,6 +43568,9 @@ func (a *App) effectiveConfig() config.Config {
 }
 
 func (a *App) planModeActive() bool {
+	if a.Config.PlanMode {
+		return true
+	}
 	state, err := planmode.Load(a.Workspace)
 	return err == nil && state.Active
 }

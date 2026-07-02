@@ -437,6 +437,7 @@ type FutureConfig struct {
 }
 
 type PermissionRules struct {
+	DefaultMode string   `json:"defaultMode,omitempty"`
 	Allow       []string `json:"allow,omitempty"`
 	Deny        []string `json:"deny,omitempty"`
 	Ask         []string `json:"ask,omitempty"`
@@ -519,6 +520,13 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if permissionRulesSet(aliases.PermissionRules) {
 		mergePermissionRules(&parsed.PermissionRules, aliases.PermissionRules)
+	}
+	if parsed.PermissionMode == "" && parsed.PermissionRules.DefaultMode != "" {
+		mode, planMode, _, ok := mapClaudePermissionDefaultMode(parsed.PermissionRules.DefaultMode)
+		if ok {
+			parsed.PermissionMode = mode
+			parsed.PlanMode = planMode
+		}
 	}
 	if len(aliases.MCPServers) != 0 {
 		if parsed.MCPServers == nil {
@@ -698,6 +706,9 @@ func finalizeConfig(cfg *Config) error {
 		return err
 	}
 	if err := validatePermissionMode(cfg); err != nil {
+		return err
+	}
+	if err := validatePermissionRulesDefaultMode(cfg); err != nil {
 		return err
 	}
 	if err := validateForceLoginMethod(cfg); err != nil {
@@ -1302,12 +1313,19 @@ func merge(dst *Config, src Config) {
 	}
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
+		dst.PlanMode = src.PlanMode
 	}
 	if privacyConfigSet(src.Privacy) {
 		mergePrivacyConfig(&dst.Privacy, src.Privacy)
 	}
 	if permissionRulesSet(src.PermissionRules) {
 		mergePermissionRules(&dst.PermissionRules, src.PermissionRules)
+		if src.PermissionMode == "" && src.PermissionRules.DefaultMode != "" {
+			if mode, planMode, _, ok := mapClaudePermissionDefaultMode(src.PermissionRules.DefaultMode); ok {
+				dst.PermissionMode = mode
+				dst.PlanMode = planMode
+			}
+		}
 	}
 	if src.ConfigHome != "" {
 		dst.ConfigHome = expandHome(src.ConfigHome)
@@ -1509,7 +1527,8 @@ func mergeSandboxConfig(dst *SandboxConfig, src SandboxConfig) {
 }
 
 func permissionRulesSet(rules PermissionRules) bool {
-	return len(rules.Allow) != 0 ||
+	return rules.DefaultMode != "" ||
+		len(rules.Allow) != 0 ||
 		len(rules.Deny) != 0 ||
 		len(rules.Ask) != 0 ||
 		len(rules.DeniedTools) != 0
@@ -1818,6 +1837,9 @@ func hookCommandKey(command HookCommand) string {
 }
 
 func mergePermissionRules(dst *PermissionRules, src PermissionRules) {
+	if src.DefaultMode != "" {
+		dst.DefaultMode = src.DefaultMode
+	}
 	dst.Allow = append(dst.Allow, src.Allow...)
 	dst.Deny = append(dst.Deny, src.Deny...)
 	dst.Ask = append(dst.Ask, src.Ask...)
@@ -2028,9 +2050,11 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.PermissionMode != "" {
 		cfg.PermissionMode = overrides.PermissionMode
+		cfg.PlanMode = false
 	}
 	if overrides.SkipPermissions {
 		cfg.PermissionMode = "allow"
+		cfg.PlanMode = false
 	}
 	if len(overrides.AllowedTools) > 0 {
 		cfg.PermissionRules.Allow = append(cfg.PermissionRules.Allow, overrides.AllowedTools...)
@@ -2141,6 +2165,37 @@ func validatePermissionMode(cfg *Config) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid_permission_mode: unknown permission mode %q", cfg.PermissionMode)
+	}
+}
+
+func validatePermissionRulesDefaultMode(cfg *Config) error {
+	if strings.TrimSpace(cfg.PermissionRules.DefaultMode) == "" {
+		return nil
+	}
+	_, _, canonical, ok := mapClaudePermissionDefaultMode(cfg.PermissionRules.DefaultMode)
+	if !ok {
+		return fmt.Errorf("invalid_permission_default_mode: unknown permissions.defaultMode %q", cfg.PermissionRules.DefaultMode)
+	}
+	cfg.PermissionRules.DefaultMode = canonical
+	return nil
+}
+
+func mapClaudePermissionDefaultMode(mode string) (string, bool, string, bool) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "default":
+		return "prompt", false, "default", true
+	case "plan":
+		return "read-only", true, "plan", true
+	case "acceptedits":
+		return "workspace-write", false, "acceptEdits", true
+	case "bypasspermissions":
+		return "allow", false, "bypassPermissions", true
+	case "dontask":
+		return "read-only", false, "dontAsk", true
+	case "auto":
+		return "prompt", false, "auto", true
+	default:
+		return "", false, "", false
 	}
 }
 

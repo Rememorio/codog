@@ -97,6 +97,94 @@ func TestMergeAppendsPermissionRules(t *testing.T) {
 	require.Equal(t, []string{"bash", "plugin_tool"}, dst.PermissionRules.DeniedTools)
 }
 
+func TestLoadPermissionsDefaultModeAliases(t *testing.T) {
+	tests := []struct {
+		name           string
+		defaultMode    string
+		permissionMode string
+		planMode       bool
+		canonical      string
+	}{
+		{name: "default", defaultMode: "default", permissionMode: "prompt", canonical: "default"},
+		{name: "plan", defaultMode: "plan", permissionMode: "read-only", planMode: true, canonical: "plan"},
+		{name: "accept edits", defaultMode: "acceptEdits", permissionMode: "workspace-write", canonical: "acceptEdits"},
+		{name: "bypass permissions", defaultMode: "bypassPermissions", permissionMode: "allow", canonical: "bypassPermissions"},
+		{name: "dont ask", defaultMode: "dontAsk", permissionMode: "read-only", canonical: "dontAsk"},
+		{name: "auto", defaultMode: "AUTO", permissionMode: "prompt", canonical: "auto"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.json")
+			require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"`+tt.defaultMode+`","allow":["read_file"]}}`), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+			require.NoError(t, err)
+			require.Equal(t, tt.permissionMode, cfg.PermissionMode)
+			require.Equal(t, tt.planMode, cfg.PlanMode)
+			require.Equal(t, tt.canonical, cfg.PermissionRules.DefaultMode)
+			require.Equal(t, []string{"read_file"}, cfg.PermissionRules.Allow)
+		})
+	}
+}
+
+func TestLoadPermissionModeOverridesDefaultModeAlias(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","permissions":{"defaultMode":"plan"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "danger-full-access", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+	require.Equal(t, "plan", cfg.PermissionRules.DefaultMode)
+}
+
+func TestLoadLaterPermissionDefaultModeClearsPlanMode(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{"permissions":{"defaultMode":"plan"}}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{"permissions":{"defaultMode":"acceptEdits"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+
+	require.NoError(t, err)
+	require.Equal(t, "workspace-write", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+	require.Equal(t, "acceptEdits", cfg.PermissionRules.DefaultMode)
+}
+
+func TestLoadPermissionModeFlagClearsPlanMode(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"plan"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath, PermissionMode: "workspace-write"})
+
+	require.NoError(t, err)
+	require.Equal(t, "workspace-write", cfg.PermissionMode)
+	require.False(t, cfg.PlanMode)
+}
+
+func TestLoadRejectsInvalidPermissionsDefaultMode(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"always"}}`), 0o644))
+
+	_, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_permission_default_mode")
+}
+
 func TestMergeFutureConfigPreservesSandboxDefaults(t *testing.T) {
 	enabled := true
 	namespace := false
