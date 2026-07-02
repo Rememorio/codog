@@ -3240,6 +3240,15 @@ func risky(value any) {
 	require.Equal(t, "perf_issue", resumedPerfIssue.Kind)
 	require.Empty(t, resumedPerfIssue.File)
 
+	out, err = runResumedJSON("/perf-issue", "--write")
+	require.NoError(t, err)
+	var resumedPerfIssueWrite perfissue.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPerfIssueWrite))
+	require.Equal(t, "perf_issue", resumedPerfIssueWrite.Kind)
+	require.NotEmpty(t, resumedPerfIssueWrite.File)
+	require.Greater(t, resumedPerfIssueWrite.Bytes, 0)
+	require.FileExists(t, resumedPerfIssueWrite.File)
+
 	thinkBackPath := filepath.Join(workspace, "resume-think-back.html")
 	out, err = runResumedJSON("/think-back", "--year", "2026", "--output", thinkBackPath)
 	require.NoError(t, err)
@@ -3251,6 +3260,24 @@ func risky(value any) {
 	require.True(t, resumedThinkBack.Written)
 	require.GreaterOrEqual(t, resumedThinkBack.Insights.Sessions, 1)
 	require.FileExists(t, thinkBackPath)
+
+	out, err = runResumedJSON("/think-back", "--year", "2026")
+	require.NoError(t, err)
+	var resumedThinkBackDefault thinkback.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedThinkBackDefault))
+	require.Equal(t, "think_back", resumedThinkBackDefault.Kind)
+	require.True(t, strings.HasSuffix(resumedThinkBackDefault.Output, filepath.Join(".codog", "think-back-2026.html")))
+	require.True(t, resumedThinkBackDefault.Written)
+	require.FileExists(t, resumedThinkBackDefault.Output)
+
+	out, err = runResumedJSON("/thinkback")
+	require.NoError(t, err)
+	var resumedThinkbackDefault thinkback.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedThinkbackDefault))
+	require.Equal(t, "think_back", resumedThinkbackDefault.Kind)
+	require.True(t, resumedThinkbackDefault.Written)
+	require.Contains(t, resumedThinkbackDefault.Output, filepath.Join(".codog", "think-back-"))
+	require.FileExists(t, resumedThinkbackDefault.Output)
 
 	thinkbackPlayPath := filepath.Join(workspace, "resume-thinkback-play.html")
 	out, err = runResumedJSON("/thinkback-play", "--year", "2026", "--output", thinkbackPlayPath)
@@ -3436,6 +3463,16 @@ func risky(value any) {
 	require.Equal(t, "ant_trace", resumedAntTrace.Kind)
 	require.False(t, resumedAntTrace.RequestSent)
 
+	out, err = runResumedJSON("/ant-trace", "--no-request", "--write")
+	require.NoError(t, err)
+	var resumedAntTraceWrite anttrace.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAntTraceWrite))
+	require.Equal(t, "ant_trace", resumedAntTraceWrite.Kind)
+	require.False(t, resumedAntTraceWrite.RequestSent)
+	require.NotEmpty(t, resumedAntTraceWrite.File)
+	require.Greater(t, resumedAntTraceWrite.Bytes, 0)
+	require.FileExists(t, resumedAntTraceWrite.File)
+
 	out, err = runResumedJSON("/mock-limits")
 	require.NoError(t, err)
 	var resumedMockLimits mocklimits.Report
@@ -3523,6 +3560,17 @@ func risky(value any) {
 	require.False(t, resumedHeapDump.GC)
 	require.Greater(t, resumedHeapDump.Bytes, int64(0))
 	require.FileExists(t, heapDumpPath)
+
+	out, err = runResumedJSON("/heapdump")
+	require.NoError(t, err)
+	var resumedHeapDumpDefault heapDumpReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedHeapDumpDefault))
+	require.Equal(t, "heapdump", resumedHeapDumpDefault.Kind)
+	require.Equal(t, "ok", resumedHeapDumpDefault.Status)
+	require.Contains(t, resumedHeapDumpDefault.Path, filepath.Join(".codog", "heap")+string(os.PathSeparator))
+	require.True(t, resumedHeapDumpDefault.GC)
+	require.Greater(t, resumedHeapDumpDefault.Bytes, int64(0))
+	require.FileExists(t, resumedHeapDumpDefault.Path)
 
 	out, err = runResumedJSON("/files", "--glob", "*.go", "--limit", "5")
 	require.NoError(t, err)
@@ -3948,15 +3996,11 @@ func risky(value any) {
 		{Command: "/team", Args: []string{"create", "writers", "check"}, Report: "/team create"},
 		{Command: "/team", Args: []string{"delete", teamEntry.ID}, Report: "/team delete"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
-		{Command: "/perf-issue", Args: []string{"--write"}, Report: "/perf-issue write"},
-		{Command: "/think-back", Args: []string{"--year", "2026"}, Report: "/think-back default-output"},
-		{Command: "/thinkback", Args: nil, Report: "/thinkback default-output"},
 		{Command: "/acp", Args: []string{"serve"}, Report: "/acp serve"},
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
-		{Command: "/ant-trace", Args: []string{"--no-request", "--write"}, Report: "/ant-trace write"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
 		{Command: "/extra-usage", Args: nil, Report: "/extra-usage open"},
 		{Command: "/extra-usage", Args: []string{"--open"}, Report: "/extra-usage open"},
@@ -3966,7 +4010,6 @@ func risky(value any) {
 		{Command: "/stickers", Args: []string{"--open"}, Report: "/stickers open"},
 		{Command: "/passes", Args: nil, Report: "/passes open"},
 		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
-		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
 	} {

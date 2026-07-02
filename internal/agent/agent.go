@@ -24159,24 +24159,10 @@ func (a *App) runResumedCodeIntelLSPSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedPerfIssueSlash(args []string, format string) error {
-	req, err := parsePerfIssueArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Write || strings.TrimSpace(req.Output) != "" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/perf-issue", "write"), format)
-	}
 	return a.PerfIssue(args)
 }
 
 func (a *App) runResumedThinkBackSlash(command string, args []string, format string) error {
-	req, err := parseThinkBackArgs(args)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(req.Output) == "" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel(command, "default-output"), format)
-	}
 	return a.ThinkBack(args)
 }
 
@@ -24269,9 +24255,6 @@ func (a *App) runResumedAntTraceSlash(ctx context.Context, args []string, format
 	req, err := parseAntTraceArgs(args)
 	if err != nil {
 		return err
-	}
-	if req.Write || strings.TrimSpace(req.Output) != "" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ant-trace", "write"), format)
 	}
 	if !req.NoRequest {
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/ant-trace", "request"), format)
@@ -24431,13 +24414,6 @@ func (a *App) runResumedPassesSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedHeapDumpSlash(args []string, format string) error {
-	req, err := parseHeapDumpArgs(args)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(req.Path) == "" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/heapdump", "default-output"), format)
-	}
 	return a.HeapDump(args)
 }
 
