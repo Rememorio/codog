@@ -16222,6 +16222,41 @@ func TestTaskHookFeedbackIsVisible(t *testing.T) {
 	require.Contains(t, errOut.String(), "task completed context")
 }
 
+func TestSubagentHookFeedbackIsVisible(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			Hooks: config.HookConfig{
+				SubagentStartCommands: []config.HookCommand{{
+					Matcher: "reviewer",
+					Command: `printf '%s' '{"systemMessage":"subagent start note","hookSpecificOutput":{"additionalContext":"subagent start context"}}'`,
+				}},
+				SubagentStopCommands: []config.HookCommand{{
+					Matcher: "reviewer",
+					Command: `printf '%s' '{"systemMessage":"subagent stop note","hookSpecificOutput":{"additionalContext":"subagent stop context"}}'`,
+				}},
+			},
+		},
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+
+	app.runSubagentStartHook(context.Background(), "agent-1", "reviewer")
+	require.Contains(t, errOut.String(), "subagent start hook feedback:")
+	require.Contains(t, errOut.String(), "subagent start note")
+	require.Contains(t, errOut.String(), "subagent start context")
+	errOut.Reset()
+
+	app.runSubagentStopHook(context.Background(), "agent-1", "reviewer", "transcript.jsonl", "done", false)
+	require.Contains(t, errOut.String(), "subagent stop hook feedback:")
+	require.Contains(t, errOut.String(), "subagent stop note")
+	require.Contains(t, errOut.String(), "subagent stop context")
+}
+
 func TestHooksDisabledSkipsRunAndReportsStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

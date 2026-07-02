@@ -700,6 +700,31 @@ func TestHooksForPayloadFiltersSubagentMatchersAndConditions(t *testing.T) {
 	require.Empty(t, matched)
 }
 
+func TestSubagentReportsParseHookFeedback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	runner := Runner{
+		Workspace: t.TempDir(),
+		Config: config.HookConfig{
+			SubagentStartCommands: []config.HookCommand{{
+				Matcher: "reviewer",
+				Command: `printf '%s' '{"systemMessage":"subagent start note","hookSpecificOutput":{"additionalContext":"subagent start context"}}'`,
+			}},
+			SubagentStopCommands: []config.HookCommand{{
+				Matcher: "reviewer",
+				Command: `printf '%s' '{"systemMessage":"subagent stop note","hookSpecificOutput":{"additionalContext":"subagent stop context"}}'`,
+			}},
+		},
+	}
+	started, err := runner.SubagentStartReport(context.Background(), "agent-1", "reviewer")
+	require.NoError(t, err)
+	require.Equal(t, []string{"subagent start note", "subagent start context"}, MessagesFromReport(started))
+	stopped, err := runner.SubagentStopReport(context.Background(), "agent-1", "reviewer", "transcript.jsonl", "done", false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"subagent stop note", "subagent stop context"}, MessagesFromReport(stopped))
+}
+
 func TestTaskReportsParseHookFeedback(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

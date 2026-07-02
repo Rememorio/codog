@@ -44312,8 +44312,13 @@ func (a *App) runSubagentStartHook(ctx context.Context, agentID string, agentTyp
 	if strings.TrimSpace(agentID) == "" {
 		return
 	}
-	if err := a.lifecycleHookRunner().SubagentStart(ctx, agentID, firstNonEmpty(agentType, "agent")); err != nil && a.Err != nil {
+	report, err := a.lifecycleHookRunner().SubagentStartReport(ctx, agentID, firstNonEmpty(agentType, "agent"))
+	if err != nil && a.Err != nil {
 		fmt.Fprintf(a.Err, "subagent start hook error: %v\n", err)
+	}
+	a.renderLifecycleHookFeedback("subagent start", report)
+	if report.Denied && a.Err != nil {
+		fmt.Fprintf(a.Err, "subagent start hook denied: %s\n", hookReportDeniedMessage(report))
 	}
 }
 
@@ -44413,8 +44418,13 @@ func (a *App) runSubagentStopHook(ctx context.Context, agentID string, agentType
 	if strings.TrimSpace(agentID) == "" {
 		return
 	}
-	if err := a.lifecycleHookRunner().SubagentStop(ctx, agentID, firstNonEmpty(agentType, "agent"), transcriptPath, lastAssistant, stopHookActive); err != nil && a.Err != nil {
+	report, err := a.lifecycleHookRunner().SubagentStopReport(ctx, agentID, firstNonEmpty(agentType, "agent"), transcriptPath, lastAssistant, stopHookActive)
+	if err != nil && a.Err != nil {
 		fmt.Fprintf(a.Err, "subagent stop hook error: %v\n", err)
+	}
+	a.renderLifecycleHookFeedback("subagent stop", report)
+	if report.Denied && a.Err != nil {
+		fmt.Fprintf(a.Err, "subagent stop hook denied: %s\n", hookReportDeniedMessage(report))
 	}
 }
 

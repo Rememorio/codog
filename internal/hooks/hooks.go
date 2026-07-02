@@ -413,16 +413,40 @@ func (r Runner) NotificationReport(ctx context.Context, notificationType string,
 }
 
 func (r Runner) SubagentStart(ctx context.Context, agentID string, agentType string) error {
+	report, err := r.SubagentStartReport(ctx, agentID, agentType)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// SubagentStartReport runs SubagentStart hooks and returns parsed hook feedback.
+func (r Runner) SubagentStartReport(ctx context.Context, agentID string, agentType string) (RunReport, error) {
 	payload := Payload{
 		Event:     "subagent_start",
 		Tool:      agentType,
 		AgentID:   agentID,
 		AgentType: agentType,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) SubagentStop(ctx context.Context, agentID string, agentType string, transcriptPath string, lastAssistant string, stopHookActive bool) error {
+	report, err := r.SubagentStopReport(ctx, agentID, agentType, transcriptPath, lastAssistant, stopHookActive)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// SubagentStopReport runs SubagentStop hooks and returns parsed hook feedback.
+func (r Runner) SubagentStopReport(ctx context.Context, agentID string, agentType string, transcriptPath string, lastAssistant string, stopHookActive bool) (RunReport, error) {
 	payload := Payload{
 		Event:          "subagent_stop",
 		Tool:           agentType,
@@ -432,7 +456,7 @@ func (r Runner) SubagentStop(ctx context.Context, agentID string, agentType stri
 		StopHookActive: stopHookActive,
 		LastAssistant:  lastAssistant,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) WorktreeCreate(ctx context.Context, id string, worktreePath string, ref string, input string) error {
