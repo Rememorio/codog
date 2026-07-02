@@ -992,17 +992,6 @@ func parseJSONStringSlice(data json.RawMessage) []string {
 	return out
 }
 
-func compactStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
 func merge(dst *Config, src Config) {
 	if src.APIKey != "" {
 		dst.APIKey = src.APIKey

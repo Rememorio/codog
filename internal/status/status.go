@@ -1,3 +1,5 @@
+// Package status builds and renders the structured runtime status report used
+// by `codog status`.
 package status
 
 import (
@@ -11,6 +13,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 )
 
+// Options contains the runtime inputs needed to build a status snapshot.
 type Options struct {
 	Version                     string
 	ConfigLoadError             string
@@ -80,6 +83,7 @@ type Options struct {
 	Executable                  string
 }
 
+// Snapshot is the stable JSON payload returned by `codog status --json`.
 type Snapshot struct {
 	Kind                string               `json:"kind"`
 	Action              string               `json:"action"`
@@ -100,6 +104,7 @@ type Snapshot struct {
 	HookValidation      HookValidationStatus `json:"hook_validation"`
 }
 
+// WorkspaceStatus describes the active workspace and loaded project memory.
 type WorkspaceStatus struct {
 	Path            string             `json:"path"`
 	Name            string             `json:"name"`
@@ -107,6 +112,7 @@ type WorkspaceStatus struct {
 	MemoryFiles     []MemoryFileStatus `json:"memory_files,omitempty"`
 }
 
+// MemoryFileStatus describes one instruction file loaded into context.
 type MemoryFileStatus struct {
 	Path      string `json:"path"`
 	Name      string `json:"name"`
@@ -115,6 +121,7 @@ type MemoryFileStatus struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
+// ConfigStatus summarizes the effective runtime configuration.
 type ConfigStatus struct {
 	ConfigHome                  string `json:"config_home"`
 	Model                       string `json:"model"`
@@ -152,6 +159,7 @@ type ConfigStatus struct {
 	EnabledSkillCount           int    `json:"enabled_skill_count"`
 }
 
+// SessionStatus summarizes the active session and saved session ledger.
 type SessionStatus struct {
 	Active              bool                    `json:"active"`
 	ID                  string                  `json:"id,omitempty"`
@@ -166,6 +174,7 @@ type SessionStatus struct {
 	Lifecycle           *SessionLifecycleStatus `json:"lifecycle,omitempty"`
 }
 
+// SessionLifecycleStatus describes whether a saved session is complete or abandoned.
 type SessionLifecycleStatus struct {
 	Kind      string `json:"kind"`
 	Signal    string `json:"signal"`
@@ -173,17 +182,20 @@ type SessionLifecycleStatus struct {
 	Abandoned bool   `json:"abandoned"`
 }
 
+// PlanStatus reports whether plan mode is active for the workspace.
 type PlanStatus struct {
 	Active    bool   `json:"active"`
 	Text      string `json:"text,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
+// ToolsStatus lists the registered tool names visible to the model runtime.
 type ToolsStatus struct {
 	Count int      `json:"count"`
 	Names []string `json:"names"`
 }
 
+// GitStatus summarizes local git state for the workspace.
 type GitStatus struct {
 	Available bool                    `json:"available"`
 	Error     string                  `json:"error,omitempty"`
@@ -197,6 +209,7 @@ type GitStatus struct {
 	Raw       string                  `json:"raw,omitempty"`
 }
 
+// LaneBoardStatus summarizes background task lanes.
 type LaneBoardStatus struct {
 	StatusJSONSupported bool                        `json:"status_json_supported"`
 	FreshnessStates     []background.LaneFreshness  `json:"freshness_states"`
@@ -211,6 +224,7 @@ type LaneBoardStatus struct {
 	Finished            []background.LaneBoardEntry `json:"finished,omitempty"`
 }
 
+// SandboxStatus reports sandbox detection and configured execution strategy.
 type SandboxStatus struct {
 	OS         string   `json:"os"`
 	Default    string   `json:"default,omitempty"`
@@ -218,6 +232,7 @@ type SandboxStatus struct {
 	Available  bool     `json:"available"`
 }
 
+// RuntimeStatus reports the Codog process and Go runtime details.
 type RuntimeStatus struct {
 	OS         string `json:"os"`
 	Arch       string `json:"arch"`
@@ -225,6 +240,7 @@ type RuntimeStatus struct {
 	Executable string `json:"executable,omitempty"`
 }
 
+// MCPValidationStatus summarizes static MCP server configuration validation.
 type MCPValidationStatus struct {
 	TotalConfigured int               `json:"total_configured"`
 	ValidCount      int               `json:"valid_count"`
@@ -232,12 +248,14 @@ type MCPValidationStatus struct {
 	InvalidServers  []ValidationIssue `json:"invalid_servers,omitempty"`
 }
 
+// HookValidationStatus summarizes static hook configuration validation.
 type HookValidationStatus struct {
 	ValidCount   int               `json:"valid_count"`
 	InvalidCount int               `json:"invalid_count"`
 	InvalidHooks []ValidationIssue `json:"invalid_hooks,omitempty"`
 }
 
+// ValidationIssue describes one invalid MCP server or hook entry.
 type ValidationIssue struct {
 	Name       string `json:"name,omitempty"`
 	Event      string `json:"event,omitempty"`
@@ -251,6 +269,7 @@ type ValidationIssue struct {
 	Valid      bool   `json:"valid"`
 }
 
+// Build converts runtime options into a status snapshot.
 func Build(opts Options) Snapshot {
 	git := parseGitStatus(opts.GitStatus, opts.GitError)
 	laneBoard := buildLaneBoardStatus(opts.LaneBoard, opts.LaneBoardError)

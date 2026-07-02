@@ -1,3 +1,5 @@
+// Package tools defines the model-callable workspace tools and their execution
+// registry.
 package tools
 
 import (
@@ -54,24 +56,32 @@ import (
 	"github.com/Rememorio/codog/internal/worktree"
 )
 
+// Permission is the minimum host access level required to run a tool.
 type Permission string
 
 const (
-	PermissionReadOnly  Permission = "read-only"
+	// PermissionReadOnly allows inspection-only tools.
+	PermissionReadOnly Permission = "read-only"
+	// PermissionWorkspace allows writes inside the configured workspace.
 	PermissionWorkspace Permission = "workspace-write"
-	PermissionDanger    Permission = "danger-full-access"
-	PermissionPrompt    Permission = "prompt"
-	PermissionAllow     Permission = "allow"
-	maxFileToolBytes    int64      = 2_000_000
-	maxRemoteBodyBytes  int64      = 2_000_000
+	// PermissionDanger allows unrestricted host actions.
+	PermissionDanger Permission = "danger-full-access"
+	// PermissionPrompt requires a user approval decision before execution.
+	PermissionPrompt Permission = "prompt"
+	// PermissionAllow marks tools that are explicitly allow-listed.
+	PermissionAllow    Permission = "allow"
+	maxFileToolBytes   int64      = 2_000_000
+	maxRemoteBodyBytes int64      = 2_000_000
 )
 
+// Tool is the runtime contract implemented by every model-callable tool.
 type Tool interface {
 	Definition() anthropic.ToolDefinition
 	Permission() Permission
 	Execute(context.Context, json.RawMessage) (string, error)
 }
 
+// CommandTool adapts a local executable into a model-callable tool.
 type CommandTool struct {
 	Name        string
 	Description string
@@ -82,6 +92,7 @@ type CommandTool struct {
 	Workspace   string
 }
 
+// MCPTool adapts a remote MCP tool into Codog's local tool contract.
 type MCPTool struct {
 	Name        string
 	Description string
@@ -92,10 +103,12 @@ type MCPTool struct {
 	RemoteName  string
 }
 
+// Registry holds all tools available for a model turn.
 type Registry struct {
 	tools map[string]Tool
 }
 
+// ToolInfo is the JSON-safe metadata view of one registered tool.
 type ToolInfo struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -103,6 +116,7 @@ type ToolInfo struct {
 	InputSchema map[string]any `json:"input_schema"`
 }
 
+// RegistryOptions controls optional tool integrations and execution defaults.
 type RegistryOptions struct {
 	SandboxStrategy string
 	Sandbox         config.SandboxConfig

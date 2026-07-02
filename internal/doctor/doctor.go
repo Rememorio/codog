@@ -1,3 +1,4 @@
+// Package doctor runs local environment checks for `codog doctor`.
 package doctor
 
 import (
@@ -20,11 +21,15 @@ import (
 )
 
 const (
-	StatusOK   = "ok"
+	// StatusOK means a doctor check passed.
+	StatusOK = "ok"
+	// StatusWarn means a doctor check found an actionable warning.
 	StatusWarn = "warn"
+	// StatusFail means a doctor check found a blocking failure.
 	StatusFail = "fail"
 )
 
+// Options contains the runtime and configuration facts checked by Doctor.
 type Options struct {
 	Workspace           string
 	ConfigHome          string
@@ -72,6 +77,7 @@ type Options struct {
 	SandboxRuntime      *sandbox.SandboxExecutionStatus
 }
 
+// Summary counts doctor checks by severity.
 type Summary struct {
 	Total    int `json:"total"`
 	OK       int `json:"ok"`
@@ -79,6 +85,7 @@ type Summary struct {
 	Failures int `json:"failures"`
 }
 
+// Check describes one doctor check result.
 type Check struct {
 	Name    string         `json:"name"`
 	Status  string         `json:"status"`
@@ -88,6 +95,7 @@ type Check struct {
 	Data    map[string]any `json:"data,omitempty"`
 }
 
+// Report is the stable JSON payload returned by `codog doctor --json`.
 type Report struct {
 	Kind        string  `json:"kind"`
 	Action      string  `json:"action"`
@@ -97,6 +105,8 @@ type Report struct {
 	Checks      []Check `json:"checks"`
 }
 
+// Run evaluates local Codog configuration, workspace, hooks, MCP, sandbox, and
+// developer-toolchain health.
 func Run(opts Options) Report {
 	checks := []Check{
 		checkAuth(opts),
@@ -121,6 +131,7 @@ func Run(opts Options) Report {
 	return NewReport(checks)
 }
 
+// NewReport combines checks and derives the top-level doctor status.
 func NewReport(checks []Check) Report {
 	summary := Summary{Total: len(checks)}
 	for _, check := range checks {
@@ -149,6 +160,7 @@ func NewReport(checks []Check) Report {
 	}
 }
 
+// RenderText writes a human-readable doctor report.
 func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Doctor")
 	fmt.Fprintf(w, "Summary\n  OK               %d\n  Warnings         %d\n  Failures         %d\n", report.Summary.OK, report.Summary.Warnings, report.Summary.Failures)
