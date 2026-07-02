@@ -2822,6 +2822,43 @@ type updaterCommandReport struct {
 	Result any    `json:"result"`
 }
 
+type enterpriseAuditReport struct {
+	Kind                    string                 `json:"kind"`
+	Action                  string                 `json:"action"`
+	Status                  string                 `json:"status"`
+	ConfigHome              string                 `json:"config_home,omitempty"`
+	PolicyPath              string                 `json:"policy_path,omitempty"`
+	PolicyConfigured        bool                   `json:"policy_configured"`
+	PolicyPublicKeyPresent  bool                   `json:"policy_public_key_present"`
+	PolicySignatureRequired bool                   `json:"policy_signature_required"`
+	PolicySignatureValid    bool                   `json:"policy_signature_valid,omitempty"`
+	Policy                  *config.ManagedPolicy  `json:"policy,omitempty"`
+	EffectivePermissionMode string                 `json:"effective_permission_mode,omitempty"`
+	PermissionRules         config.PermissionRules `json:"permission_rules,omitempty"`
+	Summary                 enterpriseAuditSummary `json:"summary"`
+	Events                  []audit.Event          `json:"events"`
+	Warnings                []string               `json:"warnings,omitempty"`
+}
+
+type enterpriseAuditSummary struct {
+	Limit            int            `json:"limit"`
+	EventsReturned   int            `json:"events_returned"`
+	PermissionEvents int            `json:"permission_events"`
+	DeniedEvents     int            `json:"denied_events"`
+	ErrorEvents      int            `json:"error_events"`
+	Tools            map[string]int `json:"tools,omitempty"`
+	EventTypes       map[string]int `json:"event_types,omitempty"`
+}
+
+type enterpriseVerifyReport struct {
+	Kind           string               `json:"kind"`
+	Action         string               `json:"action"`
+	Status         string               `json:"status"`
+	Path           string               `json:"path"`
+	SignatureValid bool                 `json:"signature_valid"`
+	Policy         config.ManagedPolicy `json:"policy"`
+}
+
 func (a *App) Enterprise(args []string) error {
 	if len(args) == 0 || (len(args) == 1 && args[0] == "--json") {
 		return errors.New("usage: codog enterprise audit [limit] | enterprise verify POLICY PUBLIC_KEY")
@@ -2837,11 +2874,11 @@ func (a *App) Enterprise(args []string) error {
 			}
 			limit = parsed
 		}
-		events, err := audit.NewStore(a.Config.ConfigHome).List(limit)
+		report, err := a.enterpriseAuditReport(limit)
 		if err != nil {
 			return err
 		}
-		payload = events
+		payload = report
 	case "verify":
 		return enterpriseVerify(a.Out, args)
 	default:
@@ -2850,6 +2887,74 @@ func (a *App) Enterprise(args []string) error {
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
 	return nil
+}
+
+func (a *App) enterpriseAuditReport(limit int) (enterpriseAuditReport, error) {
+	events, err := audit.NewStore(a.Config.ConfigHome).List(limit)
+	if err != nil {
+		return enterpriseAuditReport{}, err
+	}
+	report := enterpriseAuditReport{
+		Kind:                    "enterprise",
+		Action:                  "audit",
+		Status:                  "ok",
+		ConfigHome:              a.Config.ConfigHome,
+		PolicyPath:              strings.TrimSpace(a.Config.Future.EnterprisePolicy),
+		PolicyConfigured:        strings.TrimSpace(a.Config.Future.EnterprisePolicy) != "",
+		PolicyPublicKeyPresent:  strings.TrimSpace(a.Config.Future.EnterprisePolicyPublicKey) != "",
+		PolicySignatureRequired: strings.TrimSpace(a.Config.Future.EnterprisePolicyPublicKey) != "",
+		EffectivePermissionMode: a.Config.PermissionMode,
+		PermissionRules:         a.Config.PermissionRules,
+		Summary: enterpriseAuditSummary{
+			Limit:          limit,
+			EventsReturned: len(events),
+			Tools:          map[string]int{},
+			EventTypes:     map[string]int{},
+		},
+		Events: events,
+	}
+	for _, event := range events {
+		if event.Type != "" {
+			report.Summary.EventTypes[event.Type]++
+		}
+		if event.ToolName != "" {
+			report.Summary.Tools[event.ToolName]++
+		}
+		if event.Type == "permission" {
+			report.Summary.PermissionEvents++
+		}
+		if event.Allowed != nil && !*event.Allowed {
+			report.Summary.DeniedEvents++
+		}
+		if event.IsError {
+			report.Summary.ErrorEvents++
+		}
+	}
+	if report.PolicyConfigured {
+		policy, err := config.LoadManagedPolicyFile(report.PolicyPath)
+		if err != nil {
+			report.Status = "warn"
+			report.Warnings = append(report.Warnings, "managed policy could not be loaded: "+err.Error())
+		} else {
+			if report.PolicyPublicKeyPresent {
+				if err := config.VerifyManagedPolicy(policy, a.Config.Future.EnterprisePolicyPublicKey); err != nil {
+					report.Status = "warn"
+					report.Warnings = append(report.Warnings, "managed policy signature verification failed: "+err.Error())
+				} else {
+					report.PolicySignatureValid = true
+				}
+			}
+			policy.Signature = ""
+			report.Policy = &policy
+		}
+	}
+	if len(report.Summary.Tools) == 0 {
+		report.Summary.Tools = nil
+	}
+	if len(report.Summary.EventTypes) == 0 {
+		report.Summary.EventTypes = nil
+	}
+	return report, nil
 }
 
 func enterpriseVerify(out io.Writer, args []string) error {
@@ -2861,10 +2966,13 @@ func enterpriseVerify(out io.Writer, args []string) error {
 		return err
 	}
 	policy.Signature = ""
-	payload := map[string]any{
-		"path":            args[1],
-		"signature_valid": true,
-		"policy":          policy,
+	payload := enterpriseVerifyReport{
+		Kind:           "enterprise",
+		Action:         "verify",
+		Status:         "ok",
+		Path:           args[1],
+		SignatureValid: true,
+		Policy:         policy,
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Fprintln(out, string(data))

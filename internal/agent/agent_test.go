@@ -84,8 +84,19 @@ func TestEnterpriseAuditListsEvents(t *testing.T) {
 		Out:    &out,
 	}
 	require.NoError(t, app.Enterprise([]string{"audit", "10"}))
-	require.Contains(t, out.String(), `"type": "permission"`)
-	require.Contains(t, out.String(), `"allowed": false`)
+	var report enterpriseAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "enterprise", report.Kind)
+	require.Equal(t, "audit", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 10, report.Summary.Limit)
+	require.Equal(t, 1, report.Summary.EventsReturned)
+	require.Equal(t, 1, report.Summary.PermissionEvents)
+	require.Equal(t, 1, report.Summary.DeniedEvents)
+	require.Equal(t, 1, report.Summary.Tools["bash"])
+	require.False(t, report.PolicyConfigured)
+	require.Equal(t, "permission", report.Events[0].Type)
+	require.False(t, *report.Events[0].Allowed)
 }
 
 func TestEnterpriseVerifyCommand(t *testing.T) {
@@ -104,8 +115,60 @@ func TestEnterpriseVerifyCommand(t *testing.T) {
 	var out bytes.Buffer
 	app := &App{Out: &out}
 	require.NoError(t, app.Enterprise([]string{"verify", policyPath, base64.StdEncoding.EncodeToString(publicKey)}))
-	require.Contains(t, out.String(), `"signature_valid": true`)
-	require.Contains(t, out.String(), `"max_permission_mode": "read-only"`)
+	var report enterpriseVerifyReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "enterprise", report.Kind)
+	require.Equal(t, "verify", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.SignatureValid)
+	require.Equal(t, "read-only", report.Policy.MaxPermissionMode)
+	require.NotContains(t, out.String(), policy.Signature)
+}
+
+func TestEnterpriseAuditReportsManagedPolicyStatus(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	configHome := t.TempDir()
+	policy := config.ManagedPolicy{
+		MaxPermissionMode: "read-only",
+		DeniedTools:       []string{"bash"},
+		PermissionRules:   config.PermissionRules{Deny: []string{"write_file"}},
+	}
+	payload, err := config.ManagedPolicyPayload(policy)
+	require.NoError(t, err)
+	policy.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+	data, err := json.Marshal(policy)
+	require.NoError(t, err)
+	policyPath := filepath.Join(configHome, "policy.json")
+	require.NoError(t, os.WriteFile(policyPath, data, 0o644))
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Future: config.FutureConfig{
+				EnterprisePolicy:          policyPath,
+				EnterprisePolicyPublicKey: base64.StdEncoding.EncodeToString(publicKey),
+			},
+			PermissionMode: "read-only",
+			PermissionRules: config.PermissionRules{
+				Deny:        []string{"write_file"},
+				DeniedTools: []string{"bash"},
+			},
+		},
+		Out: &out,
+	}
+	require.NoError(t, app.Enterprise([]string{"audit", "5"}))
+	var report enterpriseAuditReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "ok", report.Status)
+	require.True(t, report.PolicyConfigured)
+	require.True(t, report.PolicyPublicKeyPresent)
+	require.True(t, report.PolicySignatureRequired)
+	require.True(t, report.PolicySignatureValid)
+	require.NotNil(t, report.Policy)
+	require.Equal(t, "read-only", report.Policy.MaxPermissionMode)
+	require.Contains(t, report.Policy.DeniedTools, "bash")
 	require.NotContains(t, out.String(), policy.Signature)
 }
 
