@@ -166,6 +166,29 @@ func TestLoadAPITimeoutConfig(t *testing.T) {
 	require.Equal(t, 7, cfg.APITimeout.MaxRetries)
 }
 
+func TestLoadMergesTopLevelEnvByConfigPrecedence(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	previous, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(previous)) })
+	t.Setenv("CODOG_CONFIG_HOME", configHome)
+	require.NoError(t, os.Chdir(workspace))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".claude"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "config.json"), []byte(`{"env":{"A":"user","B":"user"}}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.json"), []byte(`{"env":{"B":"project","C":"project"}}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".claude", "settings.local.json"), []byte(`{"env":{"C":"local","D":"local"}}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"A": "user",
+		"B": "project",
+		"C": "local",
+		"D": "local",
+	}, cfg.Env)
+}
+
 func TestLoadRejectsInvalidAPITimeoutConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

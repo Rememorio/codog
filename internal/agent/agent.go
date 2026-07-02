@@ -1227,6 +1227,7 @@ func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, q
 		Sandbox:         cfg.Future.Sandbox,
 		AdditionalDirs:  additionalDirs,
 		ConfigHome:      cfg.ConfigHome,
+		ConfigEnv:       cfg.Env,
 		OAuthProfile:    cfg.OAuthProfile,
 		MCPServers:      cfg.MCPServers,
 		RAGBaseURL:      cfg.RAGBaseURL,

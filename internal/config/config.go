@@ -441,6 +441,7 @@ type Config struct {
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
 	APITimeout          APITimeoutConfig           `json:"apiTimeout,omitempty"`
+	Env                 map[string]string          `json:"env,omitempty"`
 	RAGBaseURL          string                     `json:"rag_base_url,omitempty"`
 	RAGTimeoutSeconds   int                        `json:"rag_timeout_seconds,omitempty"`
 	RAGTopKMax          int                        `json:"rag_top_k_max,omitempty"`
@@ -1127,6 +1128,17 @@ func merge(dst *Config, src Config) {
 	}
 	if apiTimeoutConfigSet(src.APITimeout) {
 		mergeAPITimeoutConfig(&dst.APITimeout, src.APITimeout)
+	}
+	if len(src.Env) != 0 {
+		if dst.Env == nil {
+			dst.Env = map[string]string{}
+		}
+		for key, value := range src.Env {
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
+			dst.Env[key] = value
+		}
 	}
 	if src.RAGBaseURL != "" {
 		dst.RAGBaseURL = src.RAGBaseURL

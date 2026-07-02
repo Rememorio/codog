@@ -20,6 +20,7 @@ const (
 	FieldHookArray           FieldType = "hook_array"
 	FieldNumber              FieldType = "number"
 	FieldStringOrStringArray FieldType = "string_or_string_array"
+	FieldStringMap           FieldType = "string_map"
 )
 
 type Diagnostic struct {
@@ -95,6 +96,7 @@ var topLevelFields = []fieldSpec{
 	{"auto_compact_messages", FieldNumber},
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
+	{"env", FieldStringMap},
 	{"rag_base_url", FieldString},
 	{"rag_timeout_seconds", FieldNumber},
 	{"rag_top_k_max", FieldNumber},
@@ -523,6 +525,17 @@ func matchesFieldType(expected FieldType, value any) bool {
 	case FieldObject:
 		_, ok := value.(map[string]any)
 		return ok
+	case FieldStringMap:
+		values, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		for _, item := range values {
+			if _, ok := item.(string); !ok {
+				return false
+			}
+		}
+		return true
 	case FieldStringArray:
 		values, ok := value.([]any)
 		if !ok {
@@ -562,6 +575,8 @@ func (t FieldType) label() string {
 		return "a boolean"
 	case FieldObject:
 		return "an object"
+	case FieldStringMap:
+		return "an object with string values"
 	case FieldStringArray:
 		return "an array of strings"
 	case FieldHookArray:

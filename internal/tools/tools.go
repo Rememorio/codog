@@ -96,6 +96,7 @@ type CommandTool struct {
 	Command     string
 	Args        []string
 	Workspace   string
+	ConfigEnv   map[string]string
 }
 
 // MCPTool adapts a remote MCP tool into Codog's local tool contract.
@@ -128,6 +129,7 @@ type RegistryOptions struct {
 	Sandbox         config.SandboxConfig
 	AdditionalDirs  []string
 	ConfigHome      string
+	ConfigEnv       map[string]string
 	OAuthProfile    string
 	MCPServers      map[string]config.MCPServerConfig
 	PowerShell      string
@@ -566,8 +568,8 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	if r.tools == nil {
 		r.tools = map[string]Tool{}
 	}
-	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
-	r.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, Executable: opts.PowerShell})
+	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
+	r.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.PowerShell})
 	r.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(KillBashTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(ReadFileTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
@@ -596,13 +598,13 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(ExitWorktreeTool{Workspace: workspace})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
-	r.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
 	r.Register(CronCreateTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronListTool{ConfigHome: opts.ConfigHome})
 	r.Register(PolicyEvaluateTool{})
 	r.Register(ApprovalTokenTool{ConfigHome: opts.ConfigHome})
-	r.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
 	r.Register(TeamListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
@@ -612,7 +614,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(WorkerObserveTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerResolveTrustTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerAwaitReadyTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
-	r.Register(WorkerSendPromptTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(WorkerSendPromptTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
 	r.Register(WorkerRestartTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerTerminateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerObserveCompletionTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -620,8 +622,8 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(RecoveryRecipeTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryAttemptTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
-	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
-	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
+	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
+	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
 	r.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -637,7 +639,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(SendUserMessageTool{Workspace: workspace, AdditionalDirs: opts.AdditionalDirs})
 	r.Register(StructuredOutputTool{})
 	r.Register(SleepTool{})
-	r.Register(REPLTool{Workspace: workspace})
+	r.Register(REPLTool{Workspace: workspace, ConfigEnv: opts.ConfigEnv})
 	r.Register(SkillTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(ConfigTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(MCPDispatchTool{Servers: opts.MCPServers})
@@ -1106,6 +1108,7 @@ func (t CommandTool) Execute(ctx context.Context, input json.RawMessage) (string
 	cmd := exec.CommandContext(ctx, t.Command, t.Args...)
 	cmd.Dir = t.Workspace
 	cmd.Stdin = bytes.NewReader(input)
+	cmd.Env = toolEnvironmentFromConfig(t.ConfigEnv, nil)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2152,6 +2155,7 @@ func gitPathArg(workspace, requested string, allowMissing bool) (string, error) 
 type BashTool struct {
 	Workspace       string
 	ConfigHome      string
+	ConfigEnv       map[string]string
 	SandboxStrategy string
 	Sandbox         config.SandboxConfig
 }
@@ -2217,13 +2221,37 @@ func (BashTool) Definition() anthropic.ToolDefinition {
 
 func (BashTool) Permission() Permission { return PermissionDanger }
 
-func toolEnvironment(ctx context.Context, configHome string) ([]string, error) {
-	env := os.Environ()
+func toolEnvironment(ctx context.Context, configHome string, configEnv map[string]string) ([]string, error) {
+	env := toolEnvironmentFromConfig(configEnv, nil)
 	hookEnv, err := hookenv.Load(configHome, SessionIDFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
 	return hookenv.Merge(env, hookEnv), nil
+}
+
+func toolEnvironmentFromConfig(configEnv map[string]string, base []string) []string {
+	if base == nil {
+		base = os.Environ()
+	}
+	if len(configEnv) == 0 {
+		return append([]string(nil), base...)
+	}
+	keys := make([]string, 0, len(configEnv))
+	for rawKey := range configEnv {
+		key := strings.TrimSpace(rawKey)
+		if key == "" || strings.Contains(key, "=") {
+			continue
+		}
+		keys = append(keys, rawKey)
+	}
+	sort.Strings(keys)
+	overlay := make([]string, 0, len(keys))
+	for _, rawKey := range keys {
+		key := strings.TrimSpace(rawKey)
+		overlay = append(overlay, key+"="+configEnv[rawKey])
+	}
+	return hookenv.Merge(base, overlay)
 }
 
 func toolCWD(ctx context.Context, configHome string, workspace string) (string, error) {
@@ -2506,7 +2534,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		return "", err
 	}
 	if payload.RunInBackground {
-		env, err := toolEnvironment(ctx, t.ConfigHome)
+		env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 		if err != nil {
 			return "", err
 		}
@@ -2541,7 +2569,7 @@ func (t BashTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = cwd
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -2917,6 +2945,7 @@ func shellQuote(value string) string {
 type PowerShellTool struct {
 	Workspace  string
 	ConfigHome string
+	ConfigEnv  map[string]string
 	Executable string
 }
 
@@ -2964,7 +2993,7 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	}
 	if payload.RunInBackground {
 		command := strings.Join([]string{shellQuoteToolArg(executable), "-NoProfile", "-NonInteractive", "-Command", shellQuoteToolArg(payload.Command)}, " ")
-		env, err := toolEnvironment(ctx, t.ConfigHome)
+		env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 		if err != nil {
 			return "", err
 		}
@@ -2996,7 +3025,7 @@ func (t PowerShellTool) Execute(ctx context.Context, input json.RawMessage) (str
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, executable, "-NoProfile", "-NonInteractive", "-Command", payload.Command)
 	cmd.Dir = cwd
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -5959,6 +5988,7 @@ func (t ExitPlanModeTool) Execute(_ context.Context, input json.RawMessage) (str
 type AgentTool struct {
 	Workspace  string
 	ConfigHome string
+	ConfigEnv  map[string]string
 	Executable string
 }
 
@@ -6031,7 +6061,7 @@ func (t AgentTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 		}
 	}
 	command := buildAgentToolCommand(executable, def, payload.Description, payload.Prompt, payload.Model)
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -6212,6 +6242,7 @@ func (t CronListTool) Execute(_ context.Context, input json.RawMessage) (string,
 type TeamCreateTool struct {
 	Workspace  string
 	ConfigHome string
+	ConfigEnv  map[string]string
 	Executable string
 }
 
@@ -6269,7 +6300,7 @@ func (t TeamCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 		}
 	}
 	store := taskStore(t.ConfigHome, t.Workspace)
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -6855,6 +6886,7 @@ func (t WorkerAwaitReadyTool) Execute(_ context.Context, input json.RawMessage) 
 type WorkerSendPromptTool struct {
 	Workspace  string
 	ConfigHome string
+	ConfigEnv  map[string]string
 	Executable string
 }
 
@@ -6922,7 +6954,7 @@ func (t WorkerSendPromptTool) Execute(ctx context.Context, input json.RawMessage
 			return "", err
 		}
 	}
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -7252,6 +7284,7 @@ func workerStore(configHome string, workspace string) workers.Store {
 type TaskCreateTool struct {
 	Workspace  string
 	ConfigHome string
+	ConfigEnv  map[string]string
 	Executable string
 }
 
@@ -7306,7 +7339,7 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 	if command != "" && prompt != "" {
 		return "", errors.New("command and prompt cannot both be provided")
 	}
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -7365,6 +7398,7 @@ func (t TaskCreateTool) Execute(ctx context.Context, input json.RawMessage) (str
 type RunTaskPacketTool struct {
 	Workspace  string
 	ConfigHome string
+	ConfigEnv  map[string]string
 	Executable string
 }
 
@@ -7443,7 +7477,7 @@ func (t RunTaskPacketTool) Execute(ctx context.Context, input json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
-	env, err := toolEnvironment(ctx, t.ConfigHome)
+	env, err := toolEnvironment(ctx, t.ConfigHome, t.ConfigEnv)
 	if err != nil {
 		return "", err
 	}
@@ -8408,6 +8442,7 @@ func (SleepTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 
 type REPLTool struct {
 	Workspace string
+	ConfigEnv map[string]string
 }
 
 func (REPLTool) Definition() anthropic.ToolDefinition {
@@ -8458,6 +8493,7 @@ func (t REPLTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = t.Workspace
+	cmd.Env = toolEnvironmentFromConfig(t.ConfigEnv, nil)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -366,6 +366,9 @@ func TestBashToolAppliesSandboxConfigDefaults(t *testing.T) {
 }
 
 func TestBashToolLoadsHookEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
 	workspace := t.TempDir()
 	configHome := t.TempDir()
 	sessionID := "session-1"
@@ -374,7 +377,19 @@ func TestBashToolLoadsHookEnvironment(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sessionstart-hook-1.sh"), []byte("export CODOG_TEST_HOOK_ENV=ready\n"), 0o600))
 
 	ctx := ContextWithSessionID(context.Background(), sessionID)
-	out, err := BashTool{Workspace: workspace, ConfigHome: configHome}.Execute(ctx, []byte(`{"command":"printf %s \"$CODOG_TEST_HOOK_ENV\""}`))
+	out, err := BashTool{Workspace: workspace, ConfigHome: configHome, ConfigEnv: map[string]string{"CODOG_TEST_HOOK_ENV": "config"}}.Execute(ctx, []byte(`{"command":"printf %s \"$CODOG_TEST_HOOK_ENV\""}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ready"`)
+}
+
+func TestBashToolLoadsConfiguredEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	out, err := BashTool{
+		Workspace: t.TempDir(),
+		ConfigEnv: map[string]string{"CODOG_CONFIG_ENV": "ready"},
+	}.Execute(context.Background(), []byte(`{"command":"printf %s \"$CODOG_CONFIG_ENV\""}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `"stdout": "ready"`)
 }
@@ -2945,6 +2960,18 @@ func TestREPLToolExecutesShellCode(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestREPLToolLoadsConfiguredEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	out, err := REPLTool{
+		Workspace: t.TempDir(),
+		ConfigEnv: map[string]string{"CODOG_REPL_ENV": "ready"},
+	}.Execute(context.Background(), []byte(`{"language":"sh","code":"printf %s \"$CODOG_REPL_ENV\"","timeout_ms":1000}`))
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ready"`)
+}
+
 func TestSkillToolLoadsAndRendersSkill(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
@@ -3675,6 +3702,21 @@ func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
 	}.Execute(context.Background(), []byte(`{"ok":true}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ok`)
+}
+
+func TestCommandToolLoadsConfiguredEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	out, err := CommandTool{
+		Name:      "env_echo",
+		Command:   "sh",
+		Args:      []string{"-c", `printf %s "$CODOG_COMMAND_ENV"`},
+		Workspace: t.TempDir(),
+		ConfigEnv: map[string]string{"CODOG_COMMAND_ENV": "ready"},
+	}.Execute(context.Background(), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"stdout": "ready"`)
 }
 
 func TestBashToolRejectsUnavailableSandbox(t *testing.T) {

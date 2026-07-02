@@ -138,6 +138,17 @@ func TestValidateBytesValidatesAPITimeoutTypes(t *testing.T) {
 	require.Equal(t, "a number", result.Errors[0].Expected)
 }
 
+func TestValidateBytesValidatesTopLevelEnv(t *testing.T) {
+	source := []byte(`{"env":{"A":"one","B":2}}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "env", result.Errors[0].Field)
+	require.Equal(t, "an object with string values", result.Errors[0].Expected)
+}
+
 func TestValidateFileRejectsTOMLAndReportSummarizes(t *testing.T) {
 	dir := t.TempDir()
 	goodPath := filepath.Join(dir, "config.json")
