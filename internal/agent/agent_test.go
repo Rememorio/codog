@@ -1795,7 +1795,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
-	for _, command := range []string{"/pr", "/issue", "/bughunter", "/new", "/quit", "/ultraplan"} {
+	for _, command := range []string{"/pr", "/issue", "/new", "/quit", "/ultraplan"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
@@ -12087,6 +12087,22 @@ func TestBughunterCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Bughunter")
 	require.Contains(t, out.String(), "ignored-return-value")
 	require.Empty(t, errOut.String())
+	out.Reset()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": t.TempDir()})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+	cliOut, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/bughunter", ".", "--limit", "5"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, cliOut, `"kind": "bughunter"`)
+	require.Contains(t, cliOut, `"rule": "ignored-return-value"`)
 }
 
 func TestReviewCommandAndSlash(t *testing.T) {
