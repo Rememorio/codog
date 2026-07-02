@@ -17470,10 +17470,16 @@ func TestIDECommandReportsAndClearsEditorState(t *testing.T) {
 	require.Contains(t, out.String(), "Bridge Kick")
 	require.Contains(t, out.String(), "Status           ok")
 	require.Contains(t, out.String(), "Recorded         poll 404")
+	require.Contains(t, out.String(), "Fault severity   warn")
+	require.Contains(t, out.String(), "Fault category   polling")
+	require.Contains(t, out.String(), "Remediation")
 	out.Reset()
 
 	require.NoError(t, app.BridgeKick([]string{"status", "--json"}))
 	require.Contains(t, out.String(), `"action": "poll"`)
+	require.Contains(t, out.String(), `"category": "polling"`)
+	require.Contains(t, out.String(), `"severity": "warn"`)
+	require.Contains(t, out.String(), `"recoverable": true`)
 	require.Contains(t, out.String(), `"404"`)
 	out.Reset()
 

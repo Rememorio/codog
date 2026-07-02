@@ -2561,11 +2561,17 @@ func renderBridgeKickReport(out io.Writer, report bridgeKickReport) {
 	}
 	if report.Recorded != nil {
 		fmt.Fprintf(out, "  Recorded         %s %s\n", report.Recorded.Action, strings.Join(report.Recorded.Args, " "))
+		fmt.Fprintf(out, "  Fault severity   %s\n", report.Recorded.Severity)
+		fmt.Fprintf(out, "  Fault category   %s\n", report.Recorded.Category)
 		fmt.Fprintf(out, "  Fault message    %s\n", report.Recorded.Message)
+		fmt.Fprintf(out, "  Remediation      %s\n", report.Recorded.Remediation)
 	} else if len(report.Faults) > 0 {
 		last := report.Faults[len(report.Faults)-1]
 		fmt.Fprintf(out, "  Last fault       %s %s\n", last.Action, strings.Join(last.Args, " "))
+		fmt.Fprintf(out, "  Fault severity   %s\n", last.Severity)
+		fmt.Fprintf(out, "  Fault category   %s\n", last.Category)
 		fmt.Fprintf(out, "  Fault message    %s\n", last.Message)
+		fmt.Fprintf(out, "  Remediation      %s\n", last.Remediation)
 	}
 	if report.State.Identity == nil {
 		fmt.Fprintln(out, "  Trusted editor   none")
