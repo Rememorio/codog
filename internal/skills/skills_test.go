@@ -198,6 +198,42 @@ func TestCompatibilityProjectSkillRoots(t *testing.T) {
 	require.True(t, clawCommandSource.Exists)
 }
 
+func TestContextualForPathsDiscoversNestedSkillRoots(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	rootSkill := filepath.Join(workspace, ".claude", "skills", "review")
+	nestedSkill := filepath.Join(workspace, "src", "app", ".claude", "skills", "review")
+	codogNestedSkill := filepath.Join(workspace, "src", "app", ".codog", "skills", "local")
+	require.NoError(t, os.MkdirAll(rootSkill, 0o755))
+	require.NoError(t, os.MkdirAll(nestedSkill, 0o755))
+	require.NoError(t, os.MkdirAll(codogNestedSkill, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(rootSkill, "SKILL.md"), []byte("Root Claude review."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(nestedSkill, "SKILL.md"), []byte("Nested Claude review."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(codogNestedSkill, "SKILL.md"), []byte("Nested Codog local."), 0o644))
+
+	all, err := LoadForPaths(configHome, workspace, []string{"src/app/main.go"})
+	require.NoError(t, err)
+	review := skillByNameAndSource(all, "review", "claude")
+	require.True(t, review.Active)
+	require.True(t, review.dynamic)
+	expectedNestedPath, err := filepath.EvalSymlinks(filepath.Join(nestedSkill, "SKILL.md"))
+	require.NoError(t, err)
+	require.Equal(t, expectedNestedPath, review.Path)
+	require.Equal(t, "Nested Claude review.", review.Body)
+
+	contextual, err := ContextualForPaths(configHome, workspace, []string{"src/app/main.go"})
+	require.NoError(t, err)
+	require.Contains(t, skillNames(contextual), "review")
+	require.Contains(t, skillNames(contextual), "local")
+	require.Contains(t, skillBodies(contextual), "Nested Claude review.")
+	require.Contains(t, skillBodies(contextual), "Nested Codog local.")
+
+	contextual, err = ContextualForPaths(configHome, workspace, []string{"other/main.go"})
+	require.NoError(t, err)
+	require.NotContains(t, skillBodies(contextual), "Nested Claude review.")
+	require.NotContains(t, skillBodies(contextual), "Nested Codog local.")
+}
+
 func TestCompatibilityConfigAndHomeSkillRoots(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -382,6 +418,14 @@ func skillNames(all []Skill) []string {
 		names = append(names, skill.Name)
 	}
 	return names
+}
+
+func skillBodies(all []Skill) []string {
+	bodies := make([]string, 0, len(all))
+	for _, skill := range all {
+		bodies = append(bodies, skill.Body)
+	}
+	return bodies
 }
 
 func skillByNameAndSource(all []Skill, name string, source string) Skill {

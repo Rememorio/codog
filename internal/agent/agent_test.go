@@ -11759,6 +11759,31 @@ Script review body.
 	require.NotContains(t, prompt, "Script review body.")
 }
 
+func TestSystemPromptDiscoversNestedSkillsForReferencedPaths(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "app", ".claude", "skills", "local-review"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src", "app"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "app", "main.go"), []byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "src", "app", ".claude", "skills", "local-review", "SKILL.md"), []byte(`---
+description: Review files in this app subtree.
+---
+Nested app review body.
+`), 0o644))
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+	}
+
+	prompt := app.systemPromptForInput("inspect @src/app/main.go")
+	require.Contains(t, prompt, `<skill name="local-review"`)
+	require.Contains(t, prompt, "Description: Review files in this app subtree.")
+	require.Contains(t, prompt, "Nested app review body.")
+
+	prompt = app.systemPromptForInput("inspect @other/main.go")
+	require.NotContains(t, prompt, "Nested app review body.")
+}
+
 func TestSkillFrontmatterControlsInvocationAndSystemPrompt(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()

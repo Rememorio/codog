@@ -42,6 +42,8 @@ type Skill struct {
 	ShadowedBy             string   `json:"shadowed_by,omitempty"`
 	ShadowedByPath         string   `json:"shadowed_by_path,omitempty"`
 	NameDrift              bool     `json:"metadata_drift,omitempty"`
+	priority               int
+	dynamic                bool
 }
 
 type Origin struct {
@@ -305,11 +307,47 @@ type root struct {
 	originDetail string
 	pluginRoot   string
 	pluginData   string
+	priority     int
+	dynamic      bool
 }
 
 func Load(configHome, workspace string) ([]Skill, error) {
+	return load(configHome, workspace, nil)
+}
+
+func LoadForPaths(configHome, workspace string, paths []string) ([]Skill, error) {
+	return load(configHome, workspace, dynamicSkillRootsForPaths(workspace, paths))
+}
+
+func ContextualForPaths(configHome, workspace string, paths []string) ([]Skill, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	all, err := LoadForPaths(configHome, workspace, paths)
+	if err != nil {
+		return nil, err
+	}
+	out := []Skill{}
+	for _, skill := range all {
+		if !skill.Active || skill.DisableModelInvocation {
+			continue
+		}
+		if len(skill.Paths) == 0 {
+			if skill.dynamic {
+				out = append(out, skill)
+			}
+			continue
+		}
+		if MatchesAnyPath(skill, paths) {
+			out = append(out, skill)
+		}
+	}
+	return out, nil
+}
+
+func load(configHome, workspace string, extraRoots []root) ([]Skill, error) {
 	out := Bundled()
-	for _, root := range roots(configHome, workspace) {
+	for _, root := range append(roots(configHome, workspace), extraRoots...) {
 		if _, err := os.Stat(root.path); err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -352,6 +390,9 @@ func Load(configHome, workspace string) ([]Skill, error) {
 				leftOrigin := originRank(out[i].Origin)
 				rightOrigin := originRank(out[j].Origin)
 				if leftOrigin == rightOrigin {
+					if out[i].priority != out[j].priority {
+						return out[i].priority < out[j].priority
+					}
 					return out[i].Path < out[j].Path
 				}
 				return leftOrigin < rightOrigin
@@ -362,6 +403,80 @@ func Load(configHome, workspace string) ([]Skill, error) {
 	})
 	annotateActiveSkills(out)
 	return out, nil
+}
+
+func dynamicSkillRootsForPaths(workspace string, paths []string) []root {
+	workspaceAbs, err := filepath.Abs(strings.TrimSpace(workspace))
+	if err != nil {
+		return nil
+	}
+	workspaceAbs = filepath.Clean(workspaceAbs)
+	if resolved, err := filepath.EvalSymlinks(workspaceAbs); err == nil {
+		workspaceAbs = resolved
+	}
+	seen := map[string]bool{}
+	out := []root{}
+	add := func(path string, source string, priority int) {
+		if !existingDir(path) {
+			return
+		}
+		key := filepath.Clean(path)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, root{path: key, source: source, originID: originSkillsDir, priority: priority, dynamic: true})
+	}
+	for _, candidate := range paths {
+		start := dynamicSkillStartDir(workspaceAbs, candidate)
+		if start == "" {
+			continue
+		}
+		for current := start; pathWithin(workspaceAbs, current) && current != workspaceAbs; current = filepath.Dir(current) {
+			priority := -pathDepthWithin(workspaceAbs, current)
+			add(filepath.Join(current, ".codog", "skills"), "workspace", priority)
+			add(filepath.Join(current, ".claude", "skills"), "claude", priority)
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].priority == out[j].priority {
+			return out[i].path < out[j].path
+		}
+		return out[i].priority < out[j].priority
+	})
+	return out
+}
+
+func dynamicSkillStartDir(workspaceAbs string, candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return ""
+	}
+	candidate = filepath.FromSlash(candidate)
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(workspaceAbs, candidate)
+	}
+	candidate = filepath.Clean(candidate)
+	if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+		candidate = resolved
+	}
+	info, err := os.Stat(candidate)
+	if err == nil && info.IsDir() {
+		return candidate
+	}
+	return filepath.Dir(candidate)
+}
+
+func pathDepthWithin(rootPath string, path string) int {
+	rel, err := filepath.Rel(rootPath, path)
+	if err != nil || rel == "." {
+		return 0
+	}
+	return len(strings.Split(filepath.ToSlash(rel), "/"))
 }
 
 func Bundled() []Skill {
@@ -924,7 +1039,10 @@ func ParseDocument(name string, path string, source string, text string) Skill {
 }
 
 func parseDocumentFromRoot(name string, path string, root root, text string) Skill {
-	return parseDocumentWithContext(name, path, root.source, skillDir(path), root.pluginRoot, root.pluginData, rootOrigin(root), text)
+	skill := parseDocumentWithContext(name, path, root.source, skillDir(path), root.pluginRoot, root.pluginData, rootOrigin(root), text)
+	skill.priority = root.priority
+	skill.dynamic = root.dynamic
+	return skill
 }
 
 func parseDocumentWithContext(name string, path string, source string, skillRoot string, pluginRoot string, pluginData string, origin *Origin, text string) Skill {
@@ -1175,7 +1293,7 @@ func sourceRank(source string) int {
 }
 
 func skillPriority(skill Skill) int {
-	return sourceRank(skill.Source)*10 + originRank(skill.Origin)
+	return sourceRank(skill.Source)*10000 + originRank(skill.Origin)*1000 + skill.priority
 }
 
 func originRank(origin *Origin) int {
@@ -1210,6 +1328,14 @@ func cloneOrigin(origin *Origin) *Origin {
 		return newOrigin(originSkillsDir, "")
 	}
 	return newOrigin(origin.ID, origin.DetailLabel)
+}
+
+func pathWithin(rootPath string, path string) bool {
+	rel, err := filepath.Rel(rootPath, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel)
 }
 
 func escapeAttr(value string) string {

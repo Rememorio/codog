@@ -37632,20 +37632,11 @@ func (a *App) pathMatchedSkills(input string) []skills.Skill {
 	if len(paths) == 0 {
 		return nil
 	}
-	all, err := skills.Load(a.Config.ConfigHome, a.Workspace)
+	contextual, err := skills.ContextualForPaths(a.Config.ConfigHome, a.Workspace, paths)
 	if err != nil {
 		return nil
 	}
-	out := []skills.Skill{}
-	for _, skill := range all {
-		if skill.DisableModelInvocation || len(skill.Paths) == 0 {
-			continue
-		}
-		if skills.MatchesAnyPath(skill, paths) {
-			out = append(out, skill)
-		}
-	}
-	return out
+	return contextual
 }
 
 func (a *App) skillContextPaths(input string) []string {
