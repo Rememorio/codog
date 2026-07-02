@@ -134,6 +134,8 @@ func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
 	require.GreaterOrEqual(t, len(bundled), 16)
 	require.Contains(t, skillNames(bundled), "claudeApi")
 	require.Contains(t, skillNames(bundled), "scheduleRemoteAgents")
+	require.Contains(t, skillNames(bundled), "testFixtures")
+	require.NotContains(t, skillNames(bundled), "loremIpsum")
 
 	verify, err := Find(configHome, workspace, "verify")
 	require.NoError(t, err)
@@ -156,6 +158,13 @@ func TestBundledSkillsLoadAndCanBeOverridden(t *testing.T) {
 	require.Equal(t, "builtin://skills/debug.md", debug.Path)
 	require.Contains(t, debug.Description, "Debug failing Codog behavior")
 	require.Contains(t, RenderInvocation(debug, "failing test"), "User request: failing test")
+
+	fixtures, err := Find(configHome, workspace, "testFixtures")
+	require.NoError(t, err)
+	require.Equal(t, "bundled", fixtures.Source)
+	require.Contains(t, fixtures.Description, "deterministic test fixtures")
+	require.Contains(t, RenderInvocation(fixtures, "session export"), "stable IDs")
+	require.NotContains(t, RenderInvocation(fixtures, ""), "placeholder")
 }
 
 func TestCompatibilityProjectSkillRoots(t *testing.T) {

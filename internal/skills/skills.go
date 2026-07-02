@@ -194,15 +194,15 @@ Use this skill for work that needs repeated inspect, edit, run, and refine cycle
 
 Keep each iteration small, record what failed, update the implementation based on evidence, and stop only after the relevant validation passes or a real blocker is identified.
 `,
-	"loremIpsum": `---
-description: Generate neutral placeholder copy for local demos and tests.
-argument-hint: COPY_NEED
+	"testFixtures": `---
+description: Design deterministic test fixtures and example data for Codog workflows.
+argument-hint: FIXTURE_NEED
 ---
-# Lorem Ipsum
+# Test Fixtures
 
-Use this skill when placeholder prose is needed for fixtures, examples, or UI smoke tests.
+Use this skill when tests, examples, mock provider scenarios, or UI smoke checks need concrete fixture data.
 
-Prefer short neutral text that is clearly sample content and avoid realistic secrets, credentials, personal data, or operational claims.
+Keep fixtures deterministic, small, and domain-relevant. Include stable IDs, timestamps, paths, and expected outputs when they help assertions. Use obviously synthetic secrets and personal data, and call out any redaction expectations.
 `,
 	"remember": `---
 description: Capture durable project guidance in memory files.
