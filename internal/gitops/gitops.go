@@ -40,6 +40,8 @@ type BranchList struct {
 type BranchFreshness struct {
 	Branch              string            `json:"branch"`
 	Base                string            `json:"base"`
+	Upstream            string            `json:"upstream,omitempty"`
+	HasUpstream         bool              `json:"has_upstream"`
 	Status              string            `json:"status"`
 	Fresh               bool              `json:"fresh"`
 	Ahead               int               `json:"ahead"`
@@ -329,6 +331,7 @@ func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, erro
 	if err != nil {
 		return BranchFreshness{}, err
 	}
+	upstream := branchUpstream(workspace, branch)
 	status := "fresh"
 	if behind > 0 && ahead > 0 {
 		status = "diverged"
@@ -338,6 +341,8 @@ func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, erro
 	freshness := BranchFreshness{
 		Branch:       branch,
 		Base:         base,
+		Upstream:     upstream,
+		HasUpstream:  upstream != "",
 		Status:       status,
 		Fresh:        behind == 0,
 		Ahead:        ahead,
@@ -345,6 +350,14 @@ func CheckBranchFreshness(workspace, branch, base string) (BranchFreshness, erro
 		MissingFixes: missing,
 	}
 	return annotateBranchFreshness(freshness), nil
+}
+
+func branchUpstream(workspace, branch string) string {
+	raw, err := git(workspace, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(raw)
 }
 
 func ResolveExpectedBase(workspace string, flagValue string) (*BaseCommitSource, error) {

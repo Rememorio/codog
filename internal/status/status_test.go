@@ -141,6 +141,8 @@ func TestBuildWarnsOnStaleBranchFreshness(t *testing.T) {
 		GitFreshness: &gitops.BranchFreshness{
 			Branch:       "topic",
 			Base:         "main",
+			Upstream:     "origin/topic",
+			HasUpstream:  true,
 			Status:       "stale",
 			Fresh:        false,
 			Ahead:        0,
@@ -152,11 +154,13 @@ func TestBuildWarnsOnStaleBranchFreshness(t *testing.T) {
 	require.Equal(t, "warn", snapshot.Status)
 	require.NotNil(t, snapshot.Git.Freshness)
 	require.Equal(t, "stale", snapshot.Git.Freshness.Status)
+	require.True(t, snapshot.Git.Freshness.HasUpstream)
+	require.Equal(t, "origin/topic", snapshot.Git.Freshness.Upstream)
 	require.Equal(t, 2, snapshot.Git.Freshness.Behind)
 
 	var out bytes.Buffer
 	RenderText(&out, snapshot)
-	require.Contains(t, out.String(), "Git freshness    status=stale base=main ahead=0 behind=2")
+	require.Contains(t, out.String(), "Git freshness    status=stale base=main upstream=origin/topic ahead=0 behind=2")
 }
 
 func TestBuildMarksInvalidValidationDegraded(t *testing.T) {

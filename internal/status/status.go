@@ -676,9 +676,14 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 		)
 		if snapshot.Git.Freshness != nil {
 			freshness := snapshot.Git.Freshness
-			fmt.Fprintf(w, "  Git freshness    status=%s base=%s ahead=%d behind=%d\n",
+			upstream := ""
+			if freshness.HasUpstream {
+				upstream = " upstream=" + freshness.Upstream
+			}
+			fmt.Fprintf(w, "  Git freshness    status=%s base=%s%s ahead=%d behind=%d\n",
 				freshness.Status,
 				freshness.Base,
+				upstream,
 				freshness.Ahead,
 				freshness.Behind,
 			)

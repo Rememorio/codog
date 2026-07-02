@@ -175,10 +175,18 @@ func TestCheckBranchFreshness(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fresh", freshness.Status)
 	require.True(t, freshness.Fresh)
+	require.False(t, freshness.HasUpstream)
+	require.Empty(t, freshness.Upstream)
 	require.Zero(t, freshness.Ahead)
 	require.Zero(t, freshness.Behind)
 	require.False(t, freshness.VerificationBlocked)
 	require.Nil(t, freshness.Event)
+
+	runGit(t, workspace, "branch", "--set-upstream-to", "main", "topic")
+	freshness, err = CheckBranchFreshness(workspace, "topic", "main")
+	require.NoError(t, err)
+	require.True(t, freshness.HasUpstream)
+	require.Equal(t, "main", freshness.Upstream)
 
 	runGit(t, workspace, "switch", "main")
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644))
