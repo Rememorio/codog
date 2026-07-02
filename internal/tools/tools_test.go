@@ -3608,6 +3608,12 @@ func TestApprovalTokenToolPersistsAndConsumesGrant(t *testing.T) {
 	require.Contains(t, listOut, `"token": "tok-main"`)
 }
 
+func TestCommandToolPermissionDefaultsToDanger(t *testing.T) {
+	require.Equal(t, PermissionDanger, CommandTool{}.Permission())
+	require.Equal(t, PermissionReadOnly, CommandTool{Required: PermissionReadOnly}.Permission())
+	require.Equal(t, PermissionWorkspace, CommandTool{Required: PermissionWorkspace}.Permission())
+}
+
 func TestCommandToolExecutesWithJSONStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX cat")

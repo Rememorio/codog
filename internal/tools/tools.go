@@ -84,6 +84,8 @@ type Tool interface {
 }
 
 // CommandTool adapts a local executable into a model-callable tool.
+// Tools without an explicit permission default to danger-full-access because
+// they run arbitrary host executables.
 type CommandTool struct {
 	Name        string
 	Description string
@@ -1069,7 +1071,7 @@ func (t CommandTool) Definition() anthropic.ToolDefinition {
 
 func (t CommandTool) Permission() Permission {
 	if t.Required == "" {
-		return PermissionWorkspace
+		return PermissionDanger
 	}
 	return t.Required
 }
