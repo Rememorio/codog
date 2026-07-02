@@ -32,6 +32,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, preToolHook.ToolCalls)
 	require.Contains(t, preToolHook.Output, "pre hook harness ok")
 
+	userPromptHook := findScenario(t, report, "user_prompt_hook_adds_context")
+	require.True(t, userPromptHook.OK)
+	require.Equal(t, []int{2}, userPromptHook.RequestMessageCounts)
+	require.Contains(t, userPromptHook.Output, "prompt hook harness ok")
+
 	postToolHook := findScenario(t, report, "post_tool_hook_blocks_result")
 	require.True(t, postToolHook.OK)
 	require.Equal(t, 1, postToolHook.ToolCalls)

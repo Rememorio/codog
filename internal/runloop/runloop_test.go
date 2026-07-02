@@ -333,8 +333,10 @@ func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 			MaxTokens: 128,
 			MaxTurns:  2,
 			Hooks: config.HookConfig{
-				UserPromptSubmitCommands: []config.HookCommand{{Command: "cat > prompt.json"}},
-				StopCommands:             []config.HookCommand{{Command: "cat > stop.json"}},
+				UserPromptSubmitCommands: []config.HookCommand{{
+					Command: `cat > prompt.json; printf '%s' '{"systemMessage":"prompt note","hookSpecificOutput":{"additionalContext":"prompt context"}}'`,
+				}},
+				StopCommands: []config.HookCommand{{Command: "cat > stop.json"}},
 			},
 		},
 		Client:    client,
@@ -348,6 +350,13 @@ func TestRunnerExecutesPromptSubmitAndStopHooks(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(promptPayload), `"event":"user_prompt_submit"`)
 	require.Contains(t, string(promptPayload), `"input":"hello"`)
+	require.Len(t, client.requests, 1)
+	require.Len(t, client.requests[0].Messages, 2)
+	require.Equal(t, "hello", client.requests[0].Messages[0].Content[0].Text)
+	promptFeedback := client.requests[0].Messages[1].Content[0].Text
+	require.Contains(t, promptFeedback, "UserPromptSubmit hook feedback:")
+	require.Contains(t, promptFeedback, "prompt note")
+	require.Contains(t, promptFeedback, "prompt context")
 
 	stopPayload, err := os.ReadFile(workspace + "/stop.json")
 	require.NoError(t, err)

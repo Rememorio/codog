@@ -213,11 +213,24 @@ func (r Runner) PermissionDenied(ctx context.Context, tool string, input []byte,
 }
 
 func (r Runner) UserPromptSubmit(ctx context.Context, input string) error {
+	report, err := r.UserPromptSubmitReport(ctx, input)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// UserPromptSubmitReport runs UserPromptSubmit hooks and returns parsed hook
+// feedback that can be added to the next model request.
+func (r Runner) UserPromptSubmitReport(ctx context.Context, input string) (RunReport, error) {
 	payload := Payload{
 		Event: "user_prompt_submit",
 		Input: input,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) SessionStart(ctx context.Context, input string) error {

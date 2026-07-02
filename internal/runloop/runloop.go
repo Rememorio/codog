@@ -98,9 +98,14 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		hookRunner.PromptRunner = r.HookPromptRunner
 	}
 	toolCtx := tools.ContextWithSessionID(ctx, r.SessionID)
-	if err := hookRunner.UserPromptSubmit(ctx, input); err != nil {
+	promptReport, err := hookRunner.UserPromptSubmitReport(ctx, input)
+	if err != nil {
 		return TurnResult{}, err
 	}
+	if promptReport.Denied {
+		return TurnResult{}, hookDeniedReportError("user_prompt_submit", promptReport)
+	}
+	messages = appendUserPromptHookFeedback(messages, hooks.MessagesFromReport(promptReport))
 	var toolCalls []ToolCall
 	var messageUsages []MessageUsage
 	for turn := 0; turn < r.Config.MaxTurns; turn++ {
@@ -309,11 +314,11 @@ func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input str
 		ToolCalls:     toolCalls,
 		Iterations:    r.Config.MaxTurns,
 	}
-	err := errors.New("conversation exceeded max turns")
-	if hookErr := hookRunner.StopFailure(ctx, err.Error(), "max_turns"); hookErr != nil {
-		return result, fmt.Errorf("%w; stop failure hook: %v", err, hookErr)
+	maxTurnsErr := errors.New("conversation exceeded max turns")
+	if hookErr := hookRunner.StopFailure(ctx, maxTurnsErr.Error(), "max_turns"); hookErr != nil {
+		return result, fmt.Errorf("%w; stop failure hook: %v", maxTurnsErr, hookErr)
 	}
-	return result, err
+	return result, maxTurnsErr
 }
 
 func (r Runner) toolDefinitions() []anthropic.ToolDefinition {
@@ -438,6 +443,14 @@ func appendCompactionHookFeedback(messages []anthropic.Message, feedback []strin
 	text := strings.TrimRight(out[0].Content[0].Text, "\n")
 	out[0].Content[0].Text = text + "\n\nCompaction hook feedback:\n" + strings.Join(feedback, "\n")
 	return out
+}
+
+func appendUserPromptHookFeedback(messages []anthropic.Message, feedback []string) []anthropic.Message {
+	feedback = compactHookFeedbackMessages(feedback)
+	if len(feedback) == 0 {
+		return messages
+	}
+	return append(messages, anthropic.TextMessage("user", "UserPromptSubmit hook feedback:\n\n"+strings.Join(feedback, "\n")))
 }
 
 func hookDeniedReportError(event string, report hooks.RunReport) error {

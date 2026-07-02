@@ -201,6 +201,36 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		{
+			name: "user_prompt_hook_adds_context",
+			hooks: config.HookConfig{
+				UserPromptSubmitCommands: []config.HookCommand{{
+					Command: `printf '%s' '{"systemMessage":"prompt parity note","hookSpecificOutput":{"additionalContext":"prompt parity context"}}'`,
+				}},
+			},
+			turns:  []mockanthropic.Turn{{Text: "prompt hook harness ok"}},
+			prompt: "prompt hook context",
+			verify: func(_ string, _ runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "prompt hook harness ok") {
+					return fmt.Errorf("missing prompt hook final response")
+				}
+				return nil
+			},
+			verifyRequests: func(requests []anthropic.Request) error {
+				if len(requests) != 1 {
+					return fmt.Errorf("expected 1 prompt hook request, got %d", len(requests))
+				}
+				if len(requests[0].Messages) != 2 {
+					return fmt.Errorf("expected prompt hook feedback message, got %d messages", len(requests[0].Messages))
+				}
+				feedback := requests[0].Messages[1].Content[0].Text
+				if !strings.Contains(feedback, "prompt parity note") ||
+					!strings.Contains(feedback, "prompt parity context") {
+					return fmt.Errorf("missing prompt hook feedback in request")
+				}
+				return nil
+			},
+		},
+		{
 			name:       "post_tool_hook_blocks_result",
 			permission: tools.PermissionWorkspace,
 			hooks: config.HookConfig{
