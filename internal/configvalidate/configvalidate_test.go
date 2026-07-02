@@ -85,7 +85,7 @@ func TestValidateBytesValidatesMCPRemoteHeaders(t *testing.T) {
 }
 
 func TestValidateBytesAcceptsMCPRemoteServer(t *testing.T) {
-	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"headersHelper":"./headers-helper","required":true},"remote_snake":{"url":"https://mcp.example.test","headers_helper":"./headers-helper"}}}`)
+	source := []byte(`{"mcp_servers":{"remote":{"url":"https://mcp.example.test","headers":{"Authorization":"Bearer token"},"headersHelper":"./headers-helper","toolCallTimeoutMs":15000,"required":true},"remote_snake":{"url":"https://mcp.example.test","headers_helper":"./headers-helper","tool_call_timeout_ms":25000}}}`)
 
 	result := ValidateBytes(source, "config.json")
 
@@ -114,6 +114,17 @@ func TestValidateBytesValidatesMCPHeadersHelperType(t *testing.T) {
 	require.Len(t, result.Errors, 1)
 	require.Equal(t, "mcp_servers.remote.headersHelper", result.Errors[0].Field)
 	require.Equal(t, "a string", result.Errors[0].Expected)
+}
+
+func TestValidateBytesValidatesMCPToolCallTimeoutType(t *testing.T) {
+	source := []byte(`{"mcp_servers":{"local":{"command":"demo","toolCallTimeoutMs":"fast"}}}`)
+
+	result := ValidateBytes(source, "config.json")
+
+	require.Equal(t, "error", result.Status)
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, "mcp_servers.local.toolCallTimeoutMs", result.Errors[0].Field)
+	require.Equal(t, "a number", result.Errors[0].Expected)
 }
 
 func TestValidateFileRejectsTOMLAndReportSummarizes(t *testing.T) {

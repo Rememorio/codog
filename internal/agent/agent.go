@@ -39233,6 +39233,9 @@ func renderMCPShowReport(out io.Writer, format string, report mcpShowReport) {
 			fmt.Fprintf(out, "  Command          %s\n", report.Server.Details.Command)
 			fmt.Fprintf(out, "  Args count       %d\n", report.Server.Details.ArgsCount)
 		}
+		if report.Server.Details.ToolCallTimeoutMS > 0 {
+			fmt.Fprintf(out, "  Tool timeout     %dms\n", report.Server.Details.ToolCallTimeoutMS)
+		}
 		if len(report.Server.Details.EnvKeys) > 0 {
 			fmt.Fprintf(out, "  Env keys         %s\n", strings.Join(report.Server.Details.EnvKeys, ", "))
 		}
@@ -39320,7 +39323,7 @@ func currentWorkingDirectory() string {
 	return wd
 }
 
-const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] | add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
+const mcpUsage = "usage: codog mcp list | serve | self | show|info|describe SERVER | add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required] | add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required] | remove SERVER | tools [SERVER] | auth [SERVER] | call SERVER TOOL JSON | resources [SERVER] | resource-templates [SERVER] | read SERVER URI | prompts [SERVER] | prompt SERVER NAME [JSON]"
 
 type mcpSelfReport struct {
 	Kind          string   `json:"kind"`
@@ -39489,14 +39492,14 @@ func (a *App) mcpAdd(args []string, format string) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, errMCPAddMissingName):
-			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required].", format)
+			return renderMissingActionArgument(a.Out, "mcp", "add", "server_name", "mcp add requires a server name", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required].", format)
 		case errors.Is(err, errMCPAddMissingCommand):
-			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required].", format)
+			return renderMissingActionArgument(a.Out, "mcp", "add", "command_or_url", "mcp add requires a command or --url", "Usage: codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required] or codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required].", format)
 		}
 		return err
 	}
 	path := filepath.Join(a.Config.ConfigHome, "config.json")
-	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers, HeadersHelper: req.HeadersHelper, Required: req.Required}
+	server := config.MCPServerConfig{Command: req.Command, Args: req.Args, Env: req.Env, URL: req.URL, Headers: req.Headers, HeadersHelper: req.HeadersHelper, ToolCallTimeoutMS: req.ToolCallTimeoutMS, Required: req.Required}
 	report, err := config.SetFileValue(path, "mcp_servers."+req.Name, server)
 	if err != nil {
 		return err
@@ -39727,14 +39730,15 @@ func renderXAAIDPReport(out io.Writer, report xaaIDPReport) {
 }
 
 type mcpAddRequest struct {
-	Name          string
-	Command       string
-	Args          []string
-	Env           []string
-	URL           string
-	Headers       map[string]string
-	HeadersHelper string
-	Required      bool
+	Name              string
+	Command           string
+	Args              []string
+	Env               []string
+	URL               string
+	Headers           map[string]string
+	HeadersHelper     string
+	ToolCallTimeoutMS int
+	Required          bool
 }
 
 var (
@@ -39787,6 +39791,28 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 			req.HeadersHelper = strings.TrimPrefix(arg, "--headers-helper=")
 		case strings.HasPrefix(arg, "--headersHelper="):
 			req.HeadersHelper = strings.TrimPrefix(arg, "--headersHelper=")
+		case arg == "--tool-call-timeout-ms" || arg == "--toolCallTimeoutMs":
+			index++
+			if index >= len(args) {
+				return req, errors.New("mcp add tool call timeout value is required")
+			}
+			timeout, err := parseMCPToolCallTimeout(args[index])
+			if err != nil {
+				return req, err
+			}
+			req.ToolCallTimeoutMS = timeout
+		case strings.HasPrefix(arg, "--tool-call-timeout-ms="):
+			timeout, err := parseMCPToolCallTimeout(strings.TrimPrefix(arg, "--tool-call-timeout-ms="))
+			if err != nil {
+				return req, err
+			}
+			req.ToolCallTimeoutMS = timeout
+		case strings.HasPrefix(arg, "--toolCallTimeoutMs="):
+			timeout, err := parseMCPToolCallTimeout(strings.TrimPrefix(arg, "--toolCallTimeoutMs="))
+			if err != nil {
+				return req, err
+			}
+			req.ToolCallTimeoutMS = timeout
 		case arg == "--required":
 			req.Required = true
 		case arg == "--optional":
@@ -39811,6 +39837,9 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		return req, err
 	}
 	if strings.TrimSpace(req.URL) != "" {
+		if req.ToolCallTimeoutMS > 0 {
+			return req, errors.New("mcp add --tool-call-timeout-ms applies only to stdio servers")
+		}
 		if len(positionals) > 1 {
 			return req, errors.New("mcp add with --url does not accept COMMAND arguments")
 		}
@@ -39836,6 +39865,14 @@ func parseMCPAddArgs(args []string) (mcpAddRequest, error) {
 		}
 	}
 	return req, nil
+}
+
+func parseMCPToolCallTimeout(value string) (int, error) {
+	timeout, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || timeout <= 0 {
+		return 0, fmt.Errorf("mcp tool call timeout must be a positive integer in milliseconds: %s", value)
+	}
+	return timeout, nil
 }
 
 func validateMCPAddURL(rawURL string) error {
@@ -45148,7 +45185,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"mcp",
 			"mcp",
 			"codog mcp [list|serve|self|show|info|describe|add|remove|tools [SERVER]|auth [SERVER]|call|resources [SERVER]|resource-templates [SERVER]|read|prompts [SERVER]|prompt]",
-			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|auth|resources|resource-templates|prompts [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, and prompts. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
+			"MCP\n\nUsage:\n  codog mcp list\n  codog mcp show|info|describe SERVER\n  codog mcp add NAME COMMAND [ARG...] [--env KEY=VALUE] [--tool-call-timeout-ms N] [--required]\n  codog mcp add NAME --url URL [--header KEY=VALUE] [--headers-helper COMMAND] [--required]\n  codog mcp tools|auth|resources|resource-templates|prompts [SERVER]\n  codog mcp call SERVER TOOL JSON\n  codog mcp read SERVER URI\n  codog mcp prompt SERVER NAME [JSON]\n\nServes Codog tools over stdio MCP and manages configured stdio and HTTP MCP clients, tools, resources, and prompts. Discovery commands without SERVER aggregate all configured servers. `info` and `describe` are aliases for `show`.\n",
 			[]string{"servers", "tools", "resources", "prompts", "result"},
 			[]string{"ok", "error"},
 			true,

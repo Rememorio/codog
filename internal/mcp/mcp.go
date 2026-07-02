@@ -231,6 +231,7 @@ type ServerDetails struct {
 	Command                 string   `json:"command,omitempty"`
 	URL                     string   `json:"url,omitempty"`
 	ArgsCount               int      `json:"args_count"`
+	ToolCallTimeoutMS       int      `json:"tool_call_timeout_ms,omitempty"`
 	EnvKeys                 []string `json:"env_keys,omitempty"`
 	HeaderKeys              []string `json:"header_keys,omitempty"`
 	HeadersHelperConfigured bool     `json:"headers_helper_configured,omitempty"`
@@ -335,10 +336,11 @@ func ServerConfigHash(server config.MCPServerConfig) string {
 		return stableHexHash(fmt.Sprintf("required:%t|%s", server.Required, rendered))
 	}
 	rendered := fmt.Sprintf(
-		"stdio|%s|%s|%s|",
+		"stdio|%s|%s|%s|%d|",
 		server.Command,
 		renderCommandSignature(server.Args),
 		renderEnvSignature(server.Env),
+		server.ToolCallTimeoutMS,
 	)
 	return stableHexHash(fmt.Sprintf("required:%t|%s", server.Required, rendered))
 }
@@ -366,9 +368,10 @@ func DescribeServer(name string, server config.MCPServerConfig) ServerDescriptor
 		Transport: ServerTransport{ID: "stdio", Label: "stdio"},
 		Summary:   stdioServerSummary(server),
 		Details: ServerDetails{
-			Command:   server.Command,
-			ArgsCount: len(server.Args),
-			EnvKeys:   envKeys(server.Env),
+			Command:           server.Command,
+			ArgsCount:         len(server.Args),
+			ToolCallTimeoutMS: server.ToolCallTimeoutMS,
+			EnvKeys:           envKeys(server.Env),
 		},
 	}
 }
@@ -1004,7 +1007,7 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 	if server.Command == "" {
 		return nil, fmt.Errorf("missing command")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, stdioRequestTimeout(server))
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, server.Command, server.Args...)
@@ -1052,6 +1055,13 @@ func requestAfterInitialize(ctx context.Context, server config.MCPServerConfig, 
 		return nil, mcpError(errors.New(resp.Error.Message), &stderr)
 	}
 	return resp.Result, nil
+}
+
+func stdioRequestTimeout(server config.MCPServerConfig) time.Duration {
+	if server.ToolCallTimeoutMS > 0 {
+		return time.Duration(server.ToolCallTimeoutMS) * time.Millisecond
+	}
+	return 30 * time.Second
 }
 
 func initializeHTTP(ctx context.Context, serverName string, server config.MCPServerConfig) (InitializeResult, string) {

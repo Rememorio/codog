@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/stretchr/testify/require"
@@ -333,6 +334,12 @@ func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
 		Args:    []string{"mcp-server", "--verbose"},
 		Env:     []string{"TOKEN=secret", "MODE=stdio"},
 	}
+	changedTimeout := config.MCPServerConfig{
+		Command:           "uvx",
+		Args:              []string{"mcp-server"},
+		Env:               []string{"TOKEN=secret", "MODE=stdio"},
+		ToolCallTimeoutMS: 15000,
+	}
 	required := config.MCPServerConfig{
 		Command:  "uvx",
 		Args:     []string{"mcp-server"},
@@ -345,15 +352,17 @@ func TestServerConfigHashTracksContentWithoutLeakingEnv(t *testing.T) {
 	require.Equal(t, hash, ServerConfigHash(reorderedEnv))
 	require.NotEqual(t, hash, ServerConfigHash(changedEnv))
 	require.NotEqual(t, hash, ServerConfigHash(changedArgs))
+	require.NotEqual(t, hash, ServerConfigHash(changedTimeout))
 	require.NotEqual(t, hash, ServerConfigHash(required))
 	require.NotContains(t, hash, "secret")
 }
 
 func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
 	server := config.MCPServerConfig{
-		Command: "uvx",
-		Args:    []string{"mcp-server", "--token=secret"},
-		Env:     []string{"TOKEN=secret", "MODE=stdio"},
+		Command:           "uvx",
+		Args:              []string{"mcp-server", "--token=secret"},
+		Env:               []string{"TOKEN=secret", "MODE=stdio"},
+		ToolCallTimeoutMS: 15000,
 	}
 	description := DescribeServer("alpha", server)
 	require.Equal(t, "alpha", description.Name)
@@ -363,11 +372,17 @@ func TestDescribeServerRedactsSensitiveConfigValues(t *testing.T) {
 	require.Equal(t, "uvx (2 args)", description.Summary)
 	require.Equal(t, "uvx", description.Details.Command)
 	require.Equal(t, 2, description.Details.ArgsCount)
+	require.Equal(t, 15000, description.Details.ToolCallTimeoutMS)
 	require.Equal(t, []string{"MODE", "TOKEN"}, description.Details.EnvKeys)
 	data, err := json.Marshal(description)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "TOKEN=secret")
 	require.NotContains(t, string(data), "--token=secret")
+}
+
+func TestStdioRequestTimeoutUsesConfiguredMCPTimeout(t *testing.T) {
+	require.Equal(t, 30*time.Second, stdioRequestTimeout(config.MCPServerConfig{}))
+	require.Equal(t, 1500*time.Millisecond, stdioRequestTimeout(config.MCPServerConfig{ToolCallTimeoutMS: 1500}))
 }
 
 func TestDescribeAndPreflightReportRequiredMCPServer(t *testing.T) {

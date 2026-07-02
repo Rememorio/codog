@@ -389,8 +389,8 @@ func TestLoadMCPHeadersHelperAliases(t *testing.T) {
 	configPath := filepath.Join(dir, "config.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
 		"mcp_servers": {
-			"snake": {"url": "https://snake.example/mcp", "headers_helper": "./snake-helper"},
-			"camel": {"url": "https://camel.example/mcp", "headersHelper": "./camel-helper"}
+			"snake": {"url": "https://snake.example/mcp", "headers_helper": "./snake-helper", "tool_call_timeout_ms": 15000},
+			"camel": {"url": "https://camel.example/mcp", "headersHelper": "./camel-helper", "toolCallTimeoutMs": 25000}
 		}
 	}`), 0o644))
 
@@ -398,7 +398,9 @@ func TestLoadMCPHeadersHelperAliases(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "./snake-helper", cfg.MCPServers["snake"].HeadersHelper)
+	require.Equal(t, 15000, cfg.MCPServers["snake"].ToolCallTimeoutMS)
 	require.Equal(t, "./camel-helper", cfg.MCPServers["camel"].HeadersHelper)
+	require.Equal(t, 25000, cfg.MCPServers["camel"].ToolCallTimeoutMS)
 }
 
 func TestLoadInterfaceAndPrivacyPreferences(t *testing.T) {

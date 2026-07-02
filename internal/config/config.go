@@ -246,25 +246,28 @@ type PrivacyConfig struct {
 }
 
 type MCPServerConfig struct {
-	Command       string            `json:"command,omitempty"`
-	Args          []string          `json:"args,omitempty"`
-	Env           []string          `json:"env,omitempty"`
-	URL           string            `json:"url,omitempty"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	HeadersHelper string            `json:"headers_helper,omitempty"`
-	Required      bool              `json:"required,omitempty"`
+	Command           string            `json:"command,omitempty"`
+	Args              []string          `json:"args,omitempty"`
+	Env               []string          `json:"env,omitempty"`
+	URL               string            `json:"url,omitempty"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	HeadersHelper     string            `json:"headers_helper,omitempty"`
+	ToolCallTimeoutMS int               `json:"tool_call_timeout_ms,omitempty"`
+	Required          bool              `json:"required,omitempty"`
 }
 
 func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 	type rawMCPServerConfig struct {
-		Command            string            `json:"command,omitempty"`
-		Args               []string          `json:"args,omitempty"`
-		Env                []string          `json:"env,omitempty"`
-		URL                string            `json:"url,omitempty"`
-		Headers            map[string]string `json:"headers,omitempty"`
-		HeadersHelper      string            `json:"headers_helper,omitempty"`
-		HeadersHelperCamel string            `json:"headersHelper,omitempty"`
-		Required           bool              `json:"required,omitempty"`
+		Command              string            `json:"command,omitempty"`
+		Args                 []string          `json:"args,omitempty"`
+		Env                  []string          `json:"env,omitempty"`
+		URL                  string            `json:"url,omitempty"`
+		Headers              map[string]string `json:"headers,omitempty"`
+		HeadersHelper        string            `json:"headers_helper,omitempty"`
+		HeadersHelperCamel   string            `json:"headersHelper,omitempty"`
+		ToolCallTimeoutMS    int               `json:"tool_call_timeout_ms,omitempty"`
+		ToolCallTimeoutCamel int               `json:"toolCallTimeoutMs,omitempty"`
+		Required             bool              `json:"required,omitempty"`
 	}
 	var raw rawMCPServerConfig
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -278,6 +281,10 @@ func (m *MCPServerConfig) UnmarshalJSON(data []byte) error {
 	m.HeadersHelper = raw.HeadersHelper
 	if strings.TrimSpace(raw.HeadersHelperCamel) != "" {
 		m.HeadersHelper = raw.HeadersHelperCamel
+	}
+	m.ToolCallTimeoutMS = raw.ToolCallTimeoutMS
+	if raw.ToolCallTimeoutCamel != 0 {
+		m.ToolCallTimeoutMS = raw.ToolCallTimeoutCamel
 	}
 	m.Required = raw.Required
 	return nil

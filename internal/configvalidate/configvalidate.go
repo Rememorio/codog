@@ -192,6 +192,8 @@ var mcpServerFields = []fieldSpec{
 	{"headers", FieldObject},
 	{"headers_helper", FieldString},
 	{"headersHelper", FieldString},
+	{"tool_call_timeout_ms", FieldNumber},
+	{"toolCallTimeoutMs", FieldNumber},
 	{"required", FieldBool},
 }
 
