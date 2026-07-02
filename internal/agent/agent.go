@@ -3307,10 +3307,13 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		return fmt.Errorf("unknown updater command %q", args[0])
 	}
 	report := updaterCommandReport{
-		Kind:   "updater",
-		Action: action,
-		Status: "ok",
-		Result: payload,
+		Kind:          "updater",
+		Action:        action,
+		Status:        "ok",
+		SchemaVersion: 1,
+		OutputFields:  []string{"kind", "action", "status", "schema_version", "output_fields", "status_values", "result"},
+		StatusValues:  []string{"ok", "error"},
+		Result:        payload,
 	}
 	data, _ := json.MarshalIndent(report, "", "  ")
 	fmt.Fprintln(a.Out, string(data))
@@ -3318,10 +3321,13 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 }
 
 type updaterCommandReport struct {
-	Kind   string `json:"kind"`
-	Action string `json:"action"`
-	Status string `json:"status"`
-	Result any    `json:"result"`
+	Kind          string   `json:"kind"`
+	Action        string   `json:"action"`
+	Status        string   `json:"status"`
+	SchemaVersion int      `json:"schema_version"`
+	OutputFields  []string `json:"output_fields"`
+	StatusValues  []string `json:"status_values"`
+	Result        any      `json:"result"`
 }
 
 type updaterStatusReport struct {

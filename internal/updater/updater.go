@@ -1,3 +1,8 @@
+// Package updater implements manifest-based Codog binary update operations.
+//
+// The updater intentionally keeps policy outside the package: callers decide
+// which manifest URL and public key to trust, while this package fetches,
+// verifies, downloads, installs, and rolls back artifacts.
 package updater
 
 import (
@@ -18,6 +23,10 @@ import (
 	"github.com/Rememorio/codog/internal/signing"
 )
 
+// Manifest describes a release index served by an update source.
+//
+// Downloads maps platform keys such as "darwin-arm64" to artifact URLs. Relative
+// URLs are resolved against Source, which is set by FetchManifest.
 type Manifest struct {
 	Version   string            `json:"version"`
 	Notes     string            `json:"notes,omitempty"`
@@ -27,6 +36,7 @@ type Manifest struct {
 	Source    string            `json:"-"`
 }
 
+// CheckResult reports whether a manifest advertises a newer version.
 type CheckResult struct {
 	CurrentVersion  string   `json:"current_version"`
 	LatestVersion   string   `json:"latest_version"`
@@ -35,6 +45,7 @@ type CheckResult struct {
 	SignatureValid  bool     `json:"signature_valid,omitempty"`
 }
 
+// DownloadResult describes a downloaded updater artifact and its verification.
 type DownloadResult struct {
 	Version  string `json:"version"`
 	Platform string `json:"platform"`
@@ -44,6 +55,7 @@ type DownloadResult struct {
 	Verified bool   `json:"verified"`
 }
 
+// InstallResult describes an installed artifact and any created rollback backup.
 type InstallResult struct {
 	Source     string `json:"source"`
 	Target     string `json:"target"`
@@ -52,12 +64,14 @@ type InstallResult struct {
 	RolledBack bool   `json:"rolled_back,omitempty"`
 }
 
+// RollbackResult describes a successful restore from a previous install backup.
 type RollbackResult struct {
 	Target     string `json:"target"`
 	BackupPath string `json:"backup_path"`
 	RolledBack bool   `json:"rolled_back"`
 }
 
+// Check fetches an update manifest and compares it to the current version.
 func Check(ctx context.Context, currentVersion, manifestURL string) (CheckResult, error) {
 	manifest, err := FetchManifest(ctx, manifestURL)
 	if err != nil {
@@ -71,6 +85,8 @@ func Check(ctx context.Context, currentVersion, manifestURL string) (CheckResult
 	}, nil
 }
 
+// CheckSigned fetches an update manifest, verifies its signature, and compares
+// it to the current version.
 func CheckSigned(ctx context.Context, currentVersion, manifestURL, publicKey string) (CheckResult, error) {
 	manifest, err := FetchManifest(ctx, manifestURL)
 	if err != nil {
@@ -88,6 +104,7 @@ func CheckSigned(ctx context.Context, currentVersion, manifestURL, publicKey str
 	}, nil
 }
 
+// FetchManifest downloads and decodes a release manifest from manifestURL.
 func FetchManifest(ctx context.Context, manifestURL string) (Manifest, error) {
 	if manifestURL == "" {
 		return Manifest{}, fmt.Errorf("manifest URL is required")
@@ -113,6 +130,7 @@ func FetchManifest(ctx context.Context, manifestURL string) (Manifest, error) {
 	return manifest, nil
 }
 
+// VerifyManifest validates the Ed25519 signature embedded in manifest.
 func VerifyManifest(manifest Manifest, publicKey string) error {
 	if manifest.Signature == "" {
 		return fmt.Errorf("manifest signature is required")
@@ -130,6 +148,7 @@ func VerifyManifest(manifest Manifest, publicKey string) error {
 	return nil
 }
 
+// Download fetches a manifest and downloads the artifact for platform.
 func Download(ctx context.Context, manifestURL, platform, destDir string) (DownloadResult, error) {
 	manifest, err := FetchManifest(ctx, manifestURL)
 	if err != nil {
@@ -138,6 +157,7 @@ func Download(ctx context.Context, manifestURL, platform, destDir string) (Downl
 	return DownloadManifest(ctx, manifest, platform, destDir)
 }
 
+// DownloadSigned verifies a signed manifest before downloading its artifact.
 func DownloadSigned(ctx context.Context, manifestURL, platform, destDir, publicKey string) (DownloadResult, error) {
 	manifest, err := FetchManifest(ctx, manifestURL)
 	if err != nil {
@@ -149,6 +169,8 @@ func DownloadSigned(ctx context.Context, manifestURL, platform, destDir, publicK
 	return DownloadManifest(ctx, manifest, platform, destDir)
 }
 
+// DownloadManifest downloads the artifact selected from an already loaded
+// manifest. If platform is empty, PlatformKey is used.
 func DownloadManifest(ctx context.Context, manifest Manifest, platform, destDir string) (DownloadResult, error) {
 	key, url, checksum, err := selectDownload(manifest, platform)
 	if err != nil {
@@ -213,6 +235,8 @@ func DownloadManifest(ctx context.Context, manifest Manifest, platform, destDir 
 	}, nil
 }
 
+// Install atomically replaces targetPath with artifactPath where the platform
+// permits rename-based replacement. Existing targets are backed up as .bak.
 func Install(artifactPath, targetPath string) (InstallResult, error) {
 	if artifactPath == "" {
 		return InstallResult{}, fmt.Errorf("artifact path is required")
@@ -279,6 +303,7 @@ func Install(artifactPath, targetPath string) (InstallResult, error) {
 	return result, nil
 }
 
+// Rollback restores targetPath from the .bak file created by Install.
 func Rollback(targetPath string) (RollbackResult, error) {
 	if targetPath == "" {
 		return RollbackResult{}, fmt.Errorf("target path is required")
@@ -305,6 +330,7 @@ func Rollback(targetPath string) (RollbackResult, error) {
 	return RollbackResult{Target: targetPath, BackupPath: backupPath, RolledBack: true}, nil
 }
 
+// PlatformKey returns the manifest platform key for the current GOOS/GOARCH.
 func PlatformKey() string {
 	return runtime.GOOS + "-" + runtime.GOARCH
 }

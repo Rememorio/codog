@@ -17672,10 +17672,13 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 	}
 	require.NoError(t, app.Updater(context.Background(), nil))
 	var report struct {
-		Kind   string `json:"kind"`
-		Action string `json:"action"`
-		Status string `json:"status"`
-		Result struct {
+		Kind          string   `json:"kind"`
+		Action        string   `json:"action"`
+		Status        string   `json:"status"`
+		SchemaVersion int      `json:"schema_version"`
+		OutputFields  []string `json:"output_fields"`
+		StatusValues  []string `json:"status_values"`
+		Result        struct {
 			CurrentVersion string   `json:"current_version"`
 			Platform       string   `json:"platform"`
 			Executable     string   `json:"executable"`
@@ -17692,6 +17695,10 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 	require.Equal(t, "updater", report.Kind)
 	require.Equal(t, "status", report.Action)
 	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.SchemaVersion)
+	require.Contains(t, report.OutputFields, "result")
+	require.Contains(t, report.StatusValues, "ok")
+	require.Contains(t, report.StatusValues, "error")
 	require.Equal(t, version, report.Result.CurrentVersion)
 	require.Equal(t, updater.PlatformKey(), report.Result.Platform)
 	require.Equal(t, target, report.Result.Executable)
