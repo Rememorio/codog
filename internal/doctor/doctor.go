@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,6 +129,7 @@ func Run(opts Options) Report {
 	checks := []Check{
 		checkAuth(opts),
 		checkBaseURL(opts.BaseURL),
+		checkProviderEndpoints(),
 		checkConfigLoad(opts),
 		checkConfigHome(opts.ConfigHome),
 		checkWorkspace(opts.Workspace),
@@ -416,17 +416,82 @@ func providerDisplayName(provider string) string {
 
 func checkBaseURL(raw string) Check {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return Check{Name: "Base URL", Status: StatusFail, Summary: "Provider base URL is empty.", Hint: "Set base_url or ANTHROPIC_BASE_URL."}
+	diag := modelrouting.DiagnoseBaseURL("", "", "active", raw)
+	if diag.ErrorKind == "empty_base_url" {
+		return Check{Name: "Base URL", Status: StatusFail, Summary: "Provider base URL is empty.", Hint: "Set base_url or ANTHROPIC_BASE_URL.", Data: map[string]any{"endpoint": diag}}
 	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return Check{Name: "Base URL", Status: StatusFail, Summary: "Provider base URL is invalid.", Details: []string{raw}, Hint: "Use an absolute http or https URL."}
+	if !diag.Valid {
+		return Check{Name: "Base URL", Status: StatusFail, Summary: "Provider base URL is invalid.", Details: []string{diag.URL}, Hint: "Use an absolute http or https URL.", Data: map[string]any{"endpoint": diag}}
 	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return Check{Name: "Base URL", Status: StatusFail, Summary: "Provider base URL must use http or https.", Details: []string{raw}}
+	return Check{Name: "Base URL", Status: StatusOK, Summary: "Provider base URL is valid.", Details: []string{diag.URL}, Data: map[string]any{"endpoint": diag}}
+}
+
+func checkProviderEndpoints() Check {
+	diagnostics := configuredProviderEndpointDiagnostics()
+	if len(diagnostics) == 0 {
+		return Check{
+			Name:    "Provider endpoints",
+			Status:  StatusOK,
+			Summary: "No provider base URL environment overrides are set.",
+			Data: map[string]any{
+				"endpoints": []modelrouting.BaseURLDiagnostic{},
+			},
+		}
 	}
-	return Check{Name: "Base URL", Status: StatusOK, Summary: "Provider base URL is valid.", Details: []string{redactURL(raw)}}
+	invalid := 0
+	details := make([]string, 0, len(diagnostics))
+	for _, diag := range diagnostics {
+		status := "valid"
+		if !diag.Valid {
+			invalid++
+			status = diag.ErrorKind
+		}
+		details = append(details, fmt.Sprintf("%s (%s): %s", diag.Env, diag.Provider, status))
+	}
+	if invalid != 0 {
+		return Check{
+			Name:    "Provider endpoints",
+			Status:  StatusWarn,
+			Summary: fmt.Sprintf("%d provider base URL environment override(s) are invalid.", invalid),
+			Details: details,
+			Hint:    "Use absolute http or https URLs for provider base URL environment variables.",
+			Data: map[string]any{
+				"invalid_count": invalid,
+				"endpoints":     diagnostics,
+			},
+		}
+	}
+	return Check{
+		Name:    "Provider endpoints",
+		Status:  StatusOK,
+		Summary: "Provider base URL environment overrides are valid.",
+		Details: details,
+		Data: map[string]any{
+			"invalid_count": 0,
+			"endpoints":     diagnostics,
+		},
+	}
+}
+
+func configuredProviderEndpointDiagnostics() []modelrouting.BaseURLDiagnostic {
+	defs := []struct {
+		provider string
+		env      string
+	}{
+		{provider: modelrouting.ProviderAnthropic, env: "ANTHROPIC_BASE_URL"},
+		{provider: modelrouting.ProviderOpenAI, env: "OPENAI_BASE_URL"},
+		{provider: modelrouting.ProviderXAI, env: "XAI_BASE_URL"},
+		{provider: modelrouting.ProviderDashScope, env: "DASHSCOPE_BASE_URL"},
+	}
+	out := make([]modelrouting.BaseURLDiagnostic, 0, len(defs))
+	for _, def := range defs {
+		value, ok := os.LookupEnv(def.env)
+		if !ok {
+			continue
+		}
+		out = append(out, modelrouting.DiagnoseBaseURL(def.provider, def.env, "env", value))
+	}
+	return out
 }
 
 func checkConfigHome(path string) Check {
@@ -1113,13 +1178,4 @@ func runCommand(dir, name string, args ...string) (string, error) {
 		return "", err
 	}
 	return stdout.String(), nil
-}
-
-func redactURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
-		return raw
-	}
-	parsed.User = url.UserPassword("[redacted]", "[redacted]")
-	return parsed.String()
 }

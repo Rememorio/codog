@@ -2,14 +2,30 @@ package status
 
 import (
 	"bytes"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	for _, name := range []string{
+		"ANTHROPIC_BASE_URL",
+		"OPENAI_BASE_URL",
+		"OLLAMA_HOST",
+		"XAI_BASE_URL",
+		"DASHSCOPE_BASE_URL",
+		"CODOG_BASE_URL",
+	} {
+		_ = os.Unsetenv(name)
+	}
+	os.Exit(m.Run())
+}
 
 func TestBuildParsesGitStatus(t *testing.T) {
 	snapshot := Build(Options{
@@ -220,6 +236,48 @@ func TestBuildMarksConfigLoadErrorDegraded(t *testing.T) {
 	var out bytes.Buffer
 	RenderText(&out, snapshot)
 	require.Contains(t, out.String(), "Config load      degraded: broken.json")
+}
+
+func TestBuildReportsProviderEndpointProvenance(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
+	snapshot := Build(Options{
+		Version:               "test-version",
+		GitStatus:             "## main",
+		Model:                 "qwen3:8b",
+		RuntimeProvider:       modelrouting.ProviderOpenAI,
+		RuntimeProviderSource: "OPENAI_BASE_URL",
+		BaseURL:               "http://127.0.0.1:11434/v1",
+	})
+
+	require.Equal(t, "ok", snapshot.Status)
+	require.Equal(t, modelrouting.ProviderOpenAI, snapshot.Config.RuntimeProvider)
+	require.Equal(t, "OPENAI_BASE_URL", snapshot.Config.RuntimeProviderSource)
+	require.Equal(t, modelrouting.ProviderOpenAI, snapshot.Config.ProviderEndpoint.Provider)
+	require.Equal(t, "OPENAI_BASE_URL", snapshot.Config.ProviderEndpoint.Env)
+	require.Equal(t, "env", snapshot.Config.ProviderEndpoint.Source)
+	require.Equal(t, "http", snapshot.Config.ProviderEndpoint.Scheme)
+	require.Equal(t, "127.0.0.1", snapshot.Config.ProviderEndpoint.Host)
+	require.True(t, snapshot.Config.ProviderEndpoint.Valid)
+	require.True(t, snapshot.Config.ProviderEndpoint.Local)
+}
+
+func TestBuildMarksInvalidProviderEndpointDegraded(t *testing.T) {
+	snapshot := Build(Options{
+		Version:         "test-version",
+		GitStatus:       "## main",
+		Model:           "openai/gpt-4.1-mini",
+		RuntimeProvider: modelrouting.ProviderOpenAI,
+		BaseURL:         "ftp://example.com/v1",
+	})
+
+	require.Equal(t, "degraded", snapshot.Status)
+	require.Equal(t, modelrouting.ProviderOpenAI, snapshot.Config.ProviderEndpoint.Provider)
+	require.Equal(t, "OPENAI_BASE_URL", snapshot.Config.ProviderEndpoint.Env)
+	require.Equal(t, "configured", snapshot.Config.ProviderEndpoint.Source)
+	require.False(t, snapshot.Config.ProviderEndpoint.Valid)
+	require.Equal(t, "unsupported_scheme", snapshot.Config.ProviderEndpoint.ErrorKind)
+	require.Equal(t, "ftp", snapshot.Config.ProviderEndpoint.Scheme)
+	require.Equal(t, "example.com", snapshot.Config.ProviderEndpoint.Host)
 }
 
 func TestBuildParsesInitialBranch(t *testing.T) {

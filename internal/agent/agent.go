@@ -22940,6 +22940,8 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		ConfigHome:                  a.Config.ConfigHome,
 		Model:                       a.Config.Model,
 		ModelEnvVar:                 a.Config.ModelEnvVar,
+		RuntimeProvider:             a.Config.RuntimeProvider,
+		RuntimeProviderSource:       a.Config.RuntimeProviderSource,
 		FastMode:                    fastModeEnabled(a.Config.FastMode),
 		BaseURL:                     a.Config.BaseURL,
 		PermissionMode:              a.Config.PermissionMode,

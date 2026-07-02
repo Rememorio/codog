@@ -2,6 +2,8 @@ package modelrouting
 
 import (
 	"net"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -25,6 +27,20 @@ type ModelAlias struct {
 type TokenLimit struct {
 	MaxOutputTokens     int
 	ContextWindowTokens int
+}
+
+// BaseURLDiagnostic is a redaction-safe provider endpoint validation result.
+type BaseURLDiagnostic struct {
+	Provider  string `json:"provider,omitempty"`
+	Env       string `json:"base_url_env,omitempty"`
+	Source    string `json:"base_url_source,omitempty"`
+	URL       string `json:"base_url,omitempty"`
+	Valid     bool   `json:"base_url_valid"`
+	Scheme    string `json:"base_url_scheme,omitempty"`
+	Host      string `json:"base_url_host,omitempty"`
+	Local     bool   `json:"local_base_url,omitempty"`
+	ErrorKind string `json:"base_url_error_kind,omitempty"`
+	Error     string `json:"base_url_error,omitempty"`
 }
 
 var builtInAliases = []ModelAlias{
@@ -185,6 +201,66 @@ func normalizeBaseURL(baseURL string) string {
 	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	trimmed = strings.TrimRight(strings.TrimSuffix(trimmed, "/chat/completions"), "/")
 	return trimmed
+}
+
+// DiagnoseBaseURL validates a provider base URL without exposing credentials.
+func DiagnoseBaseURL(provider string, envName string, source string, raw string) BaseURLDiagnostic {
+	trimmed := strings.TrimSpace(raw)
+	out := BaseURLDiagnostic{
+		Provider: strings.TrimSpace(provider),
+		Env:      strings.TrimSpace(envName),
+		Source:   strings.TrimSpace(source),
+		URL:      RedactURL(trimmed),
+	}
+	parsed, err := url.Parse(trimmed)
+	if trimmed == "" {
+		out.ErrorKind = "empty_base_url"
+		out.Error = "base URL is empty"
+		return out
+	}
+	if err != nil {
+		out.ErrorKind = "invalid_base_url"
+		out.Error = err.Error()
+		return out
+	}
+	out.Scheme = strings.ToLower(parsed.Scheme)
+	out.Host = parsed.Hostname()
+	out.Local = IsLocalBaseURL(trimmed)
+	switch {
+	case out.Scheme == "":
+		out.ErrorKind = "missing_scheme"
+		out.Error = "base URL must include http or https scheme"
+	case out.Scheme != "http" && out.Scheme != "https":
+		out.ErrorKind = "unsupported_scheme"
+		out.Error = "base URL must use http or https"
+	case out.Host == "":
+		out.ErrorKind = "missing_host"
+		out.Error = "base URL must include a host"
+	case !validURLPort(parsed.Port()):
+		out.ErrorKind = "invalid_port"
+		out.Error = "base URL port must be between 1 and 65535"
+	default:
+		out.Valid = true
+	}
+	return out
+}
+
+func validURLPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	value, err := strconv.Atoi(port)
+	return err == nil && value > 0 && value <= 65535
+}
+
+// RedactURL returns raw with URL userinfo replaced when it can be parsed.
+func RedactURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+	parsed.User = url.UserPassword("redacted", "redacted")
+	return parsed.String()
 }
 
 // IsLocalBaseURL reports whether baseURL points at loopback or private-network host.

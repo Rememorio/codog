@@ -5,6 +5,7 @@ package status
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/gitops"
+	"github.com/Rememorio/codog/internal/modelrouting"
 )
 
 // Options contains the runtime inputs needed to build a status snapshot.
@@ -26,6 +28,8 @@ type Options struct {
 	ConfigHome                  string
 	Model                       string
 	ModelEnvVar                 string
+	RuntimeProvider             string
+	RuntimeProviderSource       string
 	FastMode                    bool
 	BaseURL                     string
 	PermissionMode              string
@@ -144,45 +148,48 @@ type MemoryFileStatus struct {
 
 // ConfigStatus summarizes the effective runtime configuration.
 type ConfigStatus struct {
-	ConfigHome                  string                `json:"config_home"`
-	Model                       string                `json:"model"`
-	ModelEnvVar                 string                `json:"model_env_var,omitempty"`
-	FastMode                    bool                  `json:"fast_mode"`
-	BaseURL                     string                `json:"base_url"`
-	PermissionMode              string                `json:"permission_mode"`
-	PermissionModeRaw           string                `json:"permission_mode_raw"`
-	PermissionModeSource        string                `json:"permission_mode_source"`
-	PermissionModeEnvVar        string                `json:"permission_mode_env_var,omitempty"`
-	PermissionRules             PermissionRulesStatus `json:"permission_rules,omitempty"`
-	MaxTokens                   int                   `json:"max_tokens"`
-	MaxTurns                    int                   `json:"max_turns"`
-	AutoCompactMessages         int                   `json:"auto_compact_messages"`
-	AuthConfigured              bool                  `json:"auth_configured"`
-	MCPServerCount              int                   `json:"mcp_server_count"`
-	UserPromptSubmitHookCount   int                   `json:"user_prompt_submit_hook_count"`
-	SessionStartHookCount       int                   `json:"session_start_hook_count"`
-	SessionEndHookCount         int                   `json:"session_end_hook_count"`
-	SetupHookCount              int                   `json:"setup_hook_count"`
-	PreHookCount                int                   `json:"pre_hook_count"`
-	PostHookCount               int                   `json:"post_hook_count"`
-	PostFailureHookCount        int                   `json:"post_tool_use_failure_hook_count"`
-	PermissionRequestHookCount  int                   `json:"permission_request_hook_count"`
-	PermissionDeniedHookCount   int                   `json:"permission_denied_hook_count"`
-	StopHookCount               int                   `json:"stop_hook_count"`
-	StopFailureHookCount        int                   `json:"stop_failure_hook_count"`
-	PreCompactHookCount         int                   `json:"pre_compact_hook_count"`
-	PostCompactHookCount        int                   `json:"post_compact_hook_count"`
-	NotificationHookCount       int                   `json:"notification_hook_count"`
-	SubagentStartHookCount      int                   `json:"subagent_start_hook_count"`
-	SubagentStopHookCount       int                   `json:"subagent_stop_hook_count"`
-	WorktreeCreateHookCount     int                   `json:"worktree_create_hook_count"`
-	WorktreeRemoveHookCount     int                   `json:"worktree_remove_hook_count"`
-	CwdChangedHookCount         int                   `json:"cwd_changed_hook_count"`
-	TaskCreatedHookCount        int                   `json:"task_created_hook_count"`
-	TaskCompletedHookCount      int                   `json:"task_completed_hook_count"`
-	InstructionsLoadedHookCount int                   `json:"instructions_loaded_hook_count"`
-	FileChangedHookCount        int                   `json:"file_changed_hook_count"`
-	EnabledSkillCount           int                   `json:"enabled_skill_count"`
+	ConfigHome                  string                         `json:"config_home"`
+	Model                       string                         `json:"model"`
+	ModelEnvVar                 string                         `json:"model_env_var,omitempty"`
+	FastMode                    bool                           `json:"fast_mode"`
+	BaseURL                     string                         `json:"base_url"`
+	RuntimeProvider             string                         `json:"runtime_provider,omitempty"`
+	RuntimeProviderSource       string                         `json:"runtime_provider_source,omitempty"`
+	ProviderEndpoint            modelrouting.BaseURLDiagnostic `json:"provider_endpoint"`
+	PermissionMode              string                         `json:"permission_mode"`
+	PermissionModeRaw           string                         `json:"permission_mode_raw"`
+	PermissionModeSource        string                         `json:"permission_mode_source"`
+	PermissionModeEnvVar        string                         `json:"permission_mode_env_var,omitempty"`
+	PermissionRules             PermissionRulesStatus          `json:"permission_rules,omitempty"`
+	MaxTokens                   int                            `json:"max_tokens"`
+	MaxTurns                    int                            `json:"max_turns"`
+	AutoCompactMessages         int                            `json:"auto_compact_messages"`
+	AuthConfigured              bool                           `json:"auth_configured"`
+	MCPServerCount              int                            `json:"mcp_server_count"`
+	UserPromptSubmitHookCount   int                            `json:"user_prompt_submit_hook_count"`
+	SessionStartHookCount       int                            `json:"session_start_hook_count"`
+	SessionEndHookCount         int                            `json:"session_end_hook_count"`
+	SetupHookCount              int                            `json:"setup_hook_count"`
+	PreHookCount                int                            `json:"pre_hook_count"`
+	PostHookCount               int                            `json:"post_hook_count"`
+	PostFailureHookCount        int                            `json:"post_tool_use_failure_hook_count"`
+	PermissionRequestHookCount  int                            `json:"permission_request_hook_count"`
+	PermissionDeniedHookCount   int                            `json:"permission_denied_hook_count"`
+	StopHookCount               int                            `json:"stop_hook_count"`
+	StopFailureHookCount        int                            `json:"stop_failure_hook_count"`
+	PreCompactHookCount         int                            `json:"pre_compact_hook_count"`
+	PostCompactHookCount        int                            `json:"post_compact_hook_count"`
+	NotificationHookCount       int                            `json:"notification_hook_count"`
+	SubagentStartHookCount      int                            `json:"subagent_start_hook_count"`
+	SubagentStopHookCount       int                            `json:"subagent_stop_hook_count"`
+	WorktreeCreateHookCount     int                            `json:"worktree_create_hook_count"`
+	WorktreeRemoveHookCount     int                            `json:"worktree_remove_hook_count"`
+	CwdChangedHookCount         int                            `json:"cwd_changed_hook_count"`
+	TaskCreatedHookCount        int                            `json:"task_created_hook_count"`
+	TaskCompletedHookCount      int                            `json:"task_completed_hook_count"`
+	InstructionsLoadedHookCount int                            `json:"instructions_loaded_hook_count"`
+	FileChangedHookCount        int                            `json:"file_changed_hook_count"`
+	EnabledSkillCount           int                            `json:"enabled_skill_count"`
 }
 
 // PermissionRulesStatus exposes parsed permission rules for automation audits.
@@ -328,6 +335,7 @@ type ValidationIssue struct {
 func Build(opts Options) Snapshot {
 	git := parseGitStatus(opts.GitStatus, opts.GitError)
 	laneBoard := buildLaneBoardStatus(opts.LaneBoard, opts.LaneBoardError)
+	endpoint := buildProviderEndpointStatus(opts)
 	if opts.GitFreshness != nil {
 		freshness := *opts.GitFreshness
 		git.Freshness = &freshness
@@ -336,6 +344,8 @@ func Build(opts Options) Snapshot {
 	if !git.Available {
 		status = "degraded"
 	} else if strings.TrimSpace(opts.ConfigLoadError) != "" {
+		status = "degraded"
+	} else if !endpoint.Valid {
 		status = "degraded"
 	} else if opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
 		status = "degraded"
@@ -364,8 +374,11 @@ func Build(opts Options) Snapshot {
 			ConfigHome:                  opts.ConfigHome,
 			Model:                       opts.Model,
 			ModelEnvVar:                 strings.TrimSpace(opts.ModelEnvVar),
+			RuntimeProvider:             endpoint.Provider,
+			RuntimeProviderSource:       strings.TrimSpace(opts.RuntimeProviderSource),
 			FastMode:                    opts.FastMode,
 			BaseURL:                     opts.BaseURL,
+			ProviderEndpoint:            endpoint,
 			PermissionMode:              opts.PermissionMode,
 			PermissionModeRaw:           defaultString(opts.PermissionModeRaw, opts.PermissionMode),
 			PermissionModeSource:        defaultString(opts.PermissionModeSource, "unknown"),
@@ -441,6 +454,64 @@ func Build(opts Options) Snapshot {
 		MCPValidation:  opts.MCPValidation,
 		HookValidation: opts.HookValidation,
 	}
+}
+
+func buildProviderEndpointStatus(opts Options) modelrouting.BaseURLDiagnostic {
+	provider := strings.TrimSpace(opts.RuntimeProvider)
+	if provider == "" {
+		provider = modelrouting.ProviderForModel(opts.Model)
+	}
+	baseURL := strings.TrimSpace(opts.BaseURL)
+	if baseURL == "" {
+		baseURL = defaultProviderBaseURL(provider)
+	}
+	envName := activeBaseURLEnv(provider, opts.RuntimeProviderSource)
+	source := "configured"
+	switch {
+	case strings.EqualFold(strings.TrimSpace(opts.RuntimeProviderSource), "OLLAMA_HOST"):
+		source = "env"
+	case envName != "" && strings.TrimSpace(os.Getenv(envName)) != "":
+		source = "env"
+	case strings.TrimSpace(os.Getenv("CODOG_BASE_URL")) != "":
+		envName = "CODOG_BASE_URL"
+		source = "env"
+	case sameBaseURL(baseURL, defaultProviderBaseURL(provider)):
+		source = "default"
+	}
+	return modelrouting.DiagnoseBaseURL(provider, envName, source, baseURL)
+}
+
+func activeBaseURLEnv(provider string, runtimeProviderSource string) string {
+	if strings.EqualFold(strings.TrimSpace(runtimeProviderSource), "OLLAMA_HOST") {
+		return "OLLAMA_HOST"
+	}
+	switch provider {
+	case modelrouting.ProviderOpenAI:
+		return "OPENAI_BASE_URL"
+	case modelrouting.ProviderXAI:
+		return "XAI_BASE_URL"
+	case modelrouting.ProviderDashScope:
+		return "DASHSCOPE_BASE_URL"
+	default:
+		return "ANTHROPIC_BASE_URL"
+	}
+}
+
+func defaultProviderBaseURL(provider string) string {
+	switch provider {
+	case modelrouting.ProviderOpenAI:
+		return modelrouting.DefaultOpenAIBaseURL
+	case modelrouting.ProviderXAI:
+		return modelrouting.DefaultXAIBaseURL
+	case modelrouting.ProviderDashScope:
+		return modelrouting.DefaultDashScopeBaseURL
+	default:
+		return config.DefaultBaseURL
+	}
+}
+
+func sameBaseURL(left string, right string) bool {
+	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(left), "/"), strings.TrimRight(strings.TrimSpace(right), "/"))
 }
 
 func buildSessionLifecycleStatus(opts Options) *SessionLifecycleStatus {

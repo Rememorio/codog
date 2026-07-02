@@ -108,6 +108,33 @@ func TestIsLocalBaseURL(t *testing.T) {
 	}
 }
 
+func TestDiagnoseBaseURL(t *testing.T) {
+	valid := DiagnoseBaseURL(ProviderOpenAI, "OPENAI_BASE_URL", "env", "http://user:secret@127.0.0.1:11434/v1")
+	require.True(t, valid.Valid)
+	require.Equal(t, ProviderOpenAI, valid.Provider)
+	require.Equal(t, "OPENAI_BASE_URL", valid.Env)
+	require.Equal(t, "env", valid.Source)
+	require.Equal(t, "http", valid.Scheme)
+	require.Equal(t, "127.0.0.1", valid.Host)
+	require.True(t, valid.Local)
+	require.Equal(t, "http://redacted:redacted@127.0.0.1:11434/v1", valid.URL)
+
+	tests := map[string]string{
+		"":                       "empty_base_url",
+		"not-a-url":              "missing_scheme",
+		"ftp://example.com":      "unsupported_scheme",
+		"http://":                "missing_host",
+		"http://localhost:99999": "invalid_port",
+		"javascript:alert(1)":    "unsupported_scheme",
+	}
+	for raw, kind := range tests {
+		diag := DiagnoseBaseURL(ProviderOpenAI, "OPENAI_BASE_URL", "env", raw)
+		require.False(t, diag.Valid, raw)
+		require.Equal(t, kind, diag.ErrorKind, raw)
+		require.NotEmpty(t, diag.Error, raw)
+	}
+}
+
 func TestModelRejectsIsErrorFieldOnlyForKimiFamily(t *testing.T) {
 	require.True(t, ModelRejectsIsErrorField("kimi"))
 	require.True(t, ModelRejectsIsErrorField("kimi-k2.5"))

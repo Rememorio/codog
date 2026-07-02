@@ -9,10 +9,29 @@ import (
 	"testing"
 
 	"github.com/Rememorio/codog/internal/mcp"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/sandbox"
 	localstatus "github.com/Rememorio/codog/internal/status"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	for _, name := range []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_BASE_URL",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"OLLAMA_HOST",
+		"XAI_API_KEY",
+		"XAI_BASE_URL",
+		"DASHSCOPE_API_KEY",
+		"DASHSCOPE_BASE_URL",
+	} {
+		_ = os.Unsetenv(name)
+	}
+	os.Exit(m.Run())
+}
 
 func TestRunWarnsWhenAuthMissing(t *testing.T) {
 	clearProviderAuthEnv(t)
@@ -188,6 +207,63 @@ func TestRunStillRequiresOpenAIAPIKeyForRemoteBaseURL(t *testing.T) {
 	require.Equal(t, "OPENAI_API_KEY", auth.Data["required_api_key_env"])
 	require.Equal(t, false, auth.Data["local_base_url"])
 	require.Equal(t, false, auth.Data["selected_provider_auth_present"])
+}
+
+func TestRunWarnsOnInvalidProviderEndpointEnv(t *testing.T) {
+	clearProviderEndpointEnv(t)
+	t.Setenv("OPENAI_BASE_URL", "javascript:alert(1)")
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	require.Equal(t, StatusWarn, report.Status)
+	check := findCheck(t, report, "Provider endpoints")
+	require.Equal(t, StatusWarn, check.Status)
+	require.Contains(t, check.Summary, "1 provider base URL")
+	require.Contains(t, strings.Join(check.Details, "\n"), "OPENAI_BASE_URL")
+	require.Equal(t, 1, check.Data["invalid_count"])
+	endpoints, ok := check.Data["endpoints"].([]modelrouting.BaseURLDiagnostic)
+	require.True(t, ok)
+	require.Len(t, endpoints, 1)
+	require.Equal(t, "OPENAI_BASE_URL", endpoints[0].Env)
+	require.Equal(t, modelrouting.ProviderOpenAI, endpoints[0].Provider)
+	require.Equal(t, "unsupported_scheme", endpoints[0].ErrorKind)
+	require.False(t, endpoints[0].Valid)
+}
+
+func TestRunReportsValidProviderEndpointEnv(t *testing.T) {
+	clearProviderEndpointEnv(t)
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "openai/qwen3:8b",
+		BaseURL:        "http://127.0.0.1:11434/v1",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	check := findCheck(t, report, "Provider endpoints")
+	require.Equal(t, StatusOK, check.Status)
+	require.Equal(t, 0, check.Data["invalid_count"])
+	endpoints, ok := check.Data["endpoints"].([]modelrouting.BaseURLDiagnostic)
+	require.True(t, ok)
+	require.Len(t, endpoints, 1)
+	require.True(t, endpoints[0].Valid)
+	require.True(t, endpoints[0].Local)
 }
 
 func TestNewReportSurfacesStableMetadata(t *testing.T) {
@@ -622,5 +698,26 @@ func clearProviderAuthEnv(t *testing.T) {
 		"OLLAMA_HOST",
 	} {
 		t.Setenv(name, "")
+	}
+}
+
+func clearProviderEndpointEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"ANTHROPIC_BASE_URL",
+		"OPENAI_BASE_URL",
+		"XAI_BASE_URL",
+		"DASHSCOPE_BASE_URL",
+	} {
+		name := name
+		previous, existed := os.LookupEnv(name)
+		require.NoError(t, os.Unsetenv(name))
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(name, previous)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
 	}
 }
