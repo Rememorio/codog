@@ -841,7 +841,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "debug-tool-call":
 		return app.DebugToolCall(ctx, rest, overrides)
 	case "updater":
-		return app.Updater(ctx, rest)
+		if err := app.Updater(ctx, rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "upgrade":
 		return app.Upgrade(ctx, rest)
 	case "install":
@@ -3345,7 +3348,7 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		payload = a.updaterStatusReport(action)
 	case "check":
 		if len(args) < 2 {
-			return errors.New("usage: codog updater check URL [PUBLIC_KEY]")
+			return requiredArgumentError{Command: "updater check", Argument: "URL", Usage: "codog updater check URL [PUBLIC_KEY]"}
 		}
 		var result updater.CheckResult
 		var err error
@@ -3360,7 +3363,7 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		payload = result
 	case "verify":
 		if len(args) < 3 {
-			return errors.New("usage: codog updater verify URL PUBLIC_KEY")
+			return requiredArgumentError{Command: "updater verify", Argument: "URL PUBLIC_KEY", Usage: "codog updater verify URL PUBLIC_KEY"}
 		}
 		result, err := updater.CheckSigned(ctx, version, args[1], args[2])
 		if err != nil {
@@ -3369,7 +3372,7 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		payload = result
 	case "download":
 		if len(args) < 2 {
-			return errors.New("usage: codog updater download URL [PLATFORM] [DEST] [PUBLIC_KEY]")
+			return requiredArgumentError{Command: "updater download", Argument: "URL", Usage: "codog updater download URL [PLATFORM] [DEST] [PUBLIC_KEY]"}
 		}
 		platform := ""
 		if len(args) > 2 {
@@ -3392,7 +3395,7 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		payload = result
 	case "install":
 		if len(args) < 2 {
-			return errors.New("usage: codog updater install ARTIFACT [TARGET]")
+			return requiredArgumentError{Command: "updater install", Argument: "ARTIFACT", Usage: "codog updater install ARTIFACT [TARGET]"}
 		}
 		target := ""
 		if len(args) > 2 {
@@ -3426,7 +3429,11 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		}
 		payload = result
 	default:
-		return fmt.Errorf("unknown updater command %q", args[0])
+		return unexpectedExtraArgsError{
+			Command: "updater",
+			Args:    []string{args[0]},
+			Usage:   "codog updater [status|check|verify|download|install|rollback] [ARGS...]",
+		}
 	}
 	report := updaterCommandReport{
 		Kind:          "updater",

@@ -20011,6 +20011,63 @@ func TestUpdaterVerifyCommand(t *testing.T) {
 	require.Contains(t, out.String(), `"signature_valid": true`)
 }
 
+func TestUpdaterErrorsHonorGlobalJSONFormat(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "check missing URL",
+			args:      []string{"updater", "check"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "updater check"`, `"argument": "URL"`},
+		},
+		{
+			name:      "verify missing URL and public key",
+			args:      []string{"updater", "verify"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "updater verify"`, `"argument": "URL PUBLIC_KEY"`},
+		},
+		{
+			name:      "download missing URL",
+			args:      []string{"updater", "download"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "updater download"`, `"argument": "URL"`},
+		},
+		{
+			name:      "install missing artifact",
+			args:      []string{"updater", "install"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "updater install"`, `"argument": "ARTIFACT"`},
+		},
+		{
+			name:      "unknown updater action",
+			args:      []string{"updater", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "updater"`, `"bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestUpdaterDownloadCommandReportsStructuredResult(t *testing.T) {
 	payload := []byte("codog cli updater binary")
 	sum := sha256.Sum256(payload)
