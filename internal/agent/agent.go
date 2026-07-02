@@ -22964,6 +22964,8 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 		return a.ResumeCommand(append([]string{overrides.Resume}, args...))
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "exists":
+		return a.SessionExists(args[1:], overrides.Resume)
 	case "delete":
 		req, err := parseSessionDeleteArgs("codog sessions delete", args[1:])
 		if err != nil {
@@ -22981,7 +22983,7 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 			return fmt.Errorf("delete: refusing to delete the active session %q", target.ID)
 		}
 		return a.SessionsCommand(args)
-	case "show", "exists", "fork", "rename":
+	case "show", "fork", "rename":
 		if len(args) == 1 || strings.HasPrefix(strings.TrimSpace(args[1]), "-") {
 			withSession := append([]string{args[0], overrides.Resume}, args[1:]...)
 			return a.SessionsCommand(withSession)
@@ -34404,16 +34406,10 @@ func (a *App) handleSessionSlash(args []string, sess *session.Session) {
 	}
 	switch args[0] {
 	case "exists":
-		if len(args) < 2 {
-			fmt.Fprintln(a.Err, "usage: /session exists ID")
-			return
-		}
-		ok, err := a.Sessions.Exists(args[1])
-		if err != nil {
+		if err := a.SessionExists(args[1:], sess.ID); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 			return
 		}
-		fmt.Fprintf(a.Err, "%t\n", ok)
 	case "switch":
 		if len(args) < 2 {
 			fmt.Fprintln(a.Err, "usage: /session switch ID")
@@ -34536,15 +34532,11 @@ func (a *App) SessionsCommand(args []string) error {
 		data, _ := json.MarshalIndent(sess, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 	case "exists":
-		if len(args) < 2 {
-			return errors.New("usage: codog sessions exists ID")
+		existsArgs := args[1:]
+		if !argsHaveOutputFormat(existsArgs) {
+			existsArgs = append(append([]string(nil), existsArgs...), "--json")
 		}
-		ok, err := a.Sessions.Exists(args[1])
-		if err != nil {
-			return err
-		}
-		data, _ := json.MarshalIndent(map[string]any{"id": args[1], "exists": ok}, "", "  ")
-		fmt.Fprintln(a.Out, string(data))
+		return a.SessionExists(existsArgs, "")
 	case "fork":
 		if len(args) < 2 {
 			return errors.New("usage: codog sessions fork ID [branch-name]")
@@ -34613,6 +34605,87 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 		}, format)
 	}
 	return renderCLIError(out, err, format)
+}
+
+type sessionExistsReport struct {
+	Kind          string `json:"kind"`
+	Action        string `json:"action"`
+	Status        string `json:"status"`
+	SessionID     string `json:"session_id"`
+	Session       string `json:"session"`
+	Requested     string `json:"requested"`
+	Exists        bool   `json:"exists"`
+	Active        bool   `json:"active"`
+	Path          string `json:"path,omitempty"`
+	CandidatePath string `json:"candidate_path,omitempty"`
+}
+
+func (a *App) SessionExists(args []string, activeID string) error {
+	format, remaining, err := parseTemplateOutputArgs("sessions exists", args)
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 1 {
+		return errors.New("usage: codog sessions exists ID [--json|--output-format text|json]")
+	}
+	requested := strings.TrimSpace(remaining[0])
+	if requested == "" {
+		return errors.New("usage: codog sessions exists ID [--json|--output-format text|json]")
+	}
+	report, err := a.buildSessionExistsReport(requested, activeID)
+	if err != nil {
+		return err
+	}
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderSessionExistsText(a.Out, report)
+	return nil
+}
+
+func (a *App) buildSessionExistsReport(requested string, activeID string) (sessionExistsReport, error) {
+	report := sessionExistsReport{
+		Kind:          "session_exists",
+		Action:        "exists",
+		Status:        "ok",
+		SessionID:     requested,
+		Session:       requested,
+		Requested:     requested,
+		CandidatePath: filepath.Join(a.Sessions.Dir, requested+".jsonl"),
+	}
+	exists, err := a.Sessions.Exists(requested)
+	if err != nil {
+		return sessionExistsReport{}, err
+	}
+	report.Exists = exists
+	if exists {
+		sess, err := a.Sessions.OpenExisting(requested)
+		if err != nil {
+			return sessionExistsReport{}, err
+		}
+		report.SessionID = sess.ID
+		report.Path = sess.Path
+	}
+	report.Active = strings.TrimSpace(activeID) != "" && report.SessionID == strings.TrimSpace(activeID)
+	return report, nil
+}
+
+func renderSessionExistsText(out io.Writer, report sessionExistsReport) {
+	exists := "no"
+	if report.Exists {
+		exists = "yes"
+	}
+	fmt.Fprintln(out, "Session exists")
+	fmt.Fprintf(out, "  Session          %s\n", report.Session)
+	fmt.Fprintf(out, "  Exists           %s\n", exists)
+	if report.Active {
+		fmt.Fprintln(out, "  Active           yes")
+	}
+	if report.Path != "" {
+		fmt.Fprintf(out, "  Path             %s\n", report.Path)
+	}
 }
 
 type resumeCommandReport struct {

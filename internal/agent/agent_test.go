@@ -5046,6 +5046,15 @@ func TestSessionsCommandForkExistsAndDelete(t *testing.T) {
 
 	require.NoError(t, app.SessionsCommand([]string{"exists", "source"}))
 	require.Contains(t, out.String(), `"exists": true`)
+	var existsReport sessionExistsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &existsReport))
+	require.Equal(t, "session_exists", existsReport.Kind)
+	require.Equal(t, "exists", existsReport.Action)
+	require.Equal(t, "source", existsReport.SessionID)
+	require.Equal(t, "source", existsReport.Requested)
+	require.True(t, existsReport.Exists)
+	require.False(t, existsReport.Active)
+	require.NotEmpty(t, existsReport.Path)
 	out.Reset()
 
 	require.NoError(t, app.SessionsCommand([]string{"fork", "source", "branch"}))
@@ -5468,6 +5477,36 @@ func TestResumedSessionDeleteRefusesActiveSession(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestResumedSessionExistsJSONMarksActiveAndRequiresTarget(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.runResumedSessionSlash([]string{"exists", "active", "--json"}, config.FlagOverrides{Resume: "active"}))
+	var report sessionExistsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_exists", report.Kind)
+	require.Equal(t, "active", report.SessionID)
+	require.True(t, report.Exists)
+	require.True(t, report.Active)
+	require.NotEmpty(t, report.Path)
+	out.Reset()
+
+	require.NoError(t, app.runResumedSessionSlash([]string{"exists", "missing", "--json"}, config.FlagOverrides{Resume: "active"}))
+	var missingReport sessionExistsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &missingReport))
+	require.Equal(t, "missing", missingReport.SessionID)
+	require.False(t, missingReport.Exists)
+	require.False(t, missingReport.Active)
+	require.Empty(t, missingReport.Path)
+	require.NotEmpty(t, missingReport.CandidatePath)
+
+	err := app.runResumedSessionSlash([]string{"exists", "--json"}, config.FlagOverrides{Resume: "active"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "usage: codog sessions exists ID")
+}
+
 func TestResumedSessionListJSONMarksActiveSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
@@ -5507,6 +5546,25 @@ func TestSessionSlashListJSONMarksActiveSession(t *testing.T) {
 	require.Equal(t, "active", report.Active)
 	require.Len(t, report.SessionDetails, 1)
 	require.True(t, report.SessionDetails[0].Active)
+}
+
+func TestSessionSlashExistsJSONMarksActiveSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{Sessions: store, Out: &out, Err: &errOut}
+	sess, err := store.Open("active")
+	require.NoError(t, err)
+
+	require.True(t, app.handleSlash(context.Background(), "/session exists active --json", sess))
+	require.Empty(t, errOut.String())
+	var report sessionExistsReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_exists", report.Kind)
+	require.Equal(t, "active", report.SessionID)
+	require.True(t, report.Exists)
+	require.True(t, report.Active)
 }
 
 func TestGenerateSessionNameCommandAndSlash(t *testing.T) {
