@@ -10088,6 +10088,15 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	workspace := t.TempDir()
 	var out bytes.Buffer
 	var errOut bytes.Buffer
+	tokenPath := filepath.Join(configHome, "remote-token")
+	caPath := filepath.Join(configHome, "ca-bundle.crt")
+	require.NoError(t, os.WriteFile(tokenPath, []byte("upstream-secret\n"), 0o600))
+	t.Setenv("CLAUDE_CODE_REMOTE", "1")
+	t.Setenv("CCR_UPSTREAM_PROXY_ENABLED", "true")
+	t.Setenv("CLAUDE_CODE_REMOTE_SESSION_ID", "setup-session")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://remote.test")
+	t.Setenv("CCR_SESSION_TOKEN_PATH", tokenPath)
+	t.Setenv("CCR_CA_BUNDLE_PATH", caPath)
 	app := &App{
 		Config:    config.Config{ConfigHome: configHome},
 		Sessions:  session.NewWorkspaceStore(configHome, workspace),
@@ -10103,7 +10112,15 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	require.Contains(t, out.String(), `"auth_token_configured": true`)
 	require.Contains(t, out.String(), `"remote_url": "http://127.0.0.1:8799"`)
 	require.Contains(t, out.String(), `"session_id": "setup-session"`)
+	require.Contains(t, out.String(), `"upstream_proxy"`)
+	require.Contains(t, out.String(), `"ready": true`)
+	require.Contains(t, out.String(), `"proxy_url": "http://127.0.0.1:8799"`)
 	require.NotContains(t, out.String(), "secret-token")
+	require.NotContains(t, out.String(), "upstream-secret")
+	var setupReport remoteSetupReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &setupReport))
+	require.True(t, setupReport.Runtime.UpstreamProxy.Ready)
+	require.Equal(t, "wss://remote.test/v1/code/upstreamproxy/ws", setupReport.Runtime.UpstreamProxy.WebSocketURL)
 	require.True(t, app.Config.Future.RemoteEnabled)
 	require.Equal(t, "secret-token", app.Config.Future.RemoteAuthToken)
 	require.Equal(t, 120, app.Config.Future.RemoteLeaseSeconds)
@@ -10116,6 +10133,7 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/remote-setup disable --addr 127.0.0.1:9999", &session.Session{ID: "active-session"}))
 	require.Contains(t, out.String(), "Remote Setup")
 	require.Contains(t, out.String(), "Enabled          false")
+	require.Contains(t, out.String(), "Upstream proxy   true")
 	require.Contains(t, out.String(), "127.0.0.1:9999")
 	require.Contains(t, out.String(), "active-session")
 	require.Empty(t, errOut.String())

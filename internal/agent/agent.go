@@ -77,6 +77,7 @@ import (
 	"github.com/Rememorio/codog/internal/promptrefs"
 	"github.com/Rememorio/codog/internal/prworkflow"
 	"github.com/Rememorio/codog/internal/releasenotes"
+	remoteruntime "github.com/Rememorio/codog/internal/remote"
 	"github.com/Rememorio/codog/internal/reportschema"
 	localreview "github.com/Rememorio/codog/internal/review"
 	"github.com/Rememorio/codog/internal/runloop"
@@ -1450,22 +1451,23 @@ type remoteSetupRequest struct {
 }
 
 type remoteSetupReport struct {
-	Kind                string   `json:"kind"`
-	Action              string   `json:"action"`
-	Status              string   `json:"status"`
-	Workspace           string   `json:"workspace,omitempty"`
-	SessionID           string   `json:"session_id,omitempty"`
-	Enabled             bool     `json:"enabled"`
-	Ready               bool     `json:"ready"`
-	AuthTokenConfigured bool     `json:"auth_token_configured"`
-	LeaseSeconds        int      `json:"lease_seconds"`
-	RemoteCommand       string   `json:"remote_command"`
-	RemoteAddr          string   `json:"remote_addr"`
-	RemoteURL           string   `json:"remote_url"`
-	HealthURL           string   `json:"health_url"`
-	StateURL            string   `json:"state_url"`
-	Path                string   `json:"path,omitempty"`
-	Messages            []string `json:"messages,omitempty"`
+	Kind                string                      `json:"kind"`
+	Action              string                      `json:"action"`
+	Status              string                      `json:"status"`
+	Workspace           string                      `json:"workspace,omitempty"`
+	SessionID           string                      `json:"session_id,omitempty"`
+	Enabled             bool                        `json:"enabled"`
+	Ready               bool                        `json:"ready"`
+	AuthTokenConfigured bool                        `json:"auth_token_configured"`
+	LeaseSeconds        int                         `json:"lease_seconds"`
+	RemoteCommand       string                      `json:"remote_command"`
+	RemoteAddr          string                      `json:"remote_addr"`
+	RemoteURL           string                      `json:"remote_url"`
+	HealthURL           string                      `json:"health_url"`
+	StateURL            string                      `json:"state_url"`
+	Path                string                      `json:"path,omitempty"`
+	Messages            []string                    `json:"messages,omitempty"`
+	Runtime             remoteruntime.RuntimeReport `json:"runtime"`
 }
 
 func (a *App) RemoteEnv(args []string) error {
@@ -1890,6 +1892,7 @@ func (a *App) buildRemoteSetupReport(req remoteSetupRequest, sessionID, addr, re
 		HealthURL:           strings.TrimRight(remoteURL, "/") + "/health",
 		StateURL:            strings.TrimRight(remoteURL, "/") + "/state",
 		Path:                req.Path,
+		Runtime:             remoteruntime.InspectEnv(remoteruntime.Env(), remoteProxyPortFromAddr(addr)),
 	}
 	switch {
 	case !enabled:
@@ -1925,6 +1928,13 @@ func renderRemoteSetupReport(out io.Writer, report remoteSetupReport) {
 	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
 	fmt.Fprintf(out, "  Remote URL       %s\n", report.RemoteURL)
 	fmt.Fprintf(out, "  Health URL       %s\n", report.HealthURL)
+	fmt.Fprintf(out, "  Upstream proxy   %t\n", report.Runtime.UpstreamProxy.Ready)
+	if report.Runtime.UpstreamProxy.WebSocketURL != "" {
+		fmt.Fprintf(out, "  Upstream WS      %s\n", report.Runtime.UpstreamProxy.WebSocketURL)
+	}
+	if len(report.Runtime.UpstreamProxy.Missing) > 0 {
+		fmt.Fprintf(out, "  Upstream missing %s\n", strings.Join(report.Runtime.UpstreamProxy.Missing, ", "))
+	}
 	if report.SessionID != "" {
 		fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
 	}
@@ -2812,6 +2822,28 @@ func normalizeRemoteHandoffAddr(value string) (string, string, error) {
 		displayHost = "127.0.0.1:" + strings.TrimPrefix(addr, "[::]:")
 	}
 	return addr, "http://" + displayHost, nil
+}
+
+func remoteProxyPortFromAddr(addr string) uint16 {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return 8791
+	}
+	if parsed, err := url.Parse(addr); err == nil && parsed.Host != "" {
+		addr = parsed.Host
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	index := strings.LastIndex(addr, ":")
+	if index < 0 || index == len(addr)-1 {
+		return 0
+	}
+	port, err := strconv.Atoi(addr[index+1:])
+	if err != nil || port < 0 || port > 65535 {
+		return 0
+	}
+	return uint16(port)
 }
 
 func saveHandoffManifest(configHome string, manifest handoffManifest) (handoffManifest, error) {
