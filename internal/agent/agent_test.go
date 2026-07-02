@@ -1853,6 +1853,10 @@ func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
 func TestResumedSlashCLIContracts(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	externalContext := filepath.Join(t.TempDir(), "external-context")
+	require.NoError(t, os.MkdirAll(externalContext, 0o755))
+	externalContext, err := filepath.EvalSymlinks(externalContext)
+	require.NoError(t, err)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", "")
 	var oauthServer *httptest.Server
@@ -1862,7 +1866,7 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		_, _ = w.Write([]byte(`{"authorization_endpoint":"` + oauthServer.URL + `/authorize","token_endpoint":"` + oauthServer.URL + `/token"}`))
 	}))
 	t.Cleanup(oauthServer.Close)
-	_, err := oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
+	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
 	require.NoError(t, err)
 	_, err = oauth.SaveToken(configHome, oauth.Token{
 		AccessToken:  "resume-oauth-access-1234",
@@ -3286,6 +3290,39 @@ func risky(value any) {
 	require.Equal(t, "clear", resumedUnfocusClear.Action)
 	require.Equal(t, 0, resumedUnfocusClear.Total)
 
+	out, err = runResumedJSON("/add-dir", externalContext)
+	require.NoError(t, err)
+	var resumedAddDirMutation pathscope.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAddDirMutation))
+	require.Equal(t, "additional_dirs", resumedAddDirMutation.Kind)
+	require.Equal(t, "add", resumedAddDirMutation.Action)
+	require.Equal(t, 1, resumedAddDirMutation.Total)
+	require.Equal(t, externalContext, resumedAddDirMutation.Entries[0].Path)
+	require.Equal(t, "workspace", resumedAddDirMutation.Entries[0].Source)
+	require.True(t, resumedAddDirMutation.Entries[0].Exists)
+
+	out, err = runResumedJSON("/add-dir", "remove", externalContext)
+	require.NoError(t, err)
+	var resumedRemoveDir pathscope.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoveDir))
+	require.Equal(t, "additional_dirs", resumedRemoveDir.Kind)
+	require.Equal(t, "remove", resumedRemoveDir.Action)
+	require.Equal(t, 0, resumedRemoveDir.Total)
+
+	out, err = runResumedJSON("/add-dir", externalContext)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAddDirMutation))
+	require.Equal(t, "add", resumedAddDirMutation.Action)
+	require.Equal(t, 1, resumedAddDirMutation.Total)
+
+	out, err = runResumedJSON("/add-dir", "clear")
+	require.NoError(t, err)
+	var resumedClearDir pathscope.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedClearDir))
+	require.Equal(t, "additional_dirs", resumedClearDir.Kind)
+	require.Equal(t, "clear", resumedClearDir.Action)
+	require.Equal(t, 0, resumedClearDir.Total)
+
 	for _, guarded := range []struct {
 		Command string
 		Args    []string
@@ -3384,7 +3421,6 @@ func risky(value any) {
 		{Command: "/ide", Args: []string{"clear"}, Report: "/ide clear"},
 		{Command: "/bridge-kick", Args: []string{"clear"}, Report: "/bridge-kick clear"},
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
-		{Command: "/add-dir", Args: []string{workspace}, Report: "/add-dir add"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/ant-trace", Args: []string{"--no-request", "--write"}, Report: "/ant-trace write"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},

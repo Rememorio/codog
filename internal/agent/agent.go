@@ -24313,13 +24313,6 @@ func (a *App) runResumedUnfocusSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedAddDirSlash(args []string, format string) error {
-	req, err := parseAddDirArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "list" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/add-dir", req.Action), format)
-	}
 	return a.AddDir(args)
 }
 
