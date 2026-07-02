@@ -20058,6 +20058,76 @@ func TestBackgroundHeartbeatAndBoardCommands(t *testing.T) {
 	require.Equal(t, background.LaneFreshnessHealthy, board.Active[0].Freshness)
 }
 
+func TestResumedBackgroundLifecycleActions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := background.NewStore(configHome)
+	task, err := store.RunWithOptions("sleep 30", workspace, background.RunOptions{SessionID: "resume-bg"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = store.Stop(task.ID) })
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Sessions:  session.NewStore(configHome),
+		Workspace: workspace,
+		Out:       &out,
+	}
+	overrides := config.FlagOverrides{Resume: "resume-bg"}
+
+	require.NoError(t, app.runResumedBackgroundSlash([]string{"heartbeat", task.ID, "--status", "working", "--json"}, overrides, "json"))
+	var report backgroundCommandReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "heartbeat", report.Action)
+	require.Equal(t, task.ID, report.TaskID)
+	require.NotNil(t, report.Task)
+	require.Equal(t, "working", report.Task.Heartbeat.Status)
+	out.Reset()
+
+	require.NoError(t, app.runResumedBackgroundSlash([]string{"restart", task.ID, "--json"}, overrides, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "restart", report.Action)
+	require.NotNil(t, report.Task)
+	require.Equal(t, task.ID, report.Task.RestartedFrom)
+	restartedID := report.Task.ID
+	t.Cleanup(func() { _, _ = store.Stop(restartedID) })
+	out.Reset()
+
+	require.NoError(t, app.runResumedBackgroundSlash([]string{"stop", restartedID, "--json"}, overrides, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "stop", report.Action)
+	require.Equal(t, restartedID, report.TaskID)
+	require.NotNil(t, report.Task)
+	require.Equal(t, "stopped", report.Task.Status)
+	out.Reset()
+
+	failed, err := store.RunWithOptions("false", workspace, background.RunOptions{
+		SessionID:     "resume-bg",
+		RestartPolicy: &background.RestartPolicy{Enabled: true, Mode: "on-failure", MaxAttempts: 1},
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		current, err := store.Status(failed.ID)
+		return err == nil && current.Status == "failed"
+	}, 2*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, app.runResumedBackgroundSlash([]string{"supervise", "--json"}, overrides, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "supervise", report.Action)
+	require.NotNil(t, report.Supervise)
+	require.Len(t, report.Supervise.Restarted, 1)
+	require.Equal(t, failed.ID, report.Supervise.Restarted[0].RestartedFrom)
+	out.Reset()
+
+	require.NoError(t, app.runResumedBackgroundSlash([]string{"prune", "0", "0", "--json"}, overrides, "json"))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prune", report.Action)
+	require.NotNil(t, report.Prune)
+}
+
 func TestBackgroundRunEmitsNotificationHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")

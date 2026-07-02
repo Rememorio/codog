@@ -25112,7 +25112,8 @@ func (a *App) runResumedBackgroundSlash(args []string, overrides config.FlagOver
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "run", "status", "logs", "board", "lane-board", "lanes":
+	case "", "list", "run", "status", "logs", "board", "lane-board", "lanes",
+		"heartbeat", "stop", "restart", "prune", "supervise":
 		return a.BackgroundWithOverrides(args, overrides)
 	default:
 		command := "/tasks"
