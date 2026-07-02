@@ -165,6 +165,17 @@ func (e PathIsDirectoryError) Error() string {
 	return fmt.Sprintf("session path is a directory: %s", e.Path)
 }
 
+// WorkspaceMismatchError reports an explicitly bound session from another workspace.
+type WorkspaceMismatchError struct {
+	Expected string
+	Actual   string
+	Path     string
+}
+
+func (e WorkspaceMismatchError) Error() string {
+	return fmt.Sprintf("session workspace mismatch: expected %s, found %s", e.Expected, e.Actual)
+}
+
 func NewStore(configHome string) *Store {
 	return &Store{Dir: filepath.Join(configHome, "sessions")}
 }
@@ -249,7 +260,7 @@ func (s *Store) Open(id string) (*Session, error) {
 		}
 		return s.createAtPath(id, path, SessionIdentity{})
 	}
-	messages, identity, metadata, err := s.readSession(path, id)
+	messages, identity, metadata, err := s.readSessionStrict(path, id)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +299,7 @@ func (s *Store) OpenExisting(id string) (*Session, error) {
 	if info.IsDir() {
 		return nil, PathIsDirectoryError{Path: path}
 	}
-	messages, identity, metadata, err := s.readSession(path, id)
+	messages, identity, metadata, err := s.readSessionStrict(path, id)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +322,7 @@ func (s *Store) openExistingPath(path string) (*Session, error) {
 	if strings.TrimSpace(id) == "" {
 		id = filepath.Base(path)
 	}
-	messages, identity, metadata, err := s.readSession(path, id)
+	messages, identity, metadata, err := s.readSessionStrict(path, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1377,9 +1388,22 @@ func validateSessionID(id string) error {
 }
 
 func (s *Store) readSession(path string, id string) ([]anthropic.Message, SessionIdentity, SessionMetadata, error) {
+	return s.readSessionWithWorkspaceMode(path, id, true)
+}
+
+func (s *Store) readSessionStrict(path string, id string) ([]anthropic.Message, SessionIdentity, SessionMetadata, error) {
+	return s.readSessionWithWorkspaceMode(path, id, false)
+}
+
+func (s *Store) readSessionWithWorkspaceMode(path string, id string, allowWorkspaceMismatch bool) ([]anthropic.Message, SessionIdentity, SessionMetadata, error) {
 	records, err := s.readRecords(path)
 	if err != nil {
 		return nil, SessionIdentity{}, SessionMetadata{}, err
+	}
+	if !allowWorkspaceMismatch {
+		if err := s.validateSessionWorkspace(path, records); err != nil {
+			return nil, SessionIdentity{}, SessionMetadata{}, err
+		}
 	}
 	var messages []anthropic.Message
 	for _, record := range records {
@@ -1388,6 +1412,24 @@ func (s *Store) readSession(path string, id string) ([]anthropic.Message, Sessio
 		}
 	}
 	return messages, identityFromRecords(id, s.Workspace, records), metadataFromRecords(path, records), nil
+}
+
+func (s *Store) validateSessionWorkspace(path string, records []Record) error {
+	expected := canonicalWorkspace(s.Workspace)
+	if strings.TrimSpace(expected) == "" {
+		return nil
+	}
+	for _, record := range records {
+		if record.Type != "session_identity" || record.Identity == nil {
+			continue
+		}
+		actual := canonicalWorkspace(record.Identity.Workspace)
+		if strings.TrimSpace(actual) == "" || sameDir(expected, actual) {
+			return nil
+		}
+		return WorkspaceMismatchError{Expected: expected, Actual: actual, Path: path}
+	}
+	return nil
 }
 
 func metadataFromRecords(path string, records []Record) SessionMetadata {

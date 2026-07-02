@@ -74,6 +74,35 @@ func TestWorkspaceStoreReadsAndContinuesLegacyFlatSessions(t *testing.T) {
 	require.Equal(t, "legacy-session", latest)
 }
 
+func TestWorkspaceStoreRejectsExplicitSessionFromOtherWorkspace(t *testing.T) {
+	configHome := t.TempDir()
+	workspaceA := filepath.Join(t.TempDir(), "repo-a")
+	workspaceB := filepath.Join(t.TempDir(), "repo-b")
+	require.NoError(t, os.MkdirAll(workspaceA, 0o755))
+	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
+	storeB := NewWorkspaceStore(configHome, workspaceB)
+	canonicalA, err := filepath.EvalSymlinks(workspaceA)
+	require.NoError(t, err)
+	canonicalB, err := filepath.EvalSymlinks(workspaceB)
+	require.NoError(t, err)
+
+	path := filepath.Join(storeB.LegacyDir, "legacy-cross.jsonl")
+	writeTestSessionIdentity(t, path, "legacy-cross", SessionIdentity{
+		Title:     "legacy cross",
+		Workspace: canonicalA,
+		Worktree:  canonicalA,
+		Purpose:   "test",
+	})
+
+	_, err = storeB.OpenExisting("legacy-cross")
+	require.Error(t, err)
+	var mismatch WorkspaceMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	require.Equal(t, canonicalB, mismatch.Expected)
+	require.Equal(t, canonicalA, mismatch.Actual)
+	require.Equal(t, path, mismatch.Path)
+}
+
 func TestLatestIDSkipsEmptySessions(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("real-session", anthropic.TextMessage("user", "hello")))
@@ -120,6 +149,8 @@ func TestLatestSessionFallsBackToSiblingWorkspace(t *testing.T) {
 	require.NoError(t, os.MkdirAll(workspaceB, 0o755))
 	storeA := NewWorkspaceStore(configHome, workspaceA)
 	storeB := NewWorkspaceStore(configHome, workspaceB)
+	_, err := storeB.CreateWithIdentity("remote-session", SessionIdentity{Purpose: "test"})
+	require.NoError(t, err)
 	require.NoError(t, storeB.Append("remote-session", anthropic.TextMessage("user", "from another workspace")))
 
 	latest, err := storeA.LatestSessionExcluding("")
@@ -172,6 +203,23 @@ func writeTestSessionRecord(t *testing.T, store *Store, id string, recordTime ti
 	require.NoError(t, writeErr)
 	require.NoError(t, closeErr)
 	require.NoError(t, os.Chtimes(path, fileTime, fileTime))
+}
+
+func writeTestSessionIdentity(t *testing.T, path string, id string, identity SessionIdentity) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	require.NoError(t, writeRecord(file, Record{Type: "session", Time: now, SessionID: id}))
+	require.NoError(t, writeRecord(file, Record{Type: "session_identity", Time: now, SessionID: id, Identity: &identity}))
+	require.NoError(t, writeRecord(file, Record{
+		Type:      "message",
+		Time:      now,
+		Message:   &anthropic.Message{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "hello"}}},
+		SessionID: id,
+	}))
+	require.NoError(t, file.Close())
 }
 
 func TestWorkspaceStoreCleanupRemovesExpiredCurrentAndLegacySessions(t *testing.T) {
