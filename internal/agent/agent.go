@@ -24638,19 +24638,10 @@ func (a *App) runResumedLanguageSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedEffortSlash(args []string, command string, format string) error {
-	req, err := parseEffortArgs(args, command)
-	if err != nil {
-		return err
+	if command == "reasoning" {
+		return a.Reasoning(args)
 	}
-	switch req.Action {
-	case "status", "list":
-		if command == "reasoning" {
-			return a.Reasoning(args)
-		}
-		return a.Effort(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/"+command, req.Action), format)
-	}
+	return a.Effort(args)
 }
 
 func (a *App) runResumedFastSlash(args []string, format string) error {

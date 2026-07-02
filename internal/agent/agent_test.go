@@ -2400,6 +2400,16 @@ func risky(value any) {
 	require.Equal(t, "status", resumedEffort.Action)
 	require.Equal(t, "high", resumedEffort.Effort)
 
+	out, err = runResumedJSON("/effort", "low")
+	require.NoError(t, err)
+	var resumedEffortSet effortReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedEffortSet))
+	require.Equal(t, "effort", resumedEffortSet.Kind)
+	require.Equal(t, "set", resumedEffortSet.Action)
+	require.Equal(t, "low", resumedEffortSet.Effort)
+	require.Equal(t, "high", resumedEffortSet.Previous)
+	require.NotEmpty(t, resumedEffortSet.Path)
+
 	out, err = runResumedJSON("/reasoning", "list")
 	require.NoError(t, err)
 	var resumedReasoning effortReport
@@ -3379,7 +3389,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
 		{Command: "/advisor", Args: []string{"claude-opus"}, Report: "/advisor set"},
 		{Command: "/advisor", Args: []string{"off"}, Report: "/advisor clear"},
-		{Command: "/effort", Args: []string{"low"}, Report: "/effort set"},
 		{Command: "/fast", Args: []string{"toggle"}, Report: "/fast toggle"},
 		{Command: "/voice", Args: []string{"set-command", "say"}, Report: "/voice set-command"},
 		{Command: "/voice", Args: []string{"on"}, Report: "/voice on"},
