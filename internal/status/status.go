@@ -60,6 +60,9 @@ type Options struct {
 	PlanUpdatedAt               string
 	MemoryFiles                 []MemoryFileStatus
 	ToolNames                   []string
+	AllowedToolSource           string
+	AllowedToolEntries          []string
+	ToolAliases                 map[string]string
 	SessionID                   string
 	SessionPath                 string
 	SessionMessages             int
@@ -96,6 +99,7 @@ type Snapshot struct {
 	Session             SessionStatus        `json:"session"`
 	Plan                PlanStatus           `json:"plan"`
 	Tools               ToolsStatus          `json:"tools"`
+	AllowedTools        AllowedToolsStatus   `json:"allowed_tools"`
 	Git                 GitStatus            `json:"git"`
 	LaneBoard           LaneBoardStatus      `json:"lane_board"`
 	Sandbox             SandboxStatus        `json:"sandbox"`
@@ -198,6 +202,15 @@ type PlanStatus struct {
 type ToolsStatus struct {
 	Count int      `json:"count"`
 	Names []string `json:"names"`
+}
+
+// AllowedToolsStatus describes the active allowed-tools restriction contract.
+type AllowedToolsStatus struct {
+	Source     string            `json:"source"`
+	Restricted bool              `json:"restricted"`
+	Entries    []string          `json:"entries,omitempty"`
+	Available  []string          `json:"available"`
+	Aliases    map[string]string `json:"aliases"`
 }
 
 // GitStatus summarizes local git state for the workspace.
@@ -365,8 +378,9 @@ func Build(opts Options) Snapshot {
 			Count: len(opts.ToolNames),
 			Names: append([]string(nil), opts.ToolNames...),
 		},
-		Git:       git,
-		LaneBoard: laneBoard,
+		AllowedTools: buildAllowedToolsStatus(opts),
+		Git:          git,
+		LaneBoard:    laneBoard,
 		Sandbox: SandboxStatus{
 			OS:         opts.SandboxOS,
 			Default:    opts.SandboxDefault,
@@ -405,6 +419,29 @@ func buildSessionLifecycleStatus(opts Options) *SessionLifecycleStatus {
 		Kind:   kind,
 		Signal: signal,
 		Saved:  true,
+	}
+}
+
+func buildAllowedToolsStatus(opts Options) AllowedToolsStatus {
+	entries := append([]string(nil), opts.AllowedToolEntries...)
+	available := append([]string(nil), opts.ToolNames...)
+	aliases := map[string]string{}
+	for alias, canonical := range opts.ToolAliases {
+		aliases[alias] = canonical
+	}
+	source := strings.TrimSpace(opts.AllowedToolSource)
+	if source == "" {
+		source = "default"
+		if len(entries) != 0 {
+			source = "configured"
+		}
+	}
+	return AllowedToolsStatus{
+		Source:     source,
+		Restricted: len(entries) != 0,
+		Entries:    entries,
+		Available:  available,
+		Aliases:    aliases,
 	}
 }
 

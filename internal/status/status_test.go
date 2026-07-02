@@ -26,7 +26,9 @@ func TestBuildParsesGitStatus(t *testing.T) {
 			Scope: "/repo/codog",
 			Chars: 18,
 		}},
-		ToolNames: []string{"bash", "read_file"},
+		ToolNames:          []string{"bash", "read_file"},
+		AllowedToolEntries: []string{"read_file", "grep"},
+		ToolAliases:        map[string]string{"Read": "read_file"},
 		LaneBoard: &background.LaneBoard{
 			GeneratedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
 			Active: []background.LaneBoardEntry{{
@@ -58,6 +60,11 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, 1, snapshot.Git.Untracked)
 	require.Equal(t, 1, snapshot.Git.Conflicts)
 	require.Equal(t, 2, snapshot.Tools.Count)
+	require.True(t, snapshot.AllowedTools.Restricted)
+	require.Equal(t, "configured", snapshot.AllowedTools.Source)
+	require.Equal(t, []string{"read_file", "grep"}, snapshot.AllowedTools.Entries)
+	require.Equal(t, []string{"bash", "read_file"}, snapshot.AllowedTools.Available)
+	require.Equal(t, "read_file", snapshot.AllowedTools.Aliases["Read"])
 	require.True(t, snapshot.Plan.Active)
 	require.Equal(t, "inspect first", snapshot.Plan.Text)
 	require.True(t, snapshot.LaneBoard.StatusJSONSupported)
@@ -65,6 +72,20 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.True(t, snapshot.LaneBoard.Available)
 	require.Equal(t, 1, snapshot.LaneBoard.ActiveCount)
 	require.Equal(t, "task-1", snapshot.LaneBoard.Active[0].TaskID)
+}
+
+func TestBuildReportsDefaultAllowedTools(t *testing.T) {
+	snapshot := Build(Options{
+		ToolNames:   []string{"agent", "bash"},
+		ToolAliases: map[string]string{"WebFetch": "web_fetch"},
+		GitStatus:   "## main",
+	})
+
+	require.False(t, snapshot.AllowedTools.Restricted)
+	require.Equal(t, "default", snapshot.AllowedTools.Source)
+	require.Empty(t, snapshot.AllowedTools.Entries)
+	require.Equal(t, []string{"agent", "bash"}, snapshot.AllowedTools.Available)
+	require.Equal(t, "web_fetch", snapshot.AllowedTools.Aliases["WebFetch"])
 }
 
 func TestBuildMarksGitErrorDegraded(t *testing.T) {

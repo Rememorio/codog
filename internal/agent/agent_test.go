@@ -7956,6 +7956,7 @@ func TestStatusCommandAndSlash(t *testing.T) {
 			BaseURL:             "https://api.example.test",
 			APIKey:              "secret",
 			PermissionMode:      "workspace-write",
+			PermissionRules:     config.PermissionRules{Allow: []string{"read_file", "grep"}},
 			MaxTokens:           1000,
 			MaxTurns:            4,
 			AutoCompactMessages: 20,
@@ -7995,6 +7996,13 @@ func TestStatusCommandAndSlash(t *testing.T) {
 				Contributes    bool   `json:"contributes"`
 			} `json:"memory_files"`
 		} `json:"workspace"`
+		AllowedTools struct {
+			Source     string            `json:"source"`
+			Restricted bool              `json:"restricted"`
+			Entries    []string          `json:"entries"`
+			Available  []string          `json:"available"`
+			Aliases    map[string]string `json:"aliases"`
+		} `json:"allowed_tools"`
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
 	require.Len(t, statusReport.Workspace.MemoryFiles, 1)
@@ -8004,6 +8012,17 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Equal(t, canonicalWorkspace, statusReport.Workspace.MemoryFiles[0].ScopePath)
 	require.False(t, statusReport.Workspace.MemoryFiles[0].OutsideProject)
 	require.True(t, statusReport.Workspace.MemoryFiles[0].Contributes)
+	require.Equal(t, "configured", statusReport.AllowedTools.Source)
+	require.True(t, statusReport.AllowedTools.Restricted)
+	require.Equal(t, []string{"read_file", "grep"}, statusReport.AllowedTools.Entries)
+	require.Contains(t, statusReport.AllowedTools.Available, "read_file")
+	require.Equal(t, "web_fetch", statusReport.AllowedTools.Aliases["WebFetch"])
+	out.Reset()
+
+	require.NoError(t, app.Status([]string{"--json"}, config.FlagOverrides{AllowedTools: []string{"read_file"}}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Equal(t, "flag", statusReport.AllowedTools.Source)
+	require.True(t, statusReport.AllowedTools.Restricted)
 	out.Reset()
 
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}

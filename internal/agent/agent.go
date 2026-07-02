@@ -20332,7 +20332,11 @@ func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 			return renderSessionRestoreError(a.Out, "status", sessionRef, err, format)
 		}
 	}
-	a.renderStatus(format, active)
+	allowedToolSource := ""
+	if len(overrides.AllowedTools) != 0 {
+		allowedToolSource = "flag"
+	}
+	a.renderStatus(format, active, allowedToolSource)
 	return nil
 }
 
@@ -21562,8 +21566,8 @@ func (a *App) renderPromptHistory(format string, sessionID string, entries []ses
 	return nil
 }
 
-func (a *App) renderStatus(format string, active *session.Session) {
-	snapshot := a.statusSnapshot(active)
+func (a *App) renderStatus(format string, active *session.Session, allowedToolSource string) {
+	snapshot := a.statusSnapshotWithAllowedToolSource(active, allowedToolSource)
 	if format == "json" {
 		data, _ := json.MarshalIndent(snapshot, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -21573,6 +21577,10 @@ func (a *App) renderStatus(format string, active *session.Session) {
 }
 
 func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
+	return a.statusSnapshotWithAllowedToolSource(active, "")
+}
+
+func (a *App) statusSnapshotWithAllowedToolSource(active *session.Session, allowedToolSource string) localstatus.Snapshot {
 	sessionCount := -1
 	if a.Sessions != nil {
 		sessions, err := a.Sessions.List()
@@ -21684,6 +21692,9 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		PlanUpdatedAt:               planState.UpdatedAt,
 		MemoryFiles:                 memoryStatuses,
 		ToolNames:                   toolNames,
+		AllowedToolSource:           allowedToolSource,
+		AllowedToolEntries:          append([]string(nil), a.Config.PermissionRules.Allow...),
+		ToolAliases:                 tools.ClaudeToolAliases(),
 		SessionID:                   sessionID,
 		SessionPath:                 sessionPath,
 		SessionMessages:             sessionMessages,
@@ -27608,7 +27619,7 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 	}
 	switch fields[0] {
 	case "/status":
-		a.renderStatus("text", sess)
+		a.renderStatus("text", sess, "")
 	case "/statusline":
 		if err := a.Statusline(fields[1:], config.FlagOverrides{SessionID: sess.ID}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
