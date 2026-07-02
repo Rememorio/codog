@@ -436,6 +436,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/ultraplan":          true,
 	"/ultrareview":        true,
 	"/unfocus":            true,
+	"/undo":               true,
 	"/unpin":              true,
 	"/usage":              true,
 	"/validation":         true,

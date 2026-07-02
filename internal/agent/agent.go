@@ -24966,6 +24966,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.ReleaseNotes(resumeSlashArgs("release-notes", args, format))
 	case "/reset":
 		return a.runResumedResetSlash(resumeSlashArgs("reset", args, format), format)
+	case "/undo":
+		return a.Undo(resumeSlashArgs("undo", args, format))
 	case "/plan", "/ultraplan":
 		return a.runResumedPlanSlash(resumeSlashArgs("plan", args, format), format)
 	case "/exit-plan", "/exit_plan_mode":

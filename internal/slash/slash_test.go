@@ -369,6 +369,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/build")
 	require.Contains(t, names, "/lint")
 	require.Contains(t, names, "/ultraplan")
+	require.Contains(t, names, "/undo")
 	require.Greater(t, len(names), 70)
 
 	for _, spec := range ResumeSupportedSpecs() {

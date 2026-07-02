@@ -5133,6 +5133,16 @@ func risky(value any) {
 	require.NoError(t, err)
 	require.Equal(t, "resumed debug write", string(debugWriteData))
 
+	out, err = runResumedJSON("/undo")
+	require.NoError(t, err)
+	var resumedUndo undo.RestoreReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedUndo))
+	require.Equal(t, "undo", resumedUndo.Kind)
+	require.Equal(t, "restore", resumedUndo.Action)
+	require.True(t, resumedUndo.Removed)
+	require.Equal(t, "debug-write.txt", resumedUndo.Path)
+	require.NoFileExists(t, filepath.Join(workspace, "debug-write.txt"))
+
 	out, err = runResumedJSON("/unfocus")
 	require.NoError(t, err)
 	var resumedUnfocus focus.Report
