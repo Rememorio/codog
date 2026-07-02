@@ -45,6 +45,15 @@ type Report struct {
 	Style  *Style         `json:"style,omitempty"`
 }
 
+// NotFoundError reports that a named output style could not be found.
+type NotFoundError struct {
+	Name string
+}
+
+func (e NotFoundError) Error() string {
+	return fmt.Sprintf("output style %q not found", e.Name)
+}
+
 type root struct {
 	path   string
 	source string
@@ -201,7 +210,7 @@ func Find(configHome, workspace, name string) (Style, error) {
 			return style, nil
 		}
 	}
-	return Style{}, fmt.Errorf("output style %q not found", name)
+	return Style{}, NotFoundError{Name: name}
 }
 
 func LoadState(workspace string) (State, error) {

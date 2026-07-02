@@ -498,7 +498,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "workspace", "cwd":
 		return app.WorkspaceCommand(rest)
 	case "output-style":
-		return app.OutputStyle(rest)
+		if err := app.OutputStyle(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "reset":
 		return app.Reset(rest)
 	case "model":
@@ -529,9 +532,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "language":
 		return app.Language(rest)
 	case "theme":
-		return app.Theme(rest)
+		if err := app.Theme(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "color":
-		return app.Theme(rest)
+		if err := app.Theme(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "vim":
 		return app.Vim(rest)
 	case "effort":
@@ -557,7 +566,10 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "keybindings":
 		return app.Keybindings(rest)
 	case "notifications":
-		return app.Notifications(rest)
+		if err := app.Notifications(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "skill", "skills":
 		if err := app.Skills(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -13254,6 +13266,8 @@ type outputStyleRequest struct {
 	Format string
 }
 
+const outputStyleUsage = "codog output-style [list|show|set|clear] [NAME] [--output-format text|json]"
+
 func (a *App) OutputStyle(args []string) error {
 	req, err := parseOutputStyleArgs(args)
 	if err != nil {
@@ -13295,35 +13309,77 @@ func parseOutputStyleArgs(args []string) (outputStyleRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return outputStyleRequest{}, errors.New("output-style output format is required")
+				return outputStyleRequest{}, missingFlagValueError{
+					Command: "output-style",
+					Flag:    arg,
+					Usage:   outputStyleUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return outputStyleRequest{}, unknownOptionError{
+				Command: "output-style",
+				Option:  arg,
+				Usage:   outputStyleUsage,
+			}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return outputStyleRequest{}, fmt.Errorf("unknown output-style output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("output-style", req.Format, []string{"text", "json"})
+	if err != nil {
+		return outputStyleRequest{}, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	switch rest[0] {
 	case "list":
+		if len(rest) > 1 {
+			return outputStyleRequest{}, unexpectedExtraArgsError{
+				Command: "output-style list",
+				Args:    rest[1:],
+				Usage:   outputStyleUsage,
+			}
+		}
 		req.Action = "list"
 	case "show", "set":
 		if len(rest) < 2 {
-			return outputStyleRequest{}, fmt.Errorf("output-style %s requires a name", rest[0])
+			return outputStyleRequest{}, requiredArgumentError{
+				Command:  "output-style " + rest[0],
+				Argument: "NAME",
+				Usage:    outputStyleUsage,
+			}
+		}
+		if len(rest) > 2 {
+			return outputStyleRequest{}, unexpectedExtraArgsError{
+				Command: "output-style " + rest[0],
+				Args:    rest[2:],
+				Usage:   outputStyleUsage,
+			}
 		}
 		req.Action = rest[0]
 		req.Name = rest[1]
 	case "clear", "reset":
+		if len(rest) > 1 {
+			return outputStyleRequest{}, unexpectedExtraArgsError{
+				Command: "output-style " + rest[0],
+				Args:    rest[1:],
+				Usage:   outputStyleUsage,
+			}
+		}
 		req.Action = "clear"
 	default:
+		if len(rest) > 1 {
+			return outputStyleRequest{}, unexpectedExtraArgsError{
+				Command: "output-style",
+				Args:    rest[1:],
+				Usage:   outputStyleUsage,
+			}
+		}
 		req.Action = "set"
 		req.Name = rest[0]
 	}
@@ -13349,6 +13405,8 @@ type themeReport struct {
 	Path      string   `json:"path,omitempty"`
 	Available []string `json:"available"`
 }
+
+const themeUsage = "codog theme [status|list|set|clear] [NAME] [--target user|project|local] [--path PATH] [--output-format text|json]"
 
 func (a *App) Theme(args []string) error {
 	req, err := parseThemeArgs(args)
@@ -13418,53 +13476,110 @@ func parseThemeArgs(args []string) (themeRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("theme output format is required")
+				return req, missingFlagValueError{
+					Command: "theme",
+					Flag:    arg,
+					Usage:   themeUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("theme target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "theme",
+					Flag:    arg,
+					Usage:   themeUsage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("theme config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "theme",
+					Flag:    arg,
+					Usage:   themeUsage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: "theme",
+					Option:  arg,
+					Usage:   themeUsage,
+				}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "theme"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("theme", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
 	switch strings.ToLower(rest[0]) {
 	case "status", "show":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: "theme " + strings.ToLower(rest[0]),
+				Args:    rest[1:],
+				Usage:   themeUsage,
+			}
+		}
 		req.Action = "status"
 	case "list":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: "theme list",
+				Args:    rest[1:],
+				Usage:   themeUsage,
+			}
+		}
 		req.Action = "list"
 	case "set":
 		if len(rest) < 2 {
-			return req, errors.New("theme name is required")
+			return req, requiredArgumentError{
+				Command:  "theme set",
+				Argument: "NAME",
+				Usage:    themeUsage,
+			}
+		}
+		if len(rest) > 2 {
+			return req, unexpectedExtraArgsError{
+				Command: "theme set",
+				Args:    rest[2:],
+				Usage:   themeUsage,
+			}
 		}
 		req.Action = "set"
 		req.Name = rest[1]
 	case "clear", "reset":
+		if len(rest) > 1 {
+			return req, unexpectedExtraArgsError{
+				Command: "theme " + strings.ToLower(rest[0]),
+				Args:    rest[1:],
+				Usage:   themeUsage,
+			}
+		}
 		req.Action = "clear"
 	default:
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected theme argument %q", rest[1])
+			return req, unexpectedExtraArgsError{
+				Command: "theme",
+				Args:    rest[1:],
+				Usage:   themeUsage,
+			}
 		}
 		req.Action = "set"
 		req.Name = rest[0]
@@ -13495,13 +13610,22 @@ func effectiveTheme(theme string) string {
 func validateThemeName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return errors.New("theme name is required")
+		return requiredArgumentError{
+			Command:  "theme set",
+			Argument: "NAME",
+			Usage:    themeUsage,
+		}
 	}
 	for _, r := range name {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
 			continue
 		}
-		return fmt.Errorf("invalid theme name %q", name)
+		return invalidFlagValueError{
+			Flag:    "theme",
+			Value:   name,
+			Message: "theme name may only contain letters, digits, dash, underscore, or dot",
+			Usage:   themeUsage,
+		}
 	}
 	return nil
 }
@@ -15025,6 +15149,8 @@ type notificationsReport struct {
 	Message    string `json:"message,omitempty"`
 }
 
+const notificationsUsage = "codog notifications [status|on|off|toggle|clear] [--target user|project|local] [--path PATH] [--output-format text|json]"
+
 func (a *App) Notifications(args []string) error {
 	req, err := parseNotificationsArgs(args)
 	if err != nil {
@@ -15083,34 +15209,55 @@ func parseNotificationsArgs(args []string) (notificationsRequest, error) {
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return req, errors.New("notifications output format is required")
+				return req, missingFlagValueError{
+					Command: "notifications",
+					Flag:    arg,
+					Usage:   notificationsUsage,
+				}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("notifications target is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "notifications",
+					Flag:    arg,
+					Usage:   notificationsUsage,
+				}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("notifications config path is required")
+			if index >= len(args) || isOutputFormatFlag(args[index]) {
+				return req, missingFlagValueError{
+					Command: "notifications",
+					Flag:    arg,
+					Usage:   notificationsUsage,
+				}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		default:
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: "notifications",
+					Option:  arg,
+					Usage:   notificationsUsage,
+				}
+			}
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "notifications"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("notifications", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -15126,10 +15273,18 @@ func parseNotificationsArgs(args []string) (notificationsRequest, error) {
 	case "clear", "reset", "unset":
 		req.Action = "clear"
 	default:
-		return req, fmt.Errorf("unknown notifications command %q", rest[0])
+		return req, unexpectedExtraArgsError{
+			Command: "notifications",
+			Args:    []string{rest[0]},
+			Usage:   notificationsUsage,
+		}
 	}
 	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected notifications argument %q", rest[1])
+		return req, unexpectedExtraArgsError{
+			Command: "notifications " + strings.ToLower(rest[0]),
+			Args:    rest[1:],
+			Usage:   notificationsUsage,
+		}
 	}
 	return req, nil
 }
@@ -23742,6 +23897,17 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Message:   "no undo records are available",
 			Hint:      "Run an editing command that records undo state before using `codog undo`.",
+		}
+	}
+	var outputStyleNotFound outputstyle.NotFoundError
+	if errors.As(err, &outputStyleNotFound) {
+		return cliErrorReport{
+			Kind:      "output_style_not_found",
+			ErrorKind: "output_style_not_found",
+			Status:    "error",
+			Value:     outputStyleNotFound.Name,
+			Message:   fmt.Sprintf("output style %q was not found", outputStyleNotFound.Name),
+			Hint:      "Run `codog output-style list` to see available output styles.",
 		}
 	}
 	var credentialsErr anthropic.MissingCredentialsError

@@ -12113,6 +12113,83 @@ func TestOutputStyleCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestOutputStyleErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"output-style", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "output-style"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"output-style", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "show missing name",
+			args:      []string{"output-style", "show"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "output-style show"`, `"argument": "NAME"`},
+		},
+		{
+			name:      "set missing name",
+			args:      []string{"output-style", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "output-style set"`, `"argument": "NAME"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"output-style", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "output-style"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "extra argument",
+			args:      []string{"output-style", "show", "concise", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "output-style show"`, `"extra"`},
+		},
+		{
+			name:      "not found",
+			args:      []string{"output-style", "missing-style"},
+			kind:      "output_style_not_found",
+			errorKind: "output_style_not_found",
+			contains:  []string{`"value": "missing-style"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -12468,6 +12545,99 @@ func TestKeybindingsCommandAndSlash(t *testing.T) {
 	require.Empty(t, errOut.String())
 }
 
+func TestThemeErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"theme", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "theme"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"theme", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing target",
+			args:      []string{"theme", "--target"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "theme"`, `"option": "--target"`},
+		},
+		{
+			name:      "missing path",
+			args:      []string{"theme", "--path"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "theme"`, `"option": "--path"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"theme", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "theme"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "set missing name",
+			args:      []string{"theme", "set"},
+			kind:      "missing_argument",
+			errorKind: "missing_argument",
+			contains:  []string{`"command": "theme set"`, `"argument": "NAME"`},
+		},
+		{
+			name:      "show extra",
+			args:      []string{"theme", "show", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "theme show"`, `"extra"`},
+		},
+		{
+			name:      "clear extra",
+			args:      []string{"theme", "clear", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "theme clear"`, `"extra"`},
+		},
+		{
+			name:      "invalid name",
+			args:      []string{"theme", "bad/name"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "theme"`, `"value": "bad/name"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+}
+
 func TestNotificationsCommandAndHookGate(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
@@ -12535,6 +12705,85 @@ func TestNotificationsCommandAndHookGate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"notifications_enabled"`)
 	require.Empty(t, errOut.String())
+}
+
+func TestNotificationsErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"notifications", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "notifications"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"notifications", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing target",
+			args:      []string{"notifications", "--target"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "notifications"`, `"option": "--target"`},
+		},
+		{
+			name:      "missing path",
+			args:      []string{"notifications", "--path"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "notifications"`, `"option": "--path"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"notifications", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "notifications"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "unknown command",
+			args:      []string{"notifications", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "notifications"`, `"bogus"`},
+		},
+		{
+			name:      "extra argument",
+			args:      []string{"notifications", "on", "extra"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "notifications on"`, `"extra"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+	require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
 }
 
 func TestTerminalSetupCommandAndSlash(t *testing.T) {
