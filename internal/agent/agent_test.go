@@ -3437,7 +3437,6 @@ func risky(value any) {
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
-		{Command: "/tag", Args: []string{"create", "v9.9.9"}, Report: "/tag create"},
 		{Command: "/stash", Args: []string{"push", "checkpoint"}, Report: "/stash push"},
 	} {
 		out, err = runResumedJSON(guarded.Command, guarded.Args...)
@@ -3534,6 +3533,15 @@ func risky(value any) {
 		require.NoError(t, json.Unmarshal([]byte(out), &resumedTag))
 		require.Equal(t, "tag", resumedTag.Kind)
 		require.Equal(t, "show", resumedTag.Action)
+
+		out, err = runResumedJSON("/tag", "create", "v9.9.9")
+		require.NoError(t, err)
+		var resumedTagCreate tagReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedTagCreate))
+		require.Equal(t, "tag", resumedTagCreate.Kind)
+		require.Equal(t, "create", resumedTagCreate.Action)
+		require.Len(t, resumedTagCreate.Tags, 1)
+		require.Equal(t, "v9.9.9", resumedTagCreate.Tags[0].Name)
 
 		out, err = runResumedJSON("/stash", "list")
 		require.NoError(t, err)

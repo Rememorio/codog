@@ -24495,16 +24495,7 @@ func (a *App) runResumedBranchSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedTagSlash(args []string, format string) error {
-	req, err := parseTagArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "list", "show":
-		return a.Tag(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/tag", req.Action), format)
-	}
+	return a.Tag(args)
 }
 
 func (a *App) runResumedStashSlash(args []string, format string) error {
