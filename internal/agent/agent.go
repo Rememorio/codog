@@ -25231,7 +25231,12 @@ func (a *App) runResumedTeamSlash(args []string, format string) error {
 		return err
 	}
 	switch req.Action {
-	case "list", "get", "status", "logs", "watch", "create", "delete":
+	case "list", "get", "status", "logs", "create", "delete":
+		return a.Team(args)
+	case "watch":
+		if req.MaxEvents <= 0 {
+			return errors.New("resumed team watch requires --max-events N to avoid blocking indefinitely")
+		}
 		return a.Team(args)
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/team", req.Action), format)

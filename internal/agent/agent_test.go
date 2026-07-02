@@ -20229,6 +20229,41 @@ func TestResumedBackgroundWatchRequiresBoundedEvents(t *testing.T) {
 	require.Contains(t, err.Error(), "requires --max-events")
 }
 
+func TestResumedTeamWatchRequiresBoundedEvents(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	backgroundStore := background.NewStore(configHome)
+	task, err := backgroundStore.Run("echo resumed-team-watch", workspace)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := backgroundStore.Logs(task.ID, 1024)
+		return err == nil && strings.Contains(logs, "resumed-team-watch")
+	}, 2*time.Second, 50*time.Millisecond)
+	teamEntry, err := team.NewStore(configHome).Create("watchers", []team.TaskSpec{{Prompt: "watch logs", TaskID: task.ID}}, []string{task.ID})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Out:       &out,
+	}
+
+	require.NoError(t, app.runResumedTeamSlash([]string{"watch", teamEntry.ID, "--max-events", "1", "--json"}, "json"))
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 1)
+	var event teamWatchEvent
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &event))
+	require.Equal(t, "team_watch", event.Kind)
+	require.Equal(t, teamEntry.ID, event.TeamID)
+	require.Equal(t, task.ID, event.TaskID)
+	out.Reset()
+
+	err = app.runResumedTeamSlash([]string{"watch", teamEntry.ID, "--json"}, "json")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires --max-events")
+}
+
 func TestBackgroundRunEmitsNotificationHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX sh")
