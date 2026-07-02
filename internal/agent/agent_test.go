@@ -16150,6 +16150,35 @@ func TestSessionStartHookOutputUpdatesSessionContext(t *testing.T) {
 	require.Contains(t, string(watchData), filepath.ToSlash(watchPath))
 }
 
+func TestSessionEndHookFeedbackIsVisible(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Model:      "claude-test",
+			Hooks: config.HookConfig{
+				SessionEndCommands: []config.HookCommand{{
+					Matcher: "exit",
+					Command: `printf '%s' '{"systemMessage":"session end note","hookSpecificOutput":{"additionalContext":"session end context"}}'`,
+				}},
+			},
+		},
+		Workspace: workspace,
+		Err:       &errOut,
+	}
+	sess := &session.Session{ID: "end-session", Path: filepath.Join(workspace, "end-session.jsonl")}
+
+	require.NoError(t, app.runSessionEndHook(context.Background(), sess, "exit"))
+	require.Contains(t, errOut.String(), "session end hook feedback:")
+	require.Contains(t, errOut.String(), "session end note")
+	require.Contains(t, errOut.String(), "session end context")
+}
+
 func TestHooksDisabledSkipsRunAndReportsStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell")

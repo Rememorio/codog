@@ -213,11 +213,30 @@ func TestSessionHooksMatchClaudeSourceAndReason(t *testing.T) {
 	require.Contains(t, string(data), `"hook_event_name":"SessionStart"`)
 	require.Contains(t, string(data), `"source":"startup"`)
 
-	require.NoError(t, runner.SessionEnd(context.Background(), `{"hook_event_name":"SessionEnd","session_id":"session-1","cwd":"`+filepath.ToSlash(workspace)+`"}`, "resume"))
+	endReport, err := runner.SessionEndReport(context.Background(), `{"hook_event_name":"SessionEnd","session_id":"session-1","cwd":"`+filepath.ToSlash(workspace)+`"}`, "resume")
+	require.NoError(t, err)
+	require.Equal(t, "session_end", endReport.Event)
 	data, err = os.ReadFile(endPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"hook_event_name":"SessionEnd"`)
 	require.Contains(t, string(data), `"reason":"resume"`)
+}
+
+func TestSessionEndReportParsesHookFeedback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell")
+	}
+	report, err := Runner{
+		Workspace: t.TempDir(),
+		Config: config.HookConfig{
+			SessionEndCommands: []config.HookCommand{{
+				Matcher: "exit",
+				Command: `printf '%s' '{"systemMessage":"session ended","hookSpecificOutput":{"additionalContext":"cleanup complete"}}'`,
+			}},
+		},
+	}.SessionEndReport(context.Background(), `{"hook_event_name":"SessionEnd","reason":"exit","session_id":"session-1"}`, "exit")
+	require.NoError(t, err)
+	require.Equal(t, []string{"session ended", "cleanup complete"}, MessagesFromReport(report))
 }
 
 func TestSessionStartOutputFromReportParsesHookSpecificOutput(t *testing.T) {

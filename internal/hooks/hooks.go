@@ -272,13 +272,25 @@ func (r Runner) SessionStartReport(ctx context.Context, input string) (RunReport
 }
 
 func (r Runner) SessionEnd(ctx context.Context, input string, reason string) error {
+	report, err := r.SessionEndReport(ctx, input, reason)
+	if err != nil {
+		return err
+	}
+	if report.Denied {
+		return hookDeniedError(report)
+	}
+	return nil
+}
+
+// SessionEndReport runs SessionEnd hooks and returns parsed hook feedback.
+func (r Runner) SessionEndReport(ctx context.Context, input string, reason string) (RunReport, error) {
 	payload := Payload{
 		Event:  "session_end",
 		Tool:   firstNonEmpty(reason, sessionHookMatcherValue(input, "reason")),
 		Input:  input,
 		Reason: reason,
 	}
-	return r.run(ctx, HooksForPayload(r.Config, payload), payload)
+	return r.RunHooks(ctx, HooksForPayload(r.Config, payload), payload)
 }
 
 func (r Runner) Setup(ctx context.Context, input string) error {

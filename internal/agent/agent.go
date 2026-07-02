@@ -44971,7 +44971,15 @@ func (a *App) runSessionEndHook(ctx context.Context, sess *session.Session, reas
 	}
 	runner := a.lifecycleHookRunner()
 	runner.SessionID = sess.ID
-	return runner.SessionEnd(ctx, string(data), reason)
+	report, err := runner.SessionEndReport(ctx, string(data), reason)
+	if err != nil {
+		return err
+	}
+	a.renderLifecycleHookFeedback("session end", report)
+	if report.Denied {
+		return fmt.Errorf("session end hook denied: %s", hookReportDeniedMessage(report))
+	}
+	return nil
 }
 
 func (a *App) runInstructionsLoadedHooks(ctx context.Context, sessionID string, loadReason string) error {
