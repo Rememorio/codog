@@ -3102,6 +3102,18 @@ func risky(value any) {
 	require.Equal(t, "rate_limit_options", resumedRateLimitOptions.Kind)
 	require.Equal(t, 4, resumedRateLimitOptions.MaxRetries)
 
+	out, err = runResumedJSON("/reset-limits", "--path", configPath)
+	require.NoError(t, err)
+	var resumedResetLimits resetLimitsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedResetLimits))
+	require.Equal(t, "reset_limits", resumedResetLimits.Kind)
+	require.Equal(t, "reset", resumedResetLimits.Action)
+	require.Equal(t, 4, resumedResetLimits.Previous.MaxRetries)
+	require.Equal(t, config.DefaultRateLimitConfig().MaxRetries, resumedResetLimits.Current.MaxRetries)
+	configData, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(configData), "rate_limit")
+
 	out, err = runResumedJSON("/permissions")
 	require.NoError(t, err)
 	var resumedPermissions permissionsReport

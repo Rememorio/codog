@@ -24721,6 +24721,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedRateLimitSlash(resumeSlashArgs("rate-limit", args, format), format)
 	case "/rate-limit-options":
 		return a.RateLimitOptions(resumeSlashArgs("rate-limit-options", args, format))
+	case "/reset-limits":
+		return a.ResetLimits(resumeSlashArgs("reset-limits", args, format))
 	case "/permissions":
 		return a.runResumedPermissionsSlash(resumeSlashArgs("permissions", args, format), format)
 	case "/allowed-tools":
