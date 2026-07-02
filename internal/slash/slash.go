@@ -329,6 +329,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/issue":              true,
 	"/keybindings":        true,
 	"/language":           true,
+	"/listen":             true,
 	"/log":                true,
 	"/map":                true,
 	"/marketplace":        true,
