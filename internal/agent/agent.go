@@ -24685,13 +24685,6 @@ func (a *App) runResumedPrivacySlash(args []string, format string) error {
 }
 
 func (a *App) runResumedTelemetrySlash(args []string, format string) error {
-	req, err := parseTelemetryArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/telemetry", req.Action), format)
-	}
 	return a.Telemetry(args)
 }
 

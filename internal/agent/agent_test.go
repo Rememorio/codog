@@ -2517,6 +2517,16 @@ func risky(value any) {
 	require.Equal(t, "status", resumedTelemetry.Action)
 	require.True(t, resumedTelemetry.Enabled)
 
+	out, err = runResumedJSON("/telemetry", "on")
+	require.NoError(t, err)
+	var resumedTelemetryOn telemetryReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedTelemetryOn))
+	require.Equal(t, "telemetry", resumedTelemetryOn.Kind)
+	require.Equal(t, "set", resumedTelemetryOn.Action)
+	require.True(t, resumedTelemetryOn.Enabled)
+	require.True(t, resumedTelemetryOn.Previous)
+	require.NotEmpty(t, resumedTelemetryOn.Path)
+
 	out, err = runResumedJSON("/keybindings", "path")
 	require.NoError(t, err)
 	var resumedKeybindings keybindingsFileReport
@@ -3437,7 +3447,6 @@ func risky(value any) {
 		{Command: "/speak", Args: []string{"clear"}, Report: "/speak clear"},
 		{Command: "/vim", Args: []string{"toggle"}, Report: "/vim toggle"},
 		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
-		{Command: "/telemetry", Args: []string{"on"}, Report: "/telemetry on"},
 		{Command: "/keybindings", Args: []string{"init"}, Report: "/keybindings init"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},
