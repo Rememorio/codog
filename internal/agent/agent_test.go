@@ -248,10 +248,10 @@ func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, resumeLine, "/commit")
 	require.Contains(t, resumeLine, "/listen")
 	require.Contains(t, resumeLine, "/notebook-edit")
+	require.Contains(t, resumeLine, "/ultraplan")
 	require.NotContains(t, resumeLine, "/new")
 	require.NotContains(t, resumeLine, "/approve")
 	require.NotContains(t, resumeLine, "/quit")
-	require.NotContains(t, resumeLine, "/ultraplan")
 	out.Reset()
 
 	require.NoError(t, renderHelpCommand(&out, []string{"--output-format", "json"}))
@@ -954,6 +954,9 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	planSlash, ok := capabilityReportSlash(report, "/plan")
 	require.True(t, ok)
 	require.True(t, planSlash.ResumeSupported)
+	ultraPlanSlash, ok := capabilityReportSlash(report, "/ultraplan")
+	require.True(t, ok)
+	require.True(t, ultraPlanSlash.ResumeSupported)
 	exitPlanSlash, ok := capabilityReportSlash(report, "/exit-plan")
 	require.True(t, ok)
 	require.True(t, exitPlanSlash.ResumeSupported)
@@ -1135,6 +1138,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-read"))
 	require.True(t, commandAcceptsGlobalOutputFormat("notebook-edit"))
 	require.True(t, commandAcceptsGlobalOutputFormat("teleport"))
+	require.True(t, commandAcceptsGlobalOutputFormat("ultraplan"))
 	require.True(t, commandAcceptsGlobalOutputFormat("upgrade"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
@@ -1801,7 +1805,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "/approve", slashReport.Command)
 	require.NotContains(t, slashReport.Hint, "--resume")
 
-	for _, command := range []string{"/new", "/quit", "/ultraplan"} {
+	for _, command := range []string{"/new", "/quit"} {
 		out, err = captureStdout(t, func() error {
 			return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", command}, config.FlagOverrides{})
 		})
@@ -1854,6 +1858,17 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "ok", clearReport.Status)
 	require.NotEmpty(t, clearReport.SessionID)
 	require.NotEmpty(t, clearReport.Path)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/ultraplan", "inspect", "release"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var directUltraPlan planmode.Report
+	require.NoError(t, json.Unmarshal([]byte(out), &directUltraPlan))
+	require.Equal(t, "plan", directUltraPlan.Kind)
+	require.Equal(t, "enter", directUltraPlan.Action)
+	require.True(t, directUltraPlan.State.Active)
+	require.Equal(t, "inspect release", directUltraPlan.State.Plan)
 }
 
 func TestDirectSlashSuggestsProjectCommands(t *testing.T) {
@@ -5317,7 +5332,6 @@ func TestLocalRouteGuardContracts(t *testing.T) {
 		{"cost", "breakdown"},
 		{"clear", "--force"},
 		{"memory", "reset"},
-		{"ultraplan", "bogus"},
 		{"usage", "extra"},
 		{"stats", "extra"},
 		{"fork", "newbranch"},

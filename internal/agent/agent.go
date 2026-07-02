@@ -24755,7 +24755,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/new", "/resume", "/exit", "/quit", "/ultraplan":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/new", "/resume", "/exit", "/quit":
 		return true
 	default:
 		return false
@@ -24914,8 +24914,6 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 		interactive = len(meaningful) > 0
 	case "memory":
 		interactive = len(meaningful) > 0 && strings.EqualFold(meaningful[0], "reset")
-	case "ultraplan":
-		interactive = len(meaningful) > 0 && !isPlanAction(meaningful[0])
 	}
 	if !interactive {
 		return false, nil
@@ -44347,7 +44345,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "skill", "skills", "speak", "state", "status", "statusline",
 		"bashes", "stash", "stale-base", "stickers", "stats", "successstep", "system-prompt", "tasks", "team", "temperature", "telemetry", "templates", "terminal-setup", "theme", "tool-details", "trust",
 		"think-back", "thinkback", "thinkback-play", "todos", "undo", "unfocus", "validation",
-		"teleport", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
+		"teleport", "ultraplan", "ultrareview", "ultrareviewcommand", "ultrareviewenabled", "ultrareviewoveragedialog", "unifiedinstalledcell", "unpin", "upgrade", "usage", "usepagination", "validateplugin", "version", "vim", "voice", "warningsstep", "web-setup", "workspace", "cwd", "rewind", "xaaidpcommand":
 		return true
 	default:
 		return false
