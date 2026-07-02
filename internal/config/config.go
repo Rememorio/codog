@@ -514,6 +514,9 @@ type Config struct {
 	MaxTurns                   int                        `json:"max_turns,omitempty"`
 	Temperature                *float64                   `json:"temperature,omitempty"`
 	PermissionMode             string                     `json:"permission_mode,omitempty"`
+	PermissionModeRaw          string                     `json:"-"`
+	PermissionModeSource       string                     `json:"-"`
+	PermissionModeEnvVar       string                     `json:"-"`
 	PlanMode                   bool                       `json:"-"`
 	Privacy                    PrivacyConfig              `json:"privacy_settings,omitempty"`
 	PermissionRules            PermissionRules            `json:"permission_rules,omitempty"`
@@ -567,6 +570,15 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aliases); err != nil {
 		return err
 	}
+	rawPermissionMode := ""
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawFields); err == nil {
+		if raw, ok := rawFields["permission_mode"]; ok {
+			rawPermissionMode, _ = parseJSONString(raw)
+		} else if raw, ok := rawFields["permissionMode"]; ok {
+			rawPermissionMode, _ = parseJSONString(raw)
+		}
+	}
 	if parsed.PermissionMode == "" {
 		parsed.PermissionMode = aliases.PermissionModeCamel
 	}
@@ -580,7 +592,15 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		if ok {
 			parsed.PermissionMode = mode
 			parsed.PlanMode = planMode
+			rawPermissionMode = parsed.PermissionRules.DefaultMode
 		}
+	}
+	if parsed.PermissionMode != "" {
+		parsed.PermissionModeRaw = rawPermissionMode
+		if parsed.PermissionModeRaw == "" {
+			parsed.PermissionModeRaw = parsed.PermissionMode
+		}
+		parsed.PermissionModeSource = "config"
 	}
 	if len(aliases.MCP.Servers) != 0 || len(aliases.MCPServers) != 0 {
 		if parsed.MCPServers == nil {
@@ -756,14 +776,16 @@ func (c Config) EffectiveAllowManagedHooksOnly() bool {
 
 func defaultConfig() (Config, error) {
 	cfg := Config{
-		BaseURL:             DefaultBaseURL,
-		Model:               DefaultModel,
-		MaxTokens:           4096,
-		MaxTurns:            8,
-		PermissionMode:      "workspace-write",
-		AutoCompactMessages: 40,
-		RateLimit:           DefaultRateLimitConfig(),
-		MCPServers:          map[string]MCPServerConfig{},
+		BaseURL:              DefaultBaseURL,
+		Model:                DefaultModel,
+		MaxTokens:            4096,
+		MaxTurns:             8,
+		PermissionMode:       "workspace-write",
+		PermissionModeRaw:    "workspace-write",
+		PermissionModeSource: "default",
+		AutoCompactMessages:  40,
+		RateLimit:            DefaultRateLimitConfig(),
+		MCPServers:           map[string]MCPServerConfig{},
 	}
 	home, err := defaultConfigHome()
 	if err != nil {
@@ -794,6 +816,12 @@ func finalizeConfig(cfg *Config) error {
 	}
 	if err := validatePermissionRulesDefaultMode(cfg); err != nil {
 		return err
+	}
+	if strings.TrimSpace(cfg.PermissionModeRaw) == "" {
+		cfg.PermissionModeRaw = cfg.PermissionMode
+	}
+	if strings.TrimSpace(cfg.PermissionModeSource) == "" {
+		cfg.PermissionModeSource = "unknown"
 	}
 	if err := validateForceLoginMethod(cfg); err != nil {
 		return err
@@ -1413,6 +1441,9 @@ func merge(dst *Config, src Config) {
 	}
 	if src.PermissionMode != "" {
 		dst.PermissionMode = src.PermissionMode
+		dst.PermissionModeRaw = defaultString(src.PermissionModeRaw, src.PermissionMode)
+		dst.PermissionModeSource = defaultString(src.PermissionModeSource, "config")
+		dst.PermissionModeEnvVar = src.PermissionModeEnvVar
 		dst.PlanMode = src.PlanMode
 	}
 	if privacyConfigSet(src.Privacy) {
@@ -1423,6 +1454,9 @@ func merge(dst *Config, src Config) {
 		if src.PermissionMode == "" && src.PermissionRules.DefaultMode != "" {
 			if mode, planMode, _, ok := mapClaudePermissionDefaultMode(src.PermissionRules.DefaultMode); ok {
 				dst.PermissionMode = mode
+				dst.PermissionModeRaw = src.PermissionRules.DefaultMode
+				dst.PermissionModeSource = defaultString(src.PermissionModeSource, "config")
+				dst.PermissionModeEnvVar = src.PermissionModeEnvVar
 				dst.PlanMode = planMode
 			}
 		}
@@ -2085,6 +2119,10 @@ func applyEnv(cfg *Config) {
 	}
 	if value := lookup("CODOG_PERMISSION_MODE"); value != "" {
 		cfg.PermissionMode = value
+		cfg.PermissionModeRaw = value
+		cfg.PermissionModeSource = "env"
+		cfg.PermissionModeEnvVar = "CODOG_PERMISSION_MODE"
+		cfg.PlanMode = false
 	}
 	if value, ok := parseBoolEnv("CODOG_PRIVACY_TELEMETRY_ENABLED", lookup); ok {
 		cfg.Privacy.TelemetryEnabled = &value
@@ -2231,10 +2269,16 @@ func applyFlags(cfg *Config, overrides FlagOverrides) {
 	}
 	if overrides.PermissionMode != "" {
 		cfg.PermissionMode = overrides.PermissionMode
+		cfg.PermissionModeRaw = overrides.PermissionMode
+		cfg.PermissionModeSource = "cli"
+		cfg.PermissionModeEnvVar = ""
 		cfg.PlanMode = false
 	}
 	if overrides.SkipPermissions {
 		cfg.PermissionMode = "allow"
+		cfg.PermissionModeRaw = "--skip-permissions"
+		cfg.PermissionModeSource = "cli"
+		cfg.PermissionModeEnvVar = ""
 		cfg.PlanMode = false
 	}
 	if len(overrides.AllowedTools) > 0 {
@@ -2305,6 +2349,13 @@ func firstNonEmptyLine(value string) string {
 	return ""
 }
 
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
 func applyManagedPolicy(cfg *Config) error {
 	if cfg.Future.EnterprisePolicy == "" {
 		return nil
@@ -2320,6 +2371,10 @@ func applyManagedPolicy(cfg *Config) error {
 	}
 	if policy.MaxPermissionMode != "" && permissionRank(policy.MaxPermissionMode) < permissionRank(cfg.PermissionMode) {
 		cfg.PermissionMode = policy.MaxPermissionMode
+		cfg.PermissionModeRaw = policy.MaxPermissionMode
+		cfg.PermissionModeSource = "policy"
+		cfg.PermissionModeEnvVar = ""
+		cfg.PlanMode = false
 	}
 	mergePermissionRules(&cfg.PermissionRules, policy.PermissionRules)
 	cfg.PermissionRules.DeniedTools = append(cfg.PermissionRules.DeniedTools, policy.DeniedTools...)

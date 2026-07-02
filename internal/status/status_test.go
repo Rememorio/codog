@@ -13,13 +13,15 @@ import (
 
 func TestBuildParsesGitStatus(t *testing.T) {
 	snapshot := Build(Options{
-		Version:          "test-version",
-		FormatSource:     "flag",
-		FormatRaw:        "json",
-		FormatOverridden: true,
-		Workspace:        "/repo/codog",
-		Model:            "claude-test",
-		PermissionMode:   "workspace-write",
+		Version:              "test-version",
+		FormatSource:         "flag",
+		FormatRaw:            "json",
+		FormatOverridden:     true,
+		Workspace:            "/repo/codog",
+		Model:                "claude-test",
+		PermissionMode:       "workspace-write",
+		PermissionModeRaw:    "acceptEdits",
+		PermissionModeSource: "config",
 		PermissionRules: config.PermissionRules{
 			Allow:       []string{"Read", "mcp__demo__*"},
 			Deny:        []string{"Bash(rm:*)", "Bsh(echo:*)"},
@@ -64,6 +66,9 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, "json", snapshot.FormatRaw)
 	require.True(t, snapshot.FormatOverridden)
 	require.Equal(t, "codog", snapshot.Workspace.Name)
+	require.Equal(t, "workspace-write", snapshot.Config.PermissionMode)
+	require.Equal(t, "acceptEdits", snapshot.Config.PermissionModeRaw)
+	require.Equal(t, "config", snapshot.Config.PermissionModeSource)
 	require.Equal(t, 1, snapshot.Workspace.MemoryFileCount)
 	require.Equal(t, "AGENTS.md", snapshot.Workspace.MemoryFiles[0].Name)
 	require.Equal(t, "main", snapshot.Git.Branch)

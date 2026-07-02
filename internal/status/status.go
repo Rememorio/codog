@@ -29,6 +29,9 @@ type Options struct {
 	FastMode                    bool
 	BaseURL                     string
 	PermissionMode              string
+	PermissionModeRaw           string
+	PermissionModeSource        string
+	PermissionModeEnvVar        string
 	PermissionRules             config.PermissionRules
 	MaxTokens                   int
 	MaxTurns                    int
@@ -147,6 +150,9 @@ type ConfigStatus struct {
 	FastMode                    bool                  `json:"fast_mode"`
 	BaseURL                     string                `json:"base_url"`
 	PermissionMode              string                `json:"permission_mode"`
+	PermissionModeRaw           string                `json:"permission_mode_raw"`
+	PermissionModeSource        string                `json:"permission_mode_source"`
+	PermissionModeEnvVar        string                `json:"permission_mode_env_var,omitempty"`
 	PermissionRules             PermissionRulesStatus `json:"permission_rules,omitempty"`
 	MaxTokens                   int                   `json:"max_tokens"`
 	MaxTurns                    int                   `json:"max_turns"`
@@ -361,6 +367,9 @@ func Build(opts Options) Snapshot {
 			FastMode:                    opts.FastMode,
 			BaseURL:                     opts.BaseURL,
 			PermissionMode:              opts.PermissionMode,
+			PermissionModeRaw:           defaultString(opts.PermissionModeRaw, opts.PermissionMode),
+			PermissionModeSource:        defaultString(opts.PermissionModeSource, "unknown"),
+			PermissionModeEnvVar:        strings.TrimSpace(opts.PermissionModeEnvVar),
 			PermissionRules:             BuildPermissionRulesStatus(opts.PermissionRules, opts.ToolNames, opts.ToolAliases),
 			MaxTokens:                   opts.MaxTokens,
 			MaxTurns:                    opts.MaxTurns,

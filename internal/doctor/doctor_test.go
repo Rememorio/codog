@@ -76,6 +76,35 @@ func TestRunFailsInvalidPermissionMode(t *testing.T) {
 	require.Contains(t, permissions.Hint, "workspace-write")
 }
 
+func TestRunReportsPermissionModeProvenance(t *testing.T) {
+	report := Run(Options{
+		Workspace:            t.TempDir(),
+		ConfigHome:           t.TempDir(),
+		Model:                "claude-test",
+		BaseURL:              "https://api.example.test",
+		APIKey:               "secret",
+		PermissionMode:       "workspace-write",
+		PermissionModeRaw:    "acceptEdits",
+		PermissionModeSource: "config",
+		ToolCount:            6,
+		SessionCount:         0,
+		SandboxDefault:       "test-sandbox",
+		SandboxOK:            true,
+	})
+
+	require.NotEqual(t, StatusFail, report.Status)
+	configCheck := findCheck(t, report, "Config")
+	require.Equal(t, "workspace-write", configCheck.Data["permission_mode"])
+	require.Equal(t, "acceptEdits", configCheck.Data["permission_mode_raw"])
+	require.Equal(t, "config", configCheck.Data["permission_mode_source"])
+	permissions := findCheck(t, report, "Permissions")
+	require.Equal(t, StatusOK, permissions.Status)
+	require.Equal(t, "workspace-write", permissions.Data["mode"])
+	require.Equal(t, "acceptEdits", permissions.Data["raw"])
+	require.Equal(t, "config", permissions.Data["source"])
+	require.Contains(t, strings.Join(permissions.Details, "\n"), "source: config")
+}
+
 func TestRunWarnsUnknownPermissionRules(t *testing.T) {
 	report := Run(Options{
 		Workspace:      t.TempDir(),

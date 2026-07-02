@@ -31,51 +31,54 @@ const (
 
 // Options contains the runtime and configuration facts checked by Doctor.
 type Options struct {
-	Workspace           string
-	ConfigHome          string
-	Model               string
-	BaseURL             string
-	APIKey              string
-	AuthToken           string
-	PermissionMode      string
-	PermissionRules     localstatus.PermissionRulesStatus
-	ConfigLoadError     string
-	ConfigLoadErrorKind string
-	ToolCount           int
-	MCPServerStatuses   []mcp.ServerStatus
-	MCPValidation       localstatus.MCPValidationStatus
-	HookValidation      localstatus.HookValidationStatus
-	SessionCount        int
-	MemoryFiles         []string
-	UserPromptSubmit    []string
-	SessionStart        []string
-	PreToolUse          []string
-	PostToolUse         []string
-	PostToolUseFailure  []string
-	PermissionRequest   []string
-	PermissionDenied    []string
-	Stop                []string
-	StopFailure         []string
-	SessionEnd          []string
-	Setup               []string
-	PreCompact          []string
-	PostCompact         []string
-	Notification        []string
-	SubagentStart       []string
-	SubagentStop        []string
-	WorktreeCreate      []string
-	WorktreeRemove      []string
-	CwdChanged          []string
-	TaskCreated         []string
-	TaskCompleted       []string
-	InstructionsLoaded  []string
-	FileChanged         []string
-	SandboxDefault      string
-	SandboxOK           bool
-	SandboxStrategies   []string
-	SandboxFallback     string
-	SandboxInContainer  bool
-	SandboxRuntime      *sandbox.SandboxExecutionStatus
+	Workspace            string
+	ConfigHome           string
+	Model                string
+	BaseURL              string
+	APIKey               string
+	AuthToken            string
+	PermissionMode       string
+	PermissionModeRaw    string
+	PermissionModeSource string
+	PermissionModeEnvVar string
+	PermissionRules      localstatus.PermissionRulesStatus
+	ConfigLoadError      string
+	ConfigLoadErrorKind  string
+	ToolCount            int
+	MCPServerStatuses    []mcp.ServerStatus
+	MCPValidation        localstatus.MCPValidationStatus
+	HookValidation       localstatus.HookValidationStatus
+	SessionCount         int
+	MemoryFiles          []string
+	UserPromptSubmit     []string
+	SessionStart         []string
+	PreToolUse           []string
+	PostToolUse          []string
+	PostToolUseFailure   []string
+	PermissionRequest    []string
+	PermissionDenied     []string
+	Stop                 []string
+	StopFailure          []string
+	SessionEnd           []string
+	Setup                []string
+	PreCompact           []string
+	PostCompact          []string
+	Notification         []string
+	SubagentStart        []string
+	SubagentStop         []string
+	WorktreeCreate       []string
+	WorktreeRemove       []string
+	CwdChanged           []string
+	TaskCreated          []string
+	TaskCompleted        []string
+	InstructionsLoaded   []string
+	FileChanged          []string
+	SandboxDefault       string
+	SandboxOK            bool
+	SandboxStrategies    []string
+	SandboxFallback      string
+	SandboxInContainer   bool
+	SandboxRuntime       *sandbox.SandboxExecutionStatus
 }
 
 // Summary counts doctor checks by severity.
@@ -121,7 +124,7 @@ func Run(opts Options) Report {
 		checkWorkspace(opts.Workspace),
 		checkMemory(opts.MemoryFiles),
 		checkModel(opts.Model),
-		checkPermissions(opts.PermissionMode),
+		checkPermissions(opts.PermissionMode, opts.PermissionModeRaw, opts.PermissionModeSource, opts.PermissionModeEnvVar),
 		checkPermissionRules(opts.PermissionRules),
 		checkTools(opts.ToolCount),
 		checkMCPValidation(opts.MCPValidation),
@@ -230,18 +233,22 @@ func checkConfigLoad(opts Options) Check {
 				"Config load error: none",
 				"Model: " + emptyDoctorValue(opts.Model),
 				"Permission mode: " + emptyDoctorValue(opts.PermissionMode),
+				"Permission mode source: " + emptyDoctorValue(opts.PermissionModeSource),
 				fmt.Sprintf("MCP servers: %d", opts.MCPValidation.TotalConfigured),
 				fmt.Sprintf("Invalid MCP servers: %d", opts.MCPValidation.InvalidCount),
 				fmt.Sprintf("Invalid hooks: %d", opts.HookValidation.InvalidCount),
 			},
 			Data: map[string]any{
-				"load_error":           nil,
-				"load_error_kind":      "",
-				"model":                opts.Model,
-				"permission_mode":      opts.PermissionMode,
-				"mcp_servers":          opts.MCPValidation.TotalConfigured,
-				"mcp_invalid_servers":  opts.MCPValidation.InvalidCount,
-				"hook_invalid_entries": opts.HookValidation.InvalidCount,
+				"load_error":              nil,
+				"load_error_kind":         "",
+				"model":                   opts.Model,
+				"permission_mode":         opts.PermissionMode,
+				"permission_mode_raw":     defaultDoctorValue(opts.PermissionModeRaw, opts.PermissionMode),
+				"permission_mode_source":  defaultDoctorValue(opts.PermissionModeSource, "unknown"),
+				"permission_mode_env_var": strings.TrimSpace(opts.PermissionModeEnvVar),
+				"mcp_servers":             opts.MCPValidation.TotalConfigured,
+				"mcp_invalid_servers":     opts.MCPValidation.InvalidCount,
+				"hook_invalid_entries":    opts.HookValidation.InvalidCount,
 			},
 		}
 	}
@@ -346,15 +353,32 @@ func checkModel(model string) Check {
 	return Check{Name: "Model", Status: StatusOK, Summary: "Model is configured.", Details: []string{model}}
 }
 
-func checkPermissions(mode string) Check {
+func checkPermissions(mode, raw, source, envVar string) Check {
 	mode = strings.TrimSpace(mode)
+	raw = defaultDoctorValue(raw, mode)
+	source = defaultDoctorValue(source, "unknown")
+	envVar = strings.TrimSpace(envVar)
+	details := []string{
+		"mode: " + emptyDoctorValue(mode),
+		"raw: " + emptyDoctorValue(raw),
+		"source: " + emptyDoctorValue(source),
+	}
+	if envVar != "" {
+		details = append(details, "env var: "+envVar)
+	}
+	data := map[string]any{
+		"mode":    mode,
+		"raw":     raw,
+		"source":  source,
+		"env_var": envVar,
+	}
 	switch mode {
 	case "read-only", "workspace-write", "danger-full-access", "prompt", "allow":
-		return Check{Name: "Permissions", Status: StatusOK, Summary: "Permission mode is valid.", Details: []string{mode}}
+		return Check{Name: "Permissions", Status: StatusOK, Summary: "Permission mode is valid.", Details: details, Data: data}
 	case "":
-		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is empty.", Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow."}
+		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is empty.", Details: details, Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow.", Data: data}
 	default:
-		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is invalid.", Details: []string{mode}, Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow."}
+		return Check{Name: "Permissions", Status: StatusFail, Summary: "Permission mode is invalid.", Details: details, Hint: "Use read-only, workspace-write, danger-full-access, prompt, or allow.", Data: data}
 	}
 }
 
@@ -830,6 +854,13 @@ func emptyDoctorValue(value string) string {
 		return "<none>"
 	}
 	return value
+}
+
+func defaultDoctorValue(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 func joinedDoctorValues(values []string) string {

@@ -22,6 +22,8 @@ func TestLoadAppliesManagedPolicy(t *testing.T) {
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "read-only", cfg.PermissionMode)
+	require.Equal(t, "read-only", cfg.PermissionModeRaw)
+	require.Equal(t, "policy", cfg.PermissionModeSource)
 	require.Contains(t, cfg.PermissionRules.DeniedTools, "bash")
 	require.Contains(t, cfg.PermissionRules.Deny, "write_file")
 }
@@ -123,6 +125,8 @@ func TestLoadPermissionsDefaultModeAliases(t *testing.T) {
 
 			require.NoError(t, err)
 			require.Equal(t, tt.permissionMode, cfg.PermissionMode)
+			require.Equal(t, tt.defaultMode, cfg.PermissionModeRaw)
+			require.Equal(t, "config", cfg.PermissionModeSource)
 			require.Equal(t, tt.planMode, cfg.PlanMode)
 			require.Equal(t, tt.canonical, cfg.PermissionRules.DefaultMode)
 			require.Equal(t, []string{"read_file"}, cfg.PermissionRules.Allow)
@@ -139,6 +143,8 @@ func TestLoadPermissionModeOverridesDefaultModeAlias(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "danger-full-access", cfg.PermissionMode)
+	require.Equal(t, "danger-full-access", cfg.PermissionModeRaw)
+	require.Equal(t, "config", cfg.PermissionModeSource)
 	require.False(t, cfg.PlanMode)
 	require.Equal(t, "plan", cfg.PermissionRules.DefaultMode)
 }
@@ -178,6 +184,8 @@ func TestLoadLaterPermissionDefaultModeClearsPlanMode(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "workspace-write", cfg.PermissionMode)
+	require.Equal(t, "acceptEdits", cfg.PermissionModeRaw)
+	require.Equal(t, "config", cfg.PermissionModeSource)
 	require.False(t, cfg.PlanMode)
 	require.Equal(t, "acceptEdits", cfg.PermissionRules.DefaultMode)
 }
@@ -191,6 +199,24 @@ func TestLoadPermissionModeFlagClearsPlanMode(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "workspace-write", cfg.PermissionMode)
+	require.Equal(t, "workspace-write", cfg.PermissionModeRaw)
+	require.Equal(t, "cli", cfg.PermissionModeSource)
+	require.False(t, cfg.PlanMode)
+}
+
+func TestLoadPermissionModeEnvProvenance(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permissions":{"defaultMode":"plan"}}`), 0o644))
+	t.Setenv("CODOG_PERMISSION_MODE", "PROMPT")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+
+	require.NoError(t, err)
+	require.Equal(t, "prompt", cfg.PermissionMode)
+	require.Equal(t, "PROMPT", cfg.PermissionModeRaw)
+	require.Equal(t, "env", cfg.PermissionModeSource)
+	require.Equal(t, "CODOG_PERMISSION_MODE", cfg.PermissionModeEnvVar)
 	require.False(t, cfg.PlanMode)
 }
 
@@ -1348,6 +1374,8 @@ func TestLoadSkipPermissionsFlagOverridesPermissionMode(t *testing.T) {
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath, PermissionMode: "workspace-write", SkipPermissions: true})
 	require.NoError(t, err)
 	require.Equal(t, "allow", cfg.PermissionMode)
+	require.Equal(t, "--skip-permissions", cfg.PermissionModeRaw)
+	require.Equal(t, "cli", cfg.PermissionModeSource)
 }
 
 func TestLoadPermissionRuleFlagOverrides(t *testing.T) {
