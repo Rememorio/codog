@@ -24108,21 +24108,7 @@ func (a *App) runResumedSpeakSlash(ctx context.Context, args []string, overrides
 }
 
 func (a *App) runResumedSandboxToggleSlash(args []string, format string) error {
-	req, err := parseSandboxToggleArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSandboxToggleSlashLabel(req), format)
-	}
 	return a.SandboxToggle(args)
-}
-
-func resumedSandboxToggleSlashLabel(req sandboxToggleRequest) string {
-	if req.Action == "set" && strings.TrimSpace(req.Strategy) != "" {
-		return resumedSlashCommandLabel("/sandbox-toggle", req.Strategy)
-	}
-	return resumedSlashCommandLabel("/sandbox-toggle", req.Action)
 }
 
 func (a *App) runResumedResetSlash(args []string, format string) error {
@@ -24439,6 +24425,8 @@ func (a *App) runResumedPassesSlash(args []string, format string) error {
 	}
 	switch req.Action {
 	case "show":
+	case "set-url", "clear-url":
+		return a.Passes(args)
 	case "open":
 		if req.Open {
 			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/passes", "open"), format)
@@ -24633,16 +24621,7 @@ func (a *App) runResumedVimSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedChromeSlash(args []string, format string) error {
-	req, err := parseChromeArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "status", "install", "permissions", "reconnect":
-		return a.Chrome(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/chrome", req.Action), format)
-	}
+	return a.Chrome(args)
 }
 
 func (a *App) runResumedNotificationsSlash(args []string, format string) error {

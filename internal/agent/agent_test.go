@@ -2605,6 +2605,16 @@ func risky(value any) {
 	require.Equal(t, "permissions", resumedChrome.Action)
 	require.True(t, resumedChrome.Enabled)
 
+	out, err = runResumedJSON("/chrome", "on")
+	require.NoError(t, err)
+	var resumedChromeOn chromeReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedChromeOn))
+	require.Equal(t, "chrome", resumedChromeOn.Kind)
+	require.Equal(t, "set", resumedChromeOn.Action)
+	require.True(t, resumedChromeOn.Enabled)
+	require.True(t, resumedChromeOn.Configured)
+	require.NotEmpty(t, resumedChromeOn.Path)
+
 	out, err = runResumedJSON("/notifications")
 	require.NoError(t, err)
 	var resumedNotifications notificationsReport
@@ -2859,6 +2869,34 @@ func risky(value any) {
 	require.Equal(t, "status", resumedSandboxToggle.Action)
 	require.Equal(t, "detect", resumedSandboxToggle.ConfiguredStrategy)
 	require.NotEmpty(t, resumedSandboxToggle.ResolutionStatus)
+
+	out, err = runResumedJSON("/sandbox-toggle", "off")
+	require.NoError(t, err)
+	var resumedSandboxToggleOff sandboxToggleReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandboxToggleOff))
+	require.Equal(t, "sandbox_toggle", resumedSandboxToggleOff.Kind)
+	require.Equal(t, "set", resumedSandboxToggleOff.Action)
+	require.Equal(t, "off", resumedSandboxToggleOff.ConfiguredStrategy)
+	require.False(t, resumedSandboxToggleOff.Enabled)
+	require.NotEmpty(t, resumedSandboxToggleOff.Path)
+
+	out, err = runResumedJSON("/sandbox-toggle", "clear")
+	require.NoError(t, err)
+	var resumedSandboxToggleClear sandboxToggleReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandboxToggleClear))
+	require.Equal(t, "sandbox_toggle", resumedSandboxToggleClear.Kind)
+	require.Equal(t, "clear", resumedSandboxToggleClear.Action)
+	require.Empty(t, resumedSandboxToggleClear.ConfiguredStrategy)
+	require.NotEmpty(t, resumedSandboxToggleClear.Path)
+
+	out, err = runResumedJSON("/sandbox-toggle", "detect")
+	require.NoError(t, err)
+	var resumedSandboxToggleDetect sandboxToggleReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSandboxToggleDetect))
+	require.Equal(t, "sandbox_toggle", resumedSandboxToggleDetect.Kind)
+	require.Equal(t, "set", resumedSandboxToggleDetect.Action)
+	require.Equal(t, "detect", resumedSandboxToggleDetect.ConfiguredStrategy)
+	require.NotEmpty(t, resumedSandboxToggleDetect.Path)
 
 	out, err = runResumedJSON("/mcp", "list")
 	require.NoError(t, err)
@@ -3270,6 +3308,30 @@ func risky(value any) {
 	require.Equal(t, 0, resumedPasses.VisitCount)
 	require.Empty(t, openedURL)
 
+	out, err = runResumedJSON("/passes", "set-url", "https://example.test/guest")
+	require.NoError(t, err)
+	var resumedPassesSet passesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPassesSet))
+	require.Equal(t, "passes", resumedPassesSet.Kind)
+	require.Equal(t, "set-url", resumedPassesSet.Action)
+	require.Equal(t, "https://example.test/guest", resumedPassesSet.URL)
+	require.Equal(t, "https://example.test/guest", resumedPassesSet.ReferralURL)
+	require.False(t, resumedPassesSet.Opened)
+	require.NotEmpty(t, resumedPassesSet.Path)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/passes", "clear-url")
+	require.NoError(t, err)
+	var resumedPassesClear passesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPassesClear))
+	require.Equal(t, "passes", resumedPassesClear.Kind)
+	require.Equal(t, "clear-url", resumedPassesClear.Action)
+	require.Equal(t, guestPassDocsURL, resumedPassesClear.URL)
+	require.Empty(t, resumedPassesClear.ReferralURL)
+	require.False(t, resumedPassesClear.Opened)
+	require.NotEmpty(t, resumedPassesClear.Path)
+	require.Empty(t, openedURL)
+
 	heapDumpPath := filepath.Join(workspace, "resume-heap.pprof")
 	out, err = runResumedJSON("/heapdump", heapDumpPath, "--no-gc")
 	require.NoError(t, err)
@@ -3598,7 +3660,6 @@ func risky(value any) {
 		{Command: "/speak", Args: []string{"hello"}, Report: "/speak speak"},
 		{Command: "/speak", Args: []string{"last"}, Report: "/speak speak"},
 		{Command: "/speak", Args: []string{"test"}, Report: "/speak test"},
-		{Command: "/chrome", Args: []string{"on"}, Report: "/chrome on"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},
@@ -3607,9 +3668,6 @@ func risky(value any) {
 		{Command: "/skills", Args: []string{"invoke", "debug"}, Report: "/skills invoke"},
 		{Command: "/skill", Args: []string{"uninstall", "debug"}, Report: "/skill uninstall"},
 		{Command: "/tasks", Args: []string{"run", "echo", "hi"}, Report: "/tasks run"},
-		{Command: "/sandbox-toggle", Args: []string{"detect"}, Report: "/sandbox-toggle detect"},
-		{Command: "/sandbox-toggle", Args: []string{"off"}, Report: "/sandbox-toggle off"},
-		{Command: "/sandbox-toggle", Args: []string{"clear"}, Report: "/sandbox-toggle clear"},
 		{Command: "/hooks", Args: []string{"run", "pre", "--tool", "read_file"}, Report: "/hooks run"},
 		{Command: "/cron", Args: []string{"create", "@daily", "check"}, Report: "/cron create"},
 		{Command: "/cron", Args: []string{"delete", cronEntry.ID}, Report: "/cron delete"},
@@ -3658,8 +3716,6 @@ func risky(value any) {
 		{Command: "/stickers", Args: []string{"--open"}, Report: "/stickers open"},
 		{Command: "/passes", Args: nil, Report: "/passes open"},
 		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
-		{Command: "/passes", Args: []string{"set-url", "https://example.test/guest"}, Report: "/passes set-url"},
-		{Command: "/passes", Args: []string{"clear-url"}, Report: "/passes clear-url"},
 		{Command: "/heapdump", Args: nil, Report: "/heapdump default-output"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
