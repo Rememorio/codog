@@ -25049,7 +25049,23 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "exists":
 		return a.SessionExists(args[1:], overrides.Resume)
-	case "switch", "fork":
+	case "fork":
+		req, err := parseSessionForkArgs("codog sessions fork", args[1:], overrides.Resume, "text")
+		if err != nil {
+			return err
+		}
+		report, _, err := a.forkSessionWithReport(req.SourceID, req.BranchName)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionForkText(a.Out, report)
+		return nil
+	case "switch":
 		format := "text"
 		if argsHaveOutputFormat(args[1:]) {
 			parsed, _, err := parseTemplateOutputArgs("sessions "+args[0], args[1:])

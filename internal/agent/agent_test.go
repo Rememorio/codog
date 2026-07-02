@@ -8024,29 +8024,38 @@ func TestResumedSessionDeleteRefusesActiveSession(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestResumedSessionForkAndSwitchRequireInteractiveSession(t *testing.T) {
+func TestResumedSessionForkCreatesSessionAndSwitchRequiresInteractiveSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
 	require.NoError(t, store.Append("other", anthropic.TextMessage("user", "other")))
 	var out bytes.Buffer
 	app := &App{Sessions: store, Out: &out}
 
-	for _, action := range []string{"fork", "switch"} {
-		out.Reset()
-		err := app.runResumedSessionSlash([]string{action, "other", "--json"}, config.FlagOverrides{Resume: "active"})
-		require.Error(t, err)
-		var exitErr *ExitError
-		require.ErrorAs(t, err, &exitErr)
-		require.True(t, exitErr.Silent)
-		var report slashErrorReport
-		require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-		require.Equal(t, "unsupported_resumed_slash_command", report.ErrorKind)
-		require.Equal(t, "/session "+action, report.Command)
-	}
+	require.NoError(t, app.runResumedSessionSlash([]string{"fork", "incident", "--json"}, config.FlagOverrides{Resume: "active"}))
+	var forkReport sessionForkReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &forkReport))
+	require.Equal(t, "session_fork", forkReport.Kind)
+	require.Equal(t, "active", forkReport.ParentSessionID)
+	require.Equal(t, "incident", forkReport.BranchName)
+	require.NotEmpty(t, forkReport.SessionID)
+	require.NotEqual(t, "active", forkReport.SessionID)
+	require.Equal(t, 1, forkReport.MessageCount)
+	require.NotEmpty(t, forkReport.Path)
+	out.Reset()
+
+	err := app.runResumedSessionSlash([]string{"switch", "other", "--json"}, config.FlagOverrides{Resume: "active"})
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.True(t, exitErr.Silent)
+	var report slashErrorReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "unsupported_resumed_slash_command", report.ErrorKind)
+	require.Equal(t, "/session switch", report.Command)
 
 	sessions, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, sessions, 2)
+	require.Len(t, sessions, 3)
 }
 
 func TestResumedSessionShowJSONDefaultsToActiveSession(t *testing.T) {
