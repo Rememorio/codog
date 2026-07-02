@@ -1,3 +1,4 @@
+// Package workerstate persists the local worker heartbeat shown by `codog state`.
 package workerstate
 
 import (
@@ -12,8 +13,10 @@ import (
 	"time"
 )
 
+// FileName is the workspace-local JSON file used for worker state snapshots.
 const FileName = "worker-state.json"
 
+// Options contains the runtime facts captured in a worker state snapshot.
 type Options struct {
 	WorkerID       string
 	Version        string
@@ -29,6 +32,7 @@ type Options struct {
 	Now            time.Time
 }
 
+// State is the stable JSON payload written by prompt and REPL workers.
 type State struct {
 	Kind           string    `json:"kind"`
 	WorkerID       string    `json:"worker_id"`
@@ -45,6 +49,8 @@ type State struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// New builds a worker state snapshot, filling process-local defaults when
+// caller-supplied fields are empty.
 func New(opts Options) State {
 	now := opts.Now
 	if now.IsZero() {
@@ -83,6 +89,7 @@ func New(opts Options) State {
 	}
 }
 
+// Path returns the workspace-local path used to persist worker state.
 func Path(workspace string) string {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
@@ -91,6 +98,7 @@ func Path(workspace string) string {
 	return filepath.Join(workspace, ".codog", FileName)
 }
 
+// Save writes state atomically to the workspace worker state file.
 func Save(workspace string, state State) error {
 	path := Path(workspace)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -116,6 +124,7 @@ func Save(workspace string, state State) error {
 	return os.Rename(tmpPath, path)
 }
 
+// Load reads and validates the workspace worker state file.
 func Load(workspace string) (State, error) {
 	path := Path(workspace)
 	data, err := os.ReadFile(path)
@@ -135,6 +144,7 @@ func Load(workspace string) (State, error) {
 	return state, nil
 }
 
+// RenderText writes a compact human-readable worker state report.
 func RenderText(w io.Writer, state State) {
 	fmt.Fprintln(w, "State")
 	fmt.Fprintf(w, "  Worker           %s\n", state.WorkerID)
@@ -150,10 +160,12 @@ func RenderText(w io.Writer, state State) {
 	}
 }
 
+// MissingError reports that a workspace has not written worker state yet.
 type MissingError struct {
 	Path string
 }
 
+// Error returns an actionable message for creating the missing worker state.
 func (e MissingError) Error() string {
 	return fmt.Sprintf("no worker state file found at %s\n  Hint: worker state is written by `codog repl` or `codog prompt <text>`.\n  Run:   codog repl\n  Or:    codog prompt <text>\n  Then rerun: codog state [--json]", e.Path)
 }

@@ -1,3 +1,5 @@
+// Package mcpserver exposes Codog tools, prompts, and local resources through
+// a minimal stdio MCP server.
 package mcpserver
 
 import (
@@ -15,6 +17,8 @@ import (
 	"github.com/Rememorio/codog/internal/tools"
 )
 
+// Options configures the local MCP server identity, workspace, and permission
+// policy.
 type Options struct {
 	Version         string
 	Workspace       string
@@ -43,6 +47,8 @@ type responseError struct {
 	Message string `json:"message"`
 }
 
+// Serve processes newline-delimited JSON-RPC MCP requests until input closes or
+// the context is canceled.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, registry *tools.Registry, opts Options) error {
 	if registry == nil {
 		return fmt.Errorf("tool registry is required")
@@ -166,6 +172,8 @@ func handleResourceRead(out io.Writer, registry *tools.Registry, opts Options, r
 	return writeResult(out, req.ID, map[string]any{"contents": []map[string]string{content}})
 }
 
+// LocalResources returns the static workspace, status, and tool resources
+// advertised by the local MCP server.
 func LocalResources(opts Options) []map[string]any {
 	return []map[string]any{
 		{
@@ -189,6 +197,8 @@ func LocalResources(opts Options) []map[string]any {
 	}
 }
 
+// LocalResourceTemplates returns parameterized resources for workspace-scoped
+// file reads.
 func LocalResourceTemplates() []map[string]any {
 	return []map[string]any{
 		{
@@ -286,6 +296,7 @@ func resolveWorkspaceResourcePath(workspace, relPath string) (string, error) {
 	return path, nil
 }
 
+// ExposedTools returns tool definitions that are safe to expose over MCP.
 func ExposedTools(registry *tools.Registry) []map[string]any {
 	if registry == nil {
 		return []map[string]any{}
@@ -305,6 +316,7 @@ func ExposedTools(registry *tools.Registry) []map[string]any {
 	return list
 }
 
+// LocalPrompts returns built-in MCP prompts for common workspace tasks.
 func LocalPrompts() []map[string]any {
 	return []map[string]any{
 		{

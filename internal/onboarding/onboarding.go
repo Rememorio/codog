@@ -1,3 +1,5 @@
+// Package onboarding inspects a workspace and reports setup gaps for first-run
+// guidance.
 package onboarding
 
 import (
@@ -10,15 +12,18 @@ import (
 	"strings"
 )
 
+// Options configures workspace onboarding analysis.
 type Options struct {
 	Workspace string
 }
 
+// Language reports how many files were detected for one language family.
 type Language struct {
 	Name  string `json:"name"`
 	Files int    `json:"files"`
 }
 
+// Check describes one onboarding prerequisite or recommendation signal.
 type Check struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
@@ -26,6 +31,7 @@ type Check struct {
 	Path    string `json:"path,omitempty"`
 }
 
+// Report is the stable JSON payload returned by workspace onboarding analysis.
 type Report struct {
 	Kind             string     `json:"kind"`
 	Action           string     `json:"action"`
@@ -45,6 +51,8 @@ type Report struct {
 	Recommendations  []string   `json:"recommendations,omitempty"`
 }
 
+// Analyze scans a workspace and reports repository, language, README, test, and
+// instruction-file readiness.
 func Analyze(options Options) (Report, error) {
 	workspace := strings.TrimSpace(options.Workspace)
 	if workspace == "" {
@@ -73,6 +81,7 @@ func Analyze(options Options) (Report, error) {
 	return report, nil
 }
 
+// RenderText writes a human-readable onboarding report.
 func RenderText(out io.Writer, report Report) {
 	fmt.Fprintln(out, "Onboarding")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
@@ -104,6 +113,7 @@ func RenderText(out io.Writer, report Report) {
 	}
 }
 
+// RenderJSON writes the structured onboarding report as indented JSON.
 func RenderJSON(out io.Writer, report Report) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {

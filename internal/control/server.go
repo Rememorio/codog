@@ -1,3 +1,5 @@
+// Package control serves Codog's local HTTP control API for remote clients,
+// editor bridge integrations, background tasks, and workspace operations.
 package control
 
 import (
@@ -26,6 +28,7 @@ import (
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
+// Server owns the dependencies and policy required to serve the control API.
 type Server struct {
 	Sessions    *session.Store
 	ConfigHome  string
@@ -39,6 +42,7 @@ type Server struct {
 	Now         func() time.Time
 }
 
+// RouteSpec describes one public control API route for discovery and docs.
 type RouteSpec struct {
 	Path        string   `json:"path"`
 	Methods     []string `json:"methods"`
@@ -47,6 +51,7 @@ type RouteSpec struct {
 	Streaming   bool     `json:"streaming,omitempty"`
 }
 
+// RouteSpecs returns the stable list of routes served by the control API.
 func RouteSpecs() []RouteSpec {
 	return []RouteSpec{
 		{Path: "/health", Methods: []string{http.MethodGet}, Description: "Health check.", Public: true},
@@ -127,6 +132,7 @@ func RouteSpecs() []RouteSpec {
 	}
 }
 
+// Failure records the latest remote client failure reported to the control API.
 type Failure struct {
 	Code      string    `json:"code,omitempty"`
 	Message   string    `json:"message"`
@@ -134,6 +140,7 @@ type Failure struct {
 	At        time.Time `json:"at,omitempty"`
 }
 
+// State is the remote client heartbeat and lease status exposed by /state.
 type State struct {
 	HeartbeatAt     time.Time  `json:"heartbeat_at,omitempty"`
 	LastError       string     `json:"last_error,omitempty"`
@@ -204,6 +211,7 @@ type hookCommandSummary struct {
 	Command string `json:"command"`
 }
 
+// Handler builds the HTTP mux for all control API routes.
 func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)

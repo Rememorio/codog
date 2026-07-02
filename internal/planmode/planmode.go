@@ -1,3 +1,5 @@
+// Package planmode stores the workspace-scoped plan-mode state used to keep
+// tool execution read-only until the user exits planning.
 package planmode
 
 import (
@@ -11,6 +13,7 @@ import (
 	"time"
 )
 
+// State is the persisted plan-mode state for one workspace.
 type State struct {
 	Active    bool   `json:"active"`
 	Plan      string `json:"plan,omitempty"`
@@ -19,6 +22,7 @@ type State struct {
 	ExitedAt  string `json:"exited_at,omitempty"`
 }
 
+// Report describes a plan-mode operation and the resulting workspace state.
 type Report struct {
 	Kind   string `json:"kind"`
 	Action string `json:"action"`
@@ -27,6 +31,7 @@ type Report struct {
 	State  State  `json:"state"`
 }
 
+// Path returns the workspace-local plan-mode state file.
 func Path(workspace string) string {
 	if workspace == "" {
 		workspace = "."
@@ -34,6 +39,8 @@ func Path(workspace string) string {
 	return filepath.Join(workspace, ".codog", "plan.json")
 }
 
+// Load reads the persisted plan-mode state, returning an inactive state when
+// no plan file exists.
 func Load(workspace string) (State, error) {
 	data, err := os.ReadFile(Path(workspace))
 	if err != nil {
@@ -49,6 +56,7 @@ func Load(workspace string) (State, error) {
 	return normalize(state), nil
 }
 
+// Show returns the current plan-mode state without mutating it.
 func Show(workspace string) (Report, error) {
 	state, err := Load(workspace)
 	if err != nil {
@@ -57,6 +65,7 @@ func Show(workspace string) (Report, error) {
 	return report(workspace, "show", state), nil
 }
 
+// Enter activates plan mode and optionally records plan text.
 func Enter(workspace string, plan string) (Report, error) {
 	state, err := Load(workspace)
 	if err != nil {
@@ -78,6 +87,7 @@ func Enter(workspace string, plan string) (Report, error) {
 	return report(workspace, "enter", state), nil
 }
 
+// Set replaces the stored plan text and keeps plan mode active.
 func Set(workspace string, plan string) (Report, error) {
 	plan = strings.TrimSpace(plan)
 	if plan == "" {
@@ -101,6 +111,7 @@ func Set(workspace string, plan string) (Report, error) {
 	return report(workspace, "set", state), nil
 }
 
+// Exit deactivates plan mode while preserving the last stored plan.
 func Exit(workspace string) (Report, error) {
 	state, err := Load(workspace)
 	if err != nil {
@@ -119,6 +130,7 @@ func Exit(workspace string) (Report, error) {
 	return report(workspace, "exit", state), nil
 }
 
+// Clear removes any persisted plan-mode state for the workspace.
 func Clear(workspace string) (Report, error) {
 	path := Path(workspace)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -127,6 +139,7 @@ func Clear(workspace string) (Report, error) {
 	return report(workspace, "clear", State{}), nil
 }
 
+// RenderText writes a human-readable plan-mode report.
 func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Plan")
 	fmt.Fprintf(w, "  Status           %s\n", report.Status)
@@ -144,6 +157,8 @@ func RenderText(w io.Writer, report Report) {
 	}
 }
 
+// RenderPrompt returns the system-prompt fragment that enforces plan-mode
+// behavior, or an empty string when plan mode is inactive.
 func RenderPrompt(state State) string {
 	state = normalize(state)
 	if !state.Active {
