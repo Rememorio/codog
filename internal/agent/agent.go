@@ -20261,13 +20261,13 @@ type memoryRequest struct {
 func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 	req, err := parseMemoryArgs(args)
 	if err != nil {
-		return err
+		return renderMemoryError(out, req.Action, err, req.Format)
 	}
 	switch req.Action {
 	case "list":
 		report, err := memory.BuildReport(workspace)
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20278,7 +20278,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 	case "show":
 		report, err := memory.Show(workspace, strings.Join(req.Rest, " "))
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20292,7 +20292,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		}
 		report, err := memory.Append(workspace, strings.Join(req.Rest, " "))
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20306,7 +20306,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		}
 		report, err := memory.Search(workspace, strings.Join(req.Rest, " "), req.Limit)
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20317,7 +20317,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 	case "path":
 		report, err := memory.Path(workspace, strings.Join(req.Rest, " "))
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20328,7 +20328,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 	case "ensure":
 		report, err := memory.Ensure(workspace, strings.Join(req.Rest, " "))
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20339,7 +20339,7 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 	case "edit":
 		report, err := memory.Edit(workspace, strings.Join(req.Rest, " "), req.Editor, !req.NoOpen)
 		if err != nil {
-			return err
+			return renderMemoryError(out, req.Action, err, req.Format)
 		}
 		if req.Format == "json" {
 			data, _ := json.MarshalIndent(report, "", "  ")
@@ -20348,9 +20348,85 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 		}
 		memory.RenderFileReport(out, report)
 	default:
-		return fmt.Errorf("unknown memory action %q", req.Action)
+		return renderMemoryError(out, req.Action, fmt.Errorf("unknown memory action %q", req.Action), req.Format)
 	}
 	return nil
+}
+
+func renderMemoryError(out io.Writer, action string, err error, format string) error {
+	if err == nil {
+		return nil
+	}
+	if !strings.EqualFold(format, "json") {
+		return err
+	}
+	report := buildMemoryErrorReport(action, err)
+	return renderActionError(out, report, format)
+}
+
+func buildMemoryErrorReport(action string, err error) actionErrorReport {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "list"
+	}
+	message := strings.TrimSpace(err.Error())
+	report := actionErrorReport{
+		Kind:      "memory",
+		Action:    action,
+		Status:    "error",
+		ErrorKind: "memory_error",
+		Message:   message,
+		Hint:      "Run `codog memory list --json` to see loaded instruction files.",
+	}
+	switch {
+	case strings.Contains(message, "no memory files found"):
+		report.ErrorKind = "no_memory_files"
+		report.Message = "no project memory files were found"
+		report.Hint = "Create AGENTS.md, CLAUDE.md, .claude/CLAUDE.md, CLAW.md, or .codog/instructions.md, or run `codog memory ensure AGENTS.md`."
+	case strings.Contains(message, "memory file path is required"):
+		report.ErrorKind = "memory_file_required"
+		report.Argument = "path"
+		report.Hint = "Pass a memory file name from `codog memory list`, for example `codog memory show AGENTS.md --json`."
+	case strings.Contains(message, "memory file not found"):
+		report.ErrorKind = "memory_file_not_found"
+		report.Argument = "path"
+		report.Hint = "Run `codog memory list --json` and retry with one of the listed file names or paths."
+	case strings.Contains(message, "memory path escapes workspace"):
+		report.ErrorKind = "invalid_memory_path"
+		report.Argument = "path"
+		report.Hint = "Use a workspace-relative memory path such as AGENTS.md or .codog/instructions.md."
+	case strings.Contains(message, "memory search query is required"):
+		report.ErrorKind = "missing_argument"
+		report.Argument = "query"
+		report.Hint = "Usage: codog memory search QUERY [--limit N] [--json|--output-format text|json]."
+	case strings.Contains(message, "unknown memory action"):
+		report.ErrorKind = "unsupported_memory_action"
+		report.Hint = "Supported memory actions are list, show, search, relevant, add, path, ensure, and edit."
+	case strings.Contains(message, "unknown memory flag"):
+		report.ErrorKind = "unknown_option"
+		report.Hint = "Usage: codog memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]."
+	case strings.Contains(message, "unknown memory output format"):
+		report.ErrorKind = "invalid_output_format"
+		report.Argument = "output_format"
+		report.Hint = "Use --output-format text or --output-format json."
+	case strings.Contains(message, "memory limit is required"):
+		report.ErrorKind = "missing_argument"
+		report.Argument = "limit"
+		report.Hint = "Pass a positive integer after --limit."
+	case strings.Contains(message, "memory limit must be a positive integer"):
+		report.ErrorKind = "invalid_argument"
+		report.Argument = "limit"
+		report.Hint = "Pass a positive integer after --limit."
+	case strings.Contains(message, "memory editor is required"):
+		report.ErrorKind = "missing_argument"
+		report.Argument = "editor"
+		report.Hint = "Pass an editor command after --editor, or omit --editor to use VISUAL or EDITOR."
+	case strings.Contains(message, "memory output format is required"):
+		report.ErrorKind = "missing_argument"
+		report.Argument = "output_format"
+		report.Hint = "Pass text or json after --output-format."
+	}
+	return report
 }
 
 func parseMemoryArgs(args []string) (memoryRequest, error) {
@@ -20406,6 +20482,7 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 					actionSet = true
 					continue
 				default:
+					req.Action = action
 					return req, fmt.Errorf("unknown memory action %q", arg)
 				}
 			}

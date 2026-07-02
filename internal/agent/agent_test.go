@@ -10271,6 +10271,53 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Memory File")
 }
 
+func TestMemoryCommandJSONErrors(t *testing.T) {
+	workspace := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	err := app.Memory([]string{"show", "--json"})
+	requireStructuredMemoryError(t, err, out.Bytes(), "show", "no_memory_files", "")
+	out.Reset()
+
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Memory first line\n"), 0o644))
+	err = app.Memory([]string{"show", "missing.md", "--json"})
+	requireStructuredMemoryError(t, err, out.Bytes(), "show", "memory_file_not_found", "path")
+	out.Reset()
+
+	err = app.Memory([]string{"path", "../outside.md", "--json"})
+	requireStructuredMemoryError(t, err, out.Bytes(), "path", "invalid_memory_path", "path")
+	out.Reset()
+
+	err = app.Memory([]string{"--json", "reset"})
+	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "unsupported_memory_action", "")
+}
+
+func requireStructuredMemoryError(t *testing.T, err error, data []byte, action string, errorKind string, argument string) {
+	t.Helper()
+	require.Error(t, err)
+	var exitErr *ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.Code)
+	require.True(t, exitErr.Silent)
+	var report actionErrorReport
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.Equal(t, "memory", report.Kind)
+	require.Equal(t, action, report.Action)
+	require.Equal(t, "error", report.Status)
+	require.Equal(t, errorKind, report.ErrorKind)
+	if argument != "" {
+		require.Equal(t, argument, report.Argument)
+	}
+	require.NotEmpty(t, report.Message)
+	require.NotEmpty(t, report.Hint)
+}
+
 func TestFocusCommandAndSlashInjectsSystemPrompt(t *testing.T) {
 	workspace := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("focus body\n"), 0o644))
