@@ -855,19 +855,19 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "issue":
 		return wrapStructured(app.IssueDraft(rest, overrides))
 	case "run":
-		return app.RunCommand(ctx, rest)
+		return wrapStructured(app.RunCommand(ctx, rest))
 	case "node", "python":
-		return app.LanguageCommand(ctx, command, rest)
+		return wrapStructured(app.LanguageCommand(ctx, command, rest))
 	case "test":
-		return app.ProjectCommand(ctx, "test", rest)
+		return wrapStructured(app.ProjectCommand(ctx, "test", rest))
 	case "build":
-		return app.ProjectCommand(ctx, "build", rest)
+		return wrapStructured(app.ProjectCommand(ctx, "build", rest))
 	case "lint":
-		return app.ProjectCommand(ctx, "lint", rest)
+		return wrapStructured(app.ProjectCommand(ctx, "lint", rest))
 	case "background":
-		return app.BackgroundWithOverrides(rest, overrides)
+		return wrapStructured(app.BackgroundWithOverrides(rest, overrides))
 	case "tasks", "bashes":
-		return app.BackgroundWithOverrides(rest, overrides)
+		return wrapStructured(app.BackgroundWithOverrides(rest, overrides))
 	case "cron":
 		if err := app.Cron(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
@@ -879,11 +879,11 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "agents":
-		return app.AgentsWithOverrides(rest, overrides)
+		return wrapStructured(app.AgentsWithOverrides(rest, overrides))
 	case "subagent":
-		return app.Subagent(rest, overrides)
+		return wrapStructured(app.Subagent(rest, overrides))
 	case "reload-plugins":
-		return app.ReloadPlugins(rest)
+		return wrapStructured(app.ReloadPlugins(rest))
 	case "PluginErrors", "PluginOptionsDialog", "PluginOptionsFlow", "PluginTrustWarning", "UnifiedInstalledCell", "parseArgs", "pluginDetailsHelpers", "usePagination":
 		return app.PluginCompatibility(command, rest)
 	case "AddMarketplace":
@@ -929,47 +929,47 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "brief":
 		return app.Brief(rest)
 	case "status":
-		return app.Status(rest, overrides)
+		return wrapStructured(app.Status(rest, overrides))
 	case "statusline":
-		return app.Statusline(rest, overrides)
+		return wrapStructured(app.Statusline(rest, overrides))
 	case "setup":
-		return app.Setup(ctx, rest)
+		return wrapStructured(app.Setup(ctx, rest))
 	case "terminal-setup", "terminalSetup":
-		return app.TerminalSetup(rest)
+		return wrapStructured(app.TerminalSetup(rest))
 	case "context", "context-noninteractive":
-		return app.Context(rest, overrides)
+		return wrapStructured(app.Context(rest, overrides))
 	case "ctx_viz":
-		return app.ContextViz(rest, overrides)
+		return wrapStructured(app.ContextViz(rest, overrides))
 	case "files":
-		return app.Files(rest)
+		return wrapStructured(app.Files(rest))
 	case "search":
-		return app.Search(ctx, rest)
+		return wrapStructured(app.Search(ctx, rest))
 	case "security-review":
-		return app.SecurityReview(rest)
+		return wrapStructured(app.SecurityReview(rest))
 	case "bughunter":
-		return app.Bughunter(rest)
+		return wrapStructured(app.Bughunter(rest))
 	case "init":
-		return app.Init(rest)
+		return wrapStructured(app.Init(rest))
 	case "init-verifiers":
-		return app.InitVerifiers(rest)
+		return wrapStructured(app.InitVerifiers(rest))
 	case "state":
-		return app.State(rest)
+		return wrapStructured(app.State(rest))
 	case "memory":
-		return app.Memory(rest)
+		return wrapStructured(app.Memory(rest))
 	case "project":
 		if err := app.Project(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "onboarding":
-		return app.Onboarding(rest)
+		return wrapStructured(app.Onboarding(rest))
 	case "env":
 		if err := app.Env(rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
 	case "doctor":
-		return app.Doctor(rest)
+		return wrapStructured(app.Doctor(rest))
 	case "sandbox":
 		return app.Sandbox()
 	case "sandbox-toggle":
@@ -11381,6 +11381,7 @@ func (a *App) InitVerifiers(args []string) error {
 }
 
 func parseInitVerifiersArgs(args []string) (initVerifiersRequest, error) {
+	const usage = "codog init-verifiers [--target claude|codog] [--workspace PATH] [--force] [--dry-run] [--json|--output-format text|json]"
 	req := initVerifiersRequest{Format: "text", Target: "claude"}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -11389,24 +11390,24 @@ func parseInitVerifiersArgs(args []string) (initVerifiersRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("init-verifiers output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "init-verifiers", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--target":
 			index++
-			if index >= len(args) {
-				return req, errors.New("init-verifiers target is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "init-verifiers", Flag: arg, Usage: usage}
 			}
 			req.Target = args[index]
 		case strings.HasPrefix(arg, "--target="):
 			req.Target = strings.TrimPrefix(arg, "--target=")
 		case arg == "--workspace":
 			index++
-			if index >= len(args) {
-				return req, errors.New("init-verifiers workspace is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "init-verifiers", Flag: arg, Usage: usage}
 			}
 			req.Workspace = args[index]
 		case strings.HasPrefix(arg, "--workspace="):
@@ -11416,12 +11417,17 @@ func parseInitVerifiersArgs(args []string) (initVerifiersRequest, error) {
 		case arg == "--dry-run":
 			req.DryRun = true
 		default:
-			return req, fmt.Errorf("unknown init-verifiers option %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "init-verifiers", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "init-verifiers", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "init-verifiers"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("init-verifiers", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -17206,7 +17212,7 @@ type commandRequest struct {
 }
 
 func (a *App) RunCommand(ctx context.Context, args []string) error {
-	req, err := parseCommandRequest(args, nil)
+	req, err := parseCommandRequest("run", args, nil)
 	if err != nil {
 		return err
 	}
@@ -17214,7 +17220,7 @@ func (a *App) RunCommand(ctx context.Context, args []string) error {
 }
 
 func (a *App) LanguageCommand(ctx context.Context, language string, args []string) error {
-	req, err := parseCommandRequest(args, nil)
+	req, err := parseCommandRequest(language, args, nil)
 	if err != nil {
 		return err
 	}
@@ -17227,7 +17233,7 @@ func (a *App) LanguageCommand(ctx context.Context, language string, args []strin
 }
 
 func (a *App) ProjectCommand(ctx context.Context, kind string, args []string) error {
-	req, err := parseCommandRequest(args, defaultProjectCommand(kind))
+	req, err := parseCommandRequest(kind, args, defaultProjectCommand(kind))
 	if err != nil {
 		return err
 	}
@@ -17254,7 +17260,11 @@ func (a *App) runCommandRequest(ctx context.Context, kind string, req commandReq
 	return nil
 }
 
-func parseCommandRequest(args []string, defaultCommand []string) (commandRequest, error) {
+func parseCommandRequest(command string, args []string, defaultCommand []string) (commandRequest, error) {
+	usage := "codog " + command + " COMMAND [ARG...] [--timeout-ms N] [--json|--output-format text|json]"
+	if len(defaultCommand) > 0 {
+		usage = "codog " + command + " [ARG...] [--timeout-ms N] [--json|--output-format text|json]"
+	}
 	req := commandRequest{Format: "text", TimeoutMS: 10 * 60 * 1000}
 	commandArgs := []string{}
 	for index := 0; index < len(args); index++ {
@@ -17267,24 +17277,24 @@ func parseCommandRequest(args []string, defaultCommand []string) (commandRequest
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("command output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--timeout-ms":
 			index++
-			if index >= len(args) {
-				return req, errors.New("command timeout is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
 			}
-			timeout, err := parseCommandTimeout(args[index])
+			timeout, err := parseCommandTimeout(args[index], "--timeout-ms", usage)
 			if err != nil {
 				return req, err
 			}
 			req.TimeoutMS = timeout
 		case strings.HasPrefix(arg, "--timeout-ms="):
-			timeout, err := parseCommandTimeout(strings.TrimPrefix(arg, "--timeout-ms="))
+			timeout, err := parseCommandTimeout(strings.TrimPrefix(arg, "--timeout-ms="), "--timeout-ms", usage)
 			if err != nil {
 				return req, err
 			}
@@ -17293,11 +17303,11 @@ func parseCommandRequest(args []string, defaultCommand []string) (commandRequest
 			commandArgs = append(commandArgs, arg)
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown command output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat(command, req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(defaultCommand) == 0 {
 		req.Command = commandArgs
 	} else {
@@ -17305,7 +17315,7 @@ func parseCommandRequest(args []string, defaultCommand []string) (commandRequest
 		req.Command = append(req.Command, commandArgs...)
 	}
 	if len(req.Command) == 0 {
-		return req, errors.New("usage: codog run COMMAND [ARG...]")
+		return req, requiredArgumentError{Command: command, Argument: "COMMAND", Usage: usage}
 	}
 	return req, nil
 }
@@ -17355,13 +17365,10 @@ func pythonExecutable() string {
 	return "python"
 }
 
-func parseCommandTimeout(value string) (int, error) {
+func parseCommandTimeout(value string, option string, usage string) (int, error) {
 	timeout, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, err
-	}
-	if timeout <= 0 {
-		return 0, errors.New("command timeout must be positive")
+	if err != nil || timeout <= 0 {
+		return 0, invalidFlagValueError{Flag: option, Value: value, Message: "command timeout must be positive", Usage: usage}
 	}
 	return timeout, nil
 }
@@ -17537,6 +17544,7 @@ func (a *App) Bughunter(args []string) error {
 }
 
 func parseBughunterArgs(args []string) (bughunterRequest, error) {
+	const usage = "codog bughunter [SCOPE] [--limit N] [--json|--output-format text|json]"
 	req := bughunterRequest{Format: "text", Limit: 200}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -17545,43 +17553,43 @@ func parseBughunterArgs(args []string) (bughunterRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return bughunterRequest{}, errors.New("bughunter output format is required")
+			if missingFlagValueAt(args, index) {
+				return bughunterRequest{}, missingFlagValueError{Command: "bughunter", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return bughunterRequest{}, errors.New("bughunter limit is required")
+			if missingFlagValueAt(args, index) {
+				return bughunterRequest{}, missingFlagValueError{Command: "bughunter", Flag: arg, Usage: usage}
 			}
-			limit, err := strconv.Atoi(args[index])
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return bughunterRequest{}, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return bughunterRequest{}, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "-"):
-			return bughunterRequest{}, fmt.Errorf("unknown bughunter argument %q", arg)
+			return bughunterRequest{}, unknownOptionError{Command: "bughunter", Option: arg, Usage: usage}
 		default:
 			if req.Scope != "" {
-				return bughunterRequest{}, fmt.Errorf("unexpected bughunter argument %q", arg)
+				return bughunterRequest{}, unexpectedExtraArgsError{Command: "bughunter", Args: []string{arg}, Usage: usage}
 			}
 			req.Scope = arg
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-		return req, nil
-	default:
-		return bughunterRequest{}, fmt.Errorf("unknown bughunter output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("bughunter", req.Format, []string{"text", "json"})
+	if err != nil {
+		return bughunterRequest{}, err
 	}
+	req.Format = normalizedFormat
+	return req, nil
 }
 
 func (a *App) SecurityReview(args []string) error {
@@ -17603,6 +17611,7 @@ func (a *App) SecurityReview(args []string) error {
 }
 
 func parseSecurityReviewArgs(args []string) (securityReviewRequest, error) {
+	const usage = "codog security-review [--limit N] [--json|--output-format text|json]"
 	req := securityReviewRequest{Format: "text", Limit: 200}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -17611,38 +17620,41 @@ func parseSecurityReviewArgs(args []string) (securityReviewRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return securityReviewRequest{}, errors.New("security-review output format is required")
+			if missingFlagValueAt(args, index) {
+				return securityReviewRequest{}, missingFlagValueError{Command: "security-review", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return securityReviewRequest{}, errors.New("security-review limit is required")
+			if missingFlagValueAt(args, index) {
+				return securityReviewRequest{}, missingFlagValueError{Command: "security-review", Flag: arg, Usage: usage}
 			}
-			limit, err := strconv.Atoi(args[index])
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return securityReviewRequest{}, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := strconv.Atoi(strings.TrimPrefix(arg, "--limit="))
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return securityReviewRequest{}, err
 			}
 			req.Limit = limit
 		default:
-			return securityReviewRequest{}, fmt.Errorf("unknown security-review argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return securityReviewRequest{}, unknownOptionError{Command: "security-review", Option: arg, Usage: usage}
+			}
+			return securityReviewRequest{}, unexpectedExtraArgsError{Command: "security-review", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-		return req, nil
-	default:
-		return securityReviewRequest{}, fmt.Errorf("unknown security-review output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("security-review", req.Format, []string{"text", "json"})
+	if err != nil {
+		return securityReviewRequest{}, err
 	}
+	req.Format = normalizedFormat
+	return req, nil
 }
 
 type reviewRequest struct {
@@ -21680,6 +21692,7 @@ func (a *App) Onboarding(args []string) error {
 }
 
 func parseOnboardingArgs(args []string) (onboardingRequest, error) {
+	const usage = "codog onboarding [--path PATH|--workspace PATH] [--json|--output-format text|json]"
 	req := onboardingRequest{Format: "text"}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -21688,16 +21701,16 @@ func parseOnboardingArgs(args []string) (onboardingRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("onboarding output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "onboarding", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--path" || arg == "--workspace":
 			index++
-			if index >= len(args) {
-				return req, errors.New("onboarding path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "onboarding", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -21705,12 +21718,17 @@ func parseOnboardingArgs(args []string) (onboardingRequest, error) {
 		case strings.HasPrefix(arg, "--workspace="):
 			req.Path = strings.TrimPrefix(arg, "--workspace=")
 		default:
-			return req, fmt.Errorf("unknown onboarding argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{Command: "onboarding", Option: arg, Usage: usage}
+			}
+			return req, unexpectedExtraArgsError{Command: "onboarding", Args: []string{arg}, Usage: usage}
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "onboarding"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("onboarding", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -21733,6 +21751,7 @@ func (a *App) Setup(ctx context.Context, args []string) error {
 }
 
 func parseSetupArgs(args []string) (setupRequest, error) {
+	const usage = "codog setup [status|init|terminal [ACTION]|all] [--shell SHELL] [--path PATH] [--force] [--json|--output-format text|json]"
 	req := setupRequest{Action: "status", Format: "text", TerminalAction: "status"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -21742,24 +21761,24 @@ func parseSetupArgs(args []string) (setupRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("setup output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "setup", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--shell":
 			index++
-			if index >= len(args) {
-				return req, errors.New("setup shell is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "setup", Flag: arg, Usage: usage}
 			}
 			req.Shell = args[index]
 		case strings.HasPrefix(arg, "--shell="):
 			req.Shell = strings.TrimPrefix(arg, "--shell=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("setup path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "setup", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
@@ -21767,14 +21786,16 @@ func parseSetupArgs(args []string) (setupRequest, error) {
 		case arg == "--force":
 			req.Force = true
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown setup flag %q", arg)
+			return req, unknownOptionError{Command: "setup", Option: arg, Usage: usage}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "setup"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("setup", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) == 0 {
 		return req, nil
 	}
@@ -21782,17 +21803,17 @@ func parseSetupArgs(args []string) (setupRequest, error) {
 	case "status", "check", "checks", "diagnose", "doctor":
 		req.Action = "status"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected setup argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "setup status", Args: rest[1:], Usage: usage}
 		}
 	case "init", "project":
 		req.Action = "init"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected setup argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "setup init", Args: rest[1:], Usage: usage}
 		}
 	case "terminal", "shell":
 		req.Action = "terminal"
 		if len(rest) > 2 {
-			return req, fmt.Errorf("unexpected setup argument %q", rest[2])
+			return req, unexpectedExtraArgsError{Command: "setup terminal", Args: rest[2:], Usage: usage}
 		}
 		if len(rest) == 2 {
 			req.TerminalAction = strings.ToLower(rest[1])
@@ -21800,10 +21821,10 @@ func parseSetupArgs(args []string) (setupRequest, error) {
 	case "all", "run":
 		req.Action = "all"
 		if len(rest) > 1 {
-			return req, fmt.Errorf("unexpected setup argument %q", rest[1])
+			return req, unexpectedExtraArgsError{Command: "setup all", Args: rest[1:], Usage: usage}
 		}
 	default:
-		return req, fmt.Errorf("unknown setup command %q", rest[0])
+		return req, unexpectedExtraArgsError{Command: "setup", Args: []string{rest[0]}, Usage: usage}
 	}
 	return req, nil
 }
@@ -22020,6 +22041,7 @@ func (a *App) TerminalSetup(args []string) error {
 }
 
 func parseTerminalSetupArgs(args []string) (terminalSetupRequest, error) {
+	const usage = "codog terminal-setup [status|install|uninstall|snippet] [--shell SHELL] [--path PATH] [--force] [--json|--output-format text|json]"
 	req := terminalSetupRequest{Action: "status", Format: "text"}
 	var rest []string
 	for index := 0; index < len(args); index++ {
@@ -22029,39 +22051,43 @@ func parseTerminalSetupArgs(args []string) (terminalSetupRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("terminal-setup output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "terminal-setup", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--shell":
 			index++
-			if index >= len(args) {
-				return req, errors.New("terminal-setup shell is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "terminal-setup", Flag: arg, Usage: usage}
 			}
 			req.Shell = args[index]
 		case strings.HasPrefix(arg, "--shell="):
 			req.Shell = strings.TrimPrefix(arg, "--shell=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("terminal-setup path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "terminal-setup", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--force":
 			req.Force = true
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "terminal-setup", Option: arg, Usage: usage}
 		default:
 			rest = append(rest, arg)
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "terminal-setup"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("terminal-setup", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	if len(rest) > 1 {
-		return req, fmt.Errorf("unexpected terminal-setup argument %q", rest[1])
+		return req, unexpectedExtraArgsError{Command: "terminal-setup", Args: rest[1:], Usage: usage}
 	}
 	if len(rest) == 1 {
 		req.Action = strings.ToLower(rest[0])
@@ -22508,6 +22534,7 @@ func (a *App) ContextViz(args []string, overrides config.FlagOverrides) error {
 }
 
 func parseContextVizArgs(args []string) (contextVizRequest, error) {
+	const usage = "codog ctx_viz [OUTPUT] [--output PATH] [--json|--output-format text|json]"
 	req := contextVizRequest{Format: "text"}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -22516,32 +22543,34 @@ func parseContextVizArgs(args []string) (contextVizRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ctx_viz output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ctx_viz", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--output" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("ctx_viz output path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "ctx_viz", Flag: arg, Usage: usage}
 			}
 			req.Output = args[index]
 		case strings.HasPrefix(arg, "--output="):
 			req.Output = strings.TrimPrefix(arg, "--output=")
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown ctx_viz flag %q", arg)
+			return req, unknownOptionError{Command: "ctx_viz", Option: arg, Usage: usage}
 		default:
 			if req.Output != "" {
-				return req, fmt.Errorf("unexpected ctx_viz argument %q", arg)
+				return req, unexpectedExtraArgsError{Command: "ctx_viz", Args: []string{arg}, Usage: usage}
 			}
 			req.Output = arg
 		}
 	}
-	if err := validateTextOrJSON(req.Format, "ctx_viz"); err != nil {
+	normalizedFormat, err := normalizeOutputFormat("ctx_viz", req.Format, []string{"text", "json"})
+	if err != nil {
 		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
@@ -26525,6 +26554,7 @@ func parseRewindCount(value string) (int, error) {
 }
 
 func parseFilesArgs(args []string) (filesRequest, error) {
+	const usage = "codog files [PATH] [--path PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]"
 	req := filesRequest{Format: "text", Limit: 200}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -26533,40 +26563,40 @@ func parseFilesArgs(args []string) (filesRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("files output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "files", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("files path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "files", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--glob":
 			index++
-			if index >= len(args) {
-				return req, errors.New("files glob is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "files", Flag: arg, Usage: usage}
 			}
 			req.Glob = args[index]
 		case strings.HasPrefix(arg, "--glob="):
 			req.Glob = strings.TrimPrefix(arg, "--glob=")
 		case arg == "--limit":
 			index++
-			if index >= len(args) {
-				return req, errors.New("files limit is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "files", Flag: arg, Usage: usage}
 			}
-			limit, err := parseFilesLimit(args[index])
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parseFilesLimit(strings.TrimPrefix(arg, "--limit="))
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
@@ -26574,35 +26604,25 @@ func parseFilesArgs(args []string) (filesRequest, error) {
 		case arg == "--hidden" || arg == "--include-hidden":
 			req.IncludeHidden = true
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown files flag %q", arg)
+			return req, unknownOptionError{Command: "files", Option: arg, Usage: usage}
 		default:
 			if req.Path == "" {
 				req.Path = arg
 				continue
 			}
-			return req, fmt.Errorf("unexpected files argument %q", arg)
+			return req, unexpectedExtraArgsError{Command: "files", Args: []string{arg}, Usage: usage}
 		}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown files output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("files", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	return req, nil
 }
 
-func parseFilesLimit(value string) (int, error) {
-	limit, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, err
-	}
-	if limit <= 0 {
-		return 0, errors.New("files limit must be positive")
-	}
-	return limit, nil
-}
-
 func parseSearchArgs(args []string) (searchRequest, error) {
+	const usage = "codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json|--output-format text|json]"
 	req := searchRequest{Format: "text", Limit: 100}
 	queryParts := []string{}
 	for index := 0; index < len(args); index++ {
@@ -26612,24 +26632,24 @@ func parseSearchArgs(args []string) (searchRequest, error) {
 			req.Format = "json"
 		case arg == "--output-format" || arg == "-o":
 			index++
-			if index >= len(args) {
-				return req, errors.New("search output format is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "search", Flag: arg, Usage: usage}
 			}
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--path":
 			index++
-			if index >= len(args) {
-				return req, errors.New("search path is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "search", Flag: arg, Usage: usage}
 			}
 			req.Path = args[index]
 		case strings.HasPrefix(arg, "--path="):
 			req.Path = strings.TrimPrefix(arg, "--path=")
 		case arg == "--glob":
 			index++
-			if index >= len(args) {
-				return req, errors.New("search glob is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "search", Flag: arg, Usage: usage}
 			}
 			req.Glob = args[index]
 		case strings.HasPrefix(arg, "--glob="):
@@ -26638,47 +26658,36 @@ func parseSearchArgs(args []string) (searchRequest, error) {
 			req.IgnoreCase = true
 		case arg == "--limit" || arg == "-n":
 			index++
-			if index >= len(args) {
-				return req, errors.New("search limit is required")
+			if missingFlagValueAt(args, index) {
+				return req, missingFlagValueError{Command: "search", Flag: arg, Usage: usage}
 			}
-			limit, err := parseSearchLimit(args[index])
+			limit, err := parsePositiveIntOption(args[index], "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "--limit="):
-			limit, err := parseSearchLimit(strings.TrimPrefix(arg, "--limit="))
+			limit, err := parsePositiveIntOption(strings.TrimPrefix(arg, "--limit="), "--limit", usage)
 			if err != nil {
 				return req, err
 			}
 			req.Limit = limit
 		case strings.HasPrefix(arg, "-"):
-			return req, fmt.Errorf("unknown search flag %q", arg)
+			return req, unknownOptionError{Command: "search", Option: arg, Usage: usage}
 		default:
 			queryParts = append(queryParts, arg)
 		}
 	}
 	req.Query = strings.TrimSpace(strings.Join(queryParts, " "))
 	if req.Query == "" {
-		return req, errors.New("usage: codog search PATTERN [--path PATH] [--glob GLOB] [--ignore-case] [--limit N] [--json]")
+		return req, requiredArgumentError{Command: "search", Argument: "PATTERN", Usage: usage}
 	}
-	switch req.Format {
-	case "text", "json":
-	default:
-		return req, fmt.Errorf("unknown search output format %q", req.Format)
-	}
-	return req, nil
-}
-
-func parseSearchLimit(value string) (int, error) {
-	limit, err := strconv.Atoi(value)
+	normalizedFormat, err := normalizeOutputFormat("search", req.Format, []string{"text", "json"})
 	if err != nil {
-		return 0, err
+		return req, err
 	}
-	if limit <= 0 {
-		return 0, errors.New("search limit must be positive")
-	}
-	return limit, nil
+	req.Format = normalizedFormat
+	return req, nil
 }
 
 func (a *App) Doctor(args []string) error {

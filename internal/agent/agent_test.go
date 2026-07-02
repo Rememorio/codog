@@ -20261,6 +20261,131 @@ func TestWorkflowCommandFallbackErrorsAreStructured(t *testing.T) {
 	}
 }
 
+func TestLocalCommandErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		kind     string
+		contains []string
+	}{
+		{
+			name:     "run missing command",
+			args:     []string{"run"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "run"`, `"argument": "COMMAND"`},
+		},
+		{
+			name:     "run missing timeout",
+			args:     []string{"run", "--timeout-ms"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "run"`, `"option": "--timeout-ms"`},
+		},
+		{
+			name:     "run invalid timeout",
+			args:     []string{"run", "--timeout-ms", "soon"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--timeout-ms"`, `"value": "soon"`},
+		},
+		{
+			name:     "node missing command",
+			args:     []string{"node"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "node"`, `"argument": "COMMAND"`},
+		},
+		{
+			name:     "files missing path",
+			args:     []string{"files", "--path"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "files"`, `"option": "--path"`},
+		},
+		{
+			name:     "files extra path",
+			args:     []string{"files", "one", "two"},
+			kind:     "unexpected_extra_args",
+			contains: []string{`"command": "files"`, `"two"`},
+		},
+		{
+			name:     "search missing pattern",
+			args:     []string{"search"},
+			kind:     "missing_argument",
+			contains: []string{`"command": "search"`, `"argument": "PATTERN"`},
+		},
+		{
+			name:     "search invalid limit",
+			args:     []string{"search", "--limit", "many", "needle"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--limit"`, `"value": "many"`},
+		},
+		{
+			name:     "setup missing shell",
+			args:     []string{"setup", "--shell"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "setup"`, `"option": "--shell"`},
+		},
+		{
+			name:     "terminal setup missing path",
+			args:     []string{"terminal-setup", "--path"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "terminal-setup"`, `"option": "--path"`},
+		},
+		{
+			name:     "security review invalid limit",
+			args:     []string{"security-review", "--limit", "many"},
+			kind:     "invalid_flag_value",
+			contains: []string{`"option": "--limit"`, `"value": "many"`},
+		},
+		{
+			name:     "bughunter extra scope",
+			args:     []string{"bughunter", "pkg", "extra"},
+			kind:     "unexpected_extra_args",
+			contains: []string{`"command": "bughunter"`, `"extra"`},
+		},
+		{
+			name:     "context viz missing output",
+			args:     []string{"ctx_viz", "--output"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "ctx_viz"`, `"option": "--output"`},
+		},
+		{
+			name:     "init verifiers missing target",
+			args:     []string{"init-verifiers", "--target"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "init-verifiers"`, `"option": "--target"`},
+		},
+		{
+			name:     "onboarding missing path",
+			args:     []string{"onboarding", "--path"},
+			kind:     "missing_flag_value",
+			contains: []string{`"command": "onboarding"`, `"option": "--path"`},
+		},
+		{
+			name:     "status unknown option",
+			args:     []string{"status", "--bogus"},
+			kind:     "unknown_option",
+			contains: []string{`"command": "status"`, `"option": "--bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.kind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+			require.NoFileExists(t, filepath.Join(workspace, "--output-format"))
+		})
+	}
+}
+
 func TestParseBackgroundRunArgsWithRestartPolicy(t *testing.T) {
 	command, options, err := parseBackgroundRunArgs([]string{"--restart=always", "--restart-limit", "2", "--restart-delay", "5", "echo", "restart"})
 	require.NoError(t, err)
