@@ -2011,6 +2011,10 @@ func risky(value any) {
 		return "test-open", nil
 	}
 	t.Cleanup(func() { openExternalURL = previousOpen })
+	voiceCommand := filepath.Join(t.TempDir(), "voice-helper.sh")
+	require.NoError(t, os.WriteFile(voiceCommand, []byte("#!/bin/sh\ninput=$(cat)\nprintf 'voice:%s' \"$input\"\n"), 0o755))
+	speakCommand := filepath.Join(t.TempDir(), "speak-helper.sh")
+	require.NoError(t, os.WriteFile(speakCommand, []byte("#!/bin/sh\ninput=$(cat)\nprintf 'speak:%s' \"$input\"\n"), 0o755))
 
 	out, err := captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json", "/status"}, config.FlagOverrides{})
@@ -2539,15 +2543,59 @@ func risky(value any) {
 	require.True(t, resumedVoice.CommandConfigured)
 	require.Equal(t, "codog-test-voice-helper", resumedVoice.Command)
 
-	out, err = runResumedJSON("/voice", "set-command", "codog-test-voice-resume")
+	out, err = runResumedJSON("/voice", "set-command", voiceCommand, "--path", configPath)
 	require.NoError(t, err)
 	var resumedVoiceSetCommand voiceReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceSetCommand))
 	require.Equal(t, "voice", resumedVoiceSetCommand.Kind)
 	require.Equal(t, "set-command", resumedVoiceSetCommand.Action)
 	require.True(t, resumedVoiceSetCommand.CommandConfigured)
-	require.Equal(t, "codog-test-voice-resume", resumedVoiceSetCommand.Command)
+	require.True(t, resumedVoiceSetCommand.CommandAvailable)
+	require.Equal(t, voiceCommand, resumedVoiceSetCommand.Command)
 	require.NotEmpty(t, resumedVoiceSetCommand.Path)
+
+	out, err = runResumedJSON("/voice", "on")
+	require.NoError(t, err)
+	var resumedVoiceOn voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceOn))
+	require.Equal(t, "voice", resumedVoiceOn.Kind)
+	require.Equal(t, "on", resumedVoiceOn.Action)
+	require.True(t, resumedVoiceOn.Enabled)
+	require.True(t, resumedVoiceOn.CommandAvailable)
+
+	out, err = runResumedJSON("/voice", "test", "--input", "resume-mic")
+	require.NoError(t, err)
+	var resumedVoiceTest voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceTest))
+	require.Equal(t, "voice", resumedVoiceTest.Kind)
+	require.Equal(t, "test", resumedVoiceTest.Action)
+	require.Equal(t, "voice:resume-mic", resumedVoiceTest.Transcript)
+	require.NotNil(t, resumedVoiceTest.ExitCode)
+	require.Equal(t, 0, *resumedVoiceTest.ExitCode)
+
+	out, err = runResumedJSON("/voice", "listen", "--input", "resume-listen")
+	require.NoError(t, err)
+	var resumedVoiceListen voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceListen))
+	require.Equal(t, "voice", resumedVoiceListen.Kind)
+	require.Equal(t, "listen", resumedVoiceListen.Action)
+	require.Equal(t, "voice:resume-listen", resumedVoiceListen.Transcript)
+
+	out, err = runResumedJSON("/listen", "--input", "resume-alias")
+	require.NoError(t, err)
+	var resumedListen voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedListen))
+	require.Equal(t, "voice", resumedListen.Kind)
+	require.Equal(t, "listen", resumedListen.Action)
+	require.Equal(t, "voice:resume-alias", resumedListen.Transcript)
+
+	out, err = runResumedJSON("/voice", "toggle")
+	require.NoError(t, err)
+	var resumedVoiceToggle voiceReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedVoiceToggle))
+	require.Equal(t, "voice", resumedVoiceToggle.Kind)
+	require.Equal(t, "toggle", resumedVoiceToggle.Action)
+	require.False(t, resumedVoiceToggle.Enabled)
 
 	out, err = runResumedJSON("/voice", "off")
 	require.NoError(t, err)
@@ -2577,15 +2625,56 @@ func risky(value any) {
 	require.True(t, resumedSpeak.CommandConfigured)
 	require.Equal(t, "codog-test-speech-helper", resumedSpeak.Command)
 
-	out, err = runResumedJSON("/speak", "set-command", "codog-test-speech-resume")
+	out, err = runResumedJSON("/speak", "set-command", speakCommand, "--path", configPath)
 	require.NoError(t, err)
 	var resumedSpeakSetCommand speakReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakSetCommand))
 	require.Equal(t, "speak", resumedSpeakSetCommand.Kind)
 	require.Equal(t, "set-command", resumedSpeakSetCommand.Action)
 	require.True(t, resumedSpeakSetCommand.CommandConfigured)
-	require.Equal(t, "codog-test-speech-resume", resumedSpeakSetCommand.Command)
+	require.True(t, resumedSpeakSetCommand.CommandAvailable)
+	require.Equal(t, speakCommand, resumedSpeakSetCommand.Command)
 	require.NotEmpty(t, resumedSpeakSetCommand.Path)
+
+	out, err = runResumedJSON("/speak", "test")
+	require.NoError(t, err)
+	var resumedSpeakTest speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakTest))
+	require.Equal(t, "speak", resumedSpeakTest.Kind)
+	require.Equal(t, "test", resumedSpeakTest.Action)
+	require.Equal(t, "speech check", resumedSpeakTest.TextPreview)
+	require.Equal(t, "speak:speech check", resumedSpeakTest.Stdout)
+	require.NotNil(t, resumedSpeakTest.ExitCode)
+	require.Equal(t, 0, *resumedSpeakTest.ExitCode)
+
+	out, err = runResumedJSON("/speak", "hello")
+	require.NoError(t, err)
+	var resumedSpeakHello speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakHello))
+	require.Equal(t, "speak", resumedSpeakHello.Kind)
+	require.Equal(t, "speak", resumedSpeakHello.Action)
+	require.Equal(t, "hello", resumedSpeakHello.TextPreview)
+	require.Equal(t, "speak:hello", resumedSpeakHello.Stdout)
+
+	out, err = runResumedJSON("/speak", "last")
+	require.NoError(t, err)
+	var resumedSpeakLast speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakLast))
+	require.Equal(t, "speak", resumedSpeakLast.Kind)
+	require.Equal(t, "speak", resumedSpeakLast.Action)
+	require.Equal(t, "resume-slash", resumedSpeakLast.SessionID)
+	require.Equal(t, "four", resumedSpeakLast.TextPreview)
+	require.Equal(t, "speak:four", resumedSpeakLast.Stdout)
+
+	out, err = runResumedJSON("/speak")
+	require.NoError(t, err)
+	var resumedSpeakDefault speakReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSpeakDefault))
+	require.Equal(t, "speak", resumedSpeakDefault.Kind)
+	require.Equal(t, "speak", resumedSpeakDefault.Action)
+	require.Equal(t, "resume-slash", resumedSpeakDefault.SessionID)
+	require.Equal(t, "four", resumedSpeakDefault.TextPreview)
+	require.Equal(t, "speak:four", resumedSpeakDefault.Stdout)
 
 	out, err = runResumedJSON("/speak", "clear")
 	require.NoError(t, err)
@@ -4110,15 +4199,6 @@ func risky(value any) {
 		{Command: "/oauth", Args: []string{"logout"}, Report: "/oauth logout"},
 		{Command: "/oauth", Args: []string{"browser", "login", "default"}, Report: "/oauth browser"},
 		{Command: "/oauth", Args: []string{"device", "login", "default"}, Report: "/oauth device"},
-		{Command: "/voice", Args: []string{"on"}, Report: "/voice on"},
-		{Command: "/voice", Args: []string{"toggle"}, Report: "/voice toggle"},
-		{Command: "/voice", Args: []string{"test"}, Report: "/voice test"},
-		{Command: "/voice", Args: []string{"listen"}, Report: "/voice listen"},
-		{Command: "/listen", Args: nil, Report: "/listen"},
-		{Command: "/speak", Args: nil, Report: "/speak speak"},
-		{Command: "/speak", Args: []string{"hello"}, Report: "/speak speak"},
-		{Command: "/speak", Args: []string{"last"}, Report: "/speak speak"},
-		{Command: "/speak", Args: []string{"test"}, Report: "/speak test"},
 		{Command: "/agents", Args: []string{"run", "reviewer", "check"}, Report: "/agents run"},
 		{Command: "/agents", Args: []string{"create", "reviewer"}, Report: "/agents create"},
 		{Command: "/plugins", Args: []string{"install", "example"}, Report: "/plugins install"},

@@ -23567,6 +23567,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedFastSlash(resumeSlashArgs("fast", args, format), format)
 	case "/voice":
 		return a.runResumedVoiceSlash(resumeSlashArgs("voice", args, format), format)
+	case "/listen":
+		return a.runResumedVoiceSlash(resumeSlashArgs("voice", append([]string{"listen"}, args...), format), format)
 	case "/speak":
 		return a.runResumedSpeakSlash(ctx, resumeSlashArgs("speak", args, format), resumed, format)
 	case "/vim":
@@ -24069,29 +24071,11 @@ func (a *App) runResumedAdvisorSlash(args []string, format string) error {
 }
 
 func (a *App) runResumedVoiceSlash(args []string, format string) error {
-	req, err := parseVoiceArgs(args)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "status", "set-command", "off", "clear-command", "clear":
-		return a.Voice(args)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/voice", req.Action), format)
-	}
+	return a.Voice(args)
 }
 
 func (a *App) runResumedSpeakSlash(ctx context.Context, args []string, overrides config.FlagOverrides, format string) error {
-	req, err := parseSpeakArgs(args, overrides)
-	if err != nil {
-		return err
-	}
-	switch req.Action {
-	case "status", "set-command", "clear-command", "clear":
-		return a.Speak(ctx, args, overrides)
-	default:
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/speak", req.Action), format)
-	}
+	return a.Speak(ctx, args, overrides)
 }
 
 func (a *App) runResumedSandboxToggleSlash(args []string, format string) error {
