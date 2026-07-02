@@ -3492,6 +3492,26 @@ func risky(value any) {
 	require.Equal(t, 0, resumedExtraUsage.VisitCount)
 	require.Empty(t, openedURL)
 
+	out, err = runResumedJSON("/extra-usage")
+	require.NoError(t, err)
+	var resumedExtraUsageDefault extraUsageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedExtraUsageDefault))
+	require.Equal(t, "extra_usage", resumedExtraUsageDefault.Kind)
+	require.Equal(t, "show", resumedExtraUsageDefault.Action)
+	require.Equal(t, "personal", resumedExtraUsageDefault.Mode)
+	require.Equal(t, extraUsagePersonalURL, resumedExtraUsageDefault.URL)
+	require.False(t, resumedExtraUsageDefault.Opened)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/extra-usage", "--open")
+	require.NoError(t, err)
+	var resumedExtraUsageOpen extraUsageReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedExtraUsageOpen))
+	require.Equal(t, "extra_usage", resumedExtraUsageOpen.Kind)
+	require.Equal(t, "show", resumedExtraUsageOpen.Action)
+	require.False(t, resumedExtraUsageOpen.Opened)
+	require.Empty(t, openedURL)
+
 	out, err = runResumedJSON("/install-slack-app", "--no-open")
 	require.NoError(t, err)
 	var resumedSlack installSlackAppReport
@@ -3501,6 +3521,25 @@ func risky(value any) {
 	require.Equal(t, slackAppURL, resumedSlack.URL)
 	require.False(t, resumedSlack.Opened)
 	require.Equal(t, 0, resumedSlack.InstallCount)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/install-slack-app")
+	require.NoError(t, err)
+	var resumedSlackDefault installSlackAppReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSlackDefault))
+	require.Equal(t, "install_slack_app", resumedSlackDefault.Kind)
+	require.Equal(t, "show", resumedSlackDefault.Action)
+	require.Equal(t, slackAppURL, resumedSlackDefault.URL)
+	require.False(t, resumedSlackDefault.Opened)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/install-slack-app", "--open")
+	require.NoError(t, err)
+	var resumedSlackOpen installSlackAppReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedSlackOpen))
+	require.Equal(t, "install_slack_app", resumedSlackOpen.Kind)
+	require.Equal(t, "show", resumedSlackOpen.Action)
+	require.False(t, resumedSlackOpen.Opened)
 	require.Empty(t, openedURL)
 
 	out, err = runResumedJSON("/stickers", "--no-open")
@@ -3514,6 +3553,25 @@ func risky(value any) {
 	require.Equal(t, 0, resumedStickers.OrderCount)
 	require.Empty(t, openedURL)
 
+	out, err = runResumedJSON("/stickers")
+	require.NoError(t, err)
+	var resumedStickersDefault stickersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedStickersDefault))
+	require.Equal(t, "stickers", resumedStickersDefault.Kind)
+	require.Equal(t, "show", resumedStickersDefault.Action)
+	require.Equal(t, stickerOrderURL, resumedStickersDefault.URL)
+	require.False(t, resumedStickersDefault.Opened)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/stickers", "--open")
+	require.NoError(t, err)
+	var resumedStickersOpen stickersReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedStickersOpen))
+	require.Equal(t, "stickers", resumedStickersOpen.Kind)
+	require.Equal(t, "show", resumedStickersOpen.Action)
+	require.False(t, resumedStickersOpen.Opened)
+	require.Empty(t, openedURL)
+
 	out, err = runResumedJSON("/passes", "show")
 	require.NoError(t, err)
 	var resumedPasses passesReport
@@ -3523,6 +3581,26 @@ func risky(value any) {
 	require.Equal(t, guestPassDocsURL, resumedPasses.URL)
 	require.False(t, resumedPasses.Opened)
 	require.Equal(t, 0, resumedPasses.VisitCount)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/passes")
+	require.NoError(t, err)
+	var resumedPassesDefault passesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPassesDefault))
+	require.Equal(t, "passes", resumedPassesDefault.Kind)
+	require.Equal(t, "show", resumedPassesDefault.Action)
+	require.Equal(t, guestPassDocsURL, resumedPassesDefault.URL)
+	require.False(t, resumedPassesDefault.Opened)
+	require.Empty(t, openedURL)
+
+	out, err = runResumedJSON("/passes", "open")
+	require.NoError(t, err)
+	var resumedPassesOpen passesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPassesOpen))
+	require.Equal(t, "passes", resumedPassesOpen.Kind)
+	require.Equal(t, "show", resumedPassesOpen.Action)
+	require.Equal(t, guestPassDocsURL, resumedPassesOpen.URL)
+	require.False(t, resumedPassesOpen.Opened)
 	require.Empty(t, openedURL)
 
 	out, err = runResumedJSON("/passes", "set-url", "https://example.test/guest")
@@ -4002,14 +4080,6 @@ func risky(value any) {
 		{Command: "/workspace", Args: []string{"set", workspace}, Report: "/workspace set"},
 		{Command: "/ant-trace", Args: nil, Report: "/ant-trace request"},
 		{Command: "/mock-limits", Args: []string{"serve"}, Report: "/mock-limits serve"},
-		{Command: "/extra-usage", Args: nil, Report: "/extra-usage open"},
-		{Command: "/extra-usage", Args: []string{"--open"}, Report: "/extra-usage open"},
-		{Command: "/install-slack-app", Args: nil, Report: "/install-slack-app open"},
-		{Command: "/install-slack-app", Args: []string{"--open"}, Report: "/install-slack-app open"},
-		{Command: "/stickers", Args: nil, Report: "/stickers open"},
-		{Command: "/stickers", Args: []string{"--open"}, Report: "/stickers open"},
-		{Command: "/passes", Args: nil, Report: "/passes open"},
-		{Command: "/passes", Args: []string{"open"}, Report: "/passes open"},
 		{Command: "/debug-tool-call", Args: []string{"write_file", `{"path":"blocked.txt","content":"blocked"}`}, Report: "/debug-tool-call write_file"},
 		{Command: "/debug-tool-call", Args: []string{"bash", `{"command":"echo blocked"}`}, Report: "/debug-tool-call bash"},
 	} {

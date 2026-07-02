@@ -24278,9 +24278,6 @@ func (a *App) runResumedExtraUsageSlash(args []string, format string) error {
 	if err != nil {
 		return err
 	}
-	if req.Open {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/extra-usage", "open"), format)
-	}
 	path, err := a.preferenceConfigPath(req.Target, req.Path)
 	if err != nil {
 		return err
@@ -24310,9 +24307,6 @@ func (a *App) runResumedInstallSlackAppSlash(args []string, format string) error
 	if err != nil {
 		return err
 	}
-	if req.Open {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/install-slack-app", "open"), format)
-	}
 	path, err := a.preferenceConfigPath(req.Target, req.Path)
 	if err != nil {
 		return err
@@ -24340,9 +24334,6 @@ func (a *App) runResumedStickersSlash(args []string, format string) error {
 	req, err := parseStickersArgs(args)
 	if err != nil {
 		return err
-	}
-	if req.Open {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/stickers", "open"), format)
 	}
 	path, err := a.preferenceConfigPath(req.Target, req.Path)
 	if err != nil {
@@ -24377,9 +24368,6 @@ func (a *App) runResumedPassesSlash(args []string, format string) error {
 	case "set-url", "clear-url":
 		return a.Passes(args)
 	case "open":
-		if req.Open {
-			return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/passes", "open"), format)
-		}
 	default:
 		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/passes", req.Action), format)
 	}
