@@ -39,6 +39,7 @@ type Server struct {
 	LeaseTTL    time.Duration
 	Executable  string
 	EditorToken string
+	RemoteEnv   []string
 	Now         func() time.Time
 }
 
@@ -693,6 +694,7 @@ func (s Server) sessionPrompt(w http.ResponseWriter, r *http.Request, id string)
 	task, err := background.NewStore(s.ConfigHome).RunWithOptions(command, s.Workspace, background.RunOptions{
 		Kind:      kind,
 		SessionID: id,
+		Env:       s.remoteEnv(),
 	})
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
@@ -874,6 +876,7 @@ func (s Server) background(w http.ResponseWriter, r *http.Request) {
 		task, err := store.RunWithOptions(payload.Command, s.Workspace, background.RunOptions{
 			SessionID:     payload.SessionID,
 			RestartPolicy: payload.RestartPolicy,
+			Env:           s.remoteEnv(),
 		})
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -911,6 +914,7 @@ func (s Server) terminal(w http.ResponseWriter, r *http.Request) {
 			Kind:          "terminal",
 			SessionID:     payload.SessionID,
 			RestartPolicy: payload.RestartPolicy,
+			Env:           s.remoteEnv(),
 		})
 		if err != nil {
 			writeError(w, err, http.StatusBadRequest)
@@ -2921,6 +2925,13 @@ func (s Server) now() time.Time {
 		return s.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+func (s Server) remoteEnv() []string {
+	if len(s.RemoteEnv) == 0 {
+		return nil
+	}
+	return append([]string(nil), s.RemoteEnv...)
 }
 
 func shellQuote(value string) string {

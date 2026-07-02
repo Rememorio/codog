@@ -87,6 +87,20 @@ func TestInheritedProxyEnvRequiresProxyAndCA(t *testing.T) {
 	require.Empty(t, InheritedProxyEnv(map[string]string{}))
 }
 
+func TestMergeEnvOverlaysProxyValuesWithoutDroppingBase(t *testing.T) {
+	merged := MergeEnv([]string{"PATH=/bin", "HTTPS_PROXY=http://old", "KEEP=yes"}, map[string]string{
+		"HTTPS_PROXY":   "http://127.0.0.1:9443",
+		"SSL_CERT_FILE": "/tmp/ca-bundle.crt",
+	})
+
+	require.Equal(t, []string{
+		"PATH=/bin",
+		"HTTPS_PROXY=http://127.0.0.1:9443",
+		"KEEP=yes",
+		"SSL_CERT_FILE=/tmp/ca-bundle.crt",
+	}, merged)
+}
+
 func TestHelperOutputsMatchRemoteContract(t *testing.T) {
 	require.Equal(t, "ws://localhost:3000/v1/code/upstreamproxy/ws", UpstreamProxyWebSocketURL("http://localhost:3000/"))
 	require.Contains(t, NoProxyList(), "anthropic.com")

@@ -294,6 +294,30 @@ func InheritedProxyEnv(env map[string]string) map[string]string {
 	return out
 }
 
+// MergeEnv overlays environment map values onto a base env list while
+// preserving unmodified entries and key order.
+func MergeEnv(base []string, overlay map[string]string) []string {
+	out := append([]string(nil), base...)
+	indexes := map[string]int{}
+	for index, item := range out {
+		key, _, ok := strings.Cut(item, "=")
+		if ok {
+			indexes[key] = index
+		}
+	}
+	keys := sortedKeys(overlay)
+	for _, key := range keys {
+		item := key + "=" + overlay[key]
+		if index, ok := indexes[key]; ok {
+			out[index] = item
+			continue
+		}
+		indexes[key] = len(out)
+		out = append(out, item)
+	}
+	return out
+}
+
 func (b UpstreamProxyBootstrap) missing() []string {
 	missing := []string{}
 	if !b.Remote.Enabled {

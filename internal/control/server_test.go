@@ -487,10 +487,11 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 		Sessions:   &session.Store{Dir: filepath.Join(root, "sessions")},
 		ConfigHome: filepath.Join(root, "home"),
 		Workspace:  root,
+		RemoteEnv:  append(os.Environ(), "CODOG_REMOTE_ENV=proxy"),
 	}.Handler())
 	defer server.Close()
 
-	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"echo remote","session_id":"session-remote","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":2}}`))
+	resp, err := http.Post(server.URL+"/background", "application/json", bytes.NewBufferString(`{"command":"printf remote-$CODOG_REMOTE_ENV","session_id":"session-remote","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":2}}`))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -508,7 +509,7 @@ func TestControlBackgroundLifecycle(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		return bytes.Contains(body, []byte("remote"))
+		return bytes.Contains(body, []byte("remote-proxy"))
 	}, 2*time.Second, 50*time.Millisecond)
 
 	resp, err = http.Get(server.URL + "/background/" + task.ID)

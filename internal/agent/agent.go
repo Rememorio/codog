@@ -1228,6 +1228,11 @@ func (a *App) Remote(args []string) error {
 		addr = args[1]
 	}
 	executable, _ := os.Executable()
+	runtimeReport := remoteruntime.InspectEnv(remoteruntime.Env(), remoteProxyPortFromAddr(addr))
+	remoteEnv := []string(nil)
+	if len(runtimeReport.SubprocessEnv) > 0 {
+		remoteEnv = remoteruntime.MergeEnv(os.Environ(), runtimeReport.SubprocessEnv)
+	}
 	fmt.Fprintf(a.Err, "codog remote control listening on http://%s\n", addr)
 	return http.ListenAndServe(addr, control.Server{
 		Sessions:    a.Sessions,
@@ -1239,6 +1244,7 @@ func (a *App) Remote(args []string) error {
 		LeaseTTL:    time.Duration(a.Config.Future.RemoteLeaseSeconds) * time.Second,
 		Executable:  executable,
 		EditorToken: a.Config.Future.EditorBridgeToken,
+		RemoteEnv:   remoteEnv,
 	}.Handler())
 }
 
