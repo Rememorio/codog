@@ -11289,6 +11289,97 @@ func TestCompactCommandPersistsCompactedSession(t *testing.T) {
 	require.Contains(t, postCompactHook.Input, `"session_id":"compact-session"`)
 }
 
+func TestCompactErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"compact", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "compact"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"compact", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "missing keep",
+			args:      []string{"compact", "--keep"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "compact"`, `"option": "--keep"`},
+		},
+		{
+			name:      "invalid keep",
+			args:      []string{"compact", "--keep", "many"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--keep"`, `"value": "many"`},
+		},
+		{
+			name:      "negative keep",
+			args:      []string{"compact", "--keep", "-1"},
+			kind:      "invalid_flag_value",
+			errorKind: "invalid_flag_value",
+			contains:  []string{`"option": "--keep"`, `"value": "-1"`},
+		},
+		{
+			name:      "missing session",
+			args:      []string{"compact", "--session"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "compact"`, `"option": "--session"`},
+		},
+		{
+			name:      "missing resume",
+			args:      []string{"compact", "--resume"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "compact"`, `"option": "--resume"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"compact", "--bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "compact"`, `"option": "--bogus"`},
+		},
+		{
+			name:      "unexpected argument",
+			args:      []string{"compact", "bogus"},
+			kind:      "unexpected_extra_args",
+			errorKind: "unexpected_extra_args",
+			contains:  []string{`"command": "compact"`, `"bogus"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
+}
+
 func TestUndoCommandAndSlashRestoreFile(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "notes.txt")
@@ -11318,6 +11409,63 @@ func TestUndoCommandAndSlashRestoreFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "old\n", string(data))
 	require.Empty(t, errOut.String())
+}
+
+func TestUndoErrorsHonorGlobalJSONFormat(t *testing.T) {
+	configHome := t.TempDir()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	workspace := t.TempDir()
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		kind      string
+		errorKind string
+		contains  []string
+	}{
+		{
+			name:      "missing output format",
+			args:      []string{"undo", "--output-format"},
+			kind:      "missing_flag_value",
+			errorKind: "missing_flag_value",
+			contains:  []string{`"command": "undo"`, `"option": "--output-format"`},
+		},
+		{
+			name:      "invalid output format",
+			args:      []string{"undo", "--output-format", "yaml"},
+			kind:      "invalid_output_format",
+			errorKind: "invalid_output_format",
+			contains:  []string{`"value": "yaml"`},
+		},
+		{
+			name:      "unknown option",
+			args:      []string{"undo", "bogus"},
+			kind:      "unknown_option",
+			errorKind: "unknown_option",
+			contains:  []string{`"command": "undo"`, `"option": "bogus"`},
+		},
+		{
+			name:      "no records",
+			args:      []string{"undo"},
+			kind:      "no_undo_records",
+			errorKind: "no_undo_records",
+			contains:  []string{`"kind": "no_undo_records"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := captureStdout(t, func() error {
+				args := append([]string{"--config", configPath, "--cwd", workspace, "--output-format", "json"}, tc.args...)
+				return RunCLI(context.Background(), args, config.FlagOverrides{})
+			})
+			requireStructuredCLIError(t, err, []byte(out), tc.kind, tc.errorKind)
+			for _, expected := range tc.contains {
+				require.Contains(t, out, expected)
+			}
+		})
+	}
 }
 
 func TestRateLimitOptionsCommandAndSlash(t *testing.T) {

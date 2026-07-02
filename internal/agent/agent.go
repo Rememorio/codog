@@ -603,9 +603,15 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	case "think-back", "thinkback", "thinkback-play":
 		return app.ThinkBack(rest)
 	case "compact":
-		return app.Compact(rest, overrides)
+		if err := app.Compact(rest, overrides); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "undo":
-		return app.Undo(rest)
+		if err := app.Undo(rest); err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
+		}
+		return nil
 	case "extra-usage":
 		return app.ExtraUsage(rest)
 	case "extra-usage-core":
@@ -23706,7 +23712,7 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			ErrorKind: "no_managed_sessions",
 			Status:    "error",
 			Action:    "abort",
-			Message:   "no managed sessions found",
+			Message:   "no saved sessions found",
 			Hint:      "Run `codog prompt <text>` to create a session, or pass an existing .jsonl/.json session path.",
 		}
 	}
@@ -23727,6 +23733,15 @@ func buildCLIErrorReport(err error) cliErrorReport {
 			Status:    "error",
 			Message:   "no oauth token is saved",
 			Hint:      "Run `codog oauth token save ACCESS_TOKEN` or complete `codog login` before using token-dependent OAuth commands.",
+		}
+	}
+	if errors.Is(err, undo.ErrNoUndo) {
+		return cliErrorReport{
+			Kind:      "no_undo_records",
+			ErrorKind: "no_undo_records",
+			Status:    "error",
+			Message:   "no undo records are available",
+			Hint:      "Run an editing command that records undo state before using `codog undo`.",
 		}
 	}
 	var credentialsErr anthropic.MissingCredentialsError
@@ -42112,6 +42127,8 @@ type compactRequest struct {
 	Keep    int
 }
 
+const compactUsage = "codog compact [--session ID|--resume ID] [--keep N] [--output-format text|json]"
+
 func (a *App) Compact(args []string, overrides config.FlagOverrides) error {
 	req, err := parseCompactArgs(args, overrides, a.Config.AutoCompactMessages)
 	if err != nil {
@@ -42193,57 +42210,100 @@ func parseCompactArgs(args []string, overrides config.FlagOverrides, defaultKeep
 		switch {
 		case arg == "--json":
 			req.Format = "json"
-		case arg == "--output-format":
+		case arg == "--output-format" || arg == "-o":
 			if i+1 >= len(args) {
-				return req, errors.New("compact output format is required")
+				return req, missingFlagValueError{
+					Command: "compact",
+					Flag:    arg,
+					Usage:   compactUsage,
+				}
 			}
 			i++
 			req.Format = args[i]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
 		case arg == "--keep":
-			if i+1 >= len(args) {
-				return req, errors.New("compact keep count is required")
+			if i+1 >= len(args) || isOutputFormatFlag(args[i+1]) {
+				return req, missingFlagValueError{
+					Command: "compact",
+					Flag:    arg,
+					Usage:   compactUsage,
+				}
 			}
 			i++
-			value, err := strconv.Atoi(args[i])
-			if err != nil || value <= 0 {
-				return req, errors.New("compact keep count must be a positive integer")
+			value, err := parseCompactKeep(args[i], arg)
+			if err != nil {
+				return req, err
 			}
 			req.Keep = value
 		case strings.HasPrefix(arg, "--keep="):
-			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--keep="))
-			if err != nil || value <= 0 {
-				return req, errors.New("compact keep count must be a positive integer")
+			value, err := parseCompactKeep(strings.TrimPrefix(arg, "--keep="), "--keep")
+			if err != nil {
+				return req, err
 			}
 			req.Keep = value
 		case arg == "--session":
-			if i+1 >= len(args) {
-				return req, errors.New("compact session id is required")
+			if i+1 >= len(args) || isOutputFormatFlag(args[i+1]) {
+				return req, missingFlagValueError{
+					Command: "compact",
+					Flag:    arg,
+					Usage:   compactUsage,
+				}
 			}
 			i++
 			req.Session = args[i]
 		case strings.HasPrefix(arg, "--session="):
 			req.Session = strings.TrimPrefix(arg, "--session=")
 		case arg == "--resume":
-			if i+1 >= len(args) {
-				return req, errors.New("compact resume id is required")
+			if i+1 >= len(args) || isOutputFormatFlag(args[i+1]) {
+				return req, missingFlagValueError{
+					Command: "compact",
+					Flag:    arg,
+					Usage:   compactUsage,
+				}
 			}
 			i++
 			req.Session = args[i]
 		case strings.HasPrefix(arg, "--resume="):
 			req.Session = strings.TrimPrefix(arg, "--resume=")
 		default:
-			return req, fmt.Errorf("unknown compact argument %q", arg)
+			if strings.HasPrefix(arg, "-") {
+				return req, unknownOptionError{
+					Command: "compact",
+					Option:  arg,
+					Usage:   compactUsage,
+				}
+			}
+			return req, unexpectedExtraArgsError{
+				Command: "compact",
+				Args:    []string{arg},
+				Usage:   compactUsage,
+			}
 		}
 	}
-	if req.Format != "text" && req.Format != "json" {
-		return req, fmt.Errorf("unknown compact output format %q", req.Format)
+	normalizedFormat, err := normalizeOutputFormat("compact", req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
 	}
+	req.Format = normalizedFormat
 	if req.Keep <= 0 {
 		req.Keep = 40
 	}
 	return req, nil
+}
+
+func parseCompactKeep(raw string, flag string) (int, error) {
+	value := strings.TrimSpace(raw)
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, invalidFlagValueError{
+			Flag:    flag,
+			Value:   raw,
+			Message: "compact keep count must be a positive integer",
+			Usage:   compactUsage,
+		}
+	}
+	return parsed, nil
 }
 
 type rateLimitOptionsReport struct {
