@@ -24049,13 +24049,6 @@ func (a *App) runResumedSetupSlash(ctx context.Context, args []string, format st
 }
 
 func (a *App) runResumedRemoteEnvSlash(args []string, format string) error {
-	req, err := parseRemoteEnvArgs(args)
-	if err != nil {
-		return err
-	}
-	if req.Action != "show" || req.SetEnabled || req.AuthToken != "" || req.ClearToken || req.SetLease {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/remote-env", req.Action), format)
-	}
 	return a.RemoteEnv(args)
 }
 
@@ -24067,13 +24060,6 @@ func (a *App) runResumedRemoteSlash(args []string, overrides config.FlagOverride
 }
 
 func (a *App) runResumedRemoteSetupSlash(args []string, overrides config.FlagOverrides, format string) error {
-	req, err := parseRemoteSetupArgs(args, overrides)
-	if err != nil {
-		return err
-	}
-	if req.Action != "status" {
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/remote-setup", req.Action), format)
-	}
 	return a.RemoteSetup(args, overrides)
 }
 

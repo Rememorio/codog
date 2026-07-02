@@ -3184,6 +3184,36 @@ func risky(value any) {
 	require.Equal(t, 45, resumedRemoteEnv.LeaseSeconds)
 	require.NotContains(t, out, "remote-secret")
 
+	out, err = runResumedJSON("/remote-env", "show", "--auth-token", "secret")
+	require.NoError(t, err)
+	var resumedRemoteEnvAuth remoteEnvReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteEnvAuth))
+	require.Equal(t, "remote_env", resumedRemoteEnvAuth.Kind)
+	require.Equal(t, "show", resumedRemoteEnvAuth.Action)
+	require.True(t, resumedRemoteEnvAuth.AuthTokenConfigured)
+	require.NotContains(t, out, "secret")
+
+	out, err = runResumedJSON("/remote-env", "set", "--enabled", "off")
+	require.NoError(t, err)
+	var resumedRemoteEnvSet remoteEnvReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteEnvSet))
+	require.Equal(t, "remote_env", resumedRemoteEnvSet.Kind)
+	require.Equal(t, "set", resumedRemoteEnvSet.Action)
+	require.False(t, resumedRemoteEnvSet.Enabled)
+	require.True(t, resumedRemoteEnvSet.AuthTokenConfigured)
+	require.NotEmpty(t, resumedRemoteEnvSet.Path)
+
+	out, err = runResumedJSON("/remote-env", "clear")
+	require.NoError(t, err)
+	var resumedRemoteEnvClear remoteEnvReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteEnvClear))
+	require.Equal(t, "remote_env", resumedRemoteEnvClear.Kind)
+	require.Equal(t, "clear", resumedRemoteEnvClear.Action)
+	require.False(t, resumedRemoteEnvClear.Enabled)
+	require.False(t, resumedRemoteEnvClear.AuthTokenConfigured)
+	require.Equal(t, 0, resumedRemoteEnvClear.LeaseSeconds)
+	require.NotEmpty(t, resumedRemoteEnvClear.Path)
+
 	out, err = runResumedJSON("/remote-setup", "status", "--addr", "127.0.0.1:8792")
 	require.NoError(t, err)
 	var resumedRemoteSetup remoteSetupReport
@@ -3197,6 +3227,37 @@ func risky(value any) {
 	require.Equal(t, "http://127.0.0.1:8792", resumedRemoteSetup.RemoteURL)
 	require.NotContains(t, out, "remote-secret")
 
+	out, err = runResumedJSON("/remote-setup", "enable", "--addr", "127.0.0.1:8794")
+	require.NoError(t, err)
+	var resumedRemoteSetupEnable remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteSetupEnable))
+	require.Equal(t, "remote_setup", resumedRemoteSetupEnable.Kind)
+	require.Equal(t, "enable", resumedRemoteSetupEnable.Action)
+	require.True(t, resumedRemoteSetupEnable.Enabled)
+	require.True(t, resumedRemoteSetupEnable.Ready)
+	require.Equal(t, "http://127.0.0.1:8794", resumedRemoteSetupEnable.RemoteURL)
+	require.NotEmpty(t, resumedRemoteSetupEnable.Path)
+
+	out, err = runResumedJSON("/remote-setup", "disable")
+	require.NoError(t, err)
+	var resumedRemoteSetupDisable remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteSetupDisable))
+	require.Equal(t, "remote_setup", resumedRemoteSetupDisable.Kind)
+	require.Equal(t, "disable", resumedRemoteSetupDisable.Action)
+	require.False(t, resumedRemoteSetupDisable.Enabled)
+	require.NotEmpty(t, resumedRemoteSetupDisable.Path)
+
+	out, err = runResumedJSON("/remote-setup", "clear")
+	require.NoError(t, err)
+	var resumedRemoteSetupClear remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedRemoteSetupClear))
+	require.Equal(t, "remote_setup", resumedRemoteSetupClear.Kind)
+	require.Equal(t, "clear", resumedRemoteSetupClear.Action)
+	require.False(t, resumedRemoteSetupClear.Enabled)
+	require.False(t, resumedRemoteSetupClear.AuthTokenConfigured)
+	require.Equal(t, 0, resumedRemoteSetupClear.LeaseSeconds)
+	require.NotEmpty(t, resumedRemoteSetupClear.Path)
+
 	out, err = runResumedJSON("/web-setup", "status", "--addr", "127.0.0.1:8793")
 	require.NoError(t, err)
 	var resumedWebSetup remoteSetupReport
@@ -3204,6 +3265,15 @@ func risky(value any) {
 	require.Equal(t, "remote_setup", resumedWebSetup.Kind)
 	require.Equal(t, "status", resumedWebSetup.Action)
 	require.Equal(t, "http://127.0.0.1:8793", resumedWebSetup.RemoteURL)
+
+	out, err = runResumedJSON("/web-setup", "enable")
+	require.NoError(t, err)
+	var resumedWebSetupEnable remoteSetupReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedWebSetupEnable))
+	require.Equal(t, "remote_setup", resumedWebSetupEnable.Kind)
+	require.Equal(t, "enable", resumedWebSetupEnable.Action)
+	require.True(t, resumedWebSetupEnable.Enabled)
+	require.NotEmpty(t, resumedWebSetupEnable.Path)
 
 	out, err = runResumedJSON("/ide")
 	require.NoError(t, err)
@@ -3681,13 +3751,6 @@ func risky(value any) {
 		{Command: "/setup", Args: []string{"terminal", "uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/setup terminal uninstall"},
 		{Command: "/terminal-setup", Args: []string{"install", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup install"},
 		{Command: "/terminal-setup", Args: []string{"uninstall", "--shell", "zsh", "--path", terminalProfilePath}, Report: "/terminal-setup uninstall"},
-		{Command: "/remote-env", Args: []string{"set", "--enabled", "off"}, Report: "/remote-env set"},
-		{Command: "/remote-env", Args: []string{"clear"}, Report: "/remote-env clear"},
-		{Command: "/remote-env", Args: []string{"show", "--auth-token", "secret"}, Report: "/remote-env show"},
-		{Command: "/remote-setup", Args: []string{"enable", "--addr", "127.0.0.1:8794"}, Report: "/remote-setup enable"},
-		{Command: "/remote-setup", Args: []string{"disable"}, Report: "/remote-setup disable"},
-		{Command: "/remote-setup", Args: []string{"clear"}, Report: "/remote-setup clear"},
-		{Command: "/web-setup", Args: []string{"enable"}, Report: "/remote-setup enable"},
 		{Command: "/format", Args: []string{"main.go", "--write"}, Report: "/format write"},
 		{Command: "/reset", Args: []string{"model"}, Report: "/reset model"},
 		{Command: "/reset", Args: []string{"all", "--confirm"}, Report: "/reset all"},
