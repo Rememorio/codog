@@ -21596,14 +21596,20 @@ func (a *App) statusSnapshot(active *session.Session) localstatus.Snapshot {
 		}
 	}
 	memoryFiles, _ := memory.Discover(a.Workspace)
-	memoryStatuses := make([]localstatus.MemoryFileStatus, 0, len(memoryFiles))
-	for _, file := range memoryFiles {
+	memoryMetadata := memory.MetadataFor(a.Workspace, memoryFiles)
+	memoryStatuses := make([]localstatus.MemoryFileStatus, 0, len(memoryMetadata))
+	for _, file := range memoryMetadata {
 		memoryStatuses = append(memoryStatuses, localstatus.MemoryFileStatus{
-			Path:      file.Path,
-			Name:      file.Name,
-			Scope:     file.Scope,
-			Chars:     file.Chars,
-			Truncated: file.Truncated,
+			Path:           file.Path,
+			Name:           file.Name,
+			Source:         file.Source,
+			Origin:         file.Origin,
+			Scope:          file.Scope,
+			ScopePath:      file.ScopePath,
+			OutsideProject: file.OutsideProject,
+			Chars:          file.Chars,
+			Contributes:    file.Contributes,
+			Truncated:      file.Truncated,
 		})
 	}
 	gitRaw, gitErr := gitops.Status(a.Workspace)

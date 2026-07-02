@@ -114,11 +114,16 @@ type WorkspaceStatus struct {
 
 // MemoryFileStatus describes one instruction file loaded into context.
 type MemoryFileStatus struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	Scope     string `json:"scope"`
-	Chars     int    `json:"chars"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Path           string `json:"path"`
+	Name           string `json:"name"`
+	Source         string `json:"source,omitempty"`
+	Origin         string `json:"origin,omitempty"`
+	Scope          string `json:"scope"`
+	ScopePath      string `json:"scope_path,omitempty"`
+	OutsideProject bool   `json:"outside_project,omitempty"`
+	Chars          int    `json:"chars"`
+	Contributes    bool   `json:"contributes"`
+	Truncated      bool   `json:"truncated,omitempty"`
 }
 
 // ConfigStatus summarizes the effective runtime configuration.

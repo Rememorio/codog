@@ -98,6 +98,34 @@ func TestBuildReportSummarizesMemoryFiles(t *testing.T) {
 	require.NotContains(t, string(data), "Second line")
 }
 
+func TestMetadataForReportsClaudeCompatibleMemoryFields(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "cmd", "tool")
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".codog"), 0o755))
+	canonicalRoot := canonicalPath(root)
+	canonicalWorkspace := canonicalPath(workspace)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Project instructions.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".codog", "instructions.md"), []byte("Workspace instructions.\n"), 0o644))
+
+	files, err := discoverBetween(workspace, root)
+	require.NoError(t, err)
+
+	metadata := MetadataFor(workspace, files)
+
+	require.Len(t, metadata, 2)
+	require.Equal(t, "AGENTS.md", metadata[0].Name)
+	require.Equal(t, "agents_md", metadata[0].Source)
+	require.Equal(t, "ancestor", metadata[0].Origin)
+	require.Equal(t, canonicalRoot, metadata[0].ScopePath)
+	require.True(t, metadata[0].OutsideProject)
+	require.True(t, metadata[0].Contributes)
+	require.Equal(t, ".codog/instructions.md", metadata[1].Name)
+	require.Equal(t, "codog_instructions", metadata[1].Source)
+	require.Equal(t, "workspace", metadata[1].Origin)
+	require.Equal(t, canonicalWorkspace, metadata[1].ScopePath)
+	require.False(t, metadata[1].OutsideProject)
+}
+
 func TestSearchFindsRelevantMemoryLines(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".codog"), 0o755))

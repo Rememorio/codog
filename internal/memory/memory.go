@@ -35,6 +35,20 @@ type File struct {
 	Body      string `json:"-"`
 }
 
+// Metadata is a JSON-safe description of one loaded project-memory file.
+type Metadata struct {
+	Path           string `json:"path"`
+	Name           string `json:"name"`
+	Source         string `json:"source"`
+	Origin         string `json:"origin"`
+	Scope          string `json:"scope"`
+	ScopePath      string `json:"scope_path"`
+	OutsideProject bool   `json:"outside_project"`
+	Chars          int    `json:"chars"`
+	Contributes    bool   `json:"contributes"`
+	Truncated      bool   `json:"truncated,omitempty"`
+}
+
 // Summary is the JSON-safe metadata view of a memory file.
 type Summary struct {
 	Path      string `json:"path"`
@@ -441,6 +455,39 @@ func RenderFileReport(w io.Writer, report FileReport) {
 	}
 }
 
+// MetadataFor returns JSON-safe metadata for loaded memory files.
+func MetadataFor(workspace string, files []File) []Metadata {
+	absWorkspace, err := absWorkspacePath(workspace)
+	if err != nil {
+		absWorkspace = canonicalPath(strings.TrimSpace(workspace))
+	}
+	projectRoot := absWorkspace
+	if root, ok := gitRoot(absWorkspace); ok && isWithin(absWorkspace, root) {
+		projectRoot = root
+	}
+	metadata := make([]Metadata, 0, len(files))
+	for _, file := range files {
+		path := canonicalPath(file.Path)
+		scope := canonicalPath(file.Scope)
+		fileForOrigin := file
+		fileForOrigin.Path = path
+		fileForOrigin.Scope = scope
+		metadata = append(metadata, Metadata{
+			Path:           path,
+			Name:           file.Name,
+			Source:         sourceForName(file.Name),
+			Origin:         originForFile(fileForOrigin, absWorkspace, projectRoot),
+			Scope:          scope,
+			ScopePath:      scope,
+			OutsideProject: !isWithin(path, projectRoot),
+			Chars:          file.Chars,
+			Contributes:    strings.TrimSpace(file.Body) != "",
+			Truncated:      file.Truncated,
+		})
+	}
+	return metadata
+}
+
 // Summaries converts loaded memory files to metadata-only summaries.
 func Summaries(files []File) []Summary {
 	summaries := make([]Summary, 0, len(files))
@@ -456,6 +503,31 @@ func Summaries(files []File) []Summary {
 		})
 	}
 	return summaries
+}
+
+func sourceForName(name string) string {
+	switch filepath.ToSlash(name) {
+	case "CLAUDE.md", ".claude/CLAUDE.md":
+		return "claude_md"
+	case "CLAW.md":
+		return "claw_md"
+	case "AGENTS.md":
+		return "agents_md"
+	case ".codog/instructions.md":
+		return "codog_instructions"
+	default:
+		return "project_memory"
+	}
+}
+
+func originForFile(file File, workspace string, projectRoot string) string {
+	if workspace != "" && canonicalPath(file.Scope) == canonicalPath(workspace) {
+		return "workspace"
+	}
+	if projectRoot != "" && canonicalPath(file.Scope) == canonicalPath(projectRoot) {
+		return "project"
+	}
+	return "ancestor"
 }
 
 func matchesTarget(file File, target string) bool {

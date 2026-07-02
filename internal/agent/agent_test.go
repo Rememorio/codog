@@ -7943,6 +7943,8 @@ func TestDoctorDegradesOnMalformedConfigFile(t *testing.T) {
 func TestStatusCommandAndSlash(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Status memory."), 0o644))
 	store := session.NewWorkspaceStore(configHome, workspace)
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "status me")))
@@ -7982,6 +7984,26 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"status_json_supported": true`)
 	require.Contains(t, out.String(), `"transport_dead"`)
 	require.Contains(t, out.String(), `"active_count": 0`)
+	var statusReport struct {
+		Workspace struct {
+			MemoryFiles []struct {
+				Name           string `json:"name"`
+				Source         string `json:"source"`
+				Origin         string `json:"origin"`
+				ScopePath      string `json:"scope_path"`
+				OutsideProject bool   `json:"outside_project"`
+				Contributes    bool   `json:"contributes"`
+			} `json:"memory_files"`
+		} `json:"workspace"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &statusReport))
+	require.Len(t, statusReport.Workspace.MemoryFiles, 1)
+	require.Equal(t, "AGENTS.md", statusReport.Workspace.MemoryFiles[0].Name)
+	require.Equal(t, "agents_md", statusReport.Workspace.MemoryFiles[0].Source)
+	require.Equal(t, "workspace", statusReport.Workspace.MemoryFiles[0].Origin)
+	require.Equal(t, canonicalWorkspace, statusReport.Workspace.MemoryFiles[0].ScopePath)
+	require.False(t, statusReport.Workspace.MemoryFiles[0].OutsideProject)
+	require.True(t, statusReport.Workspace.MemoryFiles[0].Contributes)
 	out.Reset()
 
 	sess := &session.Session{ID: "source", Messages: []anthropic.Message{anthropic.TextMessage("user", "slash")}}
