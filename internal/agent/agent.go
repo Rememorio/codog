@@ -39309,7 +39309,12 @@ Flags:
 Environment:
   ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, OPENAI_API_KEY, OPENAI_BASE_URL, OLLAMA_HOST, XAI_API_KEY, XAI_BASE_URL, DASHSCOPE_API_KEY, DASHSCOPE_BASE_URL, CODOG_BASE_URL, CODOG_MODEL, CODOG_ADVISOR_MODEL, CODOG_SYSTEM_PROMPT, CODOG_APPEND_SYSTEM_PROMPT, CODOG_LANGUAGE, CODOG_THEME, CODOG_EDITOR_MODE, CODOG_REASONING_EFFORT, CODOG_OAUTH_PROFILE, CODOG_TEMPERATURE, CODOG_FAST_MODE, CODOG_VOICE_ENABLED, CODOG_VOICE_COMMAND, CODOG_SPEECH_COMMAND, CODOG_CHROME_DEFAULT_ENABLED, CODOG_NOTIFICATIONS_ENABLED, CODOG_PRIVACY_PROMPT_HISTORY_ENABLED
 `
-	return strings.ReplaceAll(help, "%s", exe)
+	rendered := strings.ReplaceAll(help, "%s", exe)
+	return strings.Replace(rendered, "\nFlags:\n", "\nResume-safe commands: "+resumeSafeCommandsHelpLine()+"\n\nFlags:\n", 1)
+}
+
+func resumeSafeCommandsHelpLine() string {
+	return strings.Join(slash.ResumeSupportedNames(), ", ")
 }
 
 func redact(value string) string {

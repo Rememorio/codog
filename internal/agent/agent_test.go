@@ -125,11 +125,44 @@ func TestVersionCommandOutputsTextAndJSON(t *testing.T) {
 	require.NoError(t, RunCLI(context.Background(), []string{"--version"}, config.FlagOverrides{}))
 }
 
+func requireResumeSafeHelpLine(t *testing.T, help string) string {
+	t.Helper()
+	for _, line := range strings.Split(help, "\n") {
+		if strings.HasPrefix(line, "Resume-safe commands:") {
+			require.NotEmpty(t, strings.TrimSpace(strings.TrimPrefix(line, "Resume-safe commands:")))
+			return line
+		}
+	}
+	require.Fail(t, "help output is missing Resume-safe commands line")
+	return ""
+}
+
 func TestHelpCommandOutputsTextAndJSON(t *testing.T) {
 	var out bytes.Buffer
 	require.NoError(t, renderHelpCommand(&out, nil))
-	require.Contains(t, out.String(), "Usage:")
-	require.Contains(t, out.String(), "prompt")
+	helpOutput := out.String()
+	require.Contains(t, helpOutput, "Usage:")
+	require.Contains(t, helpOutput, "prompt")
+	resumeLine := requireResumeSafeHelpLine(t, helpOutput)
+	require.Contains(t, resumeLine, "/status")
+	require.Contains(t, resumeLine, "/mcp")
+	require.Contains(t, resumeLine, "/capabilities")
+	require.Contains(t, resumeLine, "/notebook-edit")
+	require.NotContains(t, resumeLine, "/commit")
+	require.NotContains(t, resumeLine, "/new")
+	require.NotContains(t, resumeLine, "/approve")
+	require.NotContains(t, resumeLine, "/quit")
+	require.NotContains(t, resumeLine, "/ultraplan")
+	require.NotContains(t, resumeLine, "/listen")
+	out.Reset()
+
+	require.NoError(t, renderHelpCommand(&out, []string{"--output-format", "json"}))
+	var globalReport helpReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &globalReport))
+	require.Equal(t, "help", globalReport.Kind)
+	require.Equal(t, "show", globalReport.Action)
+	require.Equal(t, "ok", globalReport.Status)
+	require.Equal(t, resumeLine, requireResumeSafeHelpLine(t, globalReport.Help))
 	out.Reset()
 
 	require.NoError(t, renderHelpCommand(&out, []string{"doctor", "--output-format", "json"}))
