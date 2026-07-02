@@ -7584,6 +7584,8 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		MaxTokens:      100,
 		MaxTurns:       3,
 		PermissionMode: "workspace-write",
+		RAGBaseURL:     "http://rag.example.test",
+		RAGTopKMax:     9,
 	})
 	var out bytes.Buffer
 
@@ -7608,6 +7610,32 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"model", "--output-format", "text"}))
 	require.Contains(t, out.String(), "Config")
 	require.Contains(t, out.String(), "model-a")
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "rag", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"rag_base_url": "http://rag.example.test"`)
+	require.Contains(t, out.String(), `"rag_top_k_max": 9`)
+	require.Contains(t, out.String(), `"tool": "retrieve_context"`)
+}
+
+func TestToolRegistryUsesRAGConfig(t *testing.T) {
+	app := &App{
+		Config: config.Config{
+			RAGBaseURL:        "http://127.0.0.1:1234",
+			RAGTimeoutSeconds: 6,
+			RAGTopKMax:        4,
+			PermissionMode:    "read-only",
+		},
+		Workspace: t.TempDir(),
+		In:        strings.NewReader(""),
+		Err:       io.Discard,
+	}
+
+	registry, err := app.newToolRegistry()
+	require.NoError(t, err)
+	info, ok := registry.Info("retrieve_context")
+	require.True(t, ok)
+	require.Equal(t, tools.PermissionReadOnly, info.Permission)
 }
 
 func TestRenderConfigInspectionSurfacesValidationMetadata(t *testing.T) {

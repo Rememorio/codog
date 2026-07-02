@@ -322,18 +322,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return err
 	}
 	app := &App{
-		Config: cfg,
-		Client: anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
-		Tools: tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
-			SandboxStrategy: cfg.Future.SandboxStrategy,
-			Sandbox:         cfg.Future.Sandbox,
-			AdditionalDirs:  additionalDirs,
-			ConfigHome:      cfg.ConfigHome,
-			OAuthProfile:    cfg.OAuthProfile,
-			MCPServers:      cfg.MCPServers,
-			QuestionIn:      os.Stdin,
-			QuestionOut:     os.Stderr,
-		}),
+		Config:    cfg,
+		Client:    anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Tools:     tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
 		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace: workspace,
 		Out:       os.Stdout,
@@ -921,18 +912,9 @@ func renderStatusWithConfigLoadError(out io.Writer, command string, rest []strin
 		return err
 	}
 	app := &App{
-		Config: cfg,
-		Client: anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
-		Tools: tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
-			SandboxStrategy: cfg.Future.SandboxStrategy,
-			Sandbox:         cfg.Future.Sandbox,
-			AdditionalDirs:  additionalDirs,
-			ConfigHome:      cfg.ConfigHome,
-			OAuthProfile:    cfg.OAuthProfile,
-			MCPServers:      cfg.MCPServers,
-			QuestionIn:      os.Stdin,
-			QuestionOut:     os.Stderr,
-		}),
+		Config:              cfg,
+		Client:              anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
 		Out:                 out,
@@ -963,18 +945,9 @@ func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []strin
 		return err
 	}
 	app := &App{
-		Config: cfg,
-		Client: anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
-		Tools: tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{
-			SandboxStrategy: cfg.Future.SandboxStrategy,
-			Sandbox:         cfg.Future.Sandbox,
-			AdditionalDirs:  additionalDirs,
-			ConfigHome:      cfg.ConfigHome,
-			OAuthProfile:    cfg.OAuthProfile,
-			MCPServers:      cfg.MCPServers,
-			QuestionIn:      os.Stdin,
-			QuestionOut:     os.Stderr,
-		}),
+		Config:              cfg,
+		Client:              anthropic.NewWithRateLimit(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicRateLimitOptions(cfg.RateLimit)),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
 		Out:                 out,
@@ -1216,6 +1189,26 @@ func anthropicRateLimitOptions(cfg config.RateLimitConfig) anthropic.RateLimitOp
 		MaxRetries:     cfg.MaxRetries,
 		InitialBackoff: time.Duration(cfg.InitialBackoffMS) * time.Millisecond,
 		MaxBackoff:     time.Duration(cfg.MaxBackoffMS) * time.Millisecond,
+	}
+}
+
+func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, questionIn io.Reader, questionOut io.Writer) tools.RegistryOptions {
+	var ragTimeout time.Duration
+	if cfg.RAGTimeoutSeconds > 0 {
+		ragTimeout = time.Duration(cfg.RAGTimeoutSeconds) * time.Second
+	}
+	return tools.RegistryOptions{
+		SandboxStrategy: cfg.Future.SandboxStrategy,
+		Sandbox:         cfg.Future.Sandbox,
+		AdditionalDirs:  additionalDirs,
+		ConfigHome:      cfg.ConfigHome,
+		OAuthProfile:    cfg.OAuthProfile,
+		MCPServers:      cfg.MCPServers,
+		RAGBaseURL:      cfg.RAGBaseURL,
+		RAGTimeout:      ragTimeout,
+		RAGTopKMax:      cfg.RAGTopKMax,
+		QuestionIn:      questionIn,
+		QuestionOut:     questionOut,
 	}
 }
 
@@ -5516,16 +5509,7 @@ func (a *App) newToolRegistry() (*tools.Registry, error) {
 	if questionOut == nil {
 		questionOut = io.Discard
 	}
-	return tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
-		SandboxStrategy: a.Config.Future.SandboxStrategy,
-		Sandbox:         a.Config.Future.Sandbox,
-		AdditionalDirs:  additionalDirs,
-		ConfigHome:      a.Config.ConfigHome,
-		OAuthProfile:    a.Config.OAuthProfile,
-		MCPServers:      a.Config.MCPServers,
-		QuestionIn:      questionIn,
-		QuestionOut:     questionOut,
-	}), nil
+	return tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut)), nil
 }
 
 func parseReloadPluginsArgs(args []string) (reloadPluginsRequest, error) {
@@ -12792,16 +12776,7 @@ func (a *App) refreshBuiltinToolScope() error {
 	if questionOut == nil {
 		questionOut = io.Discard
 	}
-	a.Tools.UpdateBuiltinScope(a.Workspace, tools.RegistryOptions{
-		SandboxStrategy: a.Config.Future.SandboxStrategy,
-		Sandbox:         a.Config.Future.Sandbox,
-		AdditionalDirs:  additionalDirs,
-		ConfigHome:      a.Config.ConfigHome,
-		OAuthProfile:    a.Config.OAuthProfile,
-		MCPServers:      a.Config.MCPServers,
-		QuestionIn:      questionIn,
-		QuestionOut:     questionOut,
-	})
+	a.Tools.UpdateBuiltinScope(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut))
 	return nil
 }
 
@@ -31762,6 +31737,15 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
 	case "mcp":
 		return cfg.MCPServers, nil
+	case "rag", "retrieve-context", "retrieve_context":
+		return map[string]any{
+			"rag_base_url":            cfg.RAGBaseURL,
+			"rag_timeout_seconds":     cfg.RAGTimeoutSeconds,
+			"rag_top_k_max":           cfg.RAGTopKMax,
+			"env_fallback":            "RAG_BASE_URL",
+			"tool":                    "retrieve_context",
+			"enabled_when_configured": true,
+		}, nil
 	case "hooks":
 		return cfg.Hooks, nil
 	case "skills":
@@ -39420,14 +39404,7 @@ func (a *App) mcpServe(ctx context.Context, args []string) error {
 func (a *App) mcpRegistry() *tools.Registry {
 	registry := a.Tools
 	if registry == nil {
-		registry = tools.NewRegistryWithOptions(a.Workspace, tools.RegistryOptions{
-			SandboxStrategy: a.Config.Future.SandboxStrategy,
-			Sandbox:         a.Config.Future.Sandbox,
-			AdditionalDirs:  a.Config.AdditionalDirs,
-			ConfigHome:      a.Config.ConfigHome,
-			OAuthProfile:    a.Config.OAuthProfile,
-			MCPServers:      a.Config.MCPServers,
-		})
+		registry = tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, a.Config.AdditionalDirs, nil, nil))
 	}
 	return registry
 }

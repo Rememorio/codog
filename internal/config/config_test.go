@@ -166,6 +166,27 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadRAGConfigAndEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"rag_base_url":"http://from-config","rag_timeout_seconds":7,"rag_top_k_max":11}`), 0o644))
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "http://from-config", cfg.RAGBaseURL)
+	require.Equal(t, 7, cfg.RAGTimeoutSeconds)
+	require.Equal(t, 11, cfg.RAGTopKMax)
+
+	t.Setenv("CODOG_RAG_BASE_URL", "http://from-env")
+	t.Setenv("CODOG_RAG_TIMEOUT_SECONDS", "13")
+	t.Setenv("CODOG_RAG_TOP_K_MAX", "17")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: configPath})
+	require.NoError(t, err)
+	require.Equal(t, "http://from-env", cfg.RAGBaseURL)
+	require.Equal(t, 13, cfg.RAGTimeoutSeconds)
+	require.Equal(t, 17, cfg.RAGTopKMax)
+}
+
 func TestLoadOpenAIEnvironmentForOpenAIModel(t *testing.T) {
 	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OLLAMA_HOST")
 	t.Setenv("CODOG_MODEL", "openai/gpt-4o-mini")

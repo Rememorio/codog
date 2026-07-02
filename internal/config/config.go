@@ -397,6 +397,9 @@ type Config struct {
 	ConfigHome          string                     `json:"config_home,omitempty"`
 	AutoCompactMessages int                        `json:"auto_compact_messages,omitempty"`
 	RateLimit           RateLimitConfig            `json:"rate_limit,omitempty"`
+	RAGBaseURL          string                     `json:"rag_base_url,omitempty"`
+	RAGTimeoutSeconds   int                        `json:"rag_timeout_seconds,omitempty"`
+	RAGTopKMax          int                        `json:"rag_top_k_max,omitempty"`
 	AdditionalDirs      []string                   `json:"additional_dirs,omitempty"`
 	EnabledSkills       []string                   `json:"enabled_skills,omitempty"`
 	Hooks               HookConfig                 `json:"hooks,omitempty"`
@@ -1075,6 +1078,15 @@ func merge(dst *Config, src Config) {
 	if rateLimitConfigSet(src.RateLimit) {
 		mergeRateLimitConfig(&dst.RateLimit, src.RateLimit)
 	}
+	if src.RAGBaseURL != "" {
+		dst.RAGBaseURL = src.RAGBaseURL
+	}
+	if src.RAGTimeoutSeconds != 0 {
+		dst.RAGTimeoutSeconds = src.RAGTimeoutSeconds
+	}
+	if src.RAGTopKMax != 0 {
+		dst.RAGTopKMax = src.RAGTopKMax
+	}
 	if len(src.AdditionalDirs) != 0 {
 		dst.AdditionalDirs = append([]string(nil), src.AdditionalDirs...)
 	}
@@ -1596,6 +1608,19 @@ func applyEnv(cfg *Config) {
 	if value := lookup("CODOG_RATE_LIMIT_MAX_BACKOFF_MS"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.RateLimit.MaxBackoffMS = parsed
+		}
+	}
+	if value := lookup("CODOG_RAG_BASE_URL"); value != "" {
+		cfg.RAGBaseURL = value
+	}
+	if value := lookup("CODOG_RAG_TIMEOUT_SECONDS"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.RAGTimeoutSeconds = parsed
+		}
+	}
+	if value := lookup("CODOG_RAG_TOP_K_MAX"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.RAGTopKMax = parsed
 		}
 	}
 	if value := lookup("CODOG_ADDITIONAL_DIRS"); value != "" {
