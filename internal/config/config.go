@@ -2108,6 +2108,11 @@ func applyEnv(cfg *Config) {
 			cfg.MaxTurns = parsed
 		}
 	}
+	if value, _ := lookupFirstEnv(lookup, "CODOG_MAX_TOKENS", "ANTHROPIC_MAX_TOKENS"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.MaxTokens = parsed
+		}
+	}
 	if value := lookup("CODOG_RATE_LIMIT_MAX_RETRIES"); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.RateLimit.MaxRetries = parsed

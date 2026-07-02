@@ -485,6 +485,22 @@ func TestLoadRateLimitEnvOverrides(t *testing.T) {
 	require.Equal(t, 300, cfg.RateLimit.MaxBackoffMS)
 }
 
+func TestLoadMaxTokenEnvAliases(t *testing.T) {
+	unsetEnv(t, "CODOG_MAX_TOKENS", "ANTHROPIC_MAX_TOKENS")
+	t.Setenv("ANTHROPIC_MAX_TOKENS", "8192")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, 8192, cfg.MaxTokens)
+
+	t.Setenv("CODOG_MAX_TOKENS", "2048")
+	cfg, _, err = LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+
+	require.NoError(t, err)
+	require.Equal(t, 2048, cfg.MaxTokens)
+}
+
 func TestLoadRAGConfigAndEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
