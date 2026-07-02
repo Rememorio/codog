@@ -4025,6 +4025,34 @@ func risky(value any) {
 	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "plugin.json"))
 	require.FileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "tool.sh"))
 
+	out, err = runResumedJSON("/plugins", "disable", "resume-install")
+	require.NoError(t, err)
+	var resumedPluginDisable plugins.Manifest
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginDisable))
+	require.Equal(t, "resume-install", resumedPluginDisable.ID)
+	require.False(t, resumedPluginDisable.Enabled)
+
+	out, err = runResumedJSON("/plugins", "enable", "resume-install")
+	require.NoError(t, err)
+	var resumedPluginEnable plugins.Manifest
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginEnable))
+	require.Equal(t, "resume-install", resumedPluginEnable.ID)
+	require.True(t, resumedPluginEnable.Enabled)
+
+	out, err = runResumedJSON("/plugins", "show", "resume-install")
+	require.NoError(t, err)
+	var resumedPluginShow struct {
+		Kind   string           `json:"kind"`
+		Action string           `json:"action"`
+		Status string           `json:"status"`
+		Plugin plugins.Manifest `json:"plugin"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginShow))
+	require.Equal(t, "plugin", resumedPluginShow.Kind)
+	require.Equal(t, "show", resumedPluginShow.Action)
+	require.Equal(t, "ok", resumedPluginShow.Status)
+	require.Equal(t, "resume-install", resumedPluginShow.Plugin.ID)
+
 	out, err = runResumedJSON("/reload-plugins")
 	require.NoError(t, err)
 	var resumedReloadPlugins reloadPluginsReport
@@ -4038,6 +4066,17 @@ func risky(value any) {
 	require.Contains(t, resumedReloadPlugins.EnabledPluginIDs, "resume-demo")
 	require.Contains(t, resumedReloadPlugins.EnabledPluginIDs, "resume-install")
 	require.GreaterOrEqual(t, resumedReloadPlugins.ToolCountAfter, resumedReloadPlugins.ToolCountBefore)
+
+	out, err = runResumedJSON("/plugins", "remove", "resume-install")
+	require.NoError(t, err)
+	var resumedPluginRemove struct {
+		Removed bool   `json:"removed"`
+		ID      string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginRemove))
+	require.True(t, resumedPluginRemove.Removed)
+	require.Equal(t, "resume-install", resumedPluginRemove.ID)
+	require.NoFileExists(t, filepath.Join(workspace, ".codog", "plugins", "resume-install", "plugin.json"))
 
 	out, err = runResumedJSON("/tasks")
 	require.NoError(t, err)

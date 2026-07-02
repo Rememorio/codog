@@ -25749,9 +25749,7 @@ func (a *App) runResumedMarketplaceSlash(args []string, format string) error {
 		action = strings.ToLower(strings.TrimSpace(meaningful[0]))
 	}
 	switch action {
-	case "", "list", "show", "info", "describe", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "settings", "remote", "browse", "discover", "updates":
-		return a.Marketplace(args)
-	case "install":
+	case "", "list", "show", "info", "describe", "validate", "sources", "source", "marketplaces", "manage-marketplaces", "add-marketplace", "remove-marketplace", "delete-marketplace", "settings", "remote", "browse", "discover", "updates", "install", "install-remote", "update", "enable", "disable", "remove", "uninstall":
 		return a.Marketplace(args)
 	default:
 		command := "/plugins"
