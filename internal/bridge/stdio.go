@@ -115,9 +115,13 @@ func (s Server) handle(req Request) (any, *Error) {
 				"background/run",
 				"background/get",
 				"background/logs",
+				"background/board",
+				"background/heartbeat",
 				"background/stop",
 				"background/restart",
 				"background/watch",
+				"background/prune",
+				"background/supervise",
 			},
 		}, nil
 	case "workspace/info":
@@ -312,6 +316,18 @@ func (s Server) handle(req Request) (any, *Error) {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
 		return result, nil
+	case "background/board":
+		result, err := s.backgroundBoard(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/heartbeat":
+		result, err := s.backgroundHeartbeat(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
 	case "background/stop":
 		result, err := s.backgroundStop(req.Params)
 		if err != nil {
@@ -320,6 +336,18 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "background/restart":
 		result, err := s.backgroundRestart(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/prune":
+		result, err := s.backgroundPrune(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "background/supervise":
+		result, err := s.backgroundSupervise(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -590,6 +618,66 @@ func (s Server) backgroundLogs(params json.RawMessage) (any, error) {
 	return map[string]any{"id": id, "logs": logs}, nil
 }
 
+func (s Server) backgroundBoard(params json.RawMessage) (any, error) {
+	var payload struct {
+		StalledAfterSeconds int `json:"stalled_after_seconds"`
+		StalledAfterMS      int `json:"stalled_after_ms"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	stalledAfter := 30 * time.Second
+	switch {
+	case payload.StalledAfterMS < 0:
+		return nil, errors.New("stalled_after_ms must be non-negative")
+	case payload.StalledAfterSeconds < 0:
+		return nil, errors.New("stalled_after_seconds must be non-negative")
+	case payload.StalledAfterMS > 0:
+		stalledAfter = time.Duration(payload.StalledAfterMS) * time.Millisecond
+	case payload.StalledAfterSeconds > 0:
+		stalledAfter = time.Duration(payload.StalledAfterSeconds) * time.Second
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.LaneBoard(stalledAfter)
+}
+
+func (s Server) backgroundHeartbeat(params json.RawMessage) (any, error) {
+	var payload struct {
+		ID             string     `json:"id"`
+		Status         string     `json:"status"`
+		TransportAlive *bool      `json:"transport_alive"`
+		ObservedAt     *time.Time `json:"observed_at"`
+	}
+	if err := json.Unmarshal(params, &payload); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(payload.ID)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	transportAlive := true
+	if payload.TransportAlive != nil {
+		transportAlive = *payload.TransportAlive
+	}
+	heartbeat := background.LaneHeartbeat{
+		TransportAlive: transportAlive,
+		Status:         payload.Status,
+	}
+	if payload.ObservedAt != nil {
+		heartbeat.ObservedAt = *payload.ObservedAt
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.UpdateHeartbeat(id, heartbeat)
+}
+
 func (s Server) backgroundStop(params json.RawMessage) (any, error) {
 	id, err := parseBridgeBackgroundID(params)
 	if err != nil {
@@ -612,6 +700,61 @@ func (s Server) backgroundRestart(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return store.Restart(id, s.Workspace)
+}
+
+func (s Server) backgroundPrune(params json.RawMessage) (any, error) {
+	options := background.DefaultPruneOptions()
+	if len(params) != 0 {
+		var payload struct {
+			OlderThanSeconds int  `json:"older_than_seconds"`
+			OlderThanDays    int  `json:"older_than_days"`
+			Keep             *int `json:"keep"`
+		}
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+		switch {
+		case payload.OlderThanSeconds < 0:
+			return nil, errors.New("older_than_seconds must be non-negative")
+		case payload.OlderThanDays < 0:
+			return nil, errors.New("older_than_days must be non-negative")
+		case payload.OlderThanSeconds > 0:
+			options.OlderThan = time.Duration(payload.OlderThanSeconds) * time.Second
+		case payload.OlderThanDays > 0:
+			options.OlderThan = time.Duration(payload.OlderThanDays) * 24 * time.Hour
+		}
+		if payload.Keep != nil {
+			if *payload.Keep < 0 {
+				return nil, errors.New("keep must be non-negative")
+			}
+			options.Keep = *payload.Keep
+		}
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Prune(options)
+}
+
+func (s Server) backgroundSupervise(params json.RawMessage) (any, error) {
+	now := time.Now().UTC()
+	if len(params) != 0 {
+		var payload struct {
+			Now *time.Time `json:"now"`
+		}
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+		if payload.Now != nil {
+			now = payload.Now.UTC()
+		}
+	}
+	store, err := s.backgroundStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.SuperviseOnce(now)
 }
 
 func (s Server) sessionOpen(params json.RawMessage) (any, error) {

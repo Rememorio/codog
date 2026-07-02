@@ -45,7 +45,11 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"background/list"`)
 	require.Contains(t, out.String(), `"background/run"`)
 	require.Contains(t, out.String(), `"background/logs"`)
+	require.Contains(t, out.String(), `"background/board"`)
+	require.Contains(t, out.String(), `"background/heartbeat"`)
 	require.Contains(t, out.String(), `"background/watch"`)
+	require.Contains(t, out.String(), `"background/prune"`)
+	require.Contains(t, out.String(), `"background/supervise"`)
 }
 
 func TestBridgeSessionMutations(t *testing.T) {
@@ -337,6 +341,74 @@ func TestBridgeBackgroundControl(t *testing.T) {
 	err = Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(`{"jsonrpc":"2.0","id":6,"method":"background/stop","params":{"id":"`+restartedID+`"}}`+"\n"), &out)
 	require.NoError(t, err)
 	require.Contains(t, out.String(), `"id":"`+restartedID+`"`)
+}
+
+func TestBridgeBackgroundLifecycleControls(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	bgDir := filepath.Join(configHome, "background")
+	require.NoError(t, os.MkdirAll(bgDir, 0o755))
+	now := time.Now().UTC().Truncate(time.Second)
+	activeLog := filepath.Join(bgDir, "active.log")
+	oldLog := filepath.Join(bgDir, "old.log")
+	failedLog := filepath.Join(bgDir, "failed.log")
+	require.NoError(t, os.WriteFile(activeLog, []byte("active"), 0o644))
+	require.NoError(t, os.WriteFile(oldLog, []byte("old"), 0o644))
+	require.NoError(t, os.WriteFile(failedLog, []byte("failed"), 0o644))
+	oldCompleted := now.Add(-48 * time.Hour)
+	tasks := []background.Task{
+		{
+			ID:        "active",
+			Command:   "sleep 30",
+			Status:    "running",
+			PID:       os.Getpid(),
+			StartedAt: now.Add(-time.Minute),
+			LogPath:   activeLog,
+		},
+		{
+			ID:          "old",
+			Command:     "printf old",
+			Status:      "completed",
+			StartedAt:   oldCompleted.Add(-time.Minute),
+			CompletedAt: &oldCompleted,
+			LogPath:     oldLog,
+		},
+		{
+			ID:            "failed",
+			Command:       "printf bridge-supervise",
+			Status:        "failed",
+			Workspace:     workspace,
+			StartedAt:     now.Add(-time.Minute),
+			CompletedAt:   &now,
+			LogPath:       failedLog,
+			RestartPolicy: &background.RestartPolicy{Enabled: true, MaxAttempts: 1},
+		},
+	}
+	for _, task := range tasks {
+		data, err := json.MarshalIndent(task, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(bgDir, task.ID+".json"), append(data, '\n'), 0o644))
+	}
+
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	observedAt := now.Format(time.RFC3339)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/heartbeat","params":{"id":"active","status":"working","transport_alive":true,"observed_at":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"background/board","params":{"stalled_after_seconds":3600}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"background/supervise","params":{"now":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"background/prune","params":{"older_than_days":1,"keep":0}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err := Server{Sessions: store, Version: "test", Workspace: workspace, ConfigHome: configHome}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"heartbeat":{"observed_at":"`+observedAt+`","transport_alive":true,"status":"working"}`)
+	require.Contains(t, out.String(), `"active":[{"task_id":"active"`)
+	require.Contains(t, out.String(), `"freshness":"healthy"`)
+	require.Contains(t, out.String(), `"restarted_from":"failed"`)
+	require.Contains(t, out.String(), `"removed":["old"]`)
+	require.NoFileExists(t, filepath.Join(bgDir, "old.json"))
+	require.NoFileExists(t, oldLog)
 }
 
 func TestBridgeRejectsWorkspaceEscape(t *testing.T) {
