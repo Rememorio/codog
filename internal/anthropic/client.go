@@ -71,20 +71,22 @@ func (e MissingCredentialsError) Error() string {
 }
 
 type Client struct {
-	HTTP      *http.Client
-	BaseURL   string
-	APIKey    string
-	AuthToken string
-	RateLimit RateLimitOptions
-	Sleep     func(context.Context, time.Duration) error
-	Fallbacks ProviderFallbackOptions
+	HTTP                  *http.Client
+	BaseURL               string
+	APIKey                string
+	AuthToken             string
+	RateLimit             RateLimitOptions
+	Sleep                 func(context.Context, time.Duration) error
+	Fallbacks             ProviderFallbackOptions
+	ForceOpenAICompatible bool
 }
 
 type ClientOptions struct {
-	RateLimit      RateLimitOptions
-	RequestTimeout time.Duration
-	ConnectTimeout time.Duration
-	Fallbacks      ProviderFallbackOptions
+	RateLimit             RateLimitOptions
+	RequestTimeout        time.Duration
+	ConnectTimeout        time.Duration
+	Fallbacks             ProviderFallbackOptions
+	ForceOpenAICompatible bool
 }
 
 type ProviderFallbackOptions struct {
@@ -128,12 +130,13 @@ func NewWithOptions(baseURL, apiKey, authToken string, options ClientOptions) *C
 		httpClient.Transport = transport
 	}
 	return &Client{
-		HTTP:      httpClient,
-		BaseURL:   strings.TrimRight(baseURL, "/"),
-		APIKey:    apiKey,
-		AuthToken: authToken,
-		RateLimit: normalizeRateLimit(options.RateLimit),
-		Fallbacks: normalizeProviderFallbacks(options.Fallbacks),
+		HTTP:                  httpClient,
+		BaseURL:               strings.TrimRight(baseURL, "/"),
+		APIKey:                apiKey,
+		AuthToken:             authToken,
+		RateLimit:             normalizeRateLimit(options.RateLimit),
+		Fallbacks:             normalizeProviderFallbacks(options.Fallbacks),
+		ForceOpenAICompatible: options.ForceOpenAICompatible,
 	}
 }
 
@@ -179,7 +182,7 @@ func (c *Client) Stream(ctx context.Context, req Request, onText func(string)) (
 func (c *Client) streamSingle(ctx context.Context, req Request, onText func(string)) (AssistantMessage, error) {
 	resolvedReq := req
 	resolvedReq.Model = modelrouting.ResolveAlias(req.Model)
-	if modelrouting.IsOpenAICompatibleModel(resolvedReq.Model) {
+	if c.ForceOpenAICompatible || modelrouting.IsOpenAICompatibleModel(resolvedReq.Model) {
 		return c.streamOpenAICompatible(ctx, resolvedReq, onText)
 	}
 	if !c.anthropicCredentialsConfigured() {

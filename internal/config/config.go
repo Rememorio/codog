@@ -478,6 +478,8 @@ type Config struct {
 	ForceLoginOrgUUID          string                     `json:"forceLoginOrgUUID,omitempty"`
 	BaseURL                    string                     `json:"base_url,omitempty"`
 	Model                      string                     `json:"model,omitempty"`
+	RuntimeProvider            string                     `json:"-"`
+	RuntimeProviderSource      string                     `json:"-"`
 	AdvisorModel               string                     `json:"advisor_model,omitempty"`
 	SystemPrompt               string                     `json:"system_prompt,omitempty"`
 	AppendSystemPrompt         string                     `json:"append_system_prompt,omitempty"`
@@ -2093,6 +2095,30 @@ func applyEnv(cfg *Config) {
 }
 
 func applyRoutedProviderEnv(cfg *Config, genericBaseURLSet bool, genericCredentialSet bool, lookup func(string) string) {
+	if ollamaHost := strings.TrimSpace(lookup("OLLAMA_HOST")); ollamaHost != "" && !genericBaseURLSet {
+		cfg.RuntimeProvider = modelrouting.ProviderOpenAI
+		cfg.RuntimeProviderSource = "OLLAMA_HOST"
+		if !genericCredentialSet {
+			cfg.AuthToken = ""
+			cfg.APIKey = ""
+		}
+		cfg.BaseURL = strings.TrimRight(ollamaHost, "/") + "/v1"
+		return
+	}
+	if openAIBaseURL := strings.TrimSpace(lookup("OPENAI_BASE_URL")); openAIBaseURL != "" &&
+		modelrouting.ProviderForModel(cfg.Model) == modelrouting.ProviderAnthropic &&
+		modelrouting.LooksLikeLocalOpenAICompatibleModel(cfg.Model) &&
+		!genericBaseURLSet {
+		cfg.RuntimeProvider = modelrouting.ProviderOpenAI
+		cfg.RuntimeProviderSource = "OPENAI_BASE_URL"
+		if !genericCredentialSet {
+			cfg.AuthToken = ""
+			cfg.APIKey = strings.TrimSpace(lookup("OPENAI_API_KEY"))
+		}
+		cfg.BaseURL = openAIBaseURL
+		return
+	}
+
 	switch modelrouting.ProviderForModel(cfg.Model) {
 	case modelrouting.ProviderOpenAI:
 		if !genericCredentialSet {

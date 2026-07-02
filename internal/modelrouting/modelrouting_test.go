@@ -32,6 +32,16 @@ func TestProviderForModelRoutesOpenAICompatiblePrefixes(t *testing.T) {
 	}
 }
 
+func TestLooksLikeLocalOpenAICompatibleModel(t *testing.T) {
+	require.True(t, LooksLikeLocalOpenAICompatibleModel("llama3.2"))
+	require.True(t, LooksLikeLocalOpenAICompatibleModel("qwen2.5-coder:7b"))
+	require.True(t, LooksLikeLocalOpenAICompatibleModel("Qwen2.5-Coder:7B"))
+
+	require.False(t, LooksLikeLocalOpenAICompatibleModel("claude-sonnet-4-5"))
+	require.False(t, LooksLikeLocalOpenAICompatibleModel("gpt-4.1-mini"))
+	require.False(t, LooksLikeLocalOpenAICompatibleModel("local/Qwen/Qwen3.6-27B-FP8"))
+}
+
 func TestResolveAliasAndTokenLimits(t *testing.T) {
 	require.Equal(t, "claude-opus-4-7", ResolveAlias("OPUS"))
 	require.Equal(t, "claude-sonnet-4-6", ResolveAlias("sonnet"))

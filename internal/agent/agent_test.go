@@ -8548,6 +8548,22 @@ func TestRuntimeConfigModelAndPermissionsSlash(t *testing.T) {
 	require.Equal(t, modelrouting.ProviderDashScope, resumedSlashModel.Provider)
 	out.Reset()
 
+	app.Config.Model = "qwen2.5-coder:7b"
+	app.Config.BaseURL = "http://127.0.0.1:11434/v1"
+	app.Config.RuntimeProvider = modelrouting.ProviderOpenAI
+	app.Config.RuntimeProviderSource = "OLLAMA_HOST"
+	require.True(t, app.handleSlash(context.Background(), "/models current --json", sess))
+	var ollamaSlashModel modelDetailReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &ollamaSlashModel))
+	require.Equal(t, "qwen2.5-coder:7b", ollamaSlashModel.RequestedModel)
+	require.Equal(t, modelrouting.ProviderOpenAI, ollamaSlashModel.Provider)
+	require.Equal(t, "openai_chat_completions", ollamaSlashModel.WireProtocol)
+	require.Equal(t, "http://127.0.0.1:11434/v1", ollamaSlashModel.BaseURL)
+	require.Equal(t, "none", ollamaSlashModel.AuthEnv)
+	require.Equal(t, "OLLAMA_HOST", ollamaSlashModel.BaseURLEnv)
+	require.True(t, ollamaSlashModel.OpenAICompatible)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/max-tokens 2048", sess))
 	require.Equal(t, 2048, app.Config.MaxTokens)
 	require.Contains(t, errOut.String(), "max_tokens=2048")

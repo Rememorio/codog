@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -627,6 +628,44 @@ func TestLoadLocalModelUsesOllamaHost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "local/Qwen/Qwen3.6-27B-FP8", cfg.Model)
 	require.Equal(t, "http://127.0.0.1:11434/v1", cfg.BaseURL)
+}
+
+func TestLoadOllamaHostOverridesProviderRoutingForBareTag(t *testing.T) {
+	t.Chdir(t.TempDir())
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "XAI_API_KEY", "DASHSCOPE_API_KEY")
+	t.Setenv("CODOG_MODEL", "qwen2.5-coder:7b")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "qwen2.5-coder:7b", cfg.Model)
+	require.Equal(t, "http://127.0.0.1:11434/v1", cfg.BaseURL)
+	require.Empty(t, cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, modelrouting.ProviderOpenAI, cfg.RuntimeProvider)
+	require.Equal(t, "OLLAMA_HOST", cfg.RuntimeProviderSource)
+}
+
+func TestLoadOpenAIBaseURLRoutesLocalLookingBareModel(t *testing.T) {
+	t.Chdir(t.TempDir())
+	unsetEnv(t, "CODOG_BASE_URL", "CODOG_API_KEY", "CODOG_AUTH_TOKEN", "OPENAI_API_KEY", "OLLAMA_HOST", "XAI_API_KEY", "DASHSCOPE_API_KEY")
+	t.Setenv("CODOG_MODEL", "llama3.2")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "anthropic-token")
+	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")
+
+	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: filepath.Join(t.TempDir(), "missing.json")})
+	require.NoError(t, err)
+	require.Equal(t, "llama3.2", cfg.Model)
+	require.Equal(t, "http://127.0.0.1:8080/v1", cfg.BaseURL)
+	require.Empty(t, cfg.APIKey)
+	require.Empty(t, cfg.AuthToken)
+	require.Equal(t, modelrouting.ProviderOpenAI, cfg.RuntimeProvider)
+	require.Equal(t, "OPENAI_BASE_URL", cfg.RuntimeProviderSource)
 }
 
 func unsetEnv(t *testing.T, names ...string) {

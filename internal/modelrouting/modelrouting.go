@@ -78,6 +78,14 @@ func IsOpenAICompatibleModel(model string) bool {
 	return provider == ProviderOpenAI || provider == ProviderXAI || provider == ProviderDashScope
 }
 
+func LooksLikeLocalOpenAICompatibleModel(model string) bool {
+	canonical := strings.ToLower(ResolveAlias(model))
+	if canonical == "" || IsOpenAICompatibleModel(canonical) {
+		return false
+	}
+	return strings.Contains(canonical, ":") || strings.Contains(canonical, ".")
+}
+
 func WireModelForBaseURL(model string, baseURL string) string {
 	trimmed := ResolveAlias(model)
 	pos := strings.Index(trimmed, "/")

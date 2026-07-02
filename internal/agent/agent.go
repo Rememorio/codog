@@ -1220,7 +1220,8 @@ func anthropicRateLimitOptionsFromConfig(cfg config.Config) anthropic.RateLimitO
 
 func anthropicClientOptionsFromConfig(cfg config.Config) anthropic.ClientOptions {
 	options := anthropic.ClientOptions{
-		RateLimit: anthropicRateLimitOptionsFromConfig(cfg),
+		RateLimit:             anthropicRateLimitOptionsFromConfig(cfg),
+		ForceOpenAICompatible: cfg.RuntimeProvider == modelrouting.ProviderOpenAI,
 		Fallbacks: anthropic.ProviderFallbackOptions{
 			Primary: cfg.ProviderFallbacks.Primary,
 			Models:  append([]string(nil), cfg.ProviderFallbacks.Fallbacks...),
@@ -29072,6 +29073,15 @@ func modelRoutes() []modelRouteReport {
 			Description:    "Forces OpenAI-compatible local routing while preserving slash-containing model IDs after the prefix.",
 		},
 		{
+			Prefix:         "OLLAMA_HOST",
+			Provider:       modelrouting.ProviderOpenAI,
+			WireProtocol:   "openai_chat_completions",
+			AuthEnv:        "none",
+			BaseURLEnv:     "OLLAMA_HOST",
+			DefaultBaseURL: "http://127.0.0.1:11434/v1",
+			Description:    "When set, routes the configured model through Ollama's OpenAI-compatible endpoint regardless of model prefix.",
+		},
+		{
 			Prefix:         "grok or xai/",
 			Provider:       modelrouting.ProviderXAI,
 			WireProtocol:   "openai_chat_completions",
@@ -29111,11 +29121,19 @@ func (a *App) buildModelDetailReport(model string) modelDetailReport {
 	}
 	resolved := resolveModelAlias(requested)
 	provider := modelrouting.ProviderForModel(resolved)
+	if requestedMatchesConfiguredModel(requested, a.Config.Model) && strings.TrimSpace(a.Config.RuntimeProvider) != "" {
+		provider = a.Config.RuntimeProvider
+	}
 	baseURL := a.modelDiagnosticsBaseURL(provider)
 	protocol := modelWireProtocol(provider)
 	authEnv, baseURLEnv := modelProviderEnv(provider)
+	if requestedMatchesConfiguredModel(requested, a.Config.Model) && strings.EqualFold(a.Config.RuntimeProviderSource, "OLLAMA_HOST") {
+		authEnv = "none"
+		baseURLEnv = "OLLAMA_HOST"
+	}
 	wireModel := resolved
-	if modelrouting.IsOpenAICompatibleModel(resolved) {
+	openAICompatible := provider == modelrouting.ProviderOpenAI || modelrouting.IsOpenAICompatibleModel(resolved)
+	if openAICompatible {
 		wireModel = modelrouting.WireModelForBaseURL(resolved, baseURL)
 	}
 	report := modelDetailReport{
@@ -29131,7 +29149,7 @@ func (a *App) buildModelDetailReport(model string) modelDetailReport {
 		WireModel:                       wireModel,
 		AuthEnv:                         authEnv,
 		BaseURLEnv:                      baseURLEnv,
-		OpenAICompatible:                modelrouting.IsOpenAICompatibleModel(resolved),
+		OpenAICompatible:                openAICompatible,
 		ReasoningModel:                  modelrouting.IsReasoningModel(resolved),
 		UsesMaxCompletionTokens:         modelrouting.UsesMaxCompletionTokens(resolved),
 		RejectsToolResultIsErrorField:   modelrouting.ModelRejectsIsErrorField(resolved),
@@ -29148,7 +29166,7 @@ func (a *App) buildModelDetailReport(model string) modelDetailReport {
 }
 
 func (a *App) modelDiagnosticsBaseURL(provider string) string {
-	if provider == modelrouting.ProviderForModel(a.Config.Model) && strings.TrimSpace(a.Config.BaseURL) != "" {
+	if provider == effectiveConfiguredProvider(a.Config) && strings.TrimSpace(a.Config.BaseURL) != "" {
 		return a.Config.BaseURL
 	}
 	switch provider {
@@ -29161,6 +29179,20 @@ func (a *App) modelDiagnosticsBaseURL(provider string) string {
 	default:
 		return config.DefaultBaseURL
 	}
+}
+
+func effectiveConfiguredProvider(cfg config.Config) string {
+	if provider := strings.TrimSpace(cfg.RuntimeProvider); provider != "" {
+		return provider
+	}
+	return modelrouting.ProviderForModel(cfg.Model)
+}
+
+func requestedMatchesConfiguredModel(requested string, configured string) bool {
+	if strings.TrimSpace(requested) == "" {
+		return true
+	}
+	return strings.EqualFold(resolveModelAlias(requested), resolveModelAlias(configured))
 }
 
 func modelWireProtocol(provider string) string {

@@ -779,6 +779,30 @@ func assertOpenAICompatibleRequestModel(t *testing.T, model string, expectedWire
 	require.Equal(t, "ok", msg.Blocks[0].Text)
 }
 
+func TestClientForceOpenAICompatibleStreamsBareOllamaTag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.Empty(t, r.Header.Get("authorization"))
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "qwen2.5-coder:7b", body["model"])
+		w.Header().Set("content-type", "text/event-stream")
+		writeOpenAISSE(t, w, map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "ollama ok"}}}})
+	}))
+	defer server.Close()
+
+	client := NewWithOptions(server.URL+"/v1", "", "", ClientOptions{ForceOpenAICompatible: true})
+	msg, err := client.Stream(context.Background(), Request{
+		Model:     "qwen2.5-coder:7b",
+		MaxTokens: 64,
+		Messages:  []Message{TextMessage("user", "hi")},
+	}, nil)
+
+	require.NoError(t, err)
+	require.Len(t, msg.Blocks, 1)
+	require.Equal(t, "ollama ok", msg.Blocks[0].Text)
+}
+
 func TestClientRetriesRateLimitedRequests(t *testing.T) {
 	attempts := 0
 	success := mockanthropic.Server{Text: "retry success"}.Handler()
