@@ -13512,6 +13512,7 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 	require.Equal(t, []string{doctor.StatusOK, doctor.StatusWarn, doctor.StatusFail}, doctorReport.StatusValues)
 	var sandboxCheck doctor.Check
 	var permissionRulesCheck doctor.Check
+	var memoryCheck doctor.Check
 	for _, check := range doctorReport.Checks {
 		if check.Name == "Sandbox" {
 			sandboxCheck = check
@@ -13519,7 +13520,16 @@ func TestDoctorCommandAndSlash(t *testing.T) {
 		if check.Name == "Permission rules" {
 			permissionRulesCheck = check
 		}
+		if check.Name == "Memory" {
+			memoryCheck = check
+		}
 	}
+	require.Equal(t, "Memory", memoryCheck.Name)
+	require.Equal(t, float64(1), memoryCheck.Data["file_count"])
+	require.Equal(t, float64(3), memoryCheck.Data["total_words"])
+	require.Equal(t, float64(len("Prefer focused changes.")), memoryCheck.Data["total_bytes"])
+	require.Contains(t, strings.Join(memoryCheck.Details, "\n"), "words=3")
+	require.Contains(t, strings.Join(memoryCheck.Details, "\n"), "bytes=23")
 	require.Equal(t, doctor.StatusWarn, permissionRulesCheck.Status)
 	require.Equal(t, float64(1), permissionRulesCheck.Data["unknown_count"])
 	require.Equal(t, "Sandbox", sandboxCheck.Name)
@@ -13782,6 +13792,12 @@ func TestStatusCommandAndSlash(t *testing.T) {
 				Origin         string `json:"origin"`
 				ScopePath      string `json:"scope_path"`
 				OutsideProject bool   `json:"outside_project"`
+				Lines          int    `json:"lines"`
+				Words          int    `json:"words"`
+				SizeBytes      int64  `json:"size_bytes"`
+				ModifiedAt     string `json:"modified_at"`
+				AgeSeconds     int64  `json:"age_seconds"`
+				Empty          bool   `json:"empty"`
 				Contributes    bool   `json:"contributes"`
 			} `json:"memory_files"`
 		} `json:"workspace"`
@@ -13815,6 +13831,12 @@ func TestStatusCommandAndSlash(t *testing.T) {
 	require.Equal(t, "workspace", statusReport.Workspace.MemoryFiles[0].Origin)
 	require.Equal(t, canonicalWorkspace, statusReport.Workspace.MemoryFiles[0].ScopePath)
 	require.False(t, statusReport.Workspace.MemoryFiles[0].OutsideProject)
+	require.Equal(t, 1, statusReport.Workspace.MemoryFiles[0].Lines)
+	require.Equal(t, 2, statusReport.Workspace.MemoryFiles[0].Words)
+	require.Equal(t, int64(len("Status memory.")), statusReport.Workspace.MemoryFiles[0].SizeBytes)
+	require.NotEmpty(t, statusReport.Workspace.MemoryFiles[0].ModifiedAt)
+	require.GreaterOrEqual(t, statusReport.Workspace.MemoryFiles[0].AgeSeconds, int64(0))
+	require.False(t, statusReport.Workspace.MemoryFiles[0].Empty)
 	require.True(t, statusReport.Workspace.MemoryFiles[0].Contributes)
 	require.Equal(t, "configured", statusReport.AllowedTools.Source)
 	require.True(t, statusReport.AllowedTools.Restricted)

@@ -152,6 +152,12 @@ type MemoryFileStatus struct {
 	ScopePath      string `json:"scope_path,omitempty"`
 	OutsideProject bool   `json:"outside_project,omitempty"`
 	Chars          int    `json:"chars"`
+	Lines          int    `json:"lines"`
+	Words          int    `json:"words"`
+	SizeBytes      int64  `json:"size_bytes"`
+	ModifiedAt     string `json:"modified_at,omitempty"`
+	AgeSeconds     int64  `json:"age_seconds"`
+	Empty          bool   `json:"empty"`
 	Contributes    bool   `json:"contributes"`
 	Truncated      bool   `json:"truncated,omitempty"`
 }

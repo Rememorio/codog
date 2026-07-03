@@ -310,6 +310,47 @@ func TestNewReportSurfacesStableMetadata(t *testing.T) {
 	require.Equal(t, []string{StatusOK, StatusWarn, StatusFail}, report.StatusValues)
 }
 
+func TestRunReportsMemoryMetadata(t *testing.T) {
+	report := Run(Options{
+		Workspace:      t.TempDir(),
+		ConfigHome:     t.TempDir(),
+		Model:          "claude-test",
+		BaseURL:        "https://api.example.test",
+		APIKey:         "secret",
+		PermissionMode: "workspace-write",
+		MemoryFiles: []localstatus.MemoryFileStatus{{
+			Path:        "/repo/AGENTS.md",
+			Name:        "AGENTS.md",
+			Scope:       "/repo",
+			Chars:       22,
+			Lines:       1,
+			Words:       3,
+			SizeBytes:   22,
+			ModifiedAt:  "2026-07-01T12:00:00Z",
+			AgeSeconds:  90,
+			Contributes: true,
+		}},
+		ToolCount:      6,
+		SessionCount:   0,
+		SandboxDefault: "test-sandbox",
+		SandboxOK:      true,
+	})
+
+	check := findCheck(t, report, "Memory")
+	require.Equal(t, StatusOK, check.Status)
+	require.Equal(t, 1, check.Data["file_count"])
+	require.Equal(t, 3, check.Data["total_words"])
+	require.Equal(t, int64(22), check.Data["total_bytes"])
+	require.Equal(t, int64(90), check.Data["oldest_age_seconds"])
+	require.Contains(t, strings.Join(check.Details, "\n"), "words=3")
+	require.Contains(t, strings.Join(check.Details, "\n"), "bytes=22")
+	files, ok := check.Data["files"].([]localstatus.MemoryFileStatus)
+	require.True(t, ok)
+	require.Len(t, files, 1)
+	require.Equal(t, "AGENTS.md", files[0].Name)
+	require.Equal(t, "2026-07-01T12:00:00Z", files[0].ModifiedAt)
+}
+
 func TestRunFailsInvalidPermissionMode(t *testing.T) {
 	report := Run(Options{
 		Workspace:      t.TempDir(),

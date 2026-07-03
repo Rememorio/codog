@@ -57,10 +57,15 @@ func TestBuildParsesGitStatus(t *testing.T) {
 		PlanText:       "inspect first",
 		PlanUpdatedAt:  "2026-01-01T00:00:00Z",
 		MemoryFiles: []MemoryFileStatus{{
-			Path:  "/repo/codog/AGENTS.md",
-			Name:  "AGENTS.md",
-			Scope: "/repo/codog",
-			Chars: 18,
+			Path:       "/repo/codog/AGENTS.md",
+			Name:       "AGENTS.md",
+			Scope:      "/repo/codog",
+			Chars:      18,
+			Lines:      1,
+			Words:      3,
+			SizeBytes:  24,
+			ModifiedAt: "2026-07-01T12:00:00Z",
+			AgeSeconds: 60,
 		}},
 		ToolNames:          []string{"bash", "read_file", "web_fetch", "write_file"},
 		AllowedToolEntries: []string{"read_file", "grep"},
@@ -95,6 +100,10 @@ func TestBuildParsesGitStatus(t *testing.T) {
 	require.Equal(t, "config", snapshot.Config.PermissionModeSource)
 	require.Equal(t, 1, snapshot.Workspace.MemoryFileCount)
 	require.Equal(t, "AGENTS.md", snapshot.Workspace.MemoryFiles[0].Name)
+	require.Equal(t, 3, snapshot.Workspace.MemoryFiles[0].Words)
+	require.Equal(t, int64(24), snapshot.Workspace.MemoryFiles[0].SizeBytes)
+	require.Equal(t, "2026-07-01T12:00:00Z", snapshot.Workspace.MemoryFiles[0].ModifiedAt)
+	require.Equal(t, int64(60), snapshot.Workspace.MemoryFiles[0].AgeSeconds)
 	require.Equal(t, "main", snapshot.Git.Branch)
 	require.False(t, snapshot.Git.Clean)
 	require.Equal(t, 1, snapshot.Git.Staged)

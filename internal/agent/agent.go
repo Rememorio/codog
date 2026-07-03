@@ -25338,23 +25338,7 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 			toolNames = append(toolNames, def.Name)
 		}
 	}
-	memoryFiles, _ := memory.Discover(a.Workspace)
-	memoryMetadata := memory.MetadataFor(a.Workspace, memoryFiles)
-	memoryStatuses := make([]localstatus.MemoryFileStatus, 0, len(memoryMetadata))
-	for _, file := range memoryMetadata {
-		memoryStatuses = append(memoryStatuses, localstatus.MemoryFileStatus{
-			Path:           file.Path,
-			Name:           file.Name,
-			Source:         file.Source,
-			Origin:         file.Origin,
-			Scope:          file.Scope,
-			ScopePath:      file.ScopePath,
-			OutsideProject: file.OutsideProject,
-			Chars:          file.Chars,
-			Contributes:    file.Contributes,
-			Truncated:      file.Truncated,
-		})
-	}
+	memoryStatuses := buildMemoryFileStatuses(a.Workspace)
 	gitRaw, gitErr := gitops.Status(a.Workspace)
 	gitError := ""
 	if gitErr != nil {
@@ -25476,6 +25460,36 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		SandboxAvailable:            sandboxStatus.Available,
 		Executable:                  executable,
 	})
+}
+
+func buildMemoryFileStatuses(workspace string) []localstatus.MemoryFileStatus {
+	memoryFiles, err := memory.Discover(workspace)
+	if err != nil {
+		return nil
+	}
+	memoryMetadata := memory.MetadataFor(workspace, memoryFiles)
+	memoryStatuses := make([]localstatus.MemoryFileStatus, 0, len(memoryMetadata))
+	for _, file := range memoryMetadata {
+		memoryStatuses = append(memoryStatuses, localstatus.MemoryFileStatus{
+			Path:           file.Path,
+			Name:           file.Name,
+			Source:         file.Source,
+			Origin:         file.Origin,
+			Scope:          file.Scope,
+			ScopePath:      file.ScopePath,
+			OutsideProject: file.OutsideProject,
+			Chars:          file.Chars,
+			Lines:          file.Lines,
+			Words:          file.Words,
+			SizeBytes:      file.SizeBytes,
+			ModifiedAt:     file.ModifiedAt,
+			AgeSeconds:     file.AgeSeconds,
+			Empty:          file.Empty,
+			Contributes:    file.Contributes,
+			Truncated:      file.Truncated,
+		})
+	}
+	return memoryStatuses
 }
 
 func buildMCPValidation(servers map[string]config.MCPServerConfig) localstatus.MCPValidationStatus {
@@ -29857,11 +29871,7 @@ func (a *App) Doctor(args []string) error {
 			sessionCount = len(sessions)
 		}
 	}
-	memoryFiles, _ := memory.Discover(a.Workspace)
-	memoryPaths := make([]string, 0, len(memoryFiles))
-	for _, file := range memoryFiles {
-		memoryPaths = append(memoryPaths, file.Path)
-	}
+	memoryStatuses := buildMemoryFileStatuses(a.Workspace)
 	mcpValidation := buildMCPValidation(a.Config.MCPServers)
 	hookValidation := buildHookValidation(a.Config.Hooks)
 	mcpStatuses := mcp.PreflightAll(context.Background(), a.Config.MCPServers)
@@ -29893,7 +29903,7 @@ func (a *App) Doctor(args []string) error {
 		MCPValidation:         mcpValidation,
 		HookValidation:        hookValidation,
 		SessionCount:          sessionCount,
-		MemoryFiles:           memoryPaths,
+		MemoryFiles:           memoryStatuses,
 		UserPromptSubmit:      a.Config.Hooks.UserPromptSubmit,
 		SessionStart:          a.Config.Hooks.SessionStart,
 		PreToolUse:            a.Config.Hooks.PreToolUse,

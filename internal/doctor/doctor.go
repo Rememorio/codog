@@ -54,7 +54,7 @@ type Options struct {
 	MCPValidation         localstatus.MCPValidationStatus
 	HookValidation        localstatus.HookValidationStatus
 	SessionCount          int
-	MemoryFiles           []string
+	MemoryFiles           []localstatus.MemoryFileStatus
 	UserPromptSubmit      []string
 	SessionStart          []string
 	PreToolUse            []string
@@ -471,12 +471,50 @@ func checkWorkspace(path string) Check {
 	return Check{Name: "Workspace", Status: StatusOK, Summary: "Workspace directory is available.", Details: []string{path}}
 }
 
-func checkMemory(files []string) Check {
+func checkMemory(files []localstatus.MemoryFileStatus) Check {
 	details := []string{fmt.Sprintf("Loaded files: %d", len(files))}
-	for _, path := range files {
-		details = append(details, "Loaded: "+path)
+	totalChars := 0
+	totalWords := 0
+	totalBytes := int64(0)
+	emptyFiles := 0
+	truncatedFiles := 0
+	oldestAge := int64(0)
+	for _, file := range files {
+		detail := fmt.Sprintf("Loaded: %s lines=%d words=%d chars=%d bytes=%d", file.Path, file.Lines, file.Words, file.Chars, file.SizeBytes)
+		if file.AgeSeconds > 0 {
+			detail += fmt.Sprintf(" age_seconds=%d", file.AgeSeconds)
+		}
+		if file.Empty {
+			detail += " empty=true"
+		}
+		if file.Truncated {
+			detail += " truncated=true"
+		}
+		details = append(details, detail)
+		totalChars += file.Chars
+		totalWords += file.Words
+		totalBytes += file.SizeBytes
+		if file.Empty {
+			emptyFiles++
+		}
+		if file.Truncated {
+			truncatedFiles++
+		}
+		if file.AgeSeconds > oldestAge {
+			oldestAge = file.AgeSeconds
+		}
 	}
-	return Check{Name: "Memory", Status: StatusOK, Summary: fmt.Sprintf("%d workspace memory files loaded.", len(files)), Details: details}
+	data := map[string]any{
+		"file_count":         len(files),
+		"total_chars":        totalChars,
+		"total_words":        totalWords,
+		"total_bytes":        totalBytes,
+		"empty_files":        emptyFiles,
+		"truncated_files":    truncatedFiles,
+		"oldest_age_seconds": oldestAge,
+		"files":              append([]localstatus.MemoryFileStatus(nil), files...),
+	}
+	return Check{Name: "Memory", Status: StatusOK, Summary: fmt.Sprintf("%d workspace memory files loaded.", len(files)), Details: details, Data: data}
 }
 
 func checkModel(model string) Check {
