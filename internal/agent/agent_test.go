@@ -920,6 +920,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "bridge")
 	require.Contains(t, report.Commands, "setupGitHubActions")
 	require.Contains(t, report.Commands, "bridge-kick")
+	require.Contains(t, report.Commands, "bootstrap-plan")
 	require.Contains(t, report.Commands, "cron")
 	require.Contains(t, report.Commands, "team")
 	require.Contains(t, report.Commands, "budget")
@@ -969,6 +970,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "tool-details")
 	require.Contains(t, report.Features, "approval_tokens")
 	require.Contains(t, report.Features, "broad_cwd_guard")
+	require.Contains(t, report.Features, "bootstrap_plan")
 	require.Contains(t, report.Features, "config_load_degraded")
 	require.Contains(t, report.Features, "config_reset")
 	require.Contains(t, report.Features, "doctor_config_load_degraded")
@@ -1264,6 +1266,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("bookmarks"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bridge"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bridge-kick"))
+	require.True(t, commandAcceptsGlobalOutputFormat("bootstrap-plan"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ide"))
 	require.True(t, commandAcceptsGlobalOutputFormat("install"))
@@ -1274,6 +1277,83 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("upgrade"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
+}
+
+func TestBootstrapPlanCommandOutputsTextAndJSON(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Bootstrap plan memory."), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			APIKey:         "secret",
+			BaseURL:        "https://api.example.test",
+			PermissionMode: "workspace-write",
+			Hooks: config.HookConfig{
+				SessionStart: []string{"echo session-start"},
+			},
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.BootstrapPlan(nil))
+	require.Contains(t, out.String(), "Bootstrap Plan")
+	require.Contains(t, out.String(), "resolve_workspace")
+	require.Contains(t, out.String(), "provider_dispatch")
+	out.Reset()
+
+	require.NoError(t, app.BootstrapPlan([]string{"--json"}))
+	var report bootstrapPlanReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "bootstrap_plan", report.Kind)
+	require.Equal(t, "show", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, workspace, report.Workspace)
+	require.Equal(t, report.PhaseCount, len(report.Phases))
+	require.GreaterOrEqual(t, report.PhaseCount, 10)
+	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "resolve_workspace").Status)
+	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "load_config").Status)
+	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "register_tools").Status)
+	require.Equal(t, "planned", bootstrapPlanPhaseByName(t, report, "run_session_start_hooks").Status)
+	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "provider_dispatch").Status)
+	require.Equal(t, float64(1), bootstrapPlanPhaseByName(t, report, "load_memory").Evidence["file_count"])
+}
+
+func TestBootstrapPlanDegradesOnMalformedConfigFile(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "bootstrap-plan"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report bootstrapPlanReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "bootstrap_plan", report.Kind)
+	require.Equal(t, "warn", report.Status)
+	configPhase := bootstrapPlanPhaseByName(t, report, "load_config")
+	require.Equal(t, "warn", configPhase.Status)
+	require.Equal(t, "config_load_failed", configPhase.Evidence["config_load_error_kind"])
+	require.Contains(t, configPhase.Evidence["config_load_error"], "broken.json")
+}
+
+func bootstrapPlanPhaseByName(t *testing.T, report bootstrapPlanReport, name string) bootstrapPlanPhase {
+	t.Helper()
+	for _, phase := range report.Phases {
+		if phase.Name == name {
+			return phase
+		}
+	}
+	require.Failf(t, "missing bootstrap phase", "phase %q was not reported", name)
+	return bootstrapPlanPhase{}
 }
 
 func TestReasoningCommandPersistsPreference(t *testing.T) {

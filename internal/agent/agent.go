@@ -342,6 +342,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isStatusCommand(command) {
 			return renderStatusWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
+		if config.IsFileError(err) && isBootstrapPlanCommand(command) {
+			return renderBootstrapPlanWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
+		}
 		if config.IsFileError(err) && isDoctorCommand(command) {
 			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -930,6 +933,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.GoodClaude(rest))
 	case "brief":
 		return wrapStructured(app.Brief(rest))
+	case "bootstrap-plan":
+		return wrapStructured(app.BootstrapPlan(rest))
 	case "status":
 		return wrapStructured(app.Status(rest, overrides))
 	case "statusline":
@@ -1096,6 +1101,15 @@ func isStatusCommand(command string) bool {
 	}
 }
 
+func isBootstrapPlanCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "bootstrap-plan":
+		return true
+	default:
+		return false
+	}
+}
+
 func isConfigCommand(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "config", "settings", "/config", "/settings":
@@ -1172,6 +1186,35 @@ func renderStatusWithConfigLoadError(out io.Writer, command string, rest []strin
 		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
 	}
 	return app.Status(statusArgs, overrides)
+}
+
+func renderBootstrapPlanWithConfigLoadError(out io.Writer, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	app := &App{
+		Config:              cfg,
+		Client:              anthropicClientFromConfig(cfg),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Workspace:           workspace,
+		Out:                 out,
+		Err:                 os.Stderr,
+		In:                  os.Stdin,
+		ConfigLoadError:     strings.TrimSpace(loadErr.Error()),
+		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
+	}
+	return app.BootstrapPlan(rest)
 }
 
 func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
@@ -22482,6 +22525,253 @@ func renderMissingWorkerState(out io.Writer, missing workerstate.MissingError, f
 	return &ExitError{Code: 1, Err: missing}
 }
 
+type bootstrapPlanReport struct {
+	Kind       string               `json:"kind"`
+	Action     string               `json:"action"`
+	Status     string               `json:"status"`
+	Version    string               `json:"version"`
+	Workspace  string               `json:"workspace"`
+	PhaseCount int                  `json:"phase_count"`
+	Phases     []bootstrapPlanPhase `json:"phases"`
+	Message    string               `json:"message,omitempty"`
+}
+
+type bootstrapPlanPhase struct {
+	Name        string         `json:"name"`
+	Status      string         `json:"status"`
+	Required    bool           `json:"required"`
+	Description string         `json:"description"`
+	Evidence    map[string]any `json:"evidence,omitempty"`
+}
+
+func (a *App) BootstrapPlan(args []string) error {
+	format, err := parseSimpleOutputFormat("bootstrap-plan", args)
+	if err != nil {
+		return err
+	}
+	report := a.buildBootstrapPlanReport()
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderBootstrapPlanText(a.Out, report)
+	return nil
+}
+
+func (a *App) buildBootstrapPlanReport() bootstrapPlanReport {
+	phases := make([]bootstrapPlanPhase, 0, 10)
+	addPhase := func(name string, status string, required bool, description string, evidence map[string]any) {
+		phases = append(phases, bootstrapPlanPhase{
+			Name:        name,
+			Status:      status,
+			Required:    required,
+			Description: description,
+			Evidence:    compactEvidence(evidence),
+		})
+	}
+
+	workspaceStatus := "ready"
+	workspaceEvidence := map[string]any{"path": a.Workspace}
+	if strings.TrimSpace(a.Workspace) == "" {
+		workspaceStatus = "warn"
+		workspaceEvidence["error"] = "workspace is empty"
+	} else if info, err := os.Stat(a.Workspace); err != nil {
+		workspaceStatus = "warn"
+		workspaceEvidence["error"] = err.Error()
+	} else {
+		workspaceEvidence["is_dir"] = info.IsDir()
+		if !info.IsDir() {
+			workspaceStatus = "warn"
+		}
+	}
+	addPhase("resolve_workspace", workspaceStatus, true, "Resolve the current workspace and path scope before loading local state.", workspaceEvidence)
+
+	configStatus := "ready"
+	configEvidence := map[string]any{
+		"config_home":      a.Config.ConfigHome,
+		"model":            a.Config.Model,
+		"permission_mode":  a.Config.PermissionMode,
+		"runtime_provider": a.Config.RuntimeProvider,
+	}
+	if strings.TrimSpace(a.ConfigLoadError) != "" {
+		configStatus = "warn"
+		configEvidence["config_load_error"] = a.ConfigLoadError
+		configEvidence["config_load_error_kind"] = a.ConfigLoadErrorKind
+	}
+	addPhase("load_config", configStatus, true, "Load layered configuration, provider defaults, permissions, and runtime settings.", configEvidence)
+
+	memoryStatus := "ready"
+	memoryEvidence := map[string]any{}
+	if files, err := memory.Discover(a.Workspace); err != nil {
+		memoryStatus = "warn"
+		memoryEvidence["error"] = err.Error()
+	} else {
+		memoryEvidence["file_count"] = len(files)
+	}
+	addPhase("load_memory", memoryStatus, false, "Discover project memory files that seed system context.", memoryEvidence)
+
+	runtimeHooks := a.Config.Hooks
+	if a.Config.EffectiveDisableAllHooks() {
+		runtimeHooks = config.HookConfig{}
+	}
+	hookValidation := buildHookValidation(runtimeHooks)
+	hookStatus := "ready"
+	if hookValidation.InvalidCount > 0 {
+		hookStatus = "warn"
+	}
+	addPhase("validate_hooks", hookStatus, false, "Validate configured hooks before any startup or tool events can run.", map[string]any{
+		"valid_count":   hookValidation.ValidCount,
+		"invalid_count": hookValidation.InvalidCount,
+		"disabled":      a.Config.EffectiveDisableAllHooks(),
+	})
+
+	mcpValidation := buildMCPValidation(a.Config.MCPServers)
+	mcpStatus := "ready"
+	if mcpValidation.InvalidCount > 0 {
+		mcpStatus = "warn"
+	}
+	addPhase("validate_mcp", mcpStatus, false, "Validate configured MCP servers before discovery and tool registration.", map[string]any{
+		"configured_count": mcpValidation.TotalConfigured,
+		"valid_count":      mcpValidation.ValidCount,
+		"invalid_count":    mcpValidation.InvalidCount,
+		"required_count":   mcpValidation.RequiredCount,
+		"optional_count":   mcpValidation.OptionalCount,
+	})
+
+	pluginStatus := "ready"
+	pluginEvidence := map[string]any{}
+	if manifests, err := plugins.Load(a.Workspace); err != nil {
+		pluginStatus = "warn"
+		pluginEvidence["error"] = err.Error()
+	} else {
+		pluginEvidence["installed_count"] = len(manifests)
+	}
+	addPhase("load_plugins", pluginStatus, false, "Load plugin manifests that may contribute tools, hooks, skills, and MCP servers.", pluginEvidence)
+
+	toolStatus := "ready"
+	toolCount := 0
+	if a.Tools == nil {
+		toolStatus = "warn"
+	} else {
+		toolCount = len(a.Tools.Infos())
+	}
+	addPhase("register_tools", toolStatus, true, "Register built-in and plugin-provided tools with permission metadata.", map[string]any{
+		"tool_count": toolCount,
+	})
+
+	sessionStatus := "ready"
+	sessionEvidence := map[string]any{}
+	if a.Sessions == nil {
+		sessionStatus = "warn"
+		sessionEvidence["error"] = "session store is not configured"
+	} else if sessions, err := a.Sessions.List(); err != nil {
+		sessionStatus = "warn"
+		sessionEvidence["error"] = err.Error()
+	} else {
+		sessionEvidence["saved_count"] = len(sessions)
+	}
+	addPhase("open_session_store", sessionStatus, true, "Open the JSONL session store for resume, append, and history operations.", sessionEvidence)
+
+	sessionStartHookCount := bootstrapHookCount(runtimeHooks, "session_start")
+	sessionStartStatus := "skipped"
+	if sessionStartHookCount > 0 {
+		sessionStartStatus = "planned"
+	}
+	addPhase("run_session_start_hooks", sessionStartStatus, false, "Run configured session-start hooks when a session is created or resumed.", map[string]any{
+		"hook_count": sessionStartHookCount,
+	})
+
+	authConfigured := a.Config.APIKey != "" || a.Config.AuthToken != ""
+	dispatchStatus := "ready"
+	if !authConfigured {
+		dispatchStatus = "warn"
+	}
+	addPhase("provider_dispatch", dispatchStatus, true, "Dispatch the selected prompt or REPL turn to the configured provider after local startup.", map[string]any{
+		"auth_configured":  authConfigured,
+		"model":            a.Config.Model,
+		"runtime_provider": a.Config.RuntimeProvider,
+		"base_url":         a.Config.BaseURL,
+	})
+
+	report := bootstrapPlanReport{
+		Kind:      "bootstrap_plan",
+		Action:    "show",
+		Status:    bootstrapPlanStatus(phases),
+		Version:   version,
+		Workspace: a.Workspace,
+		Phases:    phases,
+	}
+	report.PhaseCount = len(report.Phases)
+	if report.Status == "ok" {
+		report.Message = "startup plan is ready"
+	} else {
+		report.Message = "startup plan has warnings"
+	}
+	return report
+}
+
+func bootstrapPlanStatus(phases []bootstrapPlanPhase) string {
+	for _, phase := range phases {
+		if phase.Status == "warn" || phase.Status == "error" {
+			return "warn"
+		}
+	}
+	return "ok"
+}
+
+func compactEvidence(evidence map[string]any) map[string]any {
+	if len(evidence) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(evidence))
+	for key, value := range evidence {
+		switch v := value.(type) {
+		case string:
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+		case nil:
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func bootstrapHookCount(cfg config.HookConfig, event string) int {
+	for _, group := range hookValidationGroups(cfg) {
+		if group.Event != event {
+			continue
+		}
+		if len(group.Entries) != 0 {
+			return len(group.Entries)
+		}
+		return len(group.Fallback)
+	}
+	return 0
+}
+
+func renderBootstrapPlanText(out io.Writer, report bootstrapPlanReport) {
+	fmt.Fprintln(out, "Bootstrap Plan")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Version          %s\n", report.Version)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	fmt.Fprintf(out, "  Phases           %d\n", report.PhaseCount)
+	for index, phase := range report.Phases {
+		fmt.Fprintf(out, "  %2d. %-24s %-7s required=%t\n", index+1, phase.Name, phase.Status, phase.Required)
+		if phase.Description != "" {
+			fmt.Fprintf(out, "      %s\n", phase.Description)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	format, err := parseSimpleOutputFormat("status", args)
 	if err != nil {
@@ -24404,6 +24694,7 @@ func codogCapabilityFeatures() []string {
 		"bash_sandbox_request_status",
 		"bash_test_hang_timeout_event",
 		"background_tasks",
+		"bootstrap_plan",
 		"branch_lock_collisions",
 		"broad_cwd_guard",
 		"bubble_tea_tui",
@@ -24524,6 +24815,7 @@ func builtInCommandNames() []string {
 		"branch",
 		"branch-lock",
 		"branchlock",
+		"bootstrap-plan",
 		"bridge",
 		"bridge-kick",
 		"break-cache",
@@ -48248,7 +48540,7 @@ func injectGlobalOutputFormat(command string, rest []string, format string) []st
 func commandAcceptsGlobalOutputFormat(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "acp", "add-dir", "addcommand", "addmarketplace", "advisor", "agents", "subagent", "allowed-tools", "ant-trace", "api", "api-key", "apikeystep", "autofix-pr", "backfill-sessions", "background", "base-check", "blame", "bookmarks", "branch", "branch-lock", "branchlock", "brief", "budget", "browsemarketplace", "bughunter", "cache", "caches", "capabilities", "changelog", "checkexistingsecretstep", "checkgithubstep", "chooserepostep", "chrome",
-		"break-cache", "bridge", "bridge-kick", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
+		"break-cache", "bridge", "bridge-kick", "bootstrap-plan", "bug", "checkpoint", "clear", "code-intel", "color", "commands", "commit", "commit-push-pr", "compact", "config", "context", "context-noninteractive", "conversation", "createmovedtoplugincommand", "creatingstep", "cron", "ctx_viz", "discoverplugins",
 		"debug-tool-call", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "ide", "init", "init-verifiers", "insights", "install", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
@@ -48644,6 +48936,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec.Usage = "codog unpin [message-index|last] [--session ID] [--output-format text|json]"
 		spec.Text = "Unpin\n\nUsage:\n  codog unpin [message-index|last] [--session ID] [--output-format text|json]\n  /unpin [message-index|last]\n\nRemoves a message pin from a saved session. Message indexes are entered as 1-based numbers; JSON reports include both zero-based `message_index` and 1-based `display_index`.\n"
 		return spec, true
+	case "bootstrap-plan":
+		return localCommandHelpSpec(
+			"bootstrap-plan",
+			"bootstrap-plan",
+			"codog bootstrap-plan [--output-format text|json]",
+			"Bootstrap Plan\n\nUsage:\n  codog bootstrap-plan [--output-format text|json]\n\nLists the ordered local startup phases Codog prepares before dispatching a prompt or REPL turn. The report includes workspace resolution, config, memory, hooks, MCP, plugins, tool registration, session storage, startup hooks, and provider dispatch readiness without making a provider request.\n",
+			[]string{"kind", "status", "workspace", "phase_count", "phases", "evidence"},
+			[]string{"ok", "warn"},
+			false,
+		), true
 	case "status":
 		return commandHelpSpec{
 			Topic:                   "status",
@@ -49662,6 +49964,7 @@ Usage:
   %s [flags] brief [MESSAGE] [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|self|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] capabilities [--json|--output-format text|json]
+  %s [flags] bootstrap-plan [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
