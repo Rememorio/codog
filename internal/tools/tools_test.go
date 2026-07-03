@@ -450,6 +450,9 @@ func TestBashToolPersistsSessionCWD(t *testing.T) {
 		output, err := registry.Execute(ctx, "BashOutput", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
 		return err == nil && strings.Contains(output, physicalSubdir)
 	}, 5*time.Second, 50*time.Millisecond)
+	out, err = registry.Execute(ctx, "KillBash", []byte(`{"bash_id":"`+payload.Task.ID+`"}`), nil)
+	require.NoError(t, err)
+	require.Contains(t, out, `"backgroundTaskId": "`+payload.Task.ID+`"`)
 }
 
 func TestBashToolBackgroundOutputAndKillAliases(t *testing.T) {
