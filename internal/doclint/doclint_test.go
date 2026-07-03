@@ -23,6 +23,16 @@ func TestInternalPackagesHavePackageDocs(t *testing.T) {
 	}
 }
 
+func TestCommandsHaveCommandDocs(t *testing.T) {
+	root := repoRoot(t)
+	for _, cmd := range listCommandPackages(t, root) {
+		t.Run(cmd, func(t *testing.T) {
+			dir := filepath.Join(root, filepath.FromSlash(cmd))
+			requireCommandDoc(t, cmd, parsePackageFiles(t, dir))
+		})
+	}
+}
+
 func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	root := repoRoot(t)
 	packages := []string{
@@ -71,6 +81,43 @@ func listInternalPackages(t *testing.T, root string) []string {
 		}
 		name := files[0].Name.Name
 		if name == "main" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		packages = append(packages, filepath.ToSlash(rel))
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, packages)
+	return packages
+}
+
+func listCommandPackages(t *testing.T, root string) []string {
+	t.Helper()
+	cmdRoot := filepath.Join(root, "cmd")
+	packages := []string{}
+	err := filepath.WalkDir(cmdRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() != "." && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		files, err := parsePackageFilesAllowEmpty(path)
+		if err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return nil
+		}
+		name := files[0].Name.Name
+		if name != "main" {
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
@@ -136,6 +183,17 @@ func requirePackageDoc(t *testing.T, pkg string, files []*ast.File) {
 		}
 	}
 	t.Fatalf("%s is missing a package doc comment", pkg)
+}
+
+func requireCommandDoc(t *testing.T, pkg string, files []*ast.File) {
+	t.Helper()
+	commandName := filepath.Base(filepath.FromSlash(pkg))
+	for _, file := range files {
+		if file.Doc != nil && strings.HasPrefix(strings.TrimSpace(file.Doc.Text()), "Command "+commandName+" ") {
+			return
+		}
+	}
+	t.Fatalf("%s is missing a command doc comment", pkg)
 }
 
 func requireExportedDocComments(t *testing.T, pkg string, files []*ast.File) {
