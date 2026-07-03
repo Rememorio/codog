@@ -993,6 +993,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "status_config_validation")
 	require.Contains(t, report.Features, "team_watch")
 	require.Contains(t, report.Features, "telemetry_preferences")
+	require.Contains(t, report.Features, "tool_search_mcp_degraded")
 	require.Contains(t, report.Features, "typed_task_packets")
 	require.Contains(t, report.Features, "worker_startup_no_evidence")
 	require.Contains(t, report.Features, "workspace_switch")

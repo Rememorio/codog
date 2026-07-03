@@ -3076,6 +3076,82 @@ func TestToolSearchToolFindsRegisteredTools(t *testing.T) {
 	require.Equal(t, PermissionReadOnly, info.Permission)
 }
 
+func TestToolSearchToolReportsMCPDiscoveryDegradation(t *testing.T) {
+	registry := NewRegistryWithOptions(t.TempDir(), RegistryOptions{
+		MCPServers: map[string]config.MCPServerConfig{
+			"broken": {},
+			"remote": {URL: "ftp://example.test/mcp"},
+		},
+	})
+
+	out, err := ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"mcp","max_results":5}`))
+	require.NoError(t, err)
+	var report struct {
+		PendingMCPServers []string `json:"pending_mcp_servers"`
+		MCPDegraded       struct {
+			FailedServers []struct {
+				ServerName string `json:"server_name"`
+				Phase      string `json:"phase"`
+				Error      struct {
+					Message     string            `json:"message"`
+					Context     map[string]string `json:"context"`
+					Recoverable bool              `json:"recoverable"`
+				} `json:"error"`
+			} `json:"failed_servers"`
+		} `json:"mcp_degraded"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{"broken", "remote"}, report.PendingMCPServers)
+	require.Len(t, report.MCPDegraded.FailedServers, 2)
+	require.Equal(t, "broken", report.MCPDegraded.FailedServers[0].ServerName)
+	require.Equal(t, "server_registration", report.MCPDegraded.FailedServers[0].Phase)
+	require.Equal(t, "missing command or url", report.MCPDegraded.FailedServers[0].Error.Message)
+	require.False(t, report.MCPDegraded.FailedServers[0].Error.Recoverable)
+	require.Equal(t, "remote", report.MCPDegraded.FailedServers[1].ServerName)
+	require.Equal(t, "server_registration", report.MCPDegraded.FailedServers[1].Phase)
+	require.Equal(t, "http", report.MCPDegraded.FailedServers[1].Error.Context["transport"])
+	require.Equal(t, "ftp", report.MCPDegraded.FailedServers[1].Error.Context["scheme"])
+}
+
+func TestToolSearchToolReportsMCPAvailableToolsForPartialDiscovery(t *testing.T) {
+	server := config.MCPServerConfig{Command: "definitely-missing-codog-mcp-server"}
+	registry := NewRegistryWithOptions(t.TempDir(), RegistryOptions{
+		MCPServers: map[string]config.MCPServerConfig{
+			"alpha":  {Command: os.Args[0]},
+			"broken": server,
+		},
+	})
+	registry.Register(MCPTool{
+		Name:       NewMCPToolName("alpha", "echo"),
+		ServerName: "alpha",
+		Server:     config.MCPServerConfig{Command: os.Args[0]},
+		RemoteName: "echo",
+	})
+
+	out, err := ToolSearchTool{Registry: registry}.Execute(context.Background(), []byte(`{"query":"alpha echo","max_results":5}`))
+	require.NoError(t, err)
+	var report struct {
+		PendingMCPServers []string `json:"pending_mcp_servers"`
+		MCPDegraded       struct {
+			AvailableTools []string `json:"available_tools"`
+			FailedServers  []struct {
+				ServerName string `json:"server_name"`
+				Phase      string `json:"phase"`
+				Error      struct {
+					Recoverable bool `json:"recoverable"`
+				} `json:"error"`
+			} `json:"failed_servers"`
+		} `json:"mcp_degraded"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, []string{"broken"}, report.PendingMCPServers)
+	require.Equal(t, []string{"mcp__alpha__echo"}, report.MCPDegraded.AvailableTools)
+	require.Len(t, report.MCPDegraded.FailedServers, 1)
+	require.Equal(t, "broken", report.MCPDegraded.FailedServers[0].ServerName)
+	require.Equal(t, "spawn_connect", report.MCPDegraded.FailedServers[0].Phase)
+	require.True(t, report.MCPDegraded.FailedServers[0].Error.Recoverable)
+}
+
 func TestAskUserQuestionToolReadsChoiceAndDefault(t *testing.T) {
 	var out strings.Builder
 	tool := AskUserQuestionTool{

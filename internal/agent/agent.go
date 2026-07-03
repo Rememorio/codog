@@ -24473,6 +24473,7 @@ func codogCapabilityFeatures() []string {
 		"task_lane_heartbeat",
 		"task_metadata_persistence",
 		"task_output_runtime_fields",
+		"tool_search_mcp_degraded",
 		"tool_search_select_query",
 		"trust_resolver",
 		"typed_task_packets",

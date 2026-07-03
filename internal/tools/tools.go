@@ -113,7 +113,8 @@ type MCPTool struct {
 
 // Registry holds all tools available for a model turn.
 type Registry struct {
-	tools map[string]Tool
+	tools      map[string]Tool
+	mcpServers map[string]config.MCPServerConfig
 }
 
 // ToolInfo is the JSON-safe metadata view of one registered tool.
@@ -584,7 +585,7 @@ func NewRegistry(workspace string) *Registry {
 }
 
 func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
-	reg := &Registry{tools: map[string]Tool{}}
+	reg := &Registry{tools: map[string]Tool{}, mcpServers: cloneMCPServers(opts.MCPServers)}
 	reg.registerBuiltinTools(workspace, opts)
 	return reg
 }
@@ -604,6 +605,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	if r.tools == nil {
 		r.tools = map[string]Tool{}
 	}
+	r.mcpServers = cloneMCPServers(opts.MCPServers)
 	r.Register(BashTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, DefaultShell: opts.DefaultShell, PowerShell: opts.PowerShell, SandboxStrategy: opts.SandboxStrategy, Sandbox: opts.Sandbox})
 	r.Register(PowerShellTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.PowerShell})
 	r.Register(BashOutputTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -693,6 +695,17 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(GitBlameTool{Workspace: workspace})
 	r.Register(AskUserQuestionTool{In: opts.QuestionIn, Out: opts.QuestionOut})
 	r.Register(ToolSearchTool{Registry: r})
+}
+
+func cloneMCPServers(servers map[string]config.MCPServerConfig) map[string]config.MCPServerConfig {
+	if len(servers) == 0 {
+		return nil
+	}
+	out := make(map[string]config.MCPServerConfig, len(servers))
+	for name, server := range servers {
+		out[name] = server
+	}
+	return out
 }
 
 func configuredRAGBaseURL(explicit string) string {
@@ -9055,6 +9068,23 @@ type ToolSearchTool struct {
 	Registry *Registry
 }
 
+type toolSearchMCPDegradedReport struct {
+	FailedServers  []toolSearchMCPFailure `json:"failed_servers,omitempty"`
+	AvailableTools []string               `json:"available_tools,omitempty"`
+}
+
+type toolSearchMCPFailure struct {
+	ServerName string                    `json:"server_name"`
+	Phase      string                    `json:"phase"`
+	Error      toolSearchMCPFailureError `json:"error"`
+}
+
+type toolSearchMCPFailureError struct {
+	Message     string            `json:"message"`
+	Context     map[string]string `json:"context,omitempty"`
+	Recoverable bool              `json:"recoverable"`
+}
+
 func (ToolSearchTool) Definition() anthropic.ToolDefinition {
 	return anthropic.ToolDefinition{
 		Name:        "tool_search",
@@ -9097,13 +9127,102 @@ func (t ToolSearchTool) Execute(_ context.Context, input json.RawMessage) (strin
 	if selected, ok := selectToolInfos(t.Registry, query, limit); ok {
 		matches = selected
 	}
-	return pretty(map[string]any{
+	pendingMCPServers, mcpDegraded := t.Registry.mcpDiscoveryReport()
+	report := map[string]any{
 		"query":            query,
 		"normalized_query": normalizeToolSearchQuery(query),
 		"matches":          matches,
 		"match_names":      toolInfoNames(matches),
 		"total":            len(matches),
-	}), nil
+	}
+	if len(pendingMCPServers) != 0 {
+		report["pending_mcp_servers"] = pendingMCPServers
+	}
+	if len(mcpDegraded.FailedServers) != 0 || len(mcpDegraded.AvailableTools) != 0 {
+		report["mcp_degraded"] = mcpDegraded
+	}
+	return pretty(report), nil
+}
+
+func (r *Registry) mcpDiscoveryReport() ([]string, toolSearchMCPDegradedReport) {
+	if r == nil || len(r.mcpServers) == 0 {
+		return nil, toolSearchMCPDegradedReport{}
+	}
+	availableTools := r.mcpToolNames()
+	availableByServer := map[string]bool{}
+	for _, name := range availableTools {
+		parts := strings.Split(name, "__")
+		if len(parts) >= 3 {
+			availableByServer[parts[1]] = true
+		}
+	}
+	pending := []string{}
+	failures := []toolSearchMCPFailure{}
+	for _, name := range sortedMCPServerNames(r.mcpServers) {
+		if !availableByServer[mcp.NormalizeNameForTooling(name)] {
+			pending = append(pending, name)
+		}
+		if failure, ok := classifyMCPServerDiscoveryFailure(name, r.mcpServers[name]); ok {
+			failures = append(failures, failure)
+		}
+	}
+	report := toolSearchMCPDegradedReport{FailedServers: failures}
+	if len(failures) != 0 {
+		report.AvailableTools = availableTools
+	}
+	return pending, report
+}
+
+func (r *Registry) mcpToolNames() []string {
+	names := []string{}
+	if r == nil {
+		return names
+	}
+	for name := range r.tools {
+		if strings.HasPrefix(name, "mcp__") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func classifyMCPServerDiscoveryFailure(name string, server config.MCPServerConfig) (toolSearchMCPFailure, bool) {
+	context := map[string]string{"server": name}
+	if strings.TrimSpace(server.Command) == "" && strings.TrimSpace(server.URL) == "" {
+		return mcpDiscoveryFailure(name, "server_registration", "missing command or url", context, false), true
+	}
+	if strings.TrimSpace(server.URL) != "" {
+		parsed, err := url.Parse(strings.TrimSpace(server.URL))
+		if err != nil {
+			context["transport"] = "http"
+			return mcpDiscoveryFailure(name, "server_registration", err.Error(), context, false), true
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			context["transport"] = "http"
+			context["scheme"] = parsed.Scheme
+			return mcpDiscoveryFailure(name, "server_registration", "mcp url must use http or https", context, false), true
+		}
+		return toolSearchMCPFailure{}, false
+	}
+	command := strings.TrimSpace(server.Command)
+	if _, err := exec.LookPath(command); err != nil {
+		context["command"] = command
+		return mcpDiscoveryFailure(name, "spawn_connect", err.Error(), context, true), true
+	}
+	return toolSearchMCPFailure{}, false
+}
+
+func mcpDiscoveryFailure(name string, phase string, message string, context map[string]string, recoverable bool) toolSearchMCPFailure {
+	return toolSearchMCPFailure{
+		ServerName: name,
+		Phase:      phase,
+		Error: toolSearchMCPFailureError{
+			Message:     message,
+			Context:     context,
+			Recoverable: recoverable,
+		},
+	}
 }
 
 func selectToolInfos(registry *Registry, query string, limit int) ([]ToolInfo, bool) {
