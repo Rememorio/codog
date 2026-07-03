@@ -27261,6 +27261,8 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"multi_edit",
 		"apply_patch",
 		"bash",
+		"bash_output",
+		"kill_bash",
 		"todo_read",
 		"todo_write",
 		"grep",

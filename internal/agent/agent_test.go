@@ -5569,6 +5569,42 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPermissionsSet))
 	require.Equal(t, "allow", resumedPermissionsSet.PermissionMode)
 
+	out, err = runResumedJSON("/debug-tool-call", "Bash", `{"command":"printf resumed-bg; sleep 5","run_in_background":true}`)
+	require.NoError(t, err)
+	var resumedDebugBackgroundBash debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugBackgroundBash))
+	require.Equal(t, "debug_tool_call", resumedDebugBackgroundBash.Kind)
+	require.Equal(t, "bash", resumedDebugBackgroundBash.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugBackgroundBash.Permission)
+	require.True(t, resumedDebugBackgroundBash.Success)
+	var resumedBackgroundBash struct {
+		Task             background.Task `json:"task"`
+		BackgroundTaskID string          `json:"backgroundTaskId"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugBackgroundBash.Output), &resumedBackgroundBash))
+	require.NotEmpty(t, resumedBackgroundBash.Task.ID)
+	require.Equal(t, resumedBackgroundBash.Task.ID, resumedBackgroundBash.BackgroundTaskID)
+
+	out, err = runResumedJSON("/debug-tool-call", "BashOutput", `{"bash_id":"`+resumedBackgroundBash.Task.ID+`","offset":0,"block":true,"timeout_ms":2000}`)
+	require.NoError(t, err)
+	var resumedDebugBashOutput debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugBashOutput))
+	require.Equal(t, "debug_tool_call", resumedDebugBashOutput.Kind)
+	require.Equal(t, "bash_output", resumedDebugBashOutput.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugBashOutput.Permission)
+	require.True(t, resumedDebugBashOutput.Success)
+	require.Contains(t, resumedDebugBashOutput.Output, "resumed-bg")
+
+	out, err = runResumedJSON("/debug-tool-call", "KillBash", `{"bash_id":"`+resumedBackgroundBash.Task.ID+`"}`)
+	require.NoError(t, err)
+	var resumedDebugKillBash debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugKillBash))
+	require.Equal(t, "debug_tool_call", resumedDebugKillBash.Kind)
+	require.Equal(t, "kill_bash", resumedDebugKillBash.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugKillBash.Permission)
+	require.True(t, resumedDebugKillBash.Success)
+	require.Contains(t, resumedDebugKillBash.Output, `"status": "stopped"`)
+
 	out, err = runResumedJSON("/debug-tool-call", "write_file", `{"path":"debug-write.txt","content":"resumed debug write"}`)
 	require.NoError(t, err)
 	var resumedDebugWrite debugToolCallReport
