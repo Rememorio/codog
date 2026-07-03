@@ -2477,6 +2477,34 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Contains(t, text.String(), "Requests      1")
 	require.Contains(t, text.String(), "streaming_text [baseline] - Validates streamed text.: ok")
 
+	manifestPath := filepath.Join(t.TempDir(), "manifest.json")
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"mock-parity", "manifest", "--json", "--report", manifestPath}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var manifest harness.Manifest
+	require.NoError(t, json.Unmarshal([]byte(out), &manifest))
+	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
+	require.Equal(t, report.Total, manifest.ScenarioCount)
+	require.Equal(t, "read_file_roundtrip", findMockParityManifestScenario(t, manifest, "read_file_roundtrip").Name)
+	manifestData, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	var persistedManifest harness.Manifest
+	require.NoError(t, json.Unmarshal(manifestData, &persistedManifest))
+	require.Equal(t, manifest.ScenarioCount, persistedManifest.ScenarioCount)
+
+	text.Reset()
+	renderMockParityManifestText(&text, harness.Manifest{
+		SchemaVersion: harness.ManifestSchemaVersion,
+		ScenarioCount: 1,
+		Categories:    []harness.ManifestCategory{{Category: "baseline", Count: 1, Scenarios: []string{"streaming_text"}}},
+		Scenarios:     []harness.ManifestScenario{{Name: "streaming_text", Category: "baseline", Description: "Validates streamed text."}},
+	})
+	require.Contains(t, text.String(), "Mock Parity Manifest")
+	require.Contains(t, text.String(), "Schema        "+harness.ManifestSchemaVersion)
+	require.Contains(t, text.String(), "Scenarios     1")
+	require.Contains(t, text.String(), "streaming_text [baseline] - Validates streamed text.")
+
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"mock-parity", "--help", "--json"}, config.FlagOverrides{})
 	})
@@ -2486,6 +2514,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Equal(t, "mock-parity", help.Topic)
 	require.Contains(t, help.Aliases, "parity")
 	require.Contains(t, help.Aliases, "self-test")
+	require.Contains(t, help.Usage, "manifest")
 	require.Contains(t, help.OutputFields, "schema_version")
 	require.Contains(t, help.OutputFields, "request_count")
 	require.Contains(t, help.OutputFields, "scenario_count")
@@ -2514,17 +2543,35 @@ func findMockParityScenario(t *testing.T, report harness.Report, name string) ha
 	return harness.ScenarioReport{}
 }
 
+func findMockParityManifestScenario(t *testing.T, manifest harness.Manifest, name string) harness.ManifestScenario {
+	t.Helper()
+	for _, scenario := range manifest.Scenarios {
+		if scenario.Name == name {
+			return scenario
+		}
+	}
+	t.Fatalf("missing mock parity manifest scenario %q in %#v", name, manifest.Scenarios)
+	return harness.ManifestScenario{}
+}
+
 func TestParseMockParityReportPath(t *testing.T) {
 	t.Setenv("MOCK_PARITY_REPORT_PATH", "from-env.json")
 	req, err := parseMockParityArgs([]string{"check", "--output-format=json"}, "", "text")
 	require.NoError(t, err)
+	require.Equal(t, "run", req.Action)
 	require.Equal(t, "json", req.Format)
 	require.Equal(t, "from-env.json", req.ReportPath)
 
 	req, err = parseMockParityArgs([]string{"--report", "from-flag.json"}, "", "text")
 	require.NoError(t, err)
+	require.Equal(t, "run", req.Action)
 	require.Equal(t, "text", req.Format)
 	require.Equal(t, "from-flag.json", req.ReportPath)
+
+	req, err = parseMockParityArgs([]string{"manifest", "--json"}, "", "text")
+	require.NoError(t, err)
+	require.Equal(t, "manifest", req.Action)
+	require.Equal(t, "json", req.Format)
 
 	_, err = parseMockParityArgs([]string{"--report"}, "", "text")
 	var missing missingFlagValueError

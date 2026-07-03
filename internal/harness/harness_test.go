@@ -177,6 +177,24 @@ func TestValidateReportRejectsInconsistentReports(t *testing.T) {
 	require.ErrorContains(t, ValidateReport(broken), "description is required")
 }
 
+func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
+	manifest := ScenarioManifest()
+	require.Equal(t, ManifestSchemaVersion, manifest.SchemaVersion)
+	require.Equal(t, len(scenarioOrder), manifest.ScenarioCount)
+	require.Len(t, manifest.Scenarios, manifest.ScenarioCount)
+	require.GreaterOrEqual(t, len(manifest.Categories), 8)
+	require.Equal(t, manifest.ScenarioCount, manifestCategoryTotal(manifest.Categories))
+
+	report, err := Run(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, scenarioNames(report.Scenarios), manifestScenarioNames(manifest.Scenarios))
+
+	readFile := findManifestScenario(t, manifest, "read_file_roundtrip")
+	require.Equal(t, "file-tools", readFile.Category)
+	require.NotEmpty(t, readFile.Description)
+	require.Contains(t, readFile.ParityRefs, "File tools")
+}
+
 func categoryCoverageTotal(coverage []CategoryReport) int {
 	total := 0
 	for _, category := range coverage {
@@ -191,6 +209,41 @@ func scenarioRequestCountTotal(scenarios []ScenarioReport) int {
 		total += scenario.RequestCount
 	}
 	return total
+}
+
+func manifestCategoryTotal(categories []ManifestCategory) int {
+	total := 0
+	for _, category := range categories {
+		total += category.Count
+	}
+	return total
+}
+
+func manifestScenarioNames(scenarios []ManifestScenario) []string {
+	names := make([]string, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		names = append(names, scenario.Name)
+	}
+	return names
+}
+
+func scenarioNames(scenarios []ScenarioReport) []string {
+	names := make([]string, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		names = append(names, scenario.Name)
+	}
+	return names
+}
+
+func findManifestScenario(t *testing.T, manifest Manifest, name string) ManifestScenario {
+	t.Helper()
+	for _, scenario := range manifest.Scenarios {
+		if scenario.Name == name {
+			return scenario
+		}
+	}
+	t.Fatalf("missing manifest scenario %q in %#v", name, manifest.Scenarios)
+	return ManifestScenario{}
 }
 
 func findCategory(t *testing.T, report Report, category string) CategoryReport {

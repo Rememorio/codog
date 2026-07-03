@@ -28,6 +28,9 @@ import (
 // ReportSchemaVersion is the stable schema identifier for mock parity reports.
 const ReportSchemaVersion = "codog.mock_parity.v1"
 
+// ManifestSchemaVersion is the stable schema identifier for mock parity manifests.
+const ManifestSchemaVersion = "codog.mock_parity_manifest.v1"
+
 // Report summarizes one deterministic mock parity harness run.
 type Report struct {
 	SchemaVersion string           `json:"schema_version"`
@@ -45,6 +48,29 @@ type Report struct {
 	UsageSummary  usage.Summary    `json:"usage_summary"`
 	EstimatedCost float64          `json:"estimated_cost"`
 	Scenarios     []ScenarioReport `json:"scenarios"`
+}
+
+// Manifest lists the deterministic mock parity scenarios without running them.
+type Manifest struct {
+	SchemaVersion string             `json:"schema_version"`
+	ScenarioCount int                `json:"scenario_count"`
+	Categories    []ManifestCategory `json:"categories"`
+	Scenarios     []ManifestScenario `json:"scenarios"`
+}
+
+// ManifestCategory summarizes scenarios by behavioral category.
+type ManifestCategory struct {
+	Category  string   `json:"category"`
+	Count     int      `json:"count"`
+	Scenarios []string `json:"scenarios"`
+}
+
+// ManifestScenario describes one mock parity scenario contract.
+type ManifestScenario struct {
+	Name        string   `json:"name"`
+	Category    string   `json:"category"`
+	Description string   `json:"description"`
+	ParityRefs  []string `json:"parity_refs"`
 }
 
 // CategoryReport summarizes mock parity results for one behavioral category.
@@ -96,6 +122,54 @@ type scenario struct {
 	prepare             func(string) ([]mockanthropic.Turn, func(), error)
 	verify              func(string, runloop.TurnResult, string) error
 	verifyRequests      func([]anthropic.Request) error
+}
+
+var scenarioOrder = []string{
+	"streaming_text",
+	"prompt_attachments_roundtrip",
+	"read_file_roundtrip",
+	"write_file_allowed",
+	"write_file_denied",
+	"pre_tool_hook_updates_input",
+	"user_prompt_hook_adds_context",
+	"stop_hook_adds_feedback",
+	"post_tool_hook_blocks_result",
+	"post_tool_hook_adds_feedback",
+	"file_changed_hook_adds_feedback",
+	"multi_tool_turn_roundtrip",
+	"grep_chunk_assembly",
+	"bash_stdout_roundtrip",
+	"bash_output_truncation_roundtrip",
+	"bash_permission_prompt_approved",
+	"bash_permission_prompt_denied",
+	"plugin_tool_roundtrip",
+	"config_precedence_roundtrip",
+	"session_resume_jsonl_roundtrip",
+	"plugin_lifecycle_roundtrip",
+	"remote_trigger_roundtrip",
+	"auto_compact_triggered",
+	"token_cost_reporting",
+}
+
+// ScenarioManifest returns the mock parity scenario contract without executing
+// provider or tool loops.
+func ScenarioManifest() Manifest {
+	scenarios := make([]ManifestScenario, 0, len(scenarioOrder))
+	for _, name := range scenarioOrder {
+		metadata := scenarioMetadataFor(name)
+		scenarios = append(scenarios, ManifestScenario{
+			Name:        name,
+			Category:    metadata.Category,
+			Description: metadata.Description,
+			ParityRefs:  append([]string(nil), metadata.ParityRefs...),
+		})
+	}
+	return Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		ScenarioCount: len(scenarios),
+		Categories:    manifestCategories(scenarios),
+		Scenarios:     scenarios,
+	}
 }
 
 // Run executes the deterministic mock parity harness against the local agent
@@ -878,6 +952,35 @@ func categoryCoverage(scenarios []ScenarioReport) []CategoryReport {
 	}
 	slices.Sort(categories)
 	out := make([]CategoryReport, 0, len(categories))
+	for _, category := range categories {
+		report := *byCategory[category]
+		slices.Sort(report.Scenarios)
+		out = append(out, report)
+	}
+	return out
+}
+
+func manifestCategories(scenarios []ManifestScenario) []ManifestCategory {
+	byCategory := map[string]*ManifestCategory{}
+	for _, scenario := range scenarios {
+		category := strings.TrimSpace(scenario.Category)
+		if category == "" {
+			category = "uncategorized"
+		}
+		report := byCategory[category]
+		if report == nil {
+			report = &ManifestCategory{Category: category}
+			byCategory[category] = report
+		}
+		report.Count++
+		report.Scenarios = append(report.Scenarios, scenario.Name)
+	}
+	categories := make([]string, 0, len(byCategory))
+	for category := range byCategory {
+		categories = append(categories, category)
+	}
+	slices.Sort(categories)
+	out := make([]ManifestCategory, 0, len(categories))
 	for _, category := range categories {
 		report := *byCategory[category]
 		slices.Sort(report.Scenarios)
