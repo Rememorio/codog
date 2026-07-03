@@ -21,6 +21,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
+	"github.com/Rememorio/codog/internal/customcommands"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
@@ -28,6 +29,8 @@ import (
 	"github.com/Rememorio/codog/internal/providerdiag"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/session"
+	"github.com/Rememorio/codog/internal/skills"
+	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/tools"
 	"github.com/Rememorio/codog/internal/usage"
 )
@@ -167,6 +170,7 @@ var scenarioOrder = []string{
 	"plan_todo_roundtrip",
 	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
+	"command_skill_template_roundtrip",
 	"config_precedence_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -680,6 +684,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		commandSkillTemplateScenario(),
 		configPrecedenceScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
@@ -1155,6 +1160,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Loads and executes an external plugin tool through the runtime registry.",
 		ParityRefs:  []string{"Plugin tools", "External plugin lifecycle"},
 	},
+	"command_skill_template_roundtrip": {
+		Category:    "command-workflows",
+		Description: "Discovers and renders project slash commands, skills, and prompt templates without contacting a provider.",
+		ParityRefs:  []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"},
+	},
 	"auto_compact_triggered": {
 		Category:    "session-compaction",
 		Description: "Verifies auto-compaction fires when the message threshold is exceeded.",
@@ -1418,6 +1428,132 @@ func configPrecedenceScenario() scenario {
 				return fmt.Errorf("unexpected loaded hook order: %v", loadedSessionStart)
 			}
 			return nil
+		},
+	}
+}
+
+func commandSkillTemplateScenario() scenario {
+	return scenario{
+		name: "command_skill_template_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			commandDir := filepath.Join(workspace, ".codog", "commands")
+			skillDir := filepath.Join(workspace, ".codog", "skills", "review")
+			templateDir := filepath.Join(workspace, ".codog", "templates")
+			for _, dir := range []string{commandDir, skillDir, templateDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+
+			commandDoc := `---
+description: Review a target file.
+argument-hint: TARGET
+allowed-tools: read_file, grep
+arguments: TARGET
+---
+Review $TARGET for session ${CLAUDE_SESSION_ID}.`
+			if err := os.WriteFile(filepath.Join(commandDir, "review.md"), []byte(commandDoc), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			skillDoc := `---
+name: review
+description: Review project changes.
+allowed-tools: read_file, grep
+arguments: TARGET
+paths: src/**, docs
+---
+Review skill body for $TARGET during ${CLAUDE_SESSION_ID}.`
+			if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillDoc), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			templateDoc := `Release {{version}} for {{project}}.`
+			if err := os.WriteFile(filepath.Join(templateDir, "release.md"), []byte(templateDoc), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			command, err := customcommands.Find(configHome, workspace, "review")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			renderedCommand := customcommands.RenderWithSession(command, "src/main.go", "session-123")
+			if renderedCommand.Source != "workspace" {
+				return localScenarioResult{}, fmt.Errorf("unexpected command source %q", renderedCommand.Source)
+			}
+			if renderedCommand.Rendered != "Review src/main.go for session session-123." {
+				return localScenarioResult{}, fmt.Errorf("unexpected rendered command: %s", renderedCommand.Rendered)
+			}
+			for _, expected := range []string{"read_file", "grep"} {
+				if !slices.Contains(renderedCommand.AllowedTools, expected) {
+					return localScenarioResult{}, fmt.Errorf("command allowed tools missing %s: %v", expected, renderedCommand.AllowedTools)
+				}
+			}
+
+			skill, err := skills.Find(configHome, workspace, "review")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			renderedSkill := skills.RenderInvocationWithSession(skill, "src/main.go", "session-123")
+			for _, expected := range []string{`<skill name="review"`, "Review skill body for src/main.go during session-123.", "User request: src/main.go"} {
+				if !strings.Contains(renderedSkill, expected) {
+					return localScenarioResult{}, fmt.Errorf("rendered skill missing %s", expected)
+				}
+			}
+			if !skills.MatchesAnyPath(skill, []string{"src/main.go"}) {
+				return localScenarioResult{}, fmt.Errorf("skill paths did not match src/main.go")
+			}
+			if skills.MatchesAnyPath(skill, []string{"test/main.go"}) {
+				return localScenarioResult{}, fmt.Errorf("skill paths unexpectedly matched test/main.go")
+			}
+
+			template, err := prompttemplates.Find(configHome, workspace, "release")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			renderedTemplate, err := prompttemplates.Render(template, map[string]string{
+				"project": "codog",
+				"version": "1.0.0",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if renderedTemplate.Rendered != "Release 1.0.0 for codog." {
+				return localScenarioResult{}, fmt.Errorf("unexpected rendered template: %s", renderedTemplate.Rendered)
+			}
+
+			report := map[string]any{
+				"kind": "command_skill_template",
+				"command": map[string]any{
+					"name":          renderedCommand.Name,
+					"source":        renderedCommand.Source,
+					"allowed_tools": renderedCommand.AllowedTools,
+					"rendered":      renderedCommand.Rendered,
+				},
+				"skill": map[string]any{
+					"name":          skill.Name,
+					"source":        skill.Source,
+					"allowed_tools": skill.AllowedTools,
+					"paths":         skill.Paths,
+					"matches_src":   skills.MatchesAnyPath(skill, []string{"src/main.go"}),
+				},
+				"template": map[string]any{
+					"name":     renderedTemplate.Name,
+					"source":   renderedTemplate.Source,
+					"rendered": renderedTemplate.Rendered,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "command skill template harness ok",
+				RequestCount: 3,
+				MessageCount: 1,
+			}, nil
 		},
 	}
 }

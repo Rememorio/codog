@@ -208,6 +208,21 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, pluginTool.ToolCalls)
 	require.Contains(t, pluginTool.Output, "plugin harness ok")
 
+	workflow := findScenario(t, report, "command_skill_template_roundtrip")
+	require.True(t, workflow.OK)
+	require.Equal(t, "command-workflows", workflow.Category)
+	require.Equal(t, 0, workflow.ToolCalls)
+	require.Equal(t, 3, workflow.RequestCount)
+	require.Equal(t, "command skill template harness ok", workflow.FinalMessage)
+	require.Contains(t, workflow.Output, `"kind":"command_skill_template"`)
+	require.Contains(t, workflow.Output, `"rendered":"Review src/main.go for session session-123."`)
+	require.Contains(t, workflow.Output, `"matches_src":true`)
+	require.Contains(t, workflow.Output, `"rendered":"Release 1.0.0 for codog."`)
+	workflowCategory := findCategory(t, report, "command-workflows")
+	require.True(t, workflowCategory.OK)
+	require.Equal(t, 1, workflowCategory.Total)
+	require.ElementsMatch(t, []string{"command_skill_template_roundtrip"}, workflowCategory.Scenarios)
+
 	configPrecedence := findScenario(t, report, "config_precedence_roundtrip")
 	require.True(t, configPrecedence.OK)
 	require.Equal(t, 0, configPrecedence.ToolCalls)
@@ -391,6 +406,12 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "provider-routing", providerRouting.Category)
 	require.Contains(t, providerRouting.ParityRefs, "OpenAI-compatible APIs")
 	require.Contains(t, providerRouting.ParityRefs, "Ollama")
+
+	workflow := findManifestScenario(t, manifest, "command_skill_template_roundtrip")
+	require.Equal(t, "command-workflows", workflow.Category)
+	require.Contains(t, workflow.ParityRefs, "Slash commands")
+	require.Contains(t, workflow.ParityRefs, "Skills")
+	require.Contains(t, workflow.ParityRefs, "Templates")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {
