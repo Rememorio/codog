@@ -1,5 +1,3 @@
-// Package status builds and renders the structured runtime status report used
-// by `codog status`.
 package status
 
 import (
