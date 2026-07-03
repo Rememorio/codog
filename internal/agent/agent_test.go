@@ -2805,6 +2805,11 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 		case "/search":
 			w.Header().Set("Content-Type", "text/html")
 			fmt.Fprint(w, `<a class="result__a" href="https://example.com/resume">Resume Search</a><div class="result__snippet">A resumed search summary.</div>`)
+		case "/trigger":
+			w.Header().Set("Content-Type", "application/json")
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			fmt.Fprintf(w, `{"method":%q,"body":%q,"source":"resume-trigger"}`, r.Method, string(body))
 		default:
 			http.NotFound(w, r)
 		}
@@ -4102,6 +4107,30 @@ func risky(value any) {
 	require.True(t, resumedDebugToolSearch.Success)
 	require.Contains(t, resumedDebugToolSearch.Output, `"query": "web fetch"`)
 	require.Contains(t, resumedDebugToolSearch.Output, `"name": "web_fetch"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "BriefTool", `{"message":"resume debug brief","status":"normal","attachments":["main.go"]}`)
+	require.NoError(t, err)
+	var resumedDebugBrief debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugBrief))
+	require.Equal(t, "debug_tool_call", resumedDebugBrief.Kind)
+	require.Equal(t, "brief", resumedDebugBrief.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugBrief.Permission)
+	require.True(t, resumedDebugBrief.Success)
+	require.Contains(t, resumedDebugBrief.Output, `"message": "resume debug brief"`)
+	require.Contains(t, resumedDebugBrief.Output, `"status": "normal"`)
+	require.Contains(t, resumedDebugBrief.Output, `"is_image": false`)
+
+	out, err = runResumedJSON("/debug-tool-call", "SendUserMessageTool", `{"message":"resume debug user message","status":"proactive","attachments":["main.go"]}`)
+	require.NoError(t, err)
+	var resumedDebugSendUserMessage debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugSendUserMessage))
+	require.Equal(t, "debug_tool_call", resumedDebugSendUserMessage.Kind)
+	require.Equal(t, "send_user_message", resumedDebugSendUserMessage.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugSendUserMessage.Permission)
+	require.True(t, resumedDebugSendUserMessage.Success)
+	require.Contains(t, resumedDebugSendUserMessage.Output, `"message": "resume debug user message"`)
+	require.Contains(t, resumedDebugSendUserMessage.Output, `"status": "proactive"`)
+	require.Contains(t, resumedDebugSendUserMessage.Output, `"is_image": false`)
 
 	out, err = runResumedJSON("/debug-tool-call", "SleepTool", `{"duration_ms":1}`)
 	require.NoError(t, err)
@@ -5799,6 +5828,54 @@ func risky(value any) {
 	require.NoError(t, err)
 	require.False(t, resumedDebugPlanState.Active)
 	require.Equal(t, "resume debug final plan", resumedDebugPlanState.Plan)
+
+	if gitAvailable {
+		out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "EnterWorktreeTool", `{"name":"resume-debug"}`)
+		require.NoError(t, err)
+		var resumedDebugEnterWorktree debugToolCallReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugEnterWorktree))
+		require.Equal(t, "debug_tool_call", resumedDebugEnterWorktree.Kind)
+		require.Equal(t, "enter_worktree", resumedDebugEnterWorktree.Tool)
+		require.Equal(t, tools.PermissionDanger, resumedDebugEnterWorktree.Permission)
+		require.True(t, resumedDebugEnterWorktree.Success)
+		require.Contains(t, resumedDebugEnterWorktree.Output, `"kind": "worktree"`)
+		require.Contains(t, resumedDebugEnterWorktree.Output, `"operation": "enter"`)
+		var worktreeEnter struct {
+			Allocation worktree.Allocation `json:"allocation"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(resumedDebugEnterWorktree.Output), &worktreeEnter))
+		require.NotEmpty(t, worktreeEnter.Allocation.ID)
+		require.DirExists(t, worktreeEnter.Allocation.Path)
+		require.FileExists(t, filepath.Join(worktreeEnter.Allocation.Path, "main.go"))
+		t.Cleanup(func() { _ = worktree.Remove(workspace, worktreeEnter.Allocation.ID) })
+
+		worktreeExitInput, err := json.Marshal(map[string]string{"id": worktreeEnter.Allocation.ID})
+		require.NoError(t, err)
+		out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "ExitWorktreeTool", string(worktreeExitInput))
+		require.NoError(t, err)
+		var resumedDebugExitWorktree debugToolCallReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugExitWorktree))
+		require.Equal(t, "debug_tool_call", resumedDebugExitWorktree.Kind)
+		require.Equal(t, "exit_worktree", resumedDebugExitWorktree.Tool)
+		require.Equal(t, tools.PermissionDanger, resumedDebugExitWorktree.Permission)
+		require.True(t, resumedDebugExitWorktree.Success)
+		require.Contains(t, resumedDebugExitWorktree.Output, `"operation": "exit"`)
+		require.Contains(t, resumedDebugExitWorktree.Output, `"removed": true`)
+		require.NoDirExists(t, worktreeEnter.Allocation.Path)
+	}
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "RemoteTriggerTool", `{"url":"`+webServer.URL+`/trigger","method":"POST","body":"resume trigger body","headers":{"X-Codog-Test":"resume"},"timeout_ms":1000}`)
+	require.NoError(t, err)
+	var resumedDebugRemoteTrigger debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugRemoteTrigger))
+	require.Equal(t, "debug_tool_call", resumedDebugRemoteTrigger.Kind)
+	require.Equal(t, "remote_trigger", resumedDebugRemoteTrigger.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugRemoteTrigger.Permission)
+	require.True(t, resumedDebugRemoteTrigger.Success)
+	require.Contains(t, resumedDebugRemoteTrigger.Output, `"method": "POST"`)
+	require.Contains(t, resumedDebugRemoteTrigger.Output, `"status_code": 200`)
+	require.Contains(t, resumedDebugRemoteTrigger.Output, "resume-trigger")
+	require.Contains(t, resumedDebugRemoteTrigger.Output, "resume trigger body")
 
 	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "ConfigTool", `{"setting":"model"}`)
 	require.NoError(t, err)
