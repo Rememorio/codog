@@ -23980,6 +23980,13 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		runtimeHooks = config.HookConfig{}
 	}
 	hookValidation := buildHookValidation(runtimeHooks)
+	installedPluginCount := 0
+	pluginLoadError := ""
+	if manifests, err := plugins.Load(a.Workspace); err == nil {
+		installedPluginCount = len(manifests)
+	} else {
+		pluginLoadError = err.Error()
+	}
 	return localstatus.Build(localstatus.Options{
 		Version:                     version,
 		FormatSource:                opts.FormatSource,
@@ -24007,6 +24014,9 @@ func (a *App) statusSnapshotWithOptions(active *session.Session, opts statusSnap
 		AuthToken:                   a.Config.AuthToken,
 		AuthConfigured:              a.Config.APIKey != "" || a.Config.AuthToken != "",
 		MCPServerCount:              len(a.Config.MCPServers),
+		InstalledPluginCount:        installedPluginCount,
+		PluginLoadError:             pluginLoadError,
+		TrustedRoots:                append([]string(nil), a.Config.TrustedRoots...),
 		UserPromptSubmitHookCount:   len(runtimeHooks.UserPromptSubmit),
 		SessionStartHookCount:       len(runtimeHooks.SessionStart),
 		SessionEndHookCount:         len(runtimeHooks.SessionEnd),
@@ -24451,6 +24461,7 @@ func codogCapabilityFeatures() []string {
 		"speech_output",
 		"stale_base_guard",
 		"stale_branch_guard",
+		"status_boot_preflight",
 		"status_config_load_degraded",
 		"status_config_validation",
 		"team_watch",

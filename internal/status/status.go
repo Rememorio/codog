@@ -15,6 +15,7 @@ import (
 	"github.com/Rememorio/codog/internal/gitops"
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/providerdiag"
+	"github.com/Rememorio/codog/internal/trustresolver"
 )
 
 // Options contains the runtime inputs needed to build a status snapshot.
@@ -45,6 +46,10 @@ type Options struct {
 	AuthToken                   string
 	AuthConfigured              bool
 	MCPServerCount              int
+	InstalledPluginCount        int
+	PluginLoadError             string
+	TrustedRoots                []string
+	LastFailedBootReason        string
 	UserPromptSubmitHookCount   int
 	SessionStartHookCount       int
 	SessionEndHookCount         int
@@ -123,6 +128,7 @@ type Snapshot struct {
 	LaneBoard           LaneBoardStatus      `json:"lane_board"`
 	Sandbox             SandboxStatus        `json:"sandbox"`
 	Runtime             RuntimeStatus        `json:"runtime"`
+	BootPreflight       BootPreflightStatus  `json:"boot_preflight"`
 	MCPValidation       MCPValidationStatus  `json:"mcp_validation"`
 	HookValidation      HookValidationStatus `json:"hook_validation"`
 }
@@ -304,6 +310,38 @@ type RuntimeStatus struct {
 	Executable string `json:"executable,omitempty"`
 }
 
+// BootPreflightStatus reports static startup readiness signals before runtime initialization.
+type BootPreflightStatus struct {
+	Repo                 BootRepoPreflightStatus      `json:"repo"`
+	Trust                BootTrustPreflightStatus     `json:"trust"`
+	MCPStartup           BootComponentPreflightStatus `json:"mcp_startup"`
+	PluginStartup        BootComponentPreflightStatus `json:"plugin_startup"`
+	LastFailedBootReason string                       `json:"last_failed_boot_reason,omitempty"`
+}
+
+// BootRepoPreflightStatus summarizes workspace and git availability at startup.
+type BootRepoPreflightStatus struct {
+	WorkspaceExists bool                    `json:"workspace_exists"`
+	GitDirExists    bool                    `json:"git_dir_exists"`
+	GitAvailable    bool                    `json:"git_available"`
+	BranchFreshness *gitops.BranchFreshness `json:"branch_freshness,omitempty"`
+}
+
+// BootTrustPreflightStatus reports whether the workspace passes the trust gate.
+type BootTrustPreflightStatus struct {
+	Allowed           bool `json:"allowed"`
+	TrustedRootsCount int  `json:"trusted_roots_count"`
+}
+
+// BootComponentPreflightStatus reports startup eligibility for optional runtime subsystems.
+type BootComponentPreflightStatus struct {
+	Eligible   bool   `json:"eligible"`
+	Configured int    `json:"configured"`
+	Loaded     int    `json:"loaded,omitempty"`
+	Invalid    int    `json:"invalid,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
 // MCPValidationStatus summarizes static MCP server configuration validation.
 type MCPValidationStatus struct {
 	TotalConfigured int               `json:"total_configured"`
@@ -345,6 +383,7 @@ func Build(opts Options) Snapshot {
 		freshness := *opts.GitFreshness
 		git.Freshness = &freshness
 	}
+	bootPreflight := buildBootPreflightStatus(opts, git)
 	status := "ok"
 	if !git.Available {
 		status = "degraded"
@@ -353,6 +392,8 @@ func Build(opts Options) Snapshot {
 	} else if !endpoint.Valid {
 		status = "degraded"
 	} else if opts.MCPValidation.InvalidCount > 0 || opts.HookValidation.InvalidCount > 0 {
+		status = "degraded"
+	} else if strings.TrimSpace(bootPreflight.PluginStartup.Error) != "" {
 		status = "degraded"
 	} else if strings.TrimSpace(auth.Warning) != "" {
 		status = "warn"
@@ -459,9 +500,87 @@ func Build(opts Options) Snapshot {
 			GoVersion:  runtime.Version(),
 			Executable: opts.Executable,
 		},
+		BootPreflight:  bootPreflight,
 		MCPValidation:  opts.MCPValidation,
 		HookValidation: opts.HookValidation,
 	}
+}
+
+func buildBootPreflightStatus(opts Options, git GitStatus) BootPreflightStatus {
+	workspace := strings.TrimSpace(opts.Workspace)
+	workspaceExists := false
+	gitDirExists := false
+	if workspace != "" {
+		if info, err := os.Stat(workspace); err == nil && info.IsDir() {
+			workspaceExists = true
+		}
+		if _, err := os.Stat(filepath.Join(workspace, ".git")); err == nil {
+			gitDirExists = true
+		}
+	}
+	var freshness *gitops.BranchFreshness
+	if git.Freshness != nil {
+		next := *git.Freshness
+		freshness = &next
+	}
+	trustAllowed := false
+	if workspace != "" {
+		entries := make([]trustresolver.AllowlistEntry, 0, len(opts.TrustedRoots))
+		for _, root := range opts.TrustedRoots {
+			if strings.TrimSpace(root) != "" {
+				entries = append(entries, trustresolver.AllowlistEntry{Pattern: root})
+			}
+		}
+		trustAllowed = trustresolver.New(trustresolver.Config{Allowlisted: entries}).Trusts(workspace, filepath.Join(workspace, ".git"))
+	}
+	pluginError := strings.TrimSpace(opts.PluginLoadError)
+	configLoadError := strings.TrimSpace(opts.ConfigLoadError)
+	return BootPreflightStatus{
+		Repo: BootRepoPreflightStatus{
+			WorkspaceExists: workspaceExists,
+			GitDirExists:    gitDirExists,
+			GitAvailable:    git.Available,
+			BranchFreshness: freshness,
+		},
+		Trust: BootTrustPreflightStatus{
+			Allowed:           trustAllowed,
+			TrustedRootsCount: len(nonEmptyStrings(opts.TrustedRoots)),
+		},
+		MCPStartup: BootComponentPreflightStatus{
+			Eligible:   configLoadError == "" && opts.MCPValidation.InvalidCount == 0,
+			Configured: opts.MCPValidation.TotalConfigured,
+			Loaded:     opts.MCPValidation.ValidCount,
+			Invalid:    opts.MCPValidation.InvalidCount,
+			Error:      startupError(configLoadError, opts.MCPValidation.InvalidCount, "invalid MCP server configuration"),
+		},
+		PluginStartup: BootComponentPreflightStatus{
+			Eligible:   pluginError == "",
+			Configured: opts.InstalledPluginCount,
+			Loaded:     opts.InstalledPluginCount,
+			Error:      pluginError,
+		},
+		LastFailedBootReason: strings.TrimSpace(opts.LastFailedBootReason),
+	}
+}
+
+func startupError(configLoadError string, invalid int, invalidMessage string) string {
+	if configLoadError != "" {
+		return configLoadError
+	}
+	if invalid > 0 {
+		return invalidMessage
+	}
+	return ""
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func buildProviderEndpointStatus(opts Options) modelrouting.BaseURLDiagnostic {
@@ -723,6 +842,7 @@ func defaultString(value string, fallback string) string {
 	return fallback
 }
 
+// RenderText writes a human-readable status snapshot.
 func RenderText(w io.Writer, snapshot Snapshot) {
 	fmt.Fprintln(w, "Status")
 	fmt.Fprintf(w, "  Version          %s\n", snapshot.Version)
@@ -791,6 +911,15 @@ func RenderText(w io.Writer, snapshot Snapshot) {
 	}
 	if snapshot.HookValidation.ValidCount > 0 || snapshot.HookValidation.InvalidCount > 0 {
 		fmt.Fprintf(w, "  Hook validation  valid=%d invalid=%d\n", snapshot.HookValidation.ValidCount, snapshot.HookValidation.InvalidCount)
+	}
+	fmt.Fprintf(w, "  Boot preflight   repo=%t trust=%t mcp=%t plugins=%t\n",
+		snapshot.BootPreflight.Repo.GitAvailable,
+		snapshot.BootPreflight.Trust.Allowed,
+		snapshot.BootPreflight.MCPStartup.Eligible,
+		snapshot.BootPreflight.PluginStartup.Eligible,
+	)
+	if snapshot.BootPreflight.LastFailedBootReason != "" {
+		fmt.Fprintf(w, "  Last boot error  %s\n", snapshot.BootPreflight.LastFailedBootReason)
 	}
 	fmt.Fprintf(w, "  Sandbox          available=%t default=%s\n", snapshot.Sandbox.Available, snapshot.Sandbox.Default)
 	if snapshot.LaneBoard.Available {

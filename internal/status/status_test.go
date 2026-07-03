@@ -3,6 +3,7 @@ package status
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -226,6 +227,55 @@ func TestBuildMarksInvalidValidationDegraded(t *testing.T) {
 	RenderText(&out, snapshot)
 	require.Contains(t, out.String(), "MCP validation   valid=0 invalid=1 required=1 optional=0")
 	require.Contains(t, out.String(), "Hook validation  valid=1 invalid=1")
+}
+
+func TestBuildBootPreflightReportsStartupReadiness(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(workspace, ".git"), 0o755))
+
+	snapshot := Build(Options{
+		Version:              "test-version",
+		Workspace:            workspace,
+		GitStatus:            "## main...origin/main",
+		TrustedRoots:         []string{filepath.Dir(workspace), "  "},
+		InstalledPluginCount: 2,
+		MCPValidation: MCPValidationStatus{
+			TotalConfigured: 1,
+			ValidCount:      1,
+			OptionalCount:   1,
+		},
+		LastFailedBootReason: "previous mcp discovery timeout",
+	})
+
+	require.Equal(t, "ok", snapshot.Status)
+	require.True(t, snapshot.BootPreflight.Repo.WorkspaceExists)
+	require.True(t, snapshot.BootPreflight.Repo.GitDirExists)
+	require.True(t, snapshot.BootPreflight.Repo.GitAvailable)
+	require.True(t, snapshot.BootPreflight.Trust.Allowed)
+	require.Equal(t, 1, snapshot.BootPreflight.Trust.TrustedRootsCount)
+	require.True(t, snapshot.BootPreflight.MCPStartup.Eligible)
+	require.Equal(t, 1, snapshot.BootPreflight.MCPStartup.Configured)
+	require.Equal(t, 1, snapshot.BootPreflight.MCPStartup.Loaded)
+	require.True(t, snapshot.BootPreflight.PluginStartup.Eligible)
+	require.Equal(t, 2, snapshot.BootPreflight.PluginStartup.Configured)
+	require.Equal(t, "previous mcp discovery timeout", snapshot.BootPreflight.LastFailedBootReason)
+
+	var out bytes.Buffer
+	RenderText(&out, snapshot)
+	require.Contains(t, out.String(), "Boot preflight   repo=true trust=true mcp=true plugins=true")
+	require.Contains(t, out.String(), "Last boot error  previous mcp discovery timeout")
+}
+
+func TestBuildBootPreflightPluginLoadErrorDegrades(t *testing.T) {
+	snapshot := Build(Options{
+		Version:         "test-version",
+		GitStatus:       "## main",
+		PluginLoadError: "plugin manifest unreadable",
+	})
+
+	require.Equal(t, "degraded", snapshot.Status)
+	require.False(t, snapshot.BootPreflight.PluginStartup.Eligible)
+	require.Equal(t, "plugin manifest unreadable", snapshot.BootPreflight.PluginStartup.Error)
 }
 
 func TestBuildMarksConfigLoadErrorDegraded(t *testing.T) {
