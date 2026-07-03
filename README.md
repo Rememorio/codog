@@ -186,10 +186,11 @@ for hostile repositories, untrusted commands, or adversarial prompts.
 The normal validation path is intentionally boring:
 
 ```sh
-go test ./...
-go build ./cmd/codog
-scripts/install.sh --bin-dir ./bin
+scripts/smoke.sh
 ```
+
+For narrower checks, run `go test ./...`, `go vet ./...`,
+`go build ./cmd/codog`, or `scripts/install.sh --bin-dir ./bin` directly.
 
 Keep changes portable. Avoid committing generated caches, API keys,
 machine-specific setup snippets, local absolute paths, or tool attribution text.

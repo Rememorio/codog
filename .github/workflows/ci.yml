@@ -30,29 +30,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests
-        run: go test ./...
-
-      - name: Run mock parity harness
+      - name: Run smoke checks
         env:
-          MOCK_PARITY_REPORT_PATH: artifacts/mock-parity-report.json
-        run: |
-          mkdir -p artifacts
-          go run ./cmd/codog mock-parity --output-format json | tee artifacts/mock-parity-stdout.json
-          jq -e '
-            .schema_version == "codog.mock_parity.v1" and
-            .ok == true and
-            .scenario_count == (.scenarios | length) and
-            .request_count > 0
-          ' artifacts/mock-parity-report.json
-
-      - name: Build CLI
-        run: go build ./cmd/codog
-
-      - name: Install script smoke
-        run: |
-          scripts/install.sh --bin-dir "$RUNNER_TEMP/codog-bin"
-          "$RUNNER_TEMP/codog-bin/codog" --version
+          CODOG_SMOKE_ARTIFACT_DIR: artifacts
+        run: scripts/smoke.sh
 
       - name: Upload mock parity report
         uses: actions/upload-artifact@v4
