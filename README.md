@@ -29,6 +29,14 @@ go install github.com/Rememorio/codog/cmd/codog@latest
 export ANTHROPIC_API_KEY=<key>
 ```
 
+From a source checkout, install the single binary into `~/.local/bin`:
+
+```sh
+scripts/install.sh
+```
+
+Use `scripts/install.sh --bin-dir DIR` to install into a specific directory.
+
 Run it from a repository:
 
 ```sh
@@ -180,6 +188,7 @@ The normal validation path is intentionally boring:
 ```sh
 go test ./...
 go build ./cmd/codog
+scripts/install.sh --bin-dir ./bin
 ```
 
 Keep changes portable. Avoid committing generated caches, API keys,

@@ -49,6 +49,11 @@ jobs:
       - name: Build CLI
         run: go build ./cmd/codog
 
+      - name: Install script smoke
+        run: |
+          scripts/install.sh --bin-dir "$RUNNER_TEMP/codog-bin"
+          "$RUNNER_TEMP/codog-bin/codog" --version
+
       - name: Upload mock parity report
         uses: actions/upload-artifact@v4
         with:
