@@ -1289,6 +1289,7 @@ func TestBootstrapPlanCommandOutputsTextAndJSON(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Bootstrap plan memory."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hook.sh"), []byte("#!/bin/sh\nprintf ran > hook-ran.txt\nprintf '%s' '{\"additionalContext\":\"bootstrap context\",\"hookSpecificOutput\":{\"watchPaths\":[\"src\"]}}'\n"), 0o755))
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
@@ -1298,7 +1299,7 @@ func TestBootstrapPlanCommandOutputsTextAndJSON(t *testing.T) {
 			BaseURL:        "https://api.example.test",
 			PermissionMode: "workspace-write",
 			Hooks: config.HookConfig{
-				SessionStart: []string{"echo session-start"},
+				SessionStart: []string{"./hook.sh"},
 			},
 		},
 		Workspace: workspace,
@@ -1312,6 +1313,7 @@ func TestBootstrapPlanCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, out.String(), "Bootstrap Plan")
 	require.Contains(t, out.String(), "resolve_workspace")
 	require.Contains(t, out.String(), "provider_dispatch")
+	require.FileExists(t, filepath.Join(workspace, "hook-ran.txt"))
 	out.Reset()
 
 	require.NoError(t, app.BootstrapPlan([]string{"--json"}))
@@ -1326,9 +1328,48 @@ func TestBootstrapPlanCommandOutputsTextAndJSON(t *testing.T) {
 	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "resolve_workspace").Status)
 	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "load_config").Status)
 	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "register_tools").Status)
-	require.Equal(t, "planned", bootstrapPlanPhaseByName(t, report, "run_session_start_hooks").Status)
+	sessionStartPhase := bootstrapPlanPhaseByName(t, report, "run_session_start_hooks")
+	require.Equal(t, "ready", sessionStartPhase.Status)
+	require.Equal(t, float64(1), sessionStartPhase.Evidence["hook_count"])
+	require.Equal(t, float64(1), sessionStartPhase.Evidence["executed_count"])
+	require.Equal(t, "ok", sessionStartPhase.Evidence["hook_status"])
+	require.Equal(t, float64(1), sessionStartPhase.Evidence["additional_context_count"])
+	require.Equal(t, float64(1), sessionStartPhase.Evidence["watch_path_count"])
 	require.Equal(t, "ready", bootstrapPlanPhaseByName(t, report, "provider_dispatch").Status)
 	require.Equal(t, float64(1), bootstrapPlanPhaseByName(t, report, "load_memory").Evidence["file_count"])
+}
+
+func TestBootstrapPlanReportsSessionStartHookFailureAsWarning(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "hook.sh"), []byte("#!/bin/sh\necho failed >&2\nexit 3\n"), 0o755))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			APIKey:         "secret",
+			PermissionMode: "workspace-write",
+			Hooks: config.HookConfig{
+				SessionStart: []string{"./hook.sh"},
+			},
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.BootstrapPlan([]string{"--json"}))
+	var report bootstrapPlanReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "warn", report.Status)
+	phase := bootstrapPlanPhaseByName(t, report, "run_session_start_hooks")
+	require.Equal(t, "warn", phase.Status)
+	require.Equal(t, float64(1), phase.Evidence["hook_count"])
+	require.Equal(t, float64(1), phase.Evidence["executed_count"])
+	require.Contains(t, phase.Evidence["error"], "hook failed")
 }
 
 func TestBootstrapPlanDegradesOnMalformedConfigFile(t *testing.T) {

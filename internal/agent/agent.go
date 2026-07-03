@@ -22901,7 +22901,7 @@ func (a *App) BootstrapPlan(args []string) error {
 	if err != nil {
 		return err
 	}
-	report := a.buildBootstrapPlanReport()
+	report := a.buildBootstrapPlanReport(context.Background())
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
@@ -22911,7 +22911,7 @@ func (a *App) BootstrapPlan(args []string) error {
 	return nil
 }
 
-func (a *App) buildBootstrapPlanReport() bootstrapPlanReport {
+func (a *App) buildBootstrapPlanReport(ctx context.Context) bootstrapPlanReport {
 	phases := make([]bootstrapPlanPhase, 0, 10)
 	addPhase := func(name string, status string, required bool, description string, evidence map[string]any) {
 		phases = append(phases, bootstrapPlanPhase{
@@ -23025,14 +23025,8 @@ func (a *App) buildBootstrapPlanReport() bootstrapPlanReport {
 	}
 	addPhase("open_session_store", sessionStatus, true, "Open the JSONL session store for resume, append, and history operations.", sessionEvidence)
 
-	sessionStartHookCount := bootstrapHookCount(runtimeHooks, "session_start")
-	sessionStartStatus := "skipped"
-	if sessionStartHookCount > 0 {
-		sessionStartStatus = "planned"
-	}
-	addPhase("run_session_start_hooks", sessionStartStatus, false, "Run configured session-start hooks when a session is created or resumed.", map[string]any{
-		"hook_count": sessionStartHookCount,
-	})
+	sessionStartStatus, sessionStartEvidence := a.bootstrapSessionStartHookPhase(ctx, runtimeHooks)
+	addPhase("run_session_start_hooks", sessionStartStatus, false, "Run configured session-start hooks when a session is created or resumed.", sessionStartEvidence)
 
 	authConfigured := a.Config.APIKey != "" || a.Config.AuthToken != ""
 	dispatchStatus := "ready"
@@ -23061,6 +23055,47 @@ func (a *App) buildBootstrapPlanReport() bootstrapPlanReport {
 		report.Message = "startup plan has warnings"
 	}
 	return report
+}
+
+func (a *App) bootstrapSessionStartHookPhase(ctx context.Context, runtimeHooks config.HookConfig) (string, map[string]any) {
+	hookCount := bootstrapHookCount(runtimeHooks, "session_start")
+	evidence := map[string]any{
+		"hook_count": hookCount,
+	}
+	if hookCount == 0 {
+		return "skipped", evidence
+	}
+	input, err := json.Marshal(map[string]any{
+		"hook_event_name": "SessionStart",
+		"source":          "bootstrap_plan",
+		"cwd":             a.Workspace,
+		"permission_mode": a.Config.PermissionMode,
+		"model":           a.Config.Model,
+	})
+	if err != nil {
+		evidence["error"] = err.Error()
+		return "warn", evidence
+	}
+	runner := a.lifecycleHookRunner()
+	runner.Config = runtimeHooks
+	runner.Disabled = false
+	report, err := runner.SessionStartReport(ctx, string(input))
+	evidence["hook_status"] = report.Status
+	evidence["executed_count"] = len(report.Results)
+	evidence["denied"] = report.Denied
+	output := hooks.SessionStartOutputFromReport(report)
+	evidence["additional_context_count"] = len(output.AdditionalContexts)
+	evidence["initial_message_count"] = len(output.InitialMessages)
+	evidence["watch_path_count"] = len(output.WatchPaths)
+	evidence["report"] = report
+	if err != nil {
+		evidence["error"] = err.Error()
+		return "warn", evidence
+	}
+	if report.Status != "ok" {
+		return "warn", evidence
+	}
+	return "ready", evidence
 }
 
 func bootstrapPlanStatus(phases []bootstrapPlanPhase) string {
