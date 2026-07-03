@@ -15,6 +15,16 @@ type Result struct {
 	Prompt    string
 }
 
+// Preview captures a deterministic TUI model state for tests and parity
+// harnesses without taking over the terminal.
+type Preview struct {
+	View      string
+	Value     string
+	Matches   []string
+	Submitted bool
+	Prompt    string
+}
+
 type model struct {
 	textarea   textarea.Model
 	result     Result
@@ -44,6 +54,41 @@ func PromptWithCandidates(candidates []string) (Result, error) {
 		return done.result, nil
 	}
 	return Result{}, nil
+}
+
+// PreviewWithCandidates renders the Bubble Tea prompt model after applying
+// optional input, window sizing, tab completion, and submission.
+func PreviewWithCandidates(input string, candidates []string, width int, height int, complete bool, submit bool) Preview {
+	ta := textarea.New()
+	ta.Placeholder = "Ask Codog to work on this repository..."
+	ta.Focus()
+	ta.SetWidth(80)
+	ta.SetHeight(8)
+	ta.CharLimit = 16000
+	ta.SetValue(input)
+	m := model{textarea: ta, candidates: candidates}
+	if width > 0 || height > 0 {
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	if complete {
+		m = m.completeSlashCommand()
+	}
+	if submit {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+		if next, ok := updated.(model); ok {
+			m = next
+		}
+	}
+	return Preview{
+		View:      m.View(),
+		Value:     m.textarea.Value(),
+		Matches:   append([]string(nil), m.matches...),
+		Submitted: m.result.Submitted,
+		Prompt:    m.result.Prompt,
+	}
 }
 
 func (m model) Init() tea.Cmd {

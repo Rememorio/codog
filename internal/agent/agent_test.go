@@ -2509,7 +2509,14 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.GreaterOrEqual(t, report.Total, 12)
 	require.NotEmpty(t, report.Scenarios)
 	require.NotEmpty(t, report.Coverage)
+	require.NotEmpty(t, report.CapabilityCoverage)
 	require.Equal(t, report.Total, mockParityCoverageTotal(report.Coverage))
+	fileToolsCapability := findMockParityCapability(t, report.CapabilityCoverage, "file tools")
+	require.Equal(t, "passing", fileToolsCapability.Status)
+	require.Contains(t, fileToolsCapability.CoveredRefs, "File tools")
+	tuiCapability := findMockParityCapability(t, report.CapabilityCoverage, "TUI and interactive rendering")
+	require.Equal(t, "passing", tuiCapability.Status)
+	require.Contains(t, tuiCapability.Scenarios, "tui_prompt_completion_roundtrip")
 	readFile := findMockParityScenario(t, report, "read_file_roundtrip")
 	require.Equal(t, "file-tools", readFile.Category)
 	require.NotEmpty(t, readFile.Description)
@@ -2537,6 +2544,10 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 		ScenarioCount: 1,
 		RequestCount:  1,
 		Coverage:      []harness.CategoryReport{{Category: "baseline", OK: true, Passed: 1, Total: 1, Scenarios: []string{"streaming_text"}}},
+		CapabilityCoverage: []harness.CapabilityCoverage{
+			{Capability: "one-shot prompt and streaming", Status: "passing", Scenarios: []string{"streaming_text"}},
+			{Capability: "TUI and interactive rendering", Status: "passing", Scenarios: []string{"tui_prompt_completion_roundtrip"}},
+		},
 		ToolCalls:     2,
 		MessageCount:  3,
 		UsageSummary:  usage.Summary{TotalTokens: 42},
@@ -2547,6 +2558,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Contains(t, text.String(), "Schema        "+harness.ReportSchemaVersion)
 	require.Contains(t, text.String(), "1/1 passed")
 	require.Contains(t, text.String(), "Coverage      1 categories")
+	require.Contains(t, text.String(), "Capabilities  2/2 passing")
 	require.Contains(t, text.String(), "Requests      1")
 	require.Contains(t, text.String(), "streaming_text [baseline] - Validates streamed text.: ok")
 
@@ -2559,6 +2571,9 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &manifest))
 	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
 	require.Equal(t, report.Total, manifest.ScenarioCount)
+	require.NotEmpty(t, manifest.CapabilityCoverage)
+	require.Equal(t, "mapped", findMockParityCapability(t, manifest.CapabilityCoverage, "file tools").Status)
+	require.Equal(t, "mapped", findMockParityCapability(t, manifest.CapabilityCoverage, "TUI and interactive rendering").Status)
 	require.Equal(t, "read_file_roundtrip", findMockParityManifestScenario(t, manifest, "read_file_roundtrip").Name)
 	manifestData, err := os.ReadFile(manifestPath)
 	require.NoError(t, err)
@@ -2571,11 +2586,16 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 		SchemaVersion: harness.ManifestSchemaVersion,
 		ScenarioCount: 1,
 		Categories:    []harness.ManifestCategory{{Category: "baseline", Count: 1, Scenarios: []string{"streaming_text"}}},
-		Scenarios:     []harness.ManifestScenario{{Name: "streaming_text", Category: "baseline", Description: "Validates streamed text."}},
+		CapabilityCoverage: []harness.CapabilityCoverage{
+			{Capability: "one-shot prompt and streaming", Status: "mapped", Scenarios: []string{"streaming_text"}},
+			{Capability: "TUI and interactive rendering", Status: "mapped", Scenarios: []string{"tui_prompt_completion_roundtrip"}},
+		},
+		Scenarios: []harness.ManifestScenario{{Name: "streaming_text", Category: "baseline", Description: "Validates streamed text."}},
 	})
 	require.Contains(t, text.String(), "Mock Parity Manifest")
 	require.Contains(t, text.String(), "Schema        "+harness.ManifestSchemaVersion)
 	require.Contains(t, text.String(), "Scenarios     1")
+	require.Contains(t, text.String(), "Capabilities  2/2 mapped")
 	require.Contains(t, text.String(), "streaming_text [baseline] - Validates streamed text.")
 
 	out, err = captureStdout(t, func() error {
@@ -2592,6 +2612,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Contains(t, help.OutputFields, "request_count")
 	require.Contains(t, help.OutputFields, "scenario_count")
 	require.Contains(t, help.OutputFields, "coverage")
+	require.Contains(t, help.OutputFields, "capability_coverage")
 	require.NotNil(t, help.RequiresProviderRequest)
 	require.False(t, *help.RequiresProviderRequest)
 	require.True(t, commandAcceptsGlobalOutputFormat("mock-parity"))
@@ -2659,6 +2680,17 @@ func findMockParityManifestScenario(t *testing.T, manifest harness.Manifest, nam
 	}
 	t.Fatalf("missing mock parity manifest scenario %q in %#v", name, manifest.Scenarios)
 	return harness.ManifestScenario{}
+}
+
+func findMockParityCapability(t *testing.T, coverage []harness.CapabilityCoverage, capability string) harness.CapabilityCoverage {
+	t.Helper()
+	for _, item := range coverage {
+		if item.Capability == capability {
+			return item
+		}
+	}
+	t.Fatalf("missing mock parity capability %q in %#v", capability, coverage)
+	return harness.CapabilityCoverage{}
 }
 
 func TestParseMockParityReportPath(t *testing.T) {

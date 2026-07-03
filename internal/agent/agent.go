@@ -48169,6 +48169,10 @@ func renderMockParityManifestText(out io.Writer, manifest harness.Manifest) {
 	}
 	fmt.Fprintf(out, "  Scenarios     %d\n", manifest.ScenarioCount)
 	fmt.Fprintf(out, "  Categories    %d\n", len(manifest.Categories))
+	if len(manifest.CapabilityCoverage) > 0 {
+		mapped, total := mockParityCapabilityCounts(manifest.CapabilityCoverage, "mapped")
+		fmt.Fprintf(out, "  Capabilities  %d/%d mapped\n", mapped, total)
+	}
 	if len(manifest.Scenarios) == 0 {
 		return
 	}
@@ -48199,6 +48203,10 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 	if len(report.Coverage) > 0 {
 		fmt.Fprintf(out, "  Coverage      %d categories\n", len(report.Coverage))
 	}
+	if len(report.CapabilityCoverage) > 0 {
+		passing, total := mockParityCapabilityCounts(report.CapabilityCoverage, "passing")
+		fmt.Fprintf(out, "  Capabilities  %d/%d passing\n", passing, total)
+	}
 	fmt.Fprintf(out, "  Requests      %d\n", report.RequestCount)
 	fmt.Fprintf(out, "  Tool calls    %d\n", report.ToolCalls)
 	fmt.Fprintf(out, "  Messages      %d\n", report.MessageCount)
@@ -48226,6 +48234,16 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 			fmt.Fprintf(out, "    - %s: %s\n", label, caseStatus)
 		}
 	}
+}
+
+func mockParityCapabilityCounts(coverage []harness.CapabilityCoverage, passingStatus string) (int, int) {
+	count := 0
+	for _, item := range coverage {
+		if strings.EqualFold(item.Status, passingStatus) {
+			count++
+		}
+	}
+	return count, len(coverage)
 }
 
 func parseMockLimitsArgs(args []string) (mockLimitsRequest, error) {
@@ -51971,7 +51989,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"mock-parity",
 			"codog mock-parity [run|check|manifest] [--report PATH] [--output-format text|json]",
 			"Mock Parity\n\nUsage:\n  codog mock-parity [run|check|manifest] [--report PATH] [--output-format text|json]\n  codog parity [same flags]\n  codog self-test [same flags]\n\nRuns the deterministic mock provider parity harness against the local agent loop. It exercises streaming, tool calls, permission prompts, plugin tools, auto-compaction, and usage/cost accounting without contacting a real provider. Use `manifest` to print scenario metadata without running the harness. Set MOCK_PARITY_REPORT_PATH or pass --report to write the machine-readable report to disk.\n",
-			[]string{"schema_version", "ok", "passed", "total", "scenario_count", "request_count", "coverage", "scenarios", "usage_summary", "estimated_cost"},
+			[]string{"schema_version", "ok", "passed", "total", "scenario_count", "request_count", "coverage", "capability_coverage", "scenarios", "usage_summary", "estimated_cost"},
 			[]string{"ok", "error"},
 			false,
 		)

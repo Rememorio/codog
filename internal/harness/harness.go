@@ -41,6 +41,7 @@ import (
 	"github.com/Rememorio/codog/internal/skills"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/tui"
 	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
 )
@@ -53,29 +54,31 @@ const ManifestSchemaVersion = "codog.mock_parity_manifest.v1"
 
 // Report summarizes one deterministic mock parity harness run.
 type Report struct {
-	SchemaVersion string           `json:"schema_version"`
-	OK            bool             `json:"ok"`
-	Passed        int              `json:"passed"`
-	Total         int              `json:"total"`
-	ScenarioCount int              `json:"scenario_count"`
-	RequestCount  int              `json:"request_count"`
-	Coverage      []CategoryReport `json:"coverage"`
-	Workspace     string           `json:"workspace"`
-	Output        string           `json:"output"`
-	Iterations    int              `json:"iterations"`
-	MessageCount  int              `json:"message_count"`
-	ToolCalls     int              `json:"tool_calls"`
-	UsageSummary  usage.Summary    `json:"usage_summary"`
-	EstimatedCost float64          `json:"estimated_cost"`
-	Scenarios     []ScenarioReport `json:"scenarios"`
+	SchemaVersion      string               `json:"schema_version"`
+	OK                 bool                 `json:"ok"`
+	Passed             int                  `json:"passed"`
+	Total              int                  `json:"total"`
+	ScenarioCount      int                  `json:"scenario_count"`
+	RequestCount       int                  `json:"request_count"`
+	Coverage           []CategoryReport     `json:"coverage"`
+	CapabilityCoverage []CapabilityCoverage `json:"capability_coverage"`
+	Workspace          string               `json:"workspace"`
+	Output             string               `json:"output"`
+	Iterations         int                  `json:"iterations"`
+	MessageCount       int                  `json:"message_count"`
+	ToolCalls          int                  `json:"tool_calls"`
+	UsageSummary       usage.Summary        `json:"usage_summary"`
+	EstimatedCost      float64              `json:"estimated_cost"`
+	Scenarios          []ScenarioReport     `json:"scenarios"`
 }
 
 // Manifest lists the deterministic mock parity scenarios without running them.
 type Manifest struct {
-	SchemaVersion string             `json:"schema_version"`
-	ScenarioCount int                `json:"scenario_count"`
-	Categories    []ManifestCategory `json:"categories"`
-	Scenarios     []ManifestScenario `json:"scenarios"`
+	SchemaVersion      string               `json:"schema_version"`
+	ScenarioCount      int                  `json:"scenario_count"`
+	Categories         []ManifestCategory   `json:"categories"`
+	CapabilityCoverage []CapabilityCoverage `json:"capability_coverage"`
+	Scenarios          []ManifestScenario   `json:"scenarios"`
 }
 
 // ManifestCategory summarizes scenarios by behavioral category.
@@ -91,6 +94,16 @@ type ManifestScenario struct {
 	Category    string   `json:"category"`
 	Description string   `json:"description"`
 	ParityRefs  []string `json:"parity_refs"`
+}
+
+// CapabilityCoverage maps the harness scenarios back to the Claude-Code-style
+// capability surfaces the project is trying to prove.
+type CapabilityCoverage struct {
+	Capability   string   `json:"capability"`
+	Status       string   `json:"status"`
+	RequiredRefs []string `json:"required_refs"`
+	CoveredRefs  []string `json:"covered_refs"`
+	Scenarios    []string `json:"scenarios"`
 }
 
 // CategoryReport summarizes mock parity results for one behavioral category.
@@ -187,6 +200,7 @@ var scenarioOrder = []string{
 	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
+	"tui_prompt_completion_roundtrip",
 	"config_precedence_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -219,10 +233,11 @@ func ScenarioManifest() Manifest {
 		})
 	}
 	return Manifest{
-		SchemaVersion: ManifestSchemaVersion,
-		ScenarioCount: len(scenarios),
-		Categories:    manifestCategories(scenarios),
-		Scenarios:     scenarios,
+		SchemaVersion:      ManifestSchemaVersion,
+		ScenarioCount:      len(scenarios),
+		Categories:         manifestCategories(scenarios),
+		CapabilityCoverage: capabilityCoverageForManifest(scenarios),
+		Scenarios:          scenarios,
 	}
 }
 
@@ -711,6 +726,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		commandSkillTemplateScenario(),
+		tuiPromptCompletionScenario(),
 		configPrecedenceScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
@@ -811,6 +827,7 @@ func Run(ctx context.Context) (Report, error) {
 	}
 	report.OK = report.Passed == report.Total
 	report.Coverage = categoryCoverage(report.Scenarios)
+	report.CapabilityCoverage = capabilityCoverageForReport(report.Scenarios)
 	return report, nil
 }
 
@@ -1088,6 +1105,133 @@ func manifestCategories(scenarios []ManifestScenario) []ManifestCategory {
 	return out
 }
 
+type capabilityTarget struct {
+	Capability   string
+	RequiredRefs []string
+}
+
+var capabilityTargets = []capabilityTarget{
+	{Capability: "one-shot prompt and streaming", RequiredRefs: []string{"Anthropic streaming", "Tool result roundtrip"}},
+	{Capability: "file tools", RequiredRefs: []string{"File tools", "Edit tool", "Grep chunk assembly", "Glob tool", "MultiEdit tool", "ApplyPatch tool"}},
+	{Capability: "bash and shell safety", RequiredRefs: []string{"Bash tool", "Permission prompts", "Output truncation"}},
+	{Capability: "permissions and sandbox", RequiredRefs: []string{"Permission enforcement", "Workspace-write permissions", "Sandbox", "Permission safety"}},
+	{Capability: "sessions and resume", RequiredRefs: []string{"Session JSONL", "Resume", "Session context management"}},
+	{Capability: "slash commands and custom workflows", RequiredRefs: []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"}},
+	{Capability: "hooks", RequiredRefs: []string{"Hooks", "PreToolUse", "PostToolUse hooks", "UserPromptSubmit", "Stop"}},
+	{Capability: "configuration and provider routing", RequiredRefs: []string{"Configuration", "Precedence rules", "Provider routing", "OpenAI-compatible APIs"}},
+	{Capability: "MCP client and auth", RequiredRefs: []string{"MCP client", "MCP lifecycle", "MCP tool calls", "MCP auth", "OAuth refresh"}},
+	{Capability: "token, cost, and compaction", RequiredRefs: []string{"Token usage", "Cost tracking", "Auto-compaction"}},
+	{Capability: "IDE bridge and remote control", RequiredRefs: []string{"IDE bridge", "ACP/Zed", "Remote sessions", "Control API listener"}},
+	{Capability: "multi-agent and background tasks", RequiredRefs: []string{"Background tasks", "Agent runs", "Lane board", "Supervisor restarts"}},
+	{Capability: "notebook and code intelligence", RequiredRefs: []string{"Notebook read", "Notebook edit", "LSP tool", "Code intelligence"}},
+	{Capability: "OAuth and account lifecycle", RequiredRefs: []string{"OAuth refresh", "Token redaction", "MCP auth"}},
+	{Capability: "enterprise policy and updater", RequiredRefs: []string{"Enterprise policy", "Audit events", "Signed updater"}},
+	{Capability: "plugins and marketplace", RequiredRefs: []string{"Plugin tools", "Plugin lifecycle", "Plugin manifest loading", "External plugin lifecycle"}},
+	{Capability: "TUI and interactive rendering", RequiredRefs: []string{"Bubble Tea TUI", "Interactive rendering"}},
+}
+
+func capabilityCoverageForManifest(scenarios []ManifestScenario) []CapabilityCoverage {
+	refsByScenario := make([]scenarioRefs, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		refsByScenario = append(refsByScenario, scenarioRefs{
+			Name:       scenario.Name,
+			ParityRefs: scenario.ParityRefs,
+			OK:         true,
+			Ran:        true,
+		})
+	}
+	return buildCapabilityCoverage(refsByScenario, true)
+}
+
+func capabilityCoverageForReport(scenarios []ScenarioReport) []CapabilityCoverage {
+	refsByScenario := make([]scenarioRefs, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		refsByScenario = append(refsByScenario, scenarioRefs{
+			Name:       scenario.Name,
+			ParityRefs: scenario.ParityRefs,
+			OK:         scenario.OK,
+			Ran:        true,
+		})
+	}
+	return buildCapabilityCoverage(refsByScenario, false)
+}
+
+type scenarioRefs struct {
+	Name       string
+	ParityRefs []string
+	OK         bool
+	Ran        bool
+}
+
+func buildCapabilityCoverage(scenarios []scenarioRefs, manifestOnly bool) []CapabilityCoverage {
+	out := make([]CapabilityCoverage, 0, len(capabilityTargets))
+	for _, target := range capabilityTargets {
+		matchedScenarios := map[string]bool{}
+		coveredRefs := map[string]bool{}
+		failing := false
+		passing := false
+		for _, scenario := range scenarios {
+			matchedRefs := matchingRequiredRefs(target.RequiredRefs, scenario.ParityRefs)
+			if len(matchedRefs) == 0 {
+				continue
+			}
+			matchedScenarios[scenario.Name] = true
+			for _, ref := range matchedRefs {
+				coveredRefs[ref] = true
+			}
+			if scenario.OK {
+				passing = true
+			} else if scenario.Ran {
+				failing = true
+			}
+		}
+		status := "missing"
+		switch {
+		case manifestOnly && len(matchedScenarios) > 0:
+			status = "mapped"
+		case failing && passing:
+			status = "partial"
+		case failing:
+			status = "failing"
+		case passing:
+			status = "passing"
+		}
+		out = append(out, CapabilityCoverage{
+			Capability:   target.Capability,
+			Status:       status,
+			RequiredRefs: append([]string(nil), target.RequiredRefs...),
+			CoveredRefs:  sortedKeys(coveredRefs),
+			Scenarios:    sortedKeys(matchedScenarios),
+		})
+	}
+	return out
+}
+
+func matchingRequiredRefs(required []string, actual []string) []string {
+	actualSet := map[string]bool{}
+	for _, ref := range actual {
+		actualSet[strings.ToLower(strings.TrimSpace(ref))] = true
+	}
+	matches := []string{}
+	for _, ref := range required {
+		if actualSet[strings.ToLower(strings.TrimSpace(ref))] {
+			matches = append(matches, ref)
+		}
+	}
+	return matches
+}
+
+func sortedKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 type scenarioMetadata struct {
 	Category    string
 	Description string
@@ -1205,6 +1349,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "command-workflows",
 		Description: "Discovers and renders project slash commands, skills, and prompt templates without contacting a provider.",
 		ParityRefs:  []string{"Slash commands", "Skills", "Templates", "Project workflow surfaces"},
+	},
+	"tui_prompt_completion_roundtrip": {
+		Category:    "interactive-ui",
+		Description: "Renders the Bubble Tea prompt model, completes a slash command, and captures Ctrl+S submission state without a live terminal.",
+		ParityRefs:  []string{"Bubble Tea TUI", "Interactive rendering", "Slash commands"},
 	},
 	"auto_compact_triggered": {
 		Category:    "session-compaction",
@@ -1820,6 +1969,52 @@ Review skill body for $TARGET during ${CLAUDE_SESSION_ID}.`
 				Output:       string(data),
 				FinalMessage: "command skill template harness ok",
 				RequestCount: 3,
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func tuiPromptCompletionScenario() scenario {
+	return scenario{
+		name: "tui_prompt_completion_roundtrip",
+		runLocal: func(_ context.Context, _ string) (localScenarioResult, error) {
+			multiple := tui.PreviewWithCandidates("/m", []string{"/memory list", "/model claude-test"}, 96, 24, true, false)
+			for _, expected := range []string{"Codog TUI", "Ctrl+S submit", "/memory list", "/model claude-test"} {
+				if !strings.Contains(multiple.View, expected) {
+					return localScenarioResult{}, fmt.Errorf("TUI preview missing %s", expected)
+				}
+			}
+			if len(multiple.Matches) != 2 {
+				return localScenarioResult{}, fmt.Errorf("expected 2 TUI completion matches, got %d", len(multiple.Matches))
+			}
+
+			submitted := tui.PreviewWithCandidates("/mo", []string{"/model claude-test"}, 96, 24, true, true)
+			if !submitted.Submitted {
+				return localScenarioResult{}, fmt.Errorf("TUI prompt was not submitted")
+			}
+			if submitted.Prompt != "/model claude-test" {
+				return localScenarioResult{}, fmt.Errorf("unexpected submitted prompt %q", submitted.Prompt)
+			}
+			if submitted.Value != "/model claude-test " {
+				return localScenarioResult{}, fmt.Errorf("unexpected completed prompt value %q", submitted.Value)
+			}
+
+			report := map[string]any{
+				"kind":             "tui_prompt_completion",
+				"matches":          multiple.Matches,
+				"submitted":        submitted.Submitted,
+				"submitted_prompt": submitted.Prompt,
+				"view_contains":    []string{"Codog TUI", "Ctrl+S submit"},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "tui prompt completion harness ok",
+				RequestCount: 1,
 				MessageCount: 1,
 			}, nil
 		},

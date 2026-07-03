@@ -55,3 +55,23 @@ func TestCompleteSlashCommandMatchesAfterTrailingSpace(t *testing.T) {
 	m = m.completeSlashCommand()
 	require.Equal(t, "/model claude-test ", m.textarea.Value())
 }
+
+func TestPreviewWithCandidatesCompletesAndSubmits(t *testing.T) {
+	preview := PreviewWithCandidates("/mo", []string{"/model claude-test"}, 100, 24, true, true)
+
+	require.Contains(t, preview.View, "Codog TUI")
+	require.Contains(t, preview.View, "Ctrl+S submit")
+	require.Equal(t, "/model claude-test", preview.Prompt)
+	require.Equal(t, "/model claude-test ", preview.Value)
+	require.True(t, preview.Submitted)
+	require.Empty(t, preview.Matches)
+}
+
+func TestPreviewWithCandidatesRendersMultipleMatches(t *testing.T) {
+	preview := PreviewWithCandidates("/m", []string{"/model claude-test", "/memory list"}, 90, 20, true, false)
+
+	require.Contains(t, preview.View, "/memory list")
+	require.Contains(t, preview.View, "/model claude-test")
+	require.ElementsMatch(t, []string{"/model claude-test", "/memory list"}, preview.Matches)
+	require.False(t, preview.Submitted)
+}
