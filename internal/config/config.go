@@ -340,6 +340,7 @@ func parseMCPEnv(data json.RawMessage) ([]string, error) {
 }
 
 type SandboxConfig struct {
+	Strategy              string   `json:"-"`
 	Enabled               *bool    `json:"enabled,omitempty"`
 	NamespaceRestrictions *bool    `json:"namespace_restrictions,omitempty"`
 	NetworkIsolation      *bool    `json:"network_isolation,omitempty"`
@@ -400,6 +401,9 @@ func (s *SandboxConfig) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	if err := readBoolAlias(&parsed.Enabled, "enabled"); err != nil {
+		return err
+	}
+	if err := readStringAlias(&parsed.Strategy, "strategy"); err != nil {
 		return err
 	}
 	if err := readBoolAlias(&parsed.NamespaceRestrictions, "namespaceRestrictions", "namespace_restrictions"); err != nil {
@@ -617,6 +621,13 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if sandboxConfigSet(aliases.Sandbox) {
 		mergeSandboxConfig(&parsed.Future.Sandbox, aliases.Sandbox)
+	}
+	if strings.TrimSpace(parsed.Future.Sandbox.Strategy) != "" && parsed.Future.SandboxStrategy == "" {
+		parsed.Future.SandboxStrategy = parsed.Future.Sandbox.Strategy
+	}
+	parsed.Future.Sandbox.Strategy = ""
+	if strings.TrimSpace(aliases.Sandbox.Strategy) != "" {
+		parsed.Future.SandboxStrategy = aliases.Sandbox.Strategy
 	}
 	*c = Config(parsed)
 	return nil
@@ -1590,7 +1601,8 @@ func futureConfigSet(cfg FutureConfig) bool {
 }
 
 func sandboxConfigSet(cfg SandboxConfig) bool {
-	return cfg.Enabled != nil ||
+	return cfg.Strategy != "" ||
+		cfg.Enabled != nil ||
 		cfg.NamespaceRestrictions != nil ||
 		cfg.NetworkIsolation != nil ||
 		cfg.FilesystemMode != "" ||

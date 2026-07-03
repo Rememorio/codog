@@ -3313,7 +3313,7 @@ func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {
 	configHome := t.TempDir()
 	require.NoError(t, os.MkdirAll(configHome, 0o755))
 	configPath := filepath.Join(configHome, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"old-model","api_key":"secret","future":{"sandbox_strategy":"detect"}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"old-model","api_key":"secret","sandbox":{"strategy":"detect"}}`), 0o644))
 	tool := ConfigTool{Workspace: workspace, ConfigHome: configHome}
 
 	getOut, err := tool.Execute(context.Background(), []byte(`{"setting":"model"}`))
@@ -3326,7 +3326,7 @@ func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {
 	require.Contains(t, secretOut, `[redacted]`)
 	require.NotContains(t, secretOut, `secret`)
 
-	setOut, err := tool.Execute(context.Background(), []byte(`{"setting":"future.sandbox_strategy","value":"sandbox-exec"}`))
+	setOut, err := tool.Execute(context.Background(), []byte(`{"setting":"sandbox.strategy","value":"sandbox-exec"}`))
 	require.NoError(t, err)
 	require.Contains(t, setOut, `"operation": "set"`)
 	require.Contains(t, setOut, `"previous_value": "detect"`)
@@ -3334,7 +3334,7 @@ func TestConfigToolGetsAndSetsUserConfig(t *testing.T) {
 
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"sandbox_strategy": "sandbox-exec"`)
+	require.Contains(t, string(data), `"strategy": "sandbox-exec"`)
 }
 
 func TestTaskToolsManageBackgroundTasks(t *testing.T) {

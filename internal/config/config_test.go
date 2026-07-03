@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Rememorio/codog/internal/modelrouting"
@@ -1847,6 +1848,9 @@ func TestLoadSandboxConfigAliases(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"sandbox": {
+			"strategy": "sandbox-exec"
+		},
 		"future": {
 			"sandbox": {
 				"enabled": true,
@@ -1860,6 +1864,7 @@ func TestLoadSandboxConfigAliases(t *testing.T) {
 
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
+	require.Equal(t, "sandbox-exec", cfg.Future.SandboxStrategy)
 	require.NotNil(t, cfg.Future.Sandbox.Enabled)
 	require.True(t, *cfg.Future.Sandbox.Enabled)
 	require.NotNil(t, cfg.Future.Sandbox.NamespaceRestrictions)
@@ -1868,6 +1873,36 @@ func TestLoadSandboxConfigAliases(t *testing.T) {
 	require.True(t, *cfg.Future.Sandbox.NetworkIsolation)
 	require.Equal(t, "allow-list", cfg.Future.Sandbox.FilesystemMode)
 	require.Equal(t, []string{"logs", "tmp/cache"}, cfg.Future.Sandbox.AllowedMounts)
+}
+
+func TestLoadSandboxStrategyCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name     string
+		body     string
+		expected string
+	}{
+		{name: "legacy future strategy", body: `{"future":{"sandbox_strategy":"detect"}}`, expected: "detect"},
+		{name: "nested future sandbox strategy", body: `{"future":{"sandbox":{"strategy":"bwrap"}}}`, expected: "bwrap"},
+		{
+			name: "top level sandbox strategy wins",
+			body: `{
+				"future": {"sandbox_strategy": "detect"},
+				"sandbox": {"strategy": "restricted-token"}
+			}`,
+			expected: "restricted-token",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, cfg.Future.SandboxStrategy)
+		})
+	}
 }
 
 func TestLoadRejectsInvalidSandboxFilesystemMode(t *testing.T) {
@@ -1901,7 +1936,7 @@ func TestLoadProjectLocalOverridesSharedConfig(t *testing.T) {
 func TestSetAndUnsetFileValue(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"old","future":{"sandbox_strategy":"detect"}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"model":"old","sandbox":{"strategy":"detect"}}`), 0o644))
 
 	report, err := SetFileValue(configPath, "model", "new-model")
 	require.NoError(t, err)
@@ -1910,7 +1945,7 @@ func TestSetAndUnsetFileValue(t *testing.T) {
 	report, err = SetFileValue(configPath, "rate_limit.max_retries", float64(4))
 	require.NoError(t, err)
 	require.Equal(t, "rate_limit.max_retries", report.Key)
-	report, err = UnsetFileValue(configPath, "future.sandbox_strategy")
+	report, err = UnsetFileValue(configPath, "sandbox.strategy")
 	require.NoError(t, err)
 	require.Equal(t, "unset", report.Action)
 
@@ -1920,7 +1955,7 @@ func TestSetAndUnsetFileValue(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &raw))
 	require.Equal(t, "new-model", raw["model"])
 	require.Equal(t, float64(4), raw["rate_limit"].(map[string]any)["max_retries"])
-	require.NotContains(t, raw, "future")
+	require.NotContains(t, raw, "sandbox")
 
 	report, err = ResetFile(configPath)
 	require.NoError(t, err)

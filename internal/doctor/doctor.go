@@ -1012,7 +1012,7 @@ func checkSandbox(opts Options) Check {
 		if opts.SandboxOK {
 			return Check{Name: "Sandbox", Status: StatusOK, Summary: "Sandbox support is available.", Details: details}
 		}
-		return Check{Name: "Sandbox", Status: StatusWarn, Summary: "No platform sandbox strategy was detected.", Details: details, Hint: "Set future.sandbox_strategy to a supported strategy when isolation is required."}
+		return Check{Name: "Sandbox", Status: StatusWarn, Summary: "No platform sandbox strategy was detected.", Details: details, Hint: "Set sandbox.strategy to a supported strategy when isolation is required."}
 	}
 	status := StatusOK
 	summary := "Sandbox strategy is available."

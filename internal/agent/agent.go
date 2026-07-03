@@ -11777,7 +11777,7 @@ func (a *App) SandboxToggle(args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.sandbox_strategy", req.Strategy); err != nil {
+		if _, err := config.SetFileValue(path, "sandbox.strategy", req.Strategy); err != nil {
 			return err
 		}
 		a.Config.Future.SandboxStrategy = req.Strategy
@@ -11785,6 +11785,9 @@ func (a *App) SandboxToggle(args []string) error {
 	case "clear":
 		path, err := a.preferenceConfigPath(req.Target, req.Path)
 		if err != nil {
+			return err
+		}
+		if _, err := config.UnsetFileValue(path, "sandbox.strategy"); err != nil {
 			return err
 		}
 		if _, err := config.UnsetFileValue(path, "future.sandbox_strategy"); err != nil {
@@ -36267,7 +36270,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "hooks", "interface", "mcp", "model", "permissions", "privacy", "skills"}
+	sections := []string{"auth", "hooks", "interface", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36605,6 +36608,7 @@ var resetSectionKeys = map[string][]string{
 	"rag":         []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
 	"rate-limit":  []string{"rate_limit"},
 	"remote":      []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
+	"sandbox":     []string{"sandbox", "future.sandbox_strategy", "future.sandbox"},
 	"skills":      []string{"enabled_skills"},
 	"voice":       []string{"voice_enabled", "voice_command", "speech_command"},
 }
@@ -36631,6 +36635,7 @@ var resetSectionAliases = map[string]string{
 	"rate_limit":       "rate-limit",
 	"rate-limit":       "rate-limit",
 	"remote":           "remote",
+	"sandbox":          "sandbox",
 	"skills":           "skills",
 	"ui":               "interface",
 	"voice":            "voice",
@@ -36871,6 +36876,9 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.Future.RemoteEnabled = false
 		a.Config.Future.RemoteAuthToken = ""
 		a.Config.Future.RemoteLeaseSeconds = 0
+	case "sandbox":
+		a.Config.Future.SandboxStrategy = ""
+		a.Config.Future.Sandbox = config.SandboxConfig{}
 	case "skills":
 		a.Config.EnabledSkills = nil
 	case "voice":
@@ -36909,6 +36917,8 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
 	case "mcp":
 		return cfg.MCPServers, nil
+	case "sandbox":
+		return map[string]any{"strategy": cfg.Future.SandboxStrategy, "settings": cfg.Future.Sandbox}, nil
 	case "rag", "retrieve-context", "retrieve_context":
 		return map[string]any{
 			"rag_base_url":            cfg.RAGBaseURL,

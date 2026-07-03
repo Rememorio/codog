@@ -8922,7 +8922,7 @@ func (ConfigTool) Definition() anthropic.ToolDefinition {
 			"properties": map[string]any{
 				"setting": map[string]any{
 					"type":        "string",
-					"description": "Dotted config key, such as model, max_tokens, permission_mode, or future.sandbox_strategy.",
+					"description": "Dotted config key, such as model, max_tokens, permission_mode, or sandbox.strategy.",
 				},
 				"value": map[string]any{
 					"description": "When present, sets the setting to this JSON value. When omitted, reads the current user config value.",

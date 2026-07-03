@@ -3331,7 +3331,9 @@ func risky(value any) {
 			"remote_auth_token":      "remote-secret",
 			"remote_enabled":         true,
 			"remote_lease_seconds":   45,
-			"sandbox_strategy":       "detect",
+		},
+		"sandbox": map[string]any{
+			"strategy": "detect",
 		},
 	})
 	require.NoError(t, err)
@@ -12136,7 +12138,8 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.Equal(t, "detect", app.Config.Future.SandboxStrategy)
 	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"sandbox_strategy": "detect"`)
+	require.Contains(t, string(data), `"strategy": "detect"`)
+	require.NotContains(t, string(data), "sandbox_strategy")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/sandbox-toggle off", &session.Session{ID: "session"}))
@@ -12152,7 +12155,8 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.Equal(t, "restricted-token", app.Config.Future.SandboxStrategy)
 	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"sandbox_strategy": "restricted-token"`)
+	require.Contains(t, string(data), `"strategy": "restricted-token"`)
+	require.NotContains(t, string(data), "sandbox_strategy")
 	out.Reset()
 
 	require.NoError(t, app.SandboxToggle([]string{"clear", "--json"}))
@@ -12160,6 +12164,7 @@ func TestSandboxToggleCommandPersistsSettings(t *testing.T) {
 	require.Equal(t, "", app.Config.Future.SandboxStrategy)
 	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
+	require.NotContains(t, string(data), `"sandbox"`)
 	require.NotContains(t, string(data), "sandbox_strategy")
 }
 
@@ -13428,6 +13433,13 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		PermissionMode: "workspace-write",
 		RAGBaseURL:     "http://rag.example.test",
 		RAGTopKMax:     9,
+		Future: config.FutureConfig{
+			SandboxStrategy: "detect",
+			Sandbox: config.SandboxConfig{
+				FilesystemMode: "allow-list",
+				AllowedMounts:  []string{"logs"},
+			},
+		},
 	})
 	var out bytes.Buffer
 
@@ -13458,6 +13470,12 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"rag_base_url": "http://rag.example.test"`)
 	require.Contains(t, out.String(), `"rag_top_k_max": 9`)
 	require.Contains(t, out.String(), `"tool": "retrieve_context"`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "sandbox", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"strategy": "detect"`)
+	require.Contains(t, out.String(), `"filesystem_mode": "allow-list"`)
+	require.Contains(t, out.String(), `"logs"`)
 }
 
 func TestToolRegistryUsesRAGConfig(t *testing.T) {
@@ -13634,6 +13652,27 @@ func TestResetRAGConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), "rag_base_url")
 	require.NotContains(t, string(data), "rag_timeout_seconds")
 	require.NotContains(t, string(data), "rag_top_k_max")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetSandboxConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"sandbox": {"strategy": "detect", "enabled": true},
+		"future": {"sandbox_strategy": "bwrap", "sandbox": {"filesystem_mode": "allow-list"}}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "sandbox", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "sandbox", report.Section)
+	require.ElementsMatch(t, []string{"sandbox", "future.sandbox_strategy", "future.sandbox"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"sandbox"`)
+	require.NotContains(t, string(data), "sandbox_strategy")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 

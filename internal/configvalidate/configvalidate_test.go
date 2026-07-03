@@ -77,6 +77,14 @@ func TestValidateBytesReportsDeprecatedCompatibilityAliases(t *testing.T) {
 	require.Equal(t, "mcp_servers", result.Warnings[1].Replacement)
 }
 
+func TestValidateBytesAcceptsSandboxStrategy(t *testing.T) {
+	result := ValidateBytes([]byte(`{"sandbox":{"strategy":"detect","enabled":true}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
 

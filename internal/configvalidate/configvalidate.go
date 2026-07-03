@@ -138,7 +138,6 @@ var deprecatedTopLevelFields = []deprecatedField{
 	{"disallowedTools", "permission_rules.denied_tools"},
 	{"mcpServers", "mcp_servers"},
 	{"enabledPlugins", "enabled_skills"},
-	{"sandbox", "future.sandbox"},
 }
 
 var permissionRuleFields = []fieldSpec{
@@ -276,6 +275,7 @@ var futureFields = []fieldSpec{
 }
 
 var sandboxFields = []fieldSpec{
+	{"strategy", FieldString},
 	{"enabled", FieldBool},
 	{"namespace_restrictions", FieldBool},
 	{"namespaceRestrictions", FieldBool},
