@@ -33,8 +33,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	}
 	fileTools := findCategory(t, report, "file-tools")
 	require.True(t, fileTools.OK)
-	require.Equal(t, 3, fileTools.Total)
-	require.ElementsMatch(t, []string{"grep_chunk_assembly", "read_file_roundtrip", "write_file_allowed"}, fileTools.Scenarios)
+	require.Equal(t, 4, fileTools.Total)
+	require.ElementsMatch(t, []string{"edit_glob_ls_roundtrip", "grep_chunk_assembly", "read_file_roundtrip", "write_file_allowed"}, fileTools.Scenarios)
 	hooks := findCategory(t, report, "hooks")
 	require.Equal(t, 6, hooks.Total)
 	permissions := findCategory(t, report, "permissions")
@@ -52,6 +52,13 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 2, readFile.Iterations)
 	require.Equal(t, 1, readFile.ToolCalls)
 	require.GreaterOrEqual(t, readFile.MessageCount, 4)
+
+	editGlobLS := findScenario(t, report, "edit_glob_ls_roundtrip")
+	require.True(t, editGlobLS.OK)
+	require.Equal(t, "file-tools", editGlobLS.Category)
+	require.Equal(t, []string{"edit_file", "glob", "ls"}, editGlobLS.ToolUses)
+	require.Equal(t, 3, editGlobLS.ToolCalls)
+	require.Contains(t, editGlobLS.FinalMessage, "edit glob ls harness ok")
 
 	attachments := findScenario(t, report, "prompt_attachments_roundtrip")
 	require.Equal(t, "attachments", attachments.Category)

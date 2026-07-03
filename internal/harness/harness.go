@@ -169,6 +169,7 @@ var scenarioOrder = []string{
 	"file_changed_hook_adds_feedback",
 	"multi_tool_turn_roundtrip",
 	"grep_chunk_assembly",
+	"edit_glob_ls_roundtrip",
 	"bash_stdout_roundtrip",
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
@@ -585,6 +586,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		editGlobLSScenario(),
 		{
 			name:       "bash_stdout_roundtrip",
 			permission: tools.PermissionAllow,
@@ -1160,6 +1162,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Validates grep_search input chunk assembly and result delivery.",
 		ParityRefs:  []string{"File tools", "Grep chunk assembly"},
 	},
+	"edit_glob_ls_roundtrip": {
+		Category:    "file-tools",
+		Description: "Executes edit_file, glob, and ls in one tool turn and verifies the edited workspace file.",
+		ParityRefs:  []string{"File tools", "Edit tool", "Glob tool", "LS tool"},
+	},
 	"bash_stdout_roundtrip": {
 		Category:    "bash",
 		Description: "Runs bash in danger-full-access mode and returns stdout to the model.",
@@ -1524,6 +1531,79 @@ func configPrecedenceScenario() scenario {
 			}
 			if strings.Join(loadedSessionStart, ",") != "echo user,echo project,echo local" {
 				return fmt.Errorf("unexpected loaded hook order: %v", loadedSessionStart)
+			}
+			return nil
+		},
+	}
+}
+
+func editGlobLSScenario() scenario {
+	return scenario{
+		name:       "edit_glob_ls_roundtrip",
+		permission: tools.PermissionWorkspace,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{
+				{
+					ID:    "tool-1",
+					Name:  "edit_file",
+					Input: json.RawMessage(`{"path":"src/app.txt","old_string":"alpha","new_string":"beta"}`),
+				},
+				{
+					ID:    "tool-2",
+					Name:  "glob",
+					Input: json.RawMessage(`{"pattern":"src/*.txt","limit":5}`),
+				},
+				{
+					ID:    "tool-3",
+					Name:  "ls",
+					Input: json.RawMessage(`{"path":"src","limit":5}`),
+				},
+			}},
+			{Text: "edit glob ls harness ok"},
+		},
+		prompt: "edit and inspect files",
+		setup: func(workspace string) error {
+			srcDir := filepath.Join(workspace, "src")
+			if err := os.MkdirAll(srcDir, 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(srcDir, "app.txt"), []byte("alpha\n"), 0o644); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(srcDir, "notes.md"), []byte("notes\n"), 0o644)
+		},
+		verify: func(workspace string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "edit glob ls harness ok") {
+				return fmt.Errorf("missing edit/glob/ls final response")
+			}
+			if err := expectToolCalls(result, 3, false); err != nil {
+				return err
+			}
+			edited, err := os.ReadFile(filepath.Join(workspace, "src", "app.txt"))
+			if err != nil {
+				return err
+			}
+			if string(edited) != "beta\n" {
+				return fmt.Errorf("edit_file did not persist edit, got %q", string(edited))
+			}
+			outputs := map[string]string{}
+			for _, call := range result.ToolCalls {
+				outputs[call.Name] = call.Output
+			}
+			for _, expected := range []string{`"replacements": 1`, `"oldString": "alpha"`, `"newString": "beta"`} {
+				if !strings.Contains(outputs["edit_file"], expected) {
+					return fmt.Errorf("edit_file output missing %s: %s", expected, outputs["edit_file"])
+				}
+			}
+			for _, expected := range []string{`"files":`, `"filenames":`, `"numFiles": 1`, "src/app.txt"} {
+				if !strings.Contains(outputs["glob"], expected) {
+					return fmt.Errorf("glob output missing %s: %s", expected, outputs["glob"])
+				}
+			}
+			for _, expected := range []string{`"kind": "ls"`, `"name": "app.txt"`, `"type": "file"`} {
+				if !strings.Contains(outputs["ls"], expected) {
+					return fmt.Errorf("ls output missing %s: %s", expected, outputs["ls"])
+				}
 			}
 			return nil
 		},
