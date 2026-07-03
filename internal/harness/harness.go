@@ -22,8 +22,10 @@ import (
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/providerdiag"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/tools"
@@ -166,6 +168,7 @@ var scenarioOrder = []string{
 	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
+	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
 	"plugin_lifecycle_roundtrip",
 	"remote_trigger_roundtrip",
@@ -678,6 +681,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		configPrecedenceScenario(),
+		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
 		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
@@ -1166,6 +1170,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Confirms config precedence across file, environment, and runtime overrides.",
 		ParityRefs:  []string{"Configuration", "Precedence rules"},
 	},
+	"provider_routing_roundtrip": {
+		Category:    "provider-routing",
+		Description: "Confirms OpenAI-compatible, Ollama, DashScope, and custom base URL provider routing without contacting external providers.",
+		ParityRefs:  []string{"Provider routing", "OpenAI-compatible APIs", "Ollama", "DashScope", "Custom base URLs"},
+	},
 	"session_resume_jsonl_roundtrip": {
 		Category:    "session-resume",
 		Description: "Loads previous JSONL session messages and sends them with the resumed prompt.",
@@ -1410,6 +1419,225 @@ func configPrecedenceScenario() scenario {
 			}
 			return nil
 		},
+	}
+}
+
+func providerRoutingScenario() scenario {
+	type routingCase struct {
+		Name           string `json:"name"`
+		Model          string `json:"model"`
+		Provider       string `json:"provider"`
+		ProviderSource string `json:"provider_source,omitempty"`
+		BaseURL        string `json:"base_url"`
+		WireModel      string `json:"wire_model"`
+		AuthSource     string `json:"auth_source"`
+		AuthOptional   bool   `json:"auth_optional,omitempty"`
+	}
+
+	return scenario{
+		name: "provider_routing_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			cleanup, err := isolateProviderEnv(map[string]string{
+				"ANTHROPIC_API_KEY": "anthropic-secret",
+				"OPENAI_API_KEY":    "openai-secret",
+				"DASHSCOPE_API_KEY": "dashscope-secret",
+			})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			defer cleanup()
+
+			missingConfig := filepath.Join(workspace, "missing.json")
+			cases := []routingCase{}
+			for _, item := range []struct {
+				name     string
+				env      map[string]string
+				override config.FlagOverrides
+				want     routingCase
+			}{
+				{
+					name: "openai-prefixed-model",
+					override: config.FlagOverrides{
+						ConfigPath: missingConfig,
+						Model:      "openai/gpt-4.1-mini",
+					},
+					want: routingCase{
+						Name:       "openai-prefixed-model",
+						Model:      "openai/gpt-4.1-mini",
+						Provider:   modelrouting.ProviderOpenAI,
+						BaseURL:    modelrouting.DefaultOpenAIBaseURL,
+						WireModel:  "gpt-4.1-mini",
+						AuthSource: "api_key",
+					},
+				},
+				{
+					name: "ollama-host-bare-local-model",
+					env: map[string]string{
+						"OLLAMA_HOST": "http://127.0.0.1:11434",
+					},
+					override: config.FlagOverrides{
+						ConfigPath: missingConfig,
+						Model:      "qwen2.5-coder:7b",
+					},
+					want: routingCase{
+						Name:           "ollama-host-bare-local-model",
+						Model:          "qwen2.5-coder:7b",
+						Provider:       modelrouting.ProviderOpenAI,
+						ProviderSource: "OLLAMA_HOST",
+						BaseURL:        "http://127.0.0.1:11434/v1",
+						WireModel:      "qwen2.5-coder:7b",
+						AuthSource:     "OLLAMA_HOST",
+						AuthOptional:   true,
+					},
+				},
+				{
+					name: "openai-compatible-custom-base-url",
+					env: map[string]string{
+						"OPENAI_BASE_URL": "http://127.0.0.1:8080/v1",
+					},
+					override: config.FlagOverrides{
+						ConfigPath: missingConfig,
+						Model:      "llama3.2",
+					},
+					want: routingCase{
+						Name:           "openai-compatible-custom-base-url",
+						Model:          "llama3.2",
+						Provider:       modelrouting.ProviderOpenAI,
+						ProviderSource: "OPENAI_BASE_URL",
+						BaseURL:        "http://127.0.0.1:8080/v1",
+						WireModel:      "llama3.2",
+						AuthSource:     "OPENAI_BASE_URL",
+						AuthOptional:   true,
+					},
+				},
+				{
+					name: "dashscope-kimi-alias",
+					override: config.FlagOverrides{
+						ConfigPath: missingConfig,
+						Model:      "kimi",
+					},
+					want: routingCase{
+						Name:       "dashscope-kimi-alias",
+						Model:      "kimi",
+						Provider:   modelrouting.ProviderDashScope,
+						BaseURL:    modelrouting.DefaultDashScopeBaseURL,
+						WireModel:  "kimi-k2.5",
+						AuthSource: "api_key",
+					},
+				},
+			} {
+				restore, err := applyProviderCaseEnv(item.env)
+				if err != nil {
+					return localScenarioResult{}, err
+				}
+				cfg, _, loadErr := config.LoadForInspection(item.override)
+				restore()
+				if loadErr != nil {
+					return localScenarioResult{}, loadErr
+				}
+				provider := cfg.RuntimeProvider
+				if provider == "" {
+					provider = modelrouting.ProviderForModel(cfg.Model)
+				}
+				got := routingCase{
+					Name:           item.name,
+					Model:          cfg.Model,
+					Provider:       provider,
+					ProviderSource: cfg.RuntimeProviderSource,
+					BaseURL:        cfg.BaseURL,
+					WireModel:      modelrouting.WireModelForBaseURL(cfg.Model, cfg.BaseURL),
+				}
+				auth := providerdiag.AnalyzeAuth(providerdiag.AuthOptions{
+					Model:                 cfg.Model,
+					RuntimeProvider:       provider,
+					RuntimeProviderSource: cfg.RuntimeProviderSource,
+					BaseURL:               cfg.BaseURL,
+					APIKey:                cfg.APIKey,
+					AuthToken:             cfg.AuthToken,
+				})
+				got.AuthSource = auth.EffectiveAuthSource
+				got.AuthOptional = auth.AuthOptional
+				if got != item.want {
+					return localScenarioResult{}, fmt.Errorf("unexpected provider routing for %s: got %#v want %#v", item.name, got, item.want)
+				}
+				cases = append(cases, got)
+			}
+
+			data, err := json.MarshalIndent(map[string]any{
+				"kind":  "provider_routing",
+				"cases": cases,
+			}, "", "  ")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "provider routing harness ok",
+				RequestCount: len(cases),
+				MessageCount: 1,
+			}, nil
+		},
+	}
+}
+
+func isolateProviderEnv(values map[string]string) (func(), error) {
+	names := []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_MODEL",
+		"CLAUDE_MODEL",
+		"CODOG_API_KEY",
+		"CODOG_AUTH_TOKEN",
+		"CODOG_BASE_URL",
+		"CODOG_MODEL",
+		"DASHSCOPE_API_KEY",
+		"DASHSCOPE_BASE_URL",
+		"OLLAMA_HOST",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"XAI_API_KEY",
+		"XAI_BASE_URL",
+	}
+	previous := map[string]string{}
+	existed := map[string]bool{}
+	for _, name := range names {
+		previous[name], existed[name] = os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			restoreEnv(previous, existed)
+			return nil, err
+		}
+	}
+	for name, value := range values {
+		if err := os.Setenv(name, value); err != nil {
+			restoreEnv(previous, existed)
+			return nil, err
+		}
+	}
+	return func() { restoreEnv(previous, existed) }, nil
+}
+
+func applyProviderCaseEnv(values map[string]string) (func(), error) {
+	previous := map[string]string{}
+	existed := map[string]bool{}
+	for name, value := range values {
+		previous[name], existed[name] = os.LookupEnv(name)
+		if err := os.Setenv(name, value); err != nil {
+			restoreEnv(previous, existed)
+			return nil, err
+		}
+	}
+	return func() { restoreEnv(previous, existed) }, nil
+}
+
+func restoreEnv(previous map[string]string, existed map[string]bool) {
+	for name, value := range previous {
+		if existed[name] {
+			_ = os.Setenv(name, value)
+		} else {
+			_ = os.Unsetenv(name)
+		}
 	}
 }
 

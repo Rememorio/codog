@@ -213,6 +213,22 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 0, configPrecedence.ToolCalls)
 	require.Contains(t, configPrecedence.Output, "config precedence harness ok")
 
+	providerRouting := findScenario(t, report, "provider_routing_roundtrip")
+	require.True(t, providerRouting.OK)
+	require.Equal(t, "provider-routing", providerRouting.Category)
+	require.Equal(t, 0, providerRouting.ToolCalls)
+	require.Equal(t, 4, providerRouting.RequestCount)
+	require.Equal(t, "provider routing harness ok", providerRouting.FinalMessage)
+	require.Contains(t, providerRouting.Output, `"name": "openai-prefixed-model"`)
+	require.Contains(t, providerRouting.Output, `"wire_model": "gpt-4.1-mini"`)
+	require.Contains(t, providerRouting.Output, `"provider_source": "OLLAMA_HOST"`)
+	require.Contains(t, providerRouting.Output, `"auth_source": "OPENAI_BASE_URL"`)
+	require.Contains(t, providerRouting.Output, `"provider": "dashscope"`)
+	providerRoutingCategory := findCategory(t, report, "provider-routing")
+	require.True(t, providerRoutingCategory.OK)
+	require.Equal(t, 1, providerRoutingCategory.Total)
+	require.ElementsMatch(t, []string{"provider_routing_roundtrip"}, providerRoutingCategory.Scenarios)
+
 	sessionResume := findScenario(t, report, "session_resume_jsonl_roundtrip")
 	require.True(t, sessionResume.OK)
 	require.Equal(t, 0, sessionResume.ToolCalls)
@@ -370,6 +386,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	lspStatic := findManifestScenario(t, manifest, "lsp_static_roundtrip")
 	require.Equal(t, "code-intelligence", lspStatic.Category)
 	require.Contains(t, lspStatic.ParityRefs, "LSP tool")
+
+	providerRouting := findManifestScenario(t, manifest, "provider_routing_roundtrip")
+	require.Equal(t, "provider-routing", providerRouting.Category)
+	require.Contains(t, providerRouting.ParityRefs, "OpenAI-compatible APIs")
+	require.Contains(t, providerRouting.ParityRefs, "Ollama")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {
