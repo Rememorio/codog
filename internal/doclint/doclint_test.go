@@ -60,6 +60,7 @@ func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 		"internal/planmode",
 		"internal/remote",
 		"internal/signing",
+		"internal/slash",
 		"internal/usage",
 		"internal/webaccess",
 		"internal/workerstate",

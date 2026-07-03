@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// Spec describes one built-in slash command.
 type Spec struct {
 	Name            string
 	Usage           string
@@ -16,6 +17,7 @@ type Spec struct {
 	Disabled        bool
 }
 
+// CandidateOptions supplies runtime context for slash completion candidates.
 type CandidateOptions struct {
 	Model            string
 	ActiveSessionID  string
@@ -23,6 +25,7 @@ type CandidateOptions struct {
 	Extra            []string
 }
 
+// Specs returns the built-in slash command registry.
 func Specs() []Spec {
 	specs := []Spec{
 		{Name: "/help", Usage: "/help", Description: "Show slash command help."},
@@ -470,10 +473,12 @@ func init() {
 	resumeSupportedSlashCommands["/generatesessionname"] = true
 }
 
+// SupportsResume reports whether name can run through the non-interactive resume path.
 func SupportsResume(name string) bool {
 	return resumeSupportedSlashCommands[strings.ToLower(strings.TrimSpace(name))]
 }
 
+// ResumeSupportedSpecs returns visible slash commands that support --resume dispatch.
 func ResumeSupportedSpecs() []Spec {
 	specs := []Spec{}
 	for _, spec := range Specs() {
@@ -484,6 +489,7 @@ func ResumeSupportedSpecs() []Spec {
 	return specs
 }
 
+// ResumeSupportedNames returns sorted names for visible resume-safe slash commands.
 func ResumeSupportedNames() []string {
 	specs := ResumeSupportedSpecs()
 	names := make([]string, 0, len(specs))
@@ -494,6 +500,7 @@ func ResumeSupportedNames() []string {
 	return names
 }
 
+// Lookup returns the slash command spec matching name.
 func Lookup(name string) (Spec, bool) {
 	for _, spec := range Specs() {
 		if strings.EqualFold(spec.Name, name) {
@@ -503,10 +510,12 @@ func Lookup(name string) (Spec, bool) {
 	return Spec{}, false
 }
 
+// Suggest returns likely built-in slash commands for input.
 func Suggest(input string, limit int) []string {
 	return SuggestWithCandidates(input, limit, nil)
 }
 
+// SuggestWithCandidates returns likely slash commands using built-ins and extra candidates.
 func SuggestWithCandidates(input string, limit int, extraCandidates []string) []string {
 	query := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(input), "/"))
 	if query == "" || limit <= 0 {
@@ -632,10 +641,12 @@ func levenshteinDistance(left string, right string) int {
 	return previous[len(rightRunes)]
 }
 
+// Candidates returns completion candidates for prefix.
 func Candidates(prefix string) []string {
 	return CandidatesWithOptions(prefix, CandidateOptions{})
 }
 
+// CandidatesWithOptions returns completion candidates using runtime context.
 func CandidatesWithOptions(prefix string, options CandidateOptions) []string {
 	prefix = strings.Trim(prefix, "\r\n\t")
 	if !strings.HasPrefix(prefix, "/") {
@@ -644,6 +655,7 @@ func CandidatesWithOptions(prefix string, options CandidateOptions) []string {
 	return FilterCandidates(prefix, AllCandidates(options))
 }
 
+// AllCandidates returns every visible slash completion candidate for options.
 func AllCandidates(options CandidateOptions) []string {
 	seen := map[string]bool{}
 	candidates := []string{}
@@ -976,6 +988,7 @@ func AllCandidates(options CandidateOptions) []string {
 	return candidates
 }
 
+// FilterCandidates returns sorted candidates that start with prefix.
 func FilterCandidates(prefix string, candidates []string) []string {
 	prefix = strings.Trim(prefix, "\r\n\t")
 	if !strings.HasPrefix(prefix, "/") {
@@ -995,6 +1008,7 @@ func FilterCandidates(prefix string, candidates []string) []string {
 	return out
 }
 
+// RenderHelp writes a text help table for built-in slash commands.
 func RenderHelp(w io.Writer) {
 	for _, spec := range Specs() {
 		if spec.Hidden || spec.Disabled {
