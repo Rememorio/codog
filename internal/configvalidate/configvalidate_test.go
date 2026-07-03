@@ -93,6 +93,14 @@ func TestValidateBytesAcceptsRemoteSection(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsMarketplaceSection(t *testing.T) {
+	result := ValidateBytes([]byte(`{"marketplace":{"sources":["https://market.example/index.json"],"publicKeys":{"https://market.example/index.json":"key"}}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
 

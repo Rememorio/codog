@@ -125,6 +125,7 @@ var topLevelFields = []fieldSpec{
 	{"enabled_skills", FieldStringArray},
 	{"enabledPlugins", FieldObject},
 	{"hooks", FieldObject},
+	{"marketplace", FieldObject},
 	{"mcp", FieldObject},
 	{"mcp_servers", FieldObject},
 	{"mcpServers", FieldObject},
@@ -281,6 +282,12 @@ var remoteFields = []fieldSpec{
 	{"authToken", FieldString},
 	{"lease_seconds", FieldNumber},
 	{"leaseSeconds", FieldNumber},
+}
+
+var marketplaceFields = []fieldSpec{
+	{"sources", FieldStringArray},
+	{"public_keys", FieldObject},
+	{"publicKeys", FieldObject},
 }
 
 var sandboxFields = []fieldSpec{
@@ -485,6 +492,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "mcpServers"); ok {
 		validateMCPServers(result, nested, source, path, "mcpServers")
+	}
+	if marketplace, ok := objectAt(object, "marketplace"); ok {
+		validateObject(result, marketplace, marketplaceFields, "marketplace", source, path)
 	}
 	if nested, ok := objectAt(object, "future"); ok {
 		validateObject(result, nested, futureFields, "future", source, path)

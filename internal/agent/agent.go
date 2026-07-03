@@ -9360,16 +9360,22 @@ func (a *App) writeMarketplaceSources(req marketplaceSourcesRequest, urls []stri
 			cleanKeys[sourceURL] = publicKey
 		}
 	}
-	if _, err := config.SetFileValue(path, "future.plugin_marketplaces", urls); err != nil {
+	if _, err := config.SetFileValue(path, "marketplace.sources", urls); err != nil {
+		return "", err
+	}
+	if _, err := config.UnsetFileValue(path, "future.plugin_marketplaces"); err != nil {
 		return "", err
 	}
 	if len(cleanKeys) == 0 {
+		if _, err := config.UnsetFileValue(path, "marketplace.public_keys"); err != nil {
+			return "", err
+		}
 		if _, err := config.UnsetFileValue(path, "future.plugin_marketplace_public_keys"); err != nil {
 			return "", err
 		}
 		a.Config.Future.PluginMarketplaceKeys = nil
 	} else {
-		if _, err := config.SetFileValue(path, "future.plugin_marketplace_public_keys", cleanKeys); err != nil {
+		if _, err := config.SetFileValue(path, "marketplace.public_keys", cleanKeys); err != nil {
 			return "", err
 		}
 		a.Config.Future.PluginMarketplaceKeys = cleanKeys
@@ -36279,7 +36285,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "hooks", "interface", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
+	sections := []string{"auth", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36610,6 +36616,7 @@ var resetSectionKeys = map[string][]string{
 	"future":      []string{"future"},
 	"hooks":       []string{"hooks"},
 	"interface":   []string{"language", "theme", "editorMode"},
+	"marketplace": []string{"marketplace", "future.plugin_marketplaces", "future.plugin_marketplace_public_keys"},
 	"mcp":         []string{"mcp_servers"},
 	"model":       []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
 	"permissions": []string{"permission_mode", "permission_rules"},
@@ -36631,6 +36638,8 @@ var resetSectionAliases = map[string]string{
 	"future":           "future",
 	"hooks":            "hooks",
 	"interface":        "interface",
+	"marketplace":      "marketplace",
+	"marketplaces":     "marketplace",
 	"mcp":              "mcp",
 	"model":            "model",
 	"models":           "model",
@@ -36860,6 +36869,9 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.Language = ""
 		a.Config.Theme = ""
 		a.Config.EditorMode = ""
+	case "marketplace":
+		a.Config.Future.PluginMarketplaces = nil
+		a.Config.Future.PluginMarketplaceKeys = nil
 	case "mcp":
 		a.Config.MCPServers = map[string]config.MCPServerConfig{}
 	case "model":
@@ -36926,6 +36938,11 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
 	case "mcp":
 		return cfg.MCPServers, nil
+	case "marketplace", "marketplaces":
+		return map[string]any{
+			"sources":     append([]string(nil), cfg.Future.PluginMarketplaces...),
+			"public_keys": redactStringMapValues(cfg.Future.PluginMarketplaceKeys),
+		}, nil
 	case "remote":
 		return map[string]any{
 			"enabled":               cfg.Future.RemoteEnabled,
@@ -36960,6 +36977,17 @@ func redactedConfig(cfg config.Config) config.Config {
 	cfg.Future.RemoteAuthToken = redact(cfg.Future.RemoteAuthToken)
 	cfg.Future.EditorBridgeToken = redact(cfg.Future.EditorBridgeToken)
 	return cfg
+}
+
+func redactStringMapValues(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = redact(value)
+	}
+	return out
 }
 
 func validPermissionMode(mode string) bool {

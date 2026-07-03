@@ -13436,10 +13436,12 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		RAGBaseURL:     "http://rag.example.test",
 		RAGTopKMax:     9,
 		Future: config.FutureConfig{
-			RemoteEnabled:      true,
-			RemoteAuthToken:    "remote-secret",
-			RemoteLeaseSeconds: 45,
-			SandboxStrategy:    "detect",
+			PluginMarketplaces:    []string{"https://market.example/index.json"},
+			PluginMarketplaceKeys: map[string]string{"https://market.example/index.json": "market-public-key"},
+			RemoteEnabled:         true,
+			RemoteAuthToken:       "remote-secret",
+			RemoteLeaseSeconds:    45,
+			SandboxStrategy:       "detect",
 			Sandbox: config.SandboxConfig{
 				FilesystemMode: "allow-list",
 				AllowedMounts:  []string{"logs"},
@@ -13482,6 +13484,13 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"auth_token_configured": true`)
 	require.Contains(t, out.String(), `"lease_seconds": 45`)
 	require.NotContains(t, out.String(), "remote-secret")
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "marketplace", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"sources"`)
+	require.Contains(t, out.String(), "https://market.example/index.json")
+	require.Contains(t, out.String(), `"public_keys"`)
+	require.NotContains(t, out.String(), "market-public-key")
 	out.Reset()
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "sandbox", "--output-format", "json"}))
@@ -13708,6 +13717,28 @@ func TestResetRemoteConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), "remote_enabled")
 	require.NotContains(t, string(data), "remote_auth_token")
 	require.NotContains(t, string(data), "remote_lease_seconds")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetMarketplaceConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"marketplace": {"sources": ["https://market.example/index.json"], "public_keys": {"https://market.example/index.json": "public-key"}},
+		"future": {"plugin_marketplaces": ["https://old.example/index.json"], "plugin_marketplace_public_keys": {"https://old.example/index.json": "old-key"}}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "marketplace", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "marketplace", report.Section)
+	require.ElementsMatch(t, []string{"marketplace", "future.plugin_marketplaces", "future.plugin_marketplace_public_keys"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"marketplace"`)
+	require.NotContains(t, string(data), "plugin_marketplaces")
+	require.NotContains(t, string(data), "plugin_marketplace_public_keys")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -26443,7 +26474,10 @@ func TestMarketplaceSourcesManageConfigAndBrowse(t *testing.T) {
 	require.Equal(t, "public-key", app.Config.Future.PluginMarketplaceKeys[indexURL])
 	configData, err := os.ReadFile(filepath.Join(workspace, ".codog.json"))
 	require.NoError(t, err)
-	require.Contains(t, string(configData), `"plugin_marketplaces"`)
+	require.Contains(t, string(configData), `"marketplace"`)
+	require.Contains(t, string(configData), `"sources"`)
+	require.Contains(t, string(configData), `"public_keys"`)
+	require.NotContains(t, string(configData), "plugin_marketplaces")
 	require.Contains(t, string(configData), indexURL)
 	out.Reset()
 

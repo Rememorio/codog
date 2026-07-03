@@ -309,6 +309,54 @@ func TestLoadRemoteAuthToken(t *testing.T) {
 	}
 }
 
+func TestLoadMarketplaceConfigCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name    string
+		body    string
+		sources []string
+		keys    map[string]string
+	}{
+		{
+			name:    "legacy future marketplace",
+			body:    `{"future":{"plugin_marketplaces":["https://market.example/index.json"],"plugin_marketplace_public_keys":{"https://market.example/index.json":"legacy-key"}}}`,
+			sources: []string{"https://market.example/index.json"},
+			keys:    map[string]string{"https://market.example/index.json": "legacy-key"},
+		},
+		{
+			name:    "formal marketplace aliases",
+			body:    `{"marketplace":{"sources":["https://market.example/index.json"],"publicKeys":{"https://market.example/index.json":"public-key"}}}`,
+			sources: []string{"https://market.example/index.json"},
+			keys:    map[string]string{"https://market.example/index.json": "public-key"},
+		},
+		{
+			name:    "formal marketplace wins",
+			body:    `{"future":{"plugin_marketplaces":["https://old.example/index.json"],"plugin_marketplace_public_keys":{"https://old.example/index.json":"old-key"}},"marketplace":{"sources":[],"public_keys":{}}}`,
+			sources: []string{},
+			keys:    map[string]string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			if len(tc.sources) == 0 {
+				require.Empty(t, cfg.Future.PluginMarketplaces)
+			} else {
+				require.Equal(t, tc.sources, cfg.Future.PluginMarketplaces)
+			}
+			if len(tc.keys) == 0 {
+				require.Empty(t, cfg.Future.PluginMarketplaceKeys)
+			} else {
+				require.Equal(t, tc.keys, cfg.Future.PluginMarketplaceKeys)
+			}
+		})
+	}
+}
+
 func TestLoadRateLimitConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

@@ -446,6 +446,65 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// MarketplaceConfig holds trusted plugin marketplace index sources.
+type MarketplaceConfig struct {
+	Sources       []string          `json:"sources,omitempty"`
+	PublicKeys    map[string]string `json:"public_keys,omitempty"`
+	sourcesSet    bool
+	publicKeysSet bool
+}
+
+// UnmarshalJSON accepts public_keys and publicKeys aliases.
+func (m *MarketplaceConfig) UnmarshalJSON(data []byte) error {
+	type plain MarketplaceConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readStringArrayAlias := func(target *[]string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var values []string
+			if err := json.Unmarshal(value, &values); err != nil {
+				return fmt.Errorf("invalid marketplace.%s: %w", key, err)
+			}
+			*target = values
+			parsed.sourcesSet = true
+		}
+		return nil
+	}
+	readStringMapAlias := func(target *map[string]string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var values map[string]string
+			if err := json.Unmarshal(value, &values); err != nil {
+				return fmt.Errorf("invalid marketplace.%s: %w", key, err)
+			}
+			*target = values
+			parsed.publicKeysSet = true
+		}
+		return nil
+	}
+	if err := readStringArrayAlias(&parsed.Sources, "sources"); err != nil {
+		return err
+	}
+	if err := readStringMapAlias(&parsed.PublicKeys, "publicKeys", "public_keys"); err != nil {
+		return err
+	}
+	*m = MarketplaceConfig(parsed)
+	return nil
+}
+
 // RemoteConfig holds the formal top-level remote-control configuration.
 type RemoteConfig struct {
 	Enabled      *bool  `json:"enabled,omitempty"`
@@ -642,6 +701,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
+		Marketplace         MarketplaceConfig          `json:"marketplace,omitempty"`
 		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
 		Remote              RemoteConfig               `json:"remote,omitempty"`
 	}
@@ -705,6 +765,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if remoteConfigSet(aliases.Remote) {
 		mergeRemoteConfigIntoFuture(&parsed.Future, aliases.Remote)
+	}
+	if marketplaceConfigSet(aliases.Marketplace) {
+		mergeMarketplaceConfigIntoFuture(&parsed.Future, aliases.Marketplace)
 	}
 	*c = Config(parsed)
 	return nil
@@ -1683,6 +1746,13 @@ func remoteConfigSet(cfg RemoteConfig) bool {
 		cfg.LeaseSeconds != 0
 }
 
+func marketplaceConfigSet(cfg MarketplaceConfig) bool {
+	return cfg.sourcesSet ||
+		cfg.publicKeysSet ||
+		len(cfg.Sources) != 0 ||
+		len(cfg.PublicKeys) != 0
+}
+
 func sandboxConfigSet(cfg SandboxConfig) bool {
 	return cfg.Strategy != "" ||
 		cfg.Enabled != nil ||
@@ -1701,6 +1771,15 @@ func mergeRemoteConfigIntoFuture(dst *FutureConfig, src RemoteConfig) {
 	}
 	if src.LeaseSeconds != 0 {
 		dst.RemoteLeaseSeconds = src.LeaseSeconds
+	}
+}
+
+func mergeMarketplaceConfigIntoFuture(dst *FutureConfig, src MarketplaceConfig) {
+	if src.sourcesSet || len(src.Sources) != 0 {
+		dst.PluginMarketplaces = append([]string(nil), src.Sources...)
+	}
+	if src.publicKeysSet || len(src.PublicKeys) != 0 {
+		dst.PluginMarketplaceKeys = cloneStringMap(src.PublicKeys)
 	}
 }
 
