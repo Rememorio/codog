@@ -38367,6 +38367,12 @@ func renderReportSchemaReport(out io.Writer, report reportSchemaReport) {
 			}
 			fmt.Fprintf(out, "    - %s [%s] %s\n", field.ID, required, field.FieldFamily)
 		}
+		if len(report.Registry.Reports) > 0 {
+			fmt.Fprintf(out, "  Reports          %d\n", len(report.Registry.Reports))
+			for _, candidate := range report.Registry.Reports {
+				fmt.Fprintf(out, "    - %s %s\n", candidate.ID, candidate.SchemaVersion)
+			}
+		}
 	}
 	if report.Report != nil {
 		fmt.Fprintf(out, "  Schema           %s\n", report.Report.SchemaVersion)

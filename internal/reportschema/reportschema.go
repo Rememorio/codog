@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/harness"
 )
 
 const (
@@ -118,10 +120,20 @@ type RegistryField struct {
 	FieldFamily string `json:"field_family"`
 }
 
+type RegistryReport struct {
+	ID            string   `json:"id"`
+	SchemaVersion string   `json:"schema_version"`
+	Description   string   `json:"description"`
+	Producer      string   `json:"producer"`
+	Command       string   `json:"command,omitempty"`
+	Fields        []string `json:"fields"`
+}
+
 type Registry struct {
-	SchemaVersion string          `json:"schema_version"`
-	Compatibility string          `json:"compatibility"`
-	Fields        []RegistryField `json:"fields"`
+	SchemaVersion string           `json:"schema_version"`
+	Compatibility string           `json:"compatibility"`
+	Fields        []RegistryField  `json:"fields"`
+	Reports       []RegistryReport `json:"reports,omitempty"`
 }
 
 func RegistryV1() Registry {
@@ -137,6 +149,35 @@ func RegistryV1() Registry {
 			field("negative_evidence[]", "searched-and-not-found findings with checked scope", false, "negative_evidence"),
 			field("field_deltas[]", "field-level changed/unchanged/cleared/carried-forward attribution", false, "field_deltas"),
 			field("projection.provenance.redactions[]", "redaction policy provenance for projected fields", false, "projection"),
+		},
+		Reports: []RegistryReport{
+			report("canonical_report", SchemaV1, "Canonical structured runtime report accepted by report-schema canonicalize/project.", "codog report-schema", "codog report-schema canonicalize", []string{
+				"schema_version",
+				"identity",
+				"generated_at",
+				"producer",
+				"claims",
+				"negative_evidence",
+				"field_deltas",
+			}),
+			report("mock_parity_report", harness.ReportSchemaVersion, "Deterministic mock provider parity harness execution report.", "codog mock-parity", "codog mock-parity --json", []string{
+				"schema_version",
+				"ok",
+				"passed",
+				"total",
+				"scenario_count",
+				"request_count",
+				"coverage",
+				"scenarios",
+				"usage_summary",
+				"estimated_cost",
+			}),
+			report("mock_parity_manifest", harness.ManifestSchemaVersion, "Deterministic mock provider parity scenario catalog without executing the harness.", "codog mock-parity", "codog mock-parity manifest --json", []string{
+				"schema_version",
+				"scenario_count",
+				"categories",
+				"scenarios",
+			}),
 		},
 	}
 }
@@ -270,6 +311,17 @@ func StableJSONHash(value any) (string, error) {
 
 func field(id string, description string, required bool, family string) RegistryField {
 	return RegistryField{ID: id, Description: description, Required: required, FieldFamily: family}
+}
+
+func report(id string, schemaVersion string, description string, producer string, command string, fields []string) RegistryReport {
+	return RegistryReport{
+		ID:            id,
+		SchemaVersion: schemaVersion,
+		Description:   description,
+		Producer:      producer,
+		Command:       command,
+		Fields:        append([]string(nil), fields...),
+	}
 }
 
 func supportsFamily(capabilities ConsumerCapabilities, family string) bool {

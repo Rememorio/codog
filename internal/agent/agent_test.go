@@ -58,6 +58,7 @@ import (
 	"github.com/Rememorio/codog/internal/planmode"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/prworkflow"
+	"github.com/Rememorio/codog/internal/reportschema"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
@@ -7643,6 +7644,17 @@ func capabilityReportHasMCPPrompt(report capabilitiesReport, name string) bool {
 	return false
 }
 
+func reportSchemaRegistryEntry(t *testing.T, registry reportschema.Registry, id string) reportschema.RegistryReport {
+	t.Helper()
+	for _, candidate := range registry.Reports {
+		if candidate.ID == id {
+			return candidate
+		}
+	}
+	t.Fatalf("missing report schema registry entry %q in %#v", id, registry.Reports)
+	return reportschema.RegistryReport{}
+}
+
 func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	var out bytes.Buffer
 
@@ -12772,10 +12784,21 @@ func TestReportSchemaCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"field_path": "claims[1]"`)
 	out.Reset()
 
+	require.NoError(t, app.ReportSchema([]string{"registry", "--json"}))
+	var registryReport reportSchemaReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &registryReport))
+	require.NotNil(t, registryReport.Registry)
+	require.Equal(t, reportschema.SchemaV1, registryReport.Registry.SchemaVersion)
+	require.Equal(t, harness.ReportSchemaVersion, reportSchemaRegistryEntry(t, *registryReport.Registry, "mock_parity_report").SchemaVersion)
+	require.Equal(t, harness.ManifestSchemaVersion, reportSchemaRegistryEntry(t, *registryReport.Registry, "mock_parity_manifest").SchemaVersion)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/report-schema registry", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Report Schema")
 	require.Contains(t, out.String(), "Schema           claw.report.v1")
 	require.Contains(t, out.String(), "identity.report_id")
+	require.Contains(t, out.String(), "mock_parity_report "+harness.ReportSchemaVersion)
+	require.Contains(t, out.String(), "mock_parity_manifest "+harness.ManifestSchemaVersion)
 	require.Empty(t, errOut.String())
 }
 

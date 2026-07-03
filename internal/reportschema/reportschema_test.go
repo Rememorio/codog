@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Rememorio/codog/internal/harness"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,6 +66,14 @@ func TestRegistryV1IsSelfDescribing(t *testing.T) {
 	require.Contains(t, fieldIDs(registry), "claims[].kind")
 	require.Contains(t, fieldIDs(registry), "negative_evidence[]")
 	require.Contains(t, fieldIDs(registry), "projection.provenance.redactions[]")
+	require.Contains(t, reportSchemaVersions(registry), SchemaV1)
+	require.Contains(t, reportSchemaVersions(registry), harness.ReportSchemaVersion)
+	require.Contains(t, reportSchemaVersions(registry), harness.ManifestSchemaVersion)
+
+	mockParity := registryReportByID(t, registry, "mock_parity_report")
+	require.Equal(t, "codog mock-parity --json", mockParity.Command)
+	require.Contains(t, mockParity.Fields, "coverage")
+	require.Contains(t, mockParity.Fields, "usage_summary")
 }
 
 func TestCanonicalizeSortsAndHashesReport(t *testing.T) {
@@ -165,6 +174,25 @@ func fieldIDs(registry Registry) []string {
 		ids = append(ids, field.ID)
 	}
 	return ids
+}
+
+func reportSchemaVersions(registry Registry) []string {
+	versions := make([]string, 0, len(registry.Reports))
+	for _, report := range registry.Reports {
+		versions = append(versions, report.SchemaVersion)
+	}
+	return versions
+}
+
+func registryReportByID(t *testing.T, registry Registry, id string) RegistryReport {
+	t.Helper()
+	for _, report := range registry.Reports {
+		if report.ID == id {
+			return report
+		}
+	}
+	t.Fatalf("missing registry report %q in %#v", id, registry.Reports)
+	return RegistryReport{}
 }
 
 func redactionPaths(redactions []RedactionProvenance) []string {
