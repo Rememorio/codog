@@ -10,7 +10,7 @@ Runs the local release smoke gate used by CI:
   - go vet ./...
   - go build ./cmd/codog
   - source install smoke
-  - mock parity report generation
+  - contract artifact generation
 
 Options:
   --artifact-dir DIR   Write smoke artifacts to DIR. Defaults to a temp dir.
@@ -97,9 +97,24 @@ test -s "${artifact_dir}/version.json" || die "version smoke did not write a rep
 
 step "mock parity"
 MOCK_PARITY_REPORT_PATH="${artifact_dir}/mock-parity-report.json" \
-  go run ./cmd/codog mock-parity --output-format json >"${artifact_dir}/mock-parity-stdout.json"
+  "${install_dir}/codog" mock-parity --output-format json >"${artifact_dir}/mock-parity-stdout.json"
 test -s "${artifact_dir}/mock-parity-report.json" || die "mock parity report was not written"
 test -s "${artifact_dir}/mock-parity-stdout.json" || die "mock parity stdout report was not written"
+grep -q '"schema_version": "codog.mock_parity.v1"' "${artifact_dir}/mock-parity-report.json" || die "mock parity report schema version is missing"
+grep -q '"schema_version": "codog.mock_parity.v1"' "${artifact_dir}/mock-parity-stdout.json" || die "mock parity stdout schema version is missing"
+
+step "contract artifacts"
+"${install_dir}/codog" mock-parity manifest --output-format json >"${artifact_dir}/mock-parity-manifest.json"
+"${install_dir}/codog" capabilities --output-format json >"${artifact_dir}/capabilities.json"
+"${install_dir}/codog" report-schema registry --output-format json >"${artifact_dir}/report-schema-registry.json"
+test -s "${artifact_dir}/mock-parity-manifest.json" || die "mock parity manifest was not written"
+test -s "${artifact_dir}/capabilities.json" || die "capabilities report was not written"
+test -s "${artifact_dir}/report-schema-registry.json" || die "report schema registry was not written"
+grep -q '"schema_version": "codog.mock_parity_manifest.v1"' "${artifact_dir}/mock-parity-manifest.json" || die "mock parity manifest schema version is missing"
+grep -q '"mock_parity"' "${artifact_dir}/capabilities.json" || die "capabilities report does not expose mock parity metadata"
+grep -q '"schema_version": "codog.mock_parity_manifest.v1"' "${artifact_dir}/capabilities.json" || die "capabilities report does not expose mock parity manifest schema"
+grep -q '"id": "mock_parity_report"' "${artifact_dir}/report-schema-registry.json" || die "report schema registry does not catalog mock parity reports"
+grep -q '"id": "mock_parity_manifest"' "${artifact_dir}/report-schema-registry.json" || die "report schema registry does not catalog mock parity manifests"
 
 if [ "${keep_artifacts}" = "1" ] || [ "${artifact_dir_is_temp}" != "1" ]; then
   printf '\nArtifacts written to %s\n' "${artifact_dir}"

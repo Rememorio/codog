@@ -35,8 +35,8 @@ jobs:
           CODOG_SMOKE_ARTIFACT_DIR: artifacts
         run: scripts/smoke.sh
 
-      - name: Upload mock parity report
+      - name: Upload smoke artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mock-parity-report
-          path: artifacts/mock-parity-*.json
+          name: codog-smoke-artifacts
+          path: artifacts/*.json
