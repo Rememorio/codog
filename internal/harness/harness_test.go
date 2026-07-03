@@ -10,6 +10,8 @@ import (
 func TestRunUsesMockProvider(t *testing.T) {
 	report, err := Run(context.Background())
 	require.NoError(t, err)
+	require.NoError(t, ValidateReport(report))
+	require.Equal(t, ReportSchemaVersion, report.SchemaVersion)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
 	require.Equal(t, report.Total, report.ScenarioCount)
@@ -156,6 +158,23 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Greater(t, tokenCost.UsageSummary.TotalTokens, 0)
 	require.Greater(t, tokenCost.EstimatedCost, 0.0)
 	require.Contains(t, tokenCost.Output, "token cost harness ok")
+}
+
+func TestValidateReportRejectsInconsistentReports(t *testing.T) {
+	report, err := Run(context.Background())
+	require.NoError(t, err)
+
+	broken := report
+	broken.SchemaVersion = "wrong"
+	require.ErrorContains(t, ValidateReport(broken), "schema_version")
+
+	broken = report
+	broken.RequestCount++
+	require.ErrorContains(t, ValidateReport(broken), "request_count")
+
+	broken = report
+	broken.Scenarios[0].Description = ""
+	require.ErrorContains(t, ValidateReport(broken), "description is required")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

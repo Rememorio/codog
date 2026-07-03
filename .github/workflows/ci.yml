@@ -34,7 +34,23 @@ jobs:
         run: go test ./...
 
       - name: Run mock parity harness
-        run: go run ./cmd/codog mock-parity --output-format json
+        env:
+          MOCK_PARITY_REPORT_PATH: artifacts/mock-parity-report.json
+        run: |
+          mkdir -p artifacts
+          go run ./cmd/codog mock-parity --output-format json | tee artifacts/mock-parity-stdout.json
+          jq -e '
+            .schema_version == "codog.mock_parity.v1" and
+            .ok == true and
+            .scenario_count == (.scenarios | length) and
+            .request_count > 0
+          ' artifacts/mock-parity-report.json
 
       - name: Build CLI
         run: go build ./cmd/codog
+
+      - name: Upload mock parity report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-parity-report
+          path: artifacts/mock-parity-*.json

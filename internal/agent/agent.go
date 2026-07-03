@@ -47597,6 +47597,9 @@ func runMockParityCommand(ctx context.Context, out io.Writer, args []string, fal
 	if err != nil {
 		return err
 	}
+	if err := harness.ValidateReport(report); err != nil {
+		return fmt.Errorf("mock parity report validation failed: %w", err)
+	}
 	if req.ReportPath != "" {
 		if err := writeMockParityReport(req.ReportPath, report); err != nil {
 			return err
@@ -47697,6 +47700,9 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 		status = "error"
 	}
 	fmt.Fprintln(out, "Mock Parity Harness")
+	if strings.TrimSpace(report.SchemaVersion) != "" {
+		fmt.Fprintf(out, "  Schema        %s\n", report.SchemaVersion)
+	}
 	fmt.Fprintf(out, "  Status        %s\n", status)
 	fmt.Fprintf(out, "  Scenarios     %d/%d passed\n", report.Passed, report.Total)
 	if len(report.Coverage) > 0 {
@@ -51466,7 +51472,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"mock-parity",
 			"codog mock-parity [run|check] [--report PATH] [--output-format text|json]",
 			"Mock Parity\n\nUsage:\n  codog mock-parity [run|check] [--report PATH] [--output-format text|json]\n  codog parity [same flags]\n  codog self-test [same flags]\n\nRuns the deterministic mock provider parity harness against the local agent loop. It exercises streaming, tool calls, permission prompts, plugin tools, auto-compaction, and usage/cost accounting without contacting a real provider. Set MOCK_PARITY_REPORT_PATH or pass --report to write the machine-readable report to disk.\n",
-			[]string{"ok", "passed", "total", "scenario_count", "request_count", "coverage", "scenarios", "usage_summary", "estimated_cost"},
+			[]string{"schema_version", "ok", "passed", "total", "scenario_count", "request_count", "coverage", "scenarios", "usage_summary", "estimated_cost"},
 			[]string{"ok", "error"},
 			false,
 		)

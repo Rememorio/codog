@@ -2428,6 +2428,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.NoError(t, err)
 	var report harness.Report
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, harness.ReportSchemaVersion, report.SchemaVersion)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
 	require.Equal(t, report.Total, report.ScenarioCount)
@@ -2448,6 +2449,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.NoError(t, err)
 	var persisted harness.Report
 	require.NoError(t, json.Unmarshal(reportData, &persisted))
+	require.Equal(t, harness.ReportSchemaVersion, persisted.SchemaVersion)
 	require.Equal(t, report.Total, persisted.Total)
 	require.Equal(t, report.ScenarioCount, persisted.ScenarioCount)
 	require.Equal(t, report.RequestCount, persisted.RequestCount)
@@ -2456,6 +2458,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	var text bytes.Buffer
 	renderMockParityText(&text, harness.Report{
 		OK:            true,
+		SchemaVersion: harness.ReportSchemaVersion,
 		Passed:        1,
 		Total:         1,
 		ScenarioCount: 1,
@@ -2468,6 +2471,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 		Scenarios:     []harness.ScenarioReport{{Name: "streaming_text", Category: "baseline", Description: "Validates streamed text.", OK: true}},
 	})
 	require.Contains(t, text.String(), "Mock Parity Harness")
+	require.Contains(t, text.String(), "Schema        "+harness.ReportSchemaVersion)
 	require.Contains(t, text.String(), "1/1 passed")
 	require.Contains(t, text.String(), "Coverage      1 categories")
 	require.Contains(t, text.String(), "Requests      1")
@@ -2482,6 +2486,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Equal(t, "mock-parity", help.Topic)
 	require.Contains(t, help.Aliases, "parity")
 	require.Contains(t, help.Aliases, "self-test")
+	require.Contains(t, help.OutputFields, "schema_version")
 	require.Contains(t, help.OutputFields, "request_count")
 	require.Contains(t, help.OutputFields, "scenario_count")
 	require.Contains(t, help.OutputFields, "coverage")

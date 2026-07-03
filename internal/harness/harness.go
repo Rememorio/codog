@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -24,8 +25,12 @@ import (
 	"github.com/Rememorio/codog/internal/usage"
 )
 
+// ReportSchemaVersion is the stable schema identifier for mock parity reports.
+const ReportSchemaVersion = "codog.mock_parity.v1"
+
 // Report summarizes one deterministic mock parity harness run.
 type Report struct {
+	SchemaVersion string           `json:"schema_version"`
 	OK            bool             `json:"ok"`
 	Passed        int              `json:"passed"`
 	Total         int              `json:"total"`
@@ -638,7 +643,7 @@ func Run(ctx context.Context) (Report, error) {
 		},
 	}
 
-	report := Report{Total: len(scenarios), ScenarioCount: len(scenarios)}
+	report := Report{SchemaVersion: ReportSchemaVersion, Total: len(scenarios), ScenarioCount: len(scenarios)}
 	for _, item := range scenarios {
 		scenarioReport := runScenario(ctx, item)
 		report.Scenarios = append(report.Scenarios, scenarioReport)
@@ -657,6 +662,69 @@ func Run(ctx context.Context) (Report, error) {
 	report.OK = report.Passed == report.Total
 	report.Coverage = categoryCoverage(report.Scenarios)
 	return report, nil
+}
+
+// ValidateReport verifies that a mock parity report is internally consistent.
+func ValidateReport(report Report) error {
+	issues := []string{}
+	if report.SchemaVersion != ReportSchemaVersion {
+		issues = append(issues, fmt.Sprintf("schema_version: expected %q, got %q", ReportSchemaVersion, report.SchemaVersion))
+	}
+	if report.Total != report.ScenarioCount {
+		issues = append(issues, fmt.Sprintf("scenario_count: expected total %d, got %d", report.Total, report.ScenarioCount))
+	}
+	if len(report.Scenarios) != report.ScenarioCount {
+		issues = append(issues, fmt.Sprintf("scenarios: expected %d, got %d", report.ScenarioCount, len(report.Scenarios)))
+	}
+	passed := 0
+	requests := 0
+	for _, scenario := range report.Scenarios {
+		if strings.TrimSpace(scenario.Name) == "" {
+			issues = append(issues, "scenario name is required")
+		}
+		if strings.TrimSpace(scenario.Category) == "" {
+			issues = append(issues, fmt.Sprintf("%s: category is required", scenario.Name))
+		}
+		if strings.TrimSpace(scenario.Description) == "" {
+			issues = append(issues, fmt.Sprintf("%s: description is required", scenario.Name))
+		}
+		if len(scenario.ParityRefs) == 0 {
+			issues = append(issues, fmt.Sprintf("%s: parity_refs is required", scenario.Name))
+		}
+		if len(scenario.ToolUses) != scenario.ToolCalls {
+			issues = append(issues, fmt.Sprintf("%s: expected %d tool_uses, got %d", scenario.Name, scenario.ToolCalls, len(scenario.ToolUses)))
+		}
+		if scenario.ToolErrorCount > scenario.ToolCalls {
+			issues = append(issues, fmt.Sprintf("%s: tool_error_count exceeds tool_calls", scenario.Name))
+		}
+		if scenario.OK {
+			passed++
+		}
+		requests += scenario.RequestCount
+	}
+	if passed != report.Passed {
+		issues = append(issues, fmt.Sprintf("passed: expected %d, got %d", passed, report.Passed))
+	}
+	if (passed == report.Total) != report.OK {
+		issues = append(issues, fmt.Sprintf("ok: expected %t, got %t", passed == report.Total, report.OK))
+	}
+	if requests != report.RequestCount {
+		issues = append(issues, fmt.Sprintf("request_count: expected %d, got %d", requests, report.RequestCount))
+	}
+	coverageTotal := 0
+	for _, category := range report.Coverage {
+		coverageTotal += category.Total
+		if category.Passed > category.Total {
+			issues = append(issues, fmt.Sprintf("%s: category passed exceeds total", category.Category))
+		}
+	}
+	if coverageTotal != report.Total {
+		issues = append(issues, fmt.Sprintf("coverage: expected %d scenarios, got %d", report.Total, coverageTotal))
+	}
+	if len(issues) > 0 {
+		return errors.New(strings.Join(issues, "; "))
+	}
+	return nil
 }
 
 func runScenario(ctx context.Context, item scenario) ScenarioReport {
