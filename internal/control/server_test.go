@@ -617,6 +617,10 @@ func TestControlBackgroundSupervise(t *testing.T) {
 	require.Len(t, result.Restarted, 1)
 	require.Equal(t, "failed", result.Restarted[0].RestartedFrom)
 	require.Equal(t, "session-remote", result.Restarted[0].SessionID)
+	require.Eventually(t, func() bool {
+		task, err := store.Status(result.Restarted[0].ID)
+		return err == nil && task.Status != "running"
+	}, 5*time.Second, 50*time.Millisecond)
 	source, err := store.Get("failed")
 	require.NoError(t, err)
 	require.Equal(t, result.Restarted[0].ID, source.RestartedBy)
