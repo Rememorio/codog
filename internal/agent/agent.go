@@ -2084,7 +2084,7 @@ func (a *App) RemoteEnv(args []string) error {
 			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
 				return err
 			}
-			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
+			if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = ""
@@ -2101,10 +2101,8 @@ func (a *App) RemoteEnv(args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, key := range []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
-			if _, err := config.UnsetFileValue(path, key); err != nil {
-				return err
-			}
+		if err := unsetConfigKeys(path, remoteResetKeys); err != nil {
+			return err
 		}
 		a.Config.Future.RemoteEnabled = false
 		a.Config.Future.RemoteAuthToken = ""
@@ -2165,7 +2163,7 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
 				return err
 			}
-			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
+			if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = ""
@@ -2190,7 +2188,7 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
 				return err
 			}
-			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
+			if _, err := config.UnsetFileValue(path, legacyRemoteAuthTokenKey); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = ""
@@ -2201,10 +2199,8 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 		if err != nil {
 			return err
 		}
-		for _, key := range []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
-			if _, err := config.UnsetFileValue(path, key); err != nil {
-				return err
-			}
+		if err := unsetConfigKeys(path, remoteResetKeys); err != nil {
+			return err
 		}
 		a.Config.Future.RemoteEnabled = false
 		a.Config.Future.RemoteAuthToken = ""
@@ -9379,14 +9375,14 @@ func (a *App) writeMarketplaceSources(req marketplaceSourcesRequest, urls []stri
 	if _, err := config.SetFileValue(path, "marketplace.sources", urls); err != nil {
 		return "", err
 	}
-	if _, err := config.UnsetFileValue(path, "future.plugin_marketplaces"); err != nil {
+	if _, err := config.UnsetFileValue(path, legacyPluginMarketplacesKey); err != nil {
 		return "", err
 	}
 	if len(cleanKeys) == 0 {
 		if _, err := config.UnsetFileValue(path, "marketplace.public_keys"); err != nil {
 			return "", err
 		}
-		if _, err := config.UnsetFileValue(path, "future.plugin_marketplace_public_keys"); err != nil {
+		if _, err := config.UnsetFileValue(path, legacyPluginMarketplacePublicKeysKey); err != nil {
 			return "", err
 		}
 		a.Config.Future.PluginMarketplaceKeys = nil
@@ -11821,7 +11817,7 @@ func (a *App) SandboxToggle(args []string) error {
 		if _, err := config.UnsetFileValue(path, "sandbox.strategy"); err != nil {
 			return err
 		}
-		if _, err := config.UnsetFileValue(path, "future.sandbox_strategy"); err != nil {
+		if _, err := config.UnsetFileValue(path, legacySandboxStrategyKey); err != nil {
 			return err
 		}
 		a.Config.Future.SandboxStrategy = ""
@@ -16029,7 +16025,7 @@ func (a *App) Chrome(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := setPreferenceBool(path, "preferences.chrome_default_enabled", "future.chrome_default_enabled", next); err != nil {
+		if err := setPreferenceBool(path, "preferences.chrome_default_enabled", legacyChromeDefaultEnabledKey, next); err != nil {
 			return err
 		}
 		a.Config.Future.ChromeDefaultEnabled = &next
@@ -16043,7 +16039,7 @@ func (a *App) Chrome(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := unsetPreferenceBool(path, "preferences.chrome_default_enabled", "future.chrome_default_enabled"); err != nil {
+		if err := unsetPreferenceBool(path, "preferences.chrome_default_enabled", legacyChromeDefaultEnabledKey); err != nil {
 			return err
 		}
 		a.Config.Future.ChromeDefaultEnabled = nil
@@ -16219,7 +16215,7 @@ func (a *App) Notifications(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := setPreferenceBool(path, "preferences.notifications_enabled", "future.notifications_enabled", next); err != nil {
+		if err := setPreferenceBool(path, "preferences.notifications_enabled", legacyNotificationsEnabledKey, next); err != nil {
 			return err
 		}
 		a.Config.Future.NotificationsEnabled = &next
@@ -16230,7 +16226,7 @@ func (a *App) Notifications(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := unsetPreferenceBool(path, "preferences.notifications_enabled", "future.notifications_enabled"); err != nil {
+		if err := unsetPreferenceBool(path, "preferences.notifications_enabled", legacyNotificationsEnabledKey); err != nil {
 			return err
 		}
 		a.Config.Future.NotificationsEnabled = nil
@@ -17123,6 +17119,51 @@ func (a *App) preferenceConfigPath(target, path string) (string, error) {
 			Message: "target must be one of user, project, or local",
 		}
 	}
+}
+
+const (
+	legacyBackgroundStatePathKey         = "future.background_state_path"
+	legacyChromeDefaultEnabledKey        = "future.chrome_default_enabled"
+	legacyEditorBridgeSocketKey          = "future.editor_bridge_socket"
+	legacyEditorBridgeTokenKey           = "future.editor_bridge_token"
+	legacyEnterprisePolicyKey            = "future.enterprise_policy"
+	legacyEnterprisePolicyPublicKeyKey   = "future.enterprise_policy_public_key"
+	legacyExtraUsageVisitCountKey        = "future.extra_usage_visit_count"
+	legacyGuestPassReferralURLKey        = "future.guest_pass_referral_url"
+	legacyGuestPassVisitCountKey         = "future.guest_pass_visit_count"
+	legacyNotificationsEnabledKey        = "future.notifications_enabled"
+	legacyPluginMarketplacePublicKeysKey = "future.plugin_marketplace_public_keys"
+	legacyPluginMarketplacesKey          = "future.plugin_marketplaces"
+	legacyRemoteAuthTokenKey             = "future.remote_auth_token"
+	legacyRemoteEnabledKey               = "future.remote_enabled"
+	legacyRemoteLeaseSecondsKey          = "future.remote_lease_seconds"
+	legacySandboxConfigKey               = "future.sandbox"
+	legacySandboxStrategyKey             = "future.sandbox_strategy"
+	legacySlackAppInstallCountKey        = "future.slack_app_install_count"
+	legacyStickerOrderCountKey           = "future.sticker_order_count"
+	legacyUltraReviewEnabledKey          = "future.ultrareview_enabled"
+	legacyUpdaterManifestURLKey          = "future.updater_manifest_url"
+)
+
+var (
+	backgroundResetKeys    = []string{"background", legacyBackgroundStatePathKey}
+	compatibilityResetKeys = []string{"compatibility", legacySlackAppInstallCountKey, legacyStickerOrderCountKey, legacyExtraUsageVisitCountKey, legacyGuestPassReferralURLKey, legacyGuestPassVisitCountKey}
+	editorBridgeResetKeys  = []string{"editor_bridge", legacyEditorBridgeSocketKey, legacyEditorBridgeTokenKey}
+	enterpriseResetKeys    = []string{"enterprise", legacyEnterprisePolicyKey, legacyEnterprisePolicyPublicKeyKey}
+	marketplaceResetKeys   = []string{"marketplace", legacyPluginMarketplacesKey, legacyPluginMarketplacePublicKeysKey}
+	preferencesResetKeys   = []string{"preferences", legacyChromeDefaultEnabledKey, legacyNotificationsEnabledKey, legacyUltraReviewEnabledKey}
+	remoteResetKeys        = []string{"remote", legacyRemoteEnabledKey, legacyRemoteAuthTokenKey, legacyRemoteLeaseSecondsKey}
+	sandboxResetKeys       = []string{"sandbox", legacySandboxStrategyKey, legacySandboxConfigKey}
+	updaterResetKeys       = []string{"updater", legacyUpdaterManifestURLKey}
+)
+
+func unsetConfigKeys(path string, keys []string) error {
+	for _, key := range keys {
+		if _, err := config.UnsetFileValue(path, key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setPreferenceBool(path, key, legacyKey string, value bool) error {
@@ -18674,7 +18715,7 @@ func (a *App) reviewEnabledCompatibility(command string, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := setPreferenceBool(path, "preferences.ultrareview_enabled", "future.ultrareview_enabled", next); err != nil {
+		if err := setPreferenceBool(path, "preferences.ultrareview_enabled", legacyUltraReviewEnabledKey, next); err != nil {
 			return err
 		}
 		a.Config.Future.UltraReviewEnabled = &next
@@ -18695,7 +18736,7 @@ func (a *App) reviewEnabledCompatibility(command string, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := unsetPreferenceBool(path, "preferences.ultrareview_enabled", "future.ultrareview_enabled"); err != nil {
+		if err := unsetPreferenceBool(path, "preferences.ultrareview_enabled", legacyUltraReviewEnabledKey); err != nil {
 			return err
 		}
 		a.Config.Future.UltraReviewEnabled = nil
@@ -20573,7 +20614,7 @@ func (a *App) InstallSlackApp(args []string) error {
 		return err
 	}
 	count := a.Config.Future.SlackAppInstallCount + 1
-	if err := setCompatibilityValue(path, "compatibility.slack_app_install_count", "future.slack_app_install_count", count); err != nil {
+	if err := setCompatibilityValue(path, "compatibility.slack_app_install_count", legacySlackAppInstallCountKey, count); err != nil {
 		return err
 	}
 	a.Config.Future.SlackAppInstallCount = count
@@ -20680,7 +20721,7 @@ func (a *App) Stickers(args []string) error {
 		return err
 	}
 	count := a.Config.Future.StickerOrderCount + 1
-	if err := setCompatibilityValue(path, "compatibility.sticker_order_count", "future.sticker_order_count", count); err != nil {
+	if err := setCompatibilityValue(path, "compatibility.sticker_order_count", legacyStickerOrderCountKey, count); err != nil {
 		return err
 	}
 	a.Config.Future.StickerOrderCount = count
@@ -20787,7 +20828,7 @@ func (a *App) ExtraUsage(args []string) error {
 		return err
 	}
 	count := a.Config.Future.ExtraUsageVisitCount + 1
-	if err := setCompatibilityValue(path, "compatibility.extra_usage_visit_count", "future.extra_usage_visit_count", count); err != nil {
+	if err := setCompatibilityValue(path, "compatibility.extra_usage_visit_count", legacyExtraUsageVisitCountKey, count); err != nil {
 		return err
 	}
 	a.Config.Future.ExtraUsageVisitCount = count
@@ -20943,7 +20984,7 @@ func (a *App) Passes(args []string) error {
 		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
 			return err
 		}
-		if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", "future.guest_pass_referral_url", req.ReferralURL); err != nil {
+		if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey, req.ReferralURL); err != nil {
 			return err
 		}
 		a.Config.Future.GuestPassReferralURL = req.ReferralURL
@@ -20951,7 +20992,7 @@ func (a *App) Passes(args []string) error {
 		report.URL = req.ReferralURL
 		report.Message = "Guest pass referral URL saved."
 	case "clear-url":
-		if err := unsetCompatibilityValue(path, "compatibility.guest_pass_referral_url", "future.guest_pass_referral_url"); err != nil {
+		if err := unsetCompatibilityValue(path, "compatibility.guest_pass_referral_url", legacyGuestPassReferralURLKey); err != nil {
 			return err
 		}
 		a.Config.Future.GuestPassReferralURL = ""
@@ -20960,7 +21001,7 @@ func (a *App) Passes(args []string) error {
 		report.Message = "Guest pass referral URL cleared."
 	case "show", "open":
 		count := a.Config.Future.GuestPassVisitCount + 1
-		if err := setCompatibilityValue(path, "compatibility.guest_pass_visit_count", "future.guest_pass_visit_count", count); err != nil {
+		if err := setCompatibilityValue(path, "compatibility.guest_pass_visit_count", legacyGuestPassVisitCountKey, count); err != nil {
 			return err
 		}
 		a.Config.Future.GuestPassVisitCount = count
@@ -36686,27 +36727,27 @@ type resetReport struct {
 }
 
 var resetSectionKeys = map[string][]string{
-	"auth":          []string{"api_key", "auth_token", "oauth_profile", "base_url"},
-	"background":    []string{"background", "future.background_state_path"},
-	"compatibility": []string{"compatibility", "future.slack_app_install_count", "future.sticker_order_count", "future.extra_usage_visit_count", "future.guest_pass_referral_url", "future.guest_pass_visit_count"},
-	"editor-bridge": []string{"editor_bridge", "future.editor_bridge_socket", "future.editor_bridge_token"},
-	"enterprise":    []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"},
-	"future":        []string{"future"},
-	"hooks":         []string{"hooks"},
-	"interface":     []string{"language", "theme", "editorMode"},
-	"marketplace":   []string{"marketplace", "future.plugin_marketplaces", "future.plugin_marketplace_public_keys"},
-	"mcp":           []string{"mcp_servers"},
-	"model":         []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
-	"permissions":   []string{"permission_mode", "permission_rules"},
-	"preferences":   []string{"preferences", "future.chrome_default_enabled", "future.notifications_enabled", "future.ultrareview_enabled"},
-	"privacy":       []string{"privacy_settings"},
-	"rag":           []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
-	"rate-limit":    []string{"rate_limit"},
-	"remote":        []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
-	"sandbox":       []string{"sandbox", "future.sandbox_strategy", "future.sandbox"},
-	"skills":        []string{"enabled_skills"},
-	"updater":       []string{"updater", "future.updater_manifest_url"},
-	"voice":         []string{"voice_enabled", "voice_command", "speech_command"},
+	"auth":          {"api_key", "auth_token", "oauth_profile", "base_url"},
+	"background":    backgroundResetKeys,
+	"compatibility": compatibilityResetKeys,
+	"editor-bridge": editorBridgeResetKeys,
+	"enterprise":    enterpriseResetKeys,
+	"future":        {"future"},
+	"hooks":         {"hooks"},
+	"interface":     {"language", "theme", "editorMode"},
+	"marketplace":   marketplaceResetKeys,
+	"mcp":           {"mcp_servers"},
+	"model":         {"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
+	"permissions":   {"permission_mode", "permission_rules"},
+	"preferences":   preferencesResetKeys,
+	"privacy":       {"privacy_settings"},
+	"rag":           {"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
+	"rate-limit":    {"rate_limit"},
+	"remote":        remoteResetKeys,
+	"sandbox":       sandboxResetKeys,
+	"skills":        {"enabled_skills"},
+	"updater":       updaterResetKeys,
+	"voice":         {"voice_enabled", "voice_command", "speech_command"},
 }
 
 var resetSectionAliases = map[string]string{
