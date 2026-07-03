@@ -5892,6 +5892,12 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "file/write")
 	require.Contains(t, report.Protocol.Methods, "file/edit")
 	require.Contains(t, report.Protocol.Methods, "file/diff")
+	require.Contains(t, report.Protocol.Methods, "diagnostics/go")
+	require.Contains(t, report.Protocol.Methods, "code/symbols")
+	require.Contains(t, report.Protocol.Methods, "code/references")
+	require.Contains(t, report.Protocol.Methods, "code/definition")
+	require.Contains(t, report.Protocol.Methods, "code/hover")
+	require.Contains(t, report.Protocol.Methods, "code/completion")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6214,6 +6220,71 @@ func TestACPServeExposesFileOperations(t *testing.T) {
 	require.Contains(t, string(data), "func run() {}")
 }
 
+func TestACPServeExposesCodeIntelQueries(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/acp\n\ngo 1.21\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte(`package main
+
+type Runner struct{}
+
+func Run() string {
+	return "ok"
+}
+
+func main() {
+	_ = Run()
+}
+`), 0o644))
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"code/symbols","params":{"path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"code/definition","params":{"symbol":"Run"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"code/references","params":{"symbol":"Run","limit":5}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"code/hover","params":{"symbol":"Run","context_lines":1}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"code/completion","params":{"query":"Ru","limit":5}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"diagnostics/go","params":{"patterns":["./..."]}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 7)
+	symbols := responses[0]["result"].(map[string]any)
+	require.Equal(t, "symbols", symbols["kind"])
+	require.GreaterOrEqual(t, int(symbols["total"].(float64)), 2)
+	definition := responses[1]["result"].(map[string]any)
+	require.Equal(t, "definition", definition["kind"])
+	require.Equal(t, true, definition["found"])
+	definitionPayload := definition["definition"].(map[string]any)
+	require.Equal(t, "Run", definitionPayload["name"])
+	require.Equal(t, "main.go", definitionPayload["path"])
+	references := responses[2]["result"].(map[string]any)
+	require.Equal(t, "references", references["kind"])
+	require.Equal(t, "Run", references["symbol"])
+	require.GreaterOrEqual(t, int(references["total"].(float64)), 2)
+	hover := responses[3]["result"].(map[string]any)
+	require.Equal(t, "hover", hover["kind"])
+	hoverPayload := hover["hover"].(map[string]any)
+	require.Equal(t, true, hoverPayload["found"])
+	require.Equal(t, "Run", hoverPayload["symbol"])
+	completion := responses[4]["result"].(map[string]any)
+	require.Equal(t, "completion", completion["kind"])
+	require.Equal(t, "Ru", completion["query"])
+	require.GreaterOrEqual(t, int(completion["total"].(float64)), 1)
+	diagnostics := responses[5]["result"].(map[string]any)
+	require.Equal(t, "diagnostics", diagnostics["kind"])
+	require.EqualValues(t, 0, diagnostics["total"])
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6248,6 +6319,14 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, fileCaps["write"])
 			require.Equal(t, true, fileCaps["edit"])
 			require.Equal(t, true, fileCaps["diff"])
+			diagnosticsCaps := capabilities["diagnostics"].(map[string]any)
+			require.Equal(t, true, diagnosticsCaps["go"])
+			codeCaps := capabilities["code"].(map[string]any)
+			require.Equal(t, true, codeCaps["symbols"])
+			require.Equal(t, true, codeCaps["references"])
+			require.Equal(t, true, codeCaps["definition"])
+			require.Equal(t, true, codeCaps["hover"])
+			require.Equal(t, true, codeCaps["completion"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])

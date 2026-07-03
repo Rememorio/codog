@@ -39,6 +39,12 @@ type Handlers struct {
 	FileWrite       func(context.Context, workspaceops.WriteOptions) (workspaceops.WriteResult, error)
 	FileEdit        func(context.Context, workspaceops.EditOptions) (workspaceops.EditResult, error)
 	FileDiff        func(context.Context, workspaceops.DiffOptions) (workspaceops.DiffResult, error)
+	DiagnosticsGo   func(context.Context, DiagnosticsRequest) (any, error)
+	CodeSymbols     func(context.Context, CodeSymbolsRequest) (any, error)
+	CodeReferences  func(context.Context, CodeReferencesRequest) (any, error)
+	CodeDefinition  func(context.Context, CodeDefinitionRequest) (any, error)
+	CodeHover       func(context.Context, CodeHoverRequest) (any, error)
+	CodeCompletion  func(context.Context, CodeCompletionRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -172,6 +178,33 @@ type PromptResult struct {
 	Output    string `json:"output"`
 }
 
+type DiagnosticsRequest struct {
+	Patterns []string `json:"patterns,omitempty"`
+}
+
+type CodeSymbolsRequest struct {
+	Path string `json:"path,omitempty"`
+}
+
+type CodeReferencesRequest struct {
+	Symbol string `json:"symbol"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type CodeDefinitionRequest struct {
+	Symbol string `json:"symbol"`
+}
+
+type CodeHoverRequest struct {
+	Symbol       string `json:"symbol"`
+	ContextLines int    `json:"context_lines,omitempty"`
+}
+
+type CodeCompletionRequest struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -247,6 +280,18 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleFileEdit(ctx, out, handlers, req)
 	case "file/diff":
 		return false, handleFileDiff(ctx, out, handlers, req)
+	case "diagnostics/go":
+		return false, handleDiagnosticsGo(ctx, out, handlers, req)
+	case "code/symbols":
+		return false, handleCodeSymbols(ctx, out, handlers, req)
+	case "code/references":
+		return false, handleCodeReferences(ctx, out, handlers, req)
+	case "code/definition":
+		return false, handleCodeDefinition(ctx, out, handlers, req)
+	case "code/hover":
+		return false, handleCodeHover(ctx, out, handlers, req)
+	case "code/completion":
+		return false, handleCodeCompletion(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -310,6 +355,16 @@ func initializeResult(opts Options) map[string]any {
 				"write": true,
 				"edit":  true,
 				"diff":  true,
+			},
+			"diagnostics": map[string]any{
+				"go": true,
+			},
+			"code": map[string]any{
+				"symbols":    true,
+				"references": true,
+				"definition": true,
+				"hover":      true,
+				"completion": true,
 			},
 			"prompt": true,
 			"status": true,
@@ -431,6 +486,96 @@ func handleFileDiff(ctx context.Context, out io.Writer, handlers Handlers, req r
 		return writeError(out, req.ID, -32602, err.Error())
 	}
 	result, err := handlers.FileDiff(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleDiagnosticsGo(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.DiagnosticsGo == nil {
+		return writeError(out, req.ID, -32603, "go diagnostics handler is not configured")
+	}
+	var request DiagnosticsRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.DiagnosticsGo(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleCodeSymbols(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.CodeSymbols == nil {
+		return writeError(out, req.ID, -32603, "code symbols handler is not configured")
+	}
+	var request CodeSymbolsRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.CodeSymbols(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleCodeReferences(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.CodeReferences == nil {
+		return writeError(out, req.ID, -32603, "code references handler is not configured")
+	}
+	var request CodeReferencesRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.CodeReferences(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleCodeDefinition(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.CodeDefinition == nil {
+		return writeError(out, req.ID, -32603, "code definition handler is not configured")
+	}
+	var request CodeDefinitionRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.CodeDefinition(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleCodeHover(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.CodeHover == nil {
+		return writeError(out, req.ID, -32603, "code hover handler is not configured")
+	}
+	var request CodeHoverRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.CodeHover(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleCodeCompletion(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.CodeCompletion == nil {
+		return writeError(out, req.ID, -32603, "code completion handler is not configured")
+	}
+	var request CodeCompletionRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.CodeCompletion(ctx, request)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}

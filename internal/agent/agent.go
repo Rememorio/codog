@@ -20746,6 +20746,12 @@ var acpJSONRPCMethods = []string{
 	"file/write",
 	"file/edit",
 	"file/diff",
+	"diagnostics/go",
+	"code/symbols",
+	"code/references",
+	"code/definition",
+	"code/hover",
+	"code/completion",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20810,7 +20816,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -20985,6 +20991,61 @@ func (a *App) serveACP(ctx context.Context) error {
 		},
 		FileDiff: func(_ context.Context, options workspaceops.DiffOptions) (workspaceops.DiffResult, error) {
 			return (workspaceops.Service{Workspace: a.Workspace}).Diff(options)
+		},
+		DiagnosticsGo: func(ctx context.Context, req acpserver.DiagnosticsRequest) (any, error) {
+			diagnostics, err := codeintel.GoDiagnostics(ctx, a.Workspace, req.Patterns)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "diagnostics", "diagnostics": diagnostics, "total": len(diagnostics)}, nil
+		},
+		CodeSymbols: func(_ context.Context, req acpserver.CodeSymbolsRequest) (any, error) {
+			symbols, err := codeintel.GoSymbols(a.Workspace)
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(req.Path) != "" {
+				_, rel, err := (workspaceops.Service{Workspace: a.Workspace}).Resolve(req.Path, false)
+				if err != nil {
+					return nil, err
+				}
+				filtered := symbols[:0]
+				for _, symbol := range symbols {
+					if filepath.ToSlash(symbol.Path) == filepath.ToSlash(rel) {
+						filtered = append(filtered, symbol)
+					}
+				}
+				symbols = filtered
+			}
+			return map[string]any{"kind": "symbols", "total": len(symbols), "symbols": symbols}, nil
+		},
+		CodeReferences: func(_ context.Context, req acpserver.CodeReferencesRequest) (any, error) {
+			refs, err := codeintel.References(a.Workspace, req.Symbol, req.Limit)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "references", "symbol": strings.TrimSpace(req.Symbol), "total": len(refs), "references": refs}, nil
+		},
+		CodeDefinition: func(_ context.Context, req acpserver.CodeDefinitionRequest) (any, error) {
+			definition, found, err := codeintel.Definition(a.Workspace, req.Symbol)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "definition", "symbol": strings.TrimSpace(req.Symbol), "found": found, "definition": definition}, nil
+		},
+		CodeHover: func(_ context.Context, req acpserver.CodeHoverRequest) (any, error) {
+			hover, err := codeintel.HoverInfo(a.Workspace, req.Symbol, req.ContextLines)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "hover", "symbol": strings.TrimSpace(req.Symbol), "hover": hover}, nil
+		},
+		CodeCompletion: func(_ context.Context, req acpserver.CodeCompletionRequest) (any, error) {
+			completions, err := codeintel.Completions(a.Workspace, req.Query, req.Limit)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "completion", "query": strings.TrimSpace(req.Query), "total": len(completions), "completions": completions}, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

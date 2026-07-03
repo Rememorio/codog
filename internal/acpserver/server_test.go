@@ -116,6 +116,14 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, fileCaps["write"])
 	require.Equal(t, true, fileCaps["edit"])
 	require.Equal(t, true, fileCaps["diff"])
+	diagnosticsCaps := capabilities["diagnostics"].(map[string]any)
+	require.Equal(t, true, diagnosticsCaps["go"])
+	codeCaps := capabilities["code"].(map[string]any)
+	require.Equal(t, true, codeCaps["symbols"])
+	require.Equal(t, true, codeCaps["references"])
+	require.Equal(t, true, codeCaps["definition"])
+	require.Equal(t, true, codeCaps["hover"])
+	require.Equal(t, true, codeCaps["completion"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -262,6 +270,59 @@ func TestServeHandlesFileRequests(t *testing.T) {
 	require.EqualValues(t, 1, editResult["replacements"])
 	diffResult := responses[3]["result"].(map[string]any)
 	require.Contains(t, diffResult["diff"], "--- src/new.go")
+}
+
+func TestServeHandlesCodeIntelRequests(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"diagnostics/go","params":{"patterns":["./..."]}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"code/symbols","params":{"path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"code/references","params":{"symbol":"Run","limit":2}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"code/definition","params":{"symbol":"Run"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"code/hover","params":{"symbol":"Run","context_lines":1}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"code/completion","params":{"query":"Ru","limit":3}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		DiagnosticsGo: func(_ context.Context, req DiagnosticsRequest) (any, error) {
+			require.Equal(t, []string{"./..."}, req.Patterns)
+			return map[string]any{"kind": "diagnostics", "total": 0}, nil
+		},
+		CodeSymbols: func(_ context.Context, req CodeSymbolsRequest) (any, error) {
+			require.Equal(t, "main.go", req.Path)
+			return map[string]any{"kind": "symbols", "total": 1, "symbols": []map[string]any{{"name": "Run"}}}, nil
+		},
+		CodeReferences: func(_ context.Context, req CodeReferencesRequest) (any, error) {
+			require.Equal(t, "Run", req.Symbol)
+			require.Equal(t, 2, req.Limit)
+			return map[string]any{"kind": "references", "symbol": req.Symbol, "total": 1}, nil
+		},
+		CodeDefinition: func(_ context.Context, req CodeDefinitionRequest) (any, error) {
+			require.Equal(t, "Run", req.Symbol)
+			return map[string]any{"kind": "definition", "symbol": req.Symbol, "found": true}, nil
+		},
+		CodeHover: func(_ context.Context, req CodeHoverRequest) (any, error) {
+			require.Equal(t, "Run", req.Symbol)
+			require.Equal(t, 1, req.ContextLines)
+			return map[string]any{"kind": "hover", "symbol": req.Symbol}, nil
+		},
+		CodeCompletion: func(_ context.Context, req CodeCompletionRequest) (any, error) {
+			require.Equal(t, "Ru", req.Query)
+			require.Equal(t, 3, req.Limit)
+			return map[string]any{"kind": "completion", "query": req.Query, "total": 1}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 6)
+	require.Equal(t, "diagnostics", responses[0]["result"].(map[string]any)["kind"])
+	require.Equal(t, "symbols", responses[1]["result"].(map[string]any)["kind"])
+	require.Equal(t, "references", responses[2]["result"].(map[string]any)["kind"])
+	require.Equal(t, "definition", responses[3]["result"].(map[string]any)["kind"])
+	require.Equal(t, "hover", responses[4]["result"].(map[string]any)["kind"])
+	require.Equal(t, "completion", responses[5]["result"].(map[string]any)["kind"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {
