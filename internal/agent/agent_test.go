@@ -2875,7 +2875,7 @@ func risky(value any) {
 		"max_turns":             3,
 		"permission_mode":       "workspace-write",
 		"permission_rules": map[string]any{
-			"allow": []string{"read_file"},
+			"allow": []string{"read_file", "edit_file", "multi_edit"},
 		},
 		"hooks": map[string]any{
 			"pre_tool_use": []map[string]any{{
@@ -3500,7 +3500,7 @@ func risky(value any) {
 	require.Equal(t, "permissions", resumedPermissions.Kind)
 	require.Equal(t, "show", resumedPermissions.Action)
 	require.Equal(t, "workspace-write", resumedPermissions.PermissionMode)
-	require.Equal(t, []string{"read_file"}, resumedPermissions.PermissionRules.Allow)
+	require.Equal(t, []string{"read_file", "edit_file", "multi_edit"}, resumedPermissions.PermissionRules.Allow)
 
 	out, err = runResumedJSON("/permissions", "read-only")
 	require.NoError(t, err)
@@ -3518,7 +3518,7 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedAllowedTools))
 	require.Equal(t, "allowed_tools", resumedAllowedTools.Kind)
 	require.Equal(t, "list", resumedAllowedTools.Action)
-	require.Equal(t, []string{"read_file"}, resumedAllowedTools.Rules)
+	require.Equal(t, []string{"read_file", "edit_file", "multi_edit"}, resumedAllowedTools.Rules)
 
 	out, err = runResumedJSON("/allowed-tools", "add", "bash")
 	require.NoError(t, err)
@@ -3526,8 +3526,8 @@ func risky(value any) {
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedAllowedToolsAdd))
 	require.Equal(t, "allowed_tools", resumedAllowedToolsAdd.Kind)
 	require.Equal(t, "add", resumedAllowedToolsAdd.Action)
-	require.Equal(t, []string{"read_file", "bash"}, resumedAllowedToolsAdd.Rules)
-	require.Equal(t, 2, resumedAllowedToolsAdd.Count)
+	require.Equal(t, []string{"read_file", "edit_file", "multi_edit", "bash"}, resumedAllowedToolsAdd.Rules)
+	require.Equal(t, 4, resumedAllowedToolsAdd.Count)
 	require.NotEmpty(t, resumedAllowedToolsAdd.Path)
 
 	out, err = runResumedJSON("/output-style")
@@ -5558,6 +5558,32 @@ func risky(value any) {
 	require.True(t, resumedUndo.Removed)
 	require.Equal(t, "debug-write.txt", resumedUndo.Path)
 	require.NoFileExists(t, filepath.Join(workspace, "debug-write.txt"))
+
+	editTargetPath := filepath.Join(workspace, "debug-edit.txt")
+	require.NoError(t, os.WriteFile(editTargetPath, []byte("alpha\nbeta\ngamma\n"), 0o644))
+	out, err = runResumedJSON("/debug-tool-call", "EditFile", `{"path":"debug-edit.txt","old_string":"beta","new_string":"BETA"}`)
+	require.NoError(t, err)
+	var resumedDebugEdit debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugEdit))
+	require.Equal(t, "debug_tool_call", resumedDebugEdit.Kind)
+	require.Equal(t, "edit_file", resumedDebugEdit.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugEdit.Permission)
+	require.True(t, resumedDebugEdit.Success)
+	editData, err := os.ReadFile(editTargetPath)
+	require.NoError(t, err)
+	require.Equal(t, "alpha\nBETA\ngamma\n", string(editData))
+
+	out, err = runResumedJSON("/debug-tool-call", "MultiEdit", `{"path":"debug-edit.txt","edits":[{"old_string":"alpha","new_string":"ALPHA"},{"old_string":"gamma","new_string":"GAMMA"}]}`)
+	require.NoError(t, err)
+	var resumedDebugMultiEdit debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugMultiEdit))
+	require.Equal(t, "debug_tool_call", resumedDebugMultiEdit.Kind)
+	require.Equal(t, "multi_edit", resumedDebugMultiEdit.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugMultiEdit.Permission)
+	require.True(t, resumedDebugMultiEdit.Success)
+	editData, err = os.ReadFile(editTargetPath)
+	require.NoError(t, err)
+	require.Equal(t, "ALPHA\nBETA\nGAMMA\n", string(editData))
 
 	out, err = runResumedJSON("/unfocus")
 	require.NoError(t, err)
