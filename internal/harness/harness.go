@@ -14,12 +14,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/codog/internal/acpserver"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/mockanthropic"
+	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/runloop"
 	"github.com/Rememorio/codog/internal/session"
@@ -162,6 +164,7 @@ var scenarioOrder = []string{
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
 	"mcp_lifecycle_roundtrip",
+	"mcp_auth_oauth_refresh_roundtrip",
 	"acp_stdio_roundtrip",
 	"auto_compact_triggered",
 	"token_cost_reporting",
@@ -667,6 +670,7 @@ func Run(ctx context.Context) (Report, error) {
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
 		mcpLifecycleScenario(),
+		mcpAuthOAuthRefreshScenario(),
 		acpStdioScenario(),
 		{
 			name: "auto_compact_triggered",
@@ -1178,6 +1182,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "mcp-lifecycle",
 		Description: "Exercises HTTP MCP initialize, initialized notification, tool discovery, and tool invocation through the control API.",
 		ParityRefs:  []string{"MCP client", "MCP lifecycle", "Control API MCP bridge"},
+	},
+	"mcp_auth_oauth_refresh_roundtrip": {
+		Category:    "mcp-auth",
+		Description: "Exercises MCP auth diagnostics with an expired refreshable OAuth token and verifies redacted refresh output.",
+		ParityRefs:  []string{"MCP auth", "OAuth refresh", "Token redaction"},
 	},
 	"acp_stdio_roundtrip": {
 		Category:    "editor-bridge",
@@ -1835,6 +1844,154 @@ func mcpLifecycleScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func mcpAuthOAuthRefreshScenario() scenario {
+	return scenario{
+		name: "mcp_auth_oauth_refresh_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			oldStorage, hadStorage := os.LookupEnv("CODOG_OAUTH_STORAGE")
+			if err := os.Setenv("CODOG_OAUTH_STORAGE", "file"); err != nil {
+				return localScenarioResult{}, err
+			}
+			defer func() {
+				if hadStorage {
+					_ = os.Setenv("CODOG_OAUTH_STORAGE", oldStorage)
+				} else {
+					_ = os.Unsetenv("CODOG_OAUTH_STORAGE")
+				}
+			}()
+
+			refreshSeen := false
+			authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/oauth-authorization-server":
+					writeJSONBody(w, map[string]any{
+						"authorization_endpoint": "https://auth.example/authorize",
+						"token_endpoint":         "http://" + r.Host + "/token",
+					})
+				case "/token":
+					if err := r.ParseForm(); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					if r.Form.Get("grant_type") != "refresh_token" ||
+						r.Form.Get("refresh_token") != "old-refresh-token-secret" ||
+						r.Form.Get("client_id") != "client-harness" {
+						http.Error(w, "unexpected refresh request", http.StatusBadRequest)
+						return
+					}
+					refreshSeen = true
+					writeJSONBody(w, map[string]any{
+						"access_token":  "new-access-token-secret-1234",
+						"refresh_token": "new-refresh-token-secret-5678",
+						"token_type":    "Bearer",
+						"expires_in":    3600,
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer authServer.Close()
+
+			if _, err := oauth.SaveProviderProfile(ctx, configHome, "work", authServer.URL, "client-harness", []string{"profile"}); err != nil {
+				return localScenarioResult{}, err
+			}
+			now := time.Now().UTC()
+			if _, err := oauth.SaveToken(configHome, oauth.Token{
+				AccessToken:  "old-access-token-secret",
+				RefreshToken: "old-refresh-token-secret",
+				ExpiresAt:    now.Add(-1 * time.Hour),
+				CreatedAt:    now.Add(-2 * time.Hour),
+			}); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				var req map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				method, _ := req["method"].(string)
+				id := req["id"]
+				switch method {
+				case "initialize":
+					w.Header().Set("Mcp-Session-Id", "mcp-auth-session")
+					writeMCPHarnessResponse(w, id, map[string]any{
+						"protocolVersion": "2024-11-05",
+						"capabilities": map[string]any{
+							"tools":     map[string]any{},
+							"resources": map[string]any{},
+						},
+						"serverInfo": map[string]any{"name": "mcp-auth-harness", "version": "1.0.0"},
+					})
+				case "notifications/initialized":
+					w.WriteHeader(http.StatusAccepted)
+				case "tools/list":
+					writeMCPHarnessResponse(w, id, map[string]any{"tools": []map[string]any{{
+						"name":        "auth_echo",
+						"description": "MCP auth harness tool.",
+						"inputSchema": map[string]any{"type": "object"},
+					}}})
+				case "resources/list":
+					writeMCPHarnessResponse(w, id, map[string]any{"resources": []map[string]any{{"uri": "codog://auth", "name": "auth"}}})
+				default:
+					writeMCPHarnessError(w, id, "unsupported method: "+method)
+				}
+			}))
+			defer mcpServer.Close()
+
+			out, err := tools.MCPAuthTool{
+				Servers: map[string]config.MCPServerConfig{
+					"auth": {URL: mcpServer.URL + "/mcp"},
+				},
+				ConfigHome:   configHome,
+				OAuthProfile: "work",
+			}.Execute(ctx, json.RawMessage(`{"server":"auth","action":"refresh"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !refreshSeen {
+				return localScenarioResult{}, fmt.Errorf("OAuth refresh endpoint was not called")
+			}
+			for _, expected := range []string{`"server": "auth"`, `"status": "ok"`, `"tool_count": 1`, `"resource_count": 1`, `"oauth_profile": "work"`, `"profile_configured": true`, `"token_present": true`, `"ready": true`, `"refreshed": true`, `"command": "codog mcp tools auth"`} {
+				if !strings.Contains(out, expected) {
+					return localScenarioResult{}, fmt.Errorf("MCP auth refresh output missing %s", expected)
+				}
+			}
+			for _, secret := range []string{"old-access-token-secret", "old-refresh-token-secret", "new-access-token-secret-1234", "new-refresh-token-secret-5678"} {
+				if strings.Contains(out, secret) {
+					return localScenarioResult{}, fmt.Errorf("MCP auth refresh output leaked token secret")
+				}
+			}
+			loaded, err := oauth.LoadToken(configHome)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if loaded.AccessToken != "new-access-token-secret-1234" || loaded.RefreshToken != "new-refresh-token-secret-5678" {
+				return localScenarioResult{}, fmt.Errorf("OAuth token was not refreshed")
+			}
+
+			return localScenarioResult{
+				Output:       out,
+				FinalMessage: "mcp auth oauth refresh harness ok",
+				ToolCalls:    1,
+				ToolUses:     []string{"mcp_auth"},
+				RequestCount: 1,
+			}, nil
+		},
+	}
+}
+
+func writeJSONBody(w http.ResponseWriter, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func writeMCPHarnessResponse(w http.ResponseWriter, id any, result any) {
