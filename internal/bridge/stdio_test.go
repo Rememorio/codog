@@ -891,6 +891,19 @@ func TestBridgeBackgroundLifecycleControls(t *testing.T) {
 	require.Contains(t, out.String(), `"removed":["old"]`)
 	require.NoFileExists(t, filepath.Join(bgDir, "old.json"))
 	require.NoFileExists(t, oldLog)
+	bg := background.NewStore(configHome)
+	require.Eventually(t, func() bool {
+		tasks, err := bg.List()
+		if err != nil {
+			return false
+		}
+		for _, task := range tasks {
+			if task.RestartedFrom == "failed" {
+				return task.Status == "completed" || task.Status == "failed"
+			}
+		}
+		return false
+	}, 5*time.Second, 25*time.Millisecond)
 }
 
 func TestBridgeAgentRunsLifecycle(t *testing.T) {
