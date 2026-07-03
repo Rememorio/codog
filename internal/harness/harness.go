@@ -181,6 +181,7 @@ var scenarioOrder = []string{
 	"web_access_roundtrip",
 	"git_workspace_roundtrip",
 	"plan_todo_roundtrip",
+	"todo_completion_verification_roundtrip",
 	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
 	"command_skill_template_roundtrip",
@@ -670,6 +671,7 @@ func Run(ctx context.Context) (Report, error) {
 		webAccessScenario(),
 		gitWorkspaceScenario(),
 		planTodoScenario(),
+		todoCompletionVerificationScenario(),
 		lspStaticScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
@@ -1263,6 +1265,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "planning",
 		Description: "Enters plan mode, persists a todo list, reads it back, and exits plan mode with the final plan.",
 		ParityRefs:  []string{"Plan mode", "Todo tools", "Workspace state"},
+	},
+	"todo_completion_verification_roundtrip": {
+		Category:    "planning",
+		Description: "Completes a todo list, emits the verification nudge, and verifies persisted todo cleanup.",
+		ParityRefs:  []string{"TodoWrite", "TodoRead", "Verification reminders"},
 	},
 	"lsp_static_roundtrip": {
 		Category:    "code-intelligence",
@@ -2908,6 +2915,92 @@ func planTodoScenario() scenario {
 				ToolCalls:    4,
 				ToolUses:     []string{"enter_plan_mode", "todo_write", "todo_read", "exit_plan_mode"},
 				RequestCount: 4,
+			}, nil
+		},
+	}
+}
+
+func todoCompletionVerificationScenario() scenario {
+	return scenario{
+		name: "todo_completion_verification_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			initialOut, err := tools.TodoWriteTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{
+				"todos": [
+					{
+						"content": "draft implementation",
+						"activeForm": "drafting implementation",
+						"status": "in_progress",
+						"priority": "high"
+					}
+				]
+			}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "todos"`, `"action": "replace"`, `"total": 1`, `"content": "draft implementation"`} {
+				if !strings.Contains(initialOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("initial todo write output missing %s", expected)
+				}
+			}
+
+			completedOut, err := tools.TodoWriteTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{
+				"todos": [
+					{
+						"content": "draft implementation",
+						"activeForm": "drafting implementation",
+						"status": "completed",
+						"priority": "high"
+					},
+					{
+						"content": "update tests",
+						"activeForm": "updating tests",
+						"status": "completed",
+						"priority": "medium"
+					},
+					{
+						"content": "prepare summary",
+						"activeForm": "preparing summary",
+						"status": "completed",
+						"priority": "low"
+					}
+				]
+			}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "todos"`, `"action": "replace"`, `"total": 0`, `"oldTodos": [`, `"content": "draft implementation"`, `"verificationNudgeNeeded": true`} {
+				if !strings.Contains(completedOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("completed todo write output missing %s", expected)
+				}
+			}
+
+			readOut, err := tools.TodoReadTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "todos"`, `"action": "list"`, `"total": 0`} {
+				if !strings.Contains(readOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("todo read output missing %s", expected)
+				}
+			}
+			if strings.Contains(readOut, "draft implementation") || strings.Contains(readOut, "update tests") {
+				return localScenarioResult{}, fmt.Errorf("completed todos were not cleared from read output: %s", readOut)
+			}
+
+			todoData, err := os.ReadFile(filepath.Join(workspace, ".codog", "todos.json"))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if strings.Contains(string(todoData), "draft implementation") || strings.Contains(string(todoData), "update tests") {
+				return localScenarioResult{}, fmt.Errorf("completed todos were not cleared from persisted state: %s", string(todoData))
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{initialOut, completedOut, readOut}, "\n"),
+				FinalMessage: "todo completion verification harness ok",
+				ToolCalls:    3,
+				ToolUses:     []string{"todo_write", "todo_write", "todo_read"},
+				RequestCount: 3,
 			}, nil
 		},
 	}

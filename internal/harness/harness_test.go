@@ -218,8 +218,17 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, planTodo.Output, `"status": "inactive"`)
 	planTodoCategory := findCategory(t, report, "planning")
 	require.True(t, planTodoCategory.OK)
-	require.Equal(t, 1, planTodoCategory.Total)
-	require.ElementsMatch(t, []string{"plan_todo_roundtrip"}, planTodoCategory.Scenarios)
+	require.Equal(t, 2, planTodoCategory.Total)
+	require.ElementsMatch(t, []string{"plan_todo_roundtrip", "todo_completion_verification_roundtrip"}, planTodoCategory.Scenarios)
+
+	todoCompletion := findScenario(t, report, "todo_completion_verification_roundtrip")
+	require.True(t, todoCompletion.OK)
+	require.Equal(t, "planning", todoCompletion.Category)
+	require.Equal(t, 3, todoCompletion.ToolCalls)
+	require.Equal(t, []string{"todo_write", "todo_write", "todo_read"}, todoCompletion.ToolUses)
+	require.Contains(t, todoCompletion.Output, `"verificationNudgeNeeded": true`)
+	require.Contains(t, todoCompletion.Output, `"total": 0`)
+	require.Contains(t, todoCompletion.FinalMessage, "todo completion verification harness ok")
 
 	lspStatic := findScenario(t, report, "lsp_static_roundtrip")
 	require.True(t, lspStatic.OK)
@@ -489,6 +498,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	planTodo := findManifestScenario(t, manifest, "plan_todo_roundtrip")
 	require.Equal(t, "planning", planTodo.Category)
 	require.Contains(t, planTodo.ParityRefs, "Plan mode")
+
+	todoCompletion := findManifestScenario(t, manifest, "todo_completion_verification_roundtrip")
+	require.Equal(t, "planning", todoCompletion.Category)
+	require.Contains(t, todoCompletion.ParityRefs, "Verification reminders")
 
 	lspStatic := findManifestScenario(t, manifest, "lsp_static_roundtrip")
 	require.Equal(t, "code-intelligence", lspStatic.Category)
