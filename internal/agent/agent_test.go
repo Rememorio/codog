@@ -13436,12 +13436,14 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		RAGBaseURL:     "http://rag.example.test",
 		RAGTopKMax:     9,
 		Future: config.FutureConfig{
-			PluginMarketplaces:    []string{"https://market.example/index.json"},
-			PluginMarketplaceKeys: map[string]string{"https://market.example/index.json": "market-public-key"},
-			RemoteEnabled:         true,
-			RemoteAuthToken:       "remote-secret",
-			RemoteLeaseSeconds:    45,
-			SandboxStrategy:       "detect",
+			EnterprisePolicy:          "policy.json",
+			EnterprisePolicyPublicKey: "enterprise-public-key",
+			PluginMarketplaces:        []string{"https://market.example/index.json"},
+			PluginMarketplaceKeys:     map[string]string{"https://market.example/index.json": "market-public-key"},
+			RemoteEnabled:             true,
+			RemoteAuthToken:           "remote-secret",
+			RemoteLeaseSeconds:        45,
+			SandboxStrategy:           "detect",
 			Sandbox: config.SandboxConfig{
 				FilesystemMode: "allow-list",
 				AllowedMounts:  []string{"logs"},
@@ -13477,6 +13479,12 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"rag_base_url": "http://rag.example.test"`)
 	require.Contains(t, out.String(), `"rag_top_k_max": 9`)
 	require.Contains(t, out.String(), `"tool": "retrieve_context"`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "enterprise", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"policy": "policy.json"`)
+	require.Contains(t, out.String(), `"public_key_configured": true`)
+	require.NotContains(t, out.String(), "enterprise-public-key")
 	out.Reset()
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "remote", "--output-format", "json"}))
@@ -13717,6 +13725,28 @@ func TestResetRemoteConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), "remote_enabled")
 	require.NotContains(t, string(data), "remote_auth_token")
 	require.NotContains(t, string(data), "remote_lease_seconds")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetEnterpriseConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"enterprise": {"policy": "policy.json", "policy_public_key": "public-key"},
+		"future": {"enterprise_policy": "old-policy.json", "enterprise_policy_public_key": "old-key"}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "enterprise", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "enterprise", report.Section)
+	require.ElementsMatch(t, []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"enterprise"`)
+	require.NotContains(t, string(data), "enterprise_policy")
+	require.NotContains(t, string(data), "enterprise_policy_public_key")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 

@@ -446,6 +446,47 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// EnterpriseConfig holds managed organization policy configuration.
+type EnterpriseConfig struct {
+	Policy          string `json:"policy,omitempty"`
+	PolicyPublicKey string `json:"policy_public_key,omitempty"`
+}
+
+// UnmarshalJSON accepts snake_case and camelCase public key aliases.
+func (e *EnterpriseConfig) UnmarshalJSON(data []byte) error {
+	type plain EnterpriseConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readStringAlias := func(target *string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid enterprise.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	if err := readStringAlias(&parsed.Policy, "policy"); err != nil {
+		return err
+	}
+	if err := readStringAlias(&parsed.PolicyPublicKey, "policyPublicKey", "policy_public_key", "publicKey", "public_key"); err != nil {
+		return err
+	}
+	*e = EnterpriseConfig(parsed)
+	return nil
+}
+
 // MarketplaceConfig holds trusted plugin marketplace index sources.
 type MarketplaceConfig struct {
 	Sources       []string          `json:"sources,omitempty"`
@@ -699,6 +740,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
 		AllowedTools        []string                   `json:"allowedTools,omitempty"`
 		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
+		Enterprise          EnterpriseConfig           `json:"enterprise,omitempty"`
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
 		Marketplace         MarketplaceConfig          `json:"marketplace,omitempty"`
@@ -752,6 +794,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		for name, server := range aliases.MCPServers {
 			parsed.MCPServers[name] = server
 		}
+	}
+	if enterpriseConfigSet(aliases.Enterprise) {
+		mergeEnterpriseConfigIntoFuture(&parsed.Future, aliases.Enterprise)
 	}
 	if sandboxConfigSet(aliases.Sandbox) {
 		mergeSandboxConfig(&parsed.Future.Sandbox, aliases.Sandbox)
@@ -1746,6 +1791,11 @@ func remoteConfigSet(cfg RemoteConfig) bool {
 		cfg.LeaseSeconds != 0
 }
 
+func enterpriseConfigSet(cfg EnterpriseConfig) bool {
+	return cfg.Policy != "" ||
+		cfg.PolicyPublicKey != ""
+}
+
 func marketplaceConfigSet(cfg MarketplaceConfig) bool {
 	return cfg.sourcesSet ||
 		cfg.publicKeysSet ||
@@ -1771,6 +1821,15 @@ func mergeRemoteConfigIntoFuture(dst *FutureConfig, src RemoteConfig) {
 	}
 	if src.LeaseSeconds != 0 {
 		dst.RemoteLeaseSeconds = src.LeaseSeconds
+	}
+}
+
+func mergeEnterpriseConfigIntoFuture(dst *FutureConfig, src EnterpriseConfig) {
+	if src.Policy != "" {
+		dst.EnterprisePolicy = src.Policy
+	}
+	if src.PolicyPublicKey != "" {
+		dst.EnterprisePolicyPublicKey = src.PolicyPublicKey
 	}
 }
 

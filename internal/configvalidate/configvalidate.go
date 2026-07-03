@@ -115,6 +115,7 @@ var topLevelFields = []fieldSpec{
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},
+	{"enterprise", FieldObject},
 	{"env", FieldStringMap},
 	{"trustedRoots", FieldStringArray},
 	{"remote", FieldObject},
@@ -274,6 +275,14 @@ var futureFields = []fieldSpec{
 	{"extra_usage_visit_count", FieldNumber},
 	{"guest_pass_referral_url", FieldString},
 	{"guest_pass_visit_count", FieldNumber},
+}
+
+var enterpriseFields = []fieldSpec{
+	{"policy", FieldString},
+	{"policy_public_key", FieldString},
+	{"policyPublicKey", FieldString},
+	{"public_key", FieldString},
+	{"publicKey", FieldString},
 }
 
 var remoteFields = []fieldSpec{
@@ -470,6 +479,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "providerFallbacks"); ok {
 		validateObject(result, nested, providerFallbackFields, "providerFallbacks", source, path)
+	}
+	if enterprise, ok := objectAt(object, "enterprise"); ok {
+		validateObject(result, enterprise, enterpriseFields, "enterprise", source, path)
 	}
 	if nested, ok := objectAt(object, "statusLine"); ok {
 		validateObject(result, nested, statusLineFields, "statusLine", source, path)

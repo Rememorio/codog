@@ -36285,7 +36285,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
+	sections := []string{"auth", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36613,6 +36613,7 @@ type resetReport struct {
 
 var resetSectionKeys = map[string][]string{
 	"auth":        []string{"api_key", "auth_token", "oauth_profile", "base_url"},
+	"enterprise":  []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"},
 	"future":      []string{"future"},
 	"hooks":       []string{"hooks"},
 	"interface":   []string{"language", "theme", "editorMode"},
@@ -36630,33 +36631,36 @@ var resetSectionKeys = map[string][]string{
 }
 
 var resetSectionAliases = map[string]string{
-	"all":              "all",
-	"auth":             "auth",
-	"authentication":   "auth",
-	"defaults":         "all",
-	"everything":       "all",
-	"future":           "future",
-	"hooks":            "hooks",
-	"interface":        "interface",
-	"marketplace":      "marketplace",
-	"marketplaces":     "marketplace",
-	"mcp":              "mcp",
-	"model":            "model",
-	"models":           "model",
-	"permission":       "permissions",
-	"permissions":      "permissions",
-	"privacy":          "privacy",
-	"privacy-settings": "privacy",
-	"rag":              "rag",
-	"retrieve-context": "rag",
-	"retrieve_context": "rag",
-	"rate_limit":       "rate-limit",
-	"rate-limit":       "rate-limit",
-	"remote":           "remote",
-	"sandbox":          "sandbox",
-	"skills":           "skills",
-	"ui":               "interface",
-	"voice":            "voice",
+	"all":               "all",
+	"auth":              "auth",
+	"authentication":    "auth",
+	"defaults":          "all",
+	"everything":        "all",
+	"enterprise":        "enterprise",
+	"enterprise-policy": "enterprise",
+	"policy":            "enterprise",
+	"future":            "future",
+	"hooks":             "hooks",
+	"interface":         "interface",
+	"marketplace":       "marketplace",
+	"marketplaces":      "marketplace",
+	"mcp":               "mcp",
+	"model":             "model",
+	"models":            "model",
+	"permission":        "permissions",
+	"permissions":       "permissions",
+	"privacy":           "privacy",
+	"privacy-settings":  "privacy",
+	"rag":               "rag",
+	"retrieve-context":  "rag",
+	"retrieve_context":  "rag",
+	"rate_limit":        "rate-limit",
+	"rate-limit":        "rate-limit",
+	"remote":            "remote",
+	"sandbox":           "sandbox",
+	"skills":            "skills",
+	"ui":                "interface",
+	"voice":             "voice",
 }
 
 func (a *App) Reset(args []string) error {
@@ -36861,6 +36865,9 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.AuthToken = ""
 		a.Config.OAuthProfile = ""
 		a.Config.BaseURL = defaults.BaseURL
+	case "enterprise":
+		a.Config.Future.EnterprisePolicy = ""
+		a.Config.Future.EnterprisePolicyPublicKey = ""
 	case "future":
 		a.Config.Future = config.FutureConfig{}
 	case "hooks":
@@ -36936,6 +36943,11 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
+	case "enterprise", "enterprise-policy", "policy":
+		return map[string]any{
+			"policy":                cfg.Future.EnterprisePolicy,
+			"public_key_configured": strings.TrimSpace(cfg.Future.EnterprisePolicyPublicKey) != "",
+		}, nil
 	case "mcp":
 		return cfg.MCPServers, nil
 	case "marketplace", "marketplaces":

@@ -18,7 +18,7 @@ func TestLoadAppliesManagedPolicy(t *testing.T) {
 	policyPath := filepath.Join(dir, "policy.json")
 	require.NoError(t, os.WriteFile(policyPath, []byte(`{"max_permission_mode":"read-only","denied_tools":["bash"],"permission_rules":{"deny":["write_file"]}}`), 0o644))
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","future":{"enterprise_policy":"`+policyPath+`"}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","enterprise":{"policy":"`+policyPath+`"}}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
@@ -40,12 +40,54 @@ func TestLoadVerifiesSignedManagedPolicy(t *testing.T) {
 	}
 	writeSignedPolicy(t, policyPath, policy, privateKey)
 	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","future":{"enterprise_policy":"`+policyPath+`","enterprise_policy_public_key":"`+base64.StdEncoding.EncodeToString(publicKey)+`"}}`), 0o644))
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"permission_mode":"danger-full-access","enterprise":{"policy":"`+policyPath+`","policy_public_key":"`+base64.StdEncoding.EncodeToString(publicKey)+`"}}`), 0o644))
 
 	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
 	require.NoError(t, err)
 	require.Equal(t, "read-only", cfg.PermissionMode)
 	require.Contains(t, cfg.PermissionRules.DeniedTools, "bash")
+}
+
+func TestLoadEnterpriseConfigCompatibility(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	encodedPublicKey := base64.StdEncoding.EncodeToString(publicKey)
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policy.json")
+	writeSignedPolicy(t, policyPath, ManagedPolicy{MaxPermissionMode: "read-only"}, privateKey)
+	cases := []struct {
+		name      string
+		body      string
+		policy    string
+		publicKey string
+	}{
+		{
+			name:   "legacy future policy",
+			body:   `{"future":{"enterprise_policy":"` + policyPath + `","enterprise_policy_public_key":"` + encodedPublicKey + `"}}`,
+			policy: policyPath, publicKey: encodedPublicKey,
+		},
+		{
+			name:   "formal enterprise aliases",
+			body:   `{"enterprise":{"policy":"` + policyPath + `","publicKey":"` + encodedPublicKey + `"}}`,
+			policy: policyPath, publicKey: encodedPublicKey,
+		},
+		{
+			name:   "formal enterprise wins",
+			body:   `{"future":{"enterprise_policy":"old-policy","enterprise_policy_public_key":"old-key"},"enterprise":{"policy":"` + policyPath + `","policyPublicKey":"` + encodedPublicKey + `"}}`,
+			policy: policyPath, publicKey: encodedPublicKey,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.policy, cfg.Future.EnterprisePolicy)
+			require.Equal(t, tc.publicKey, cfg.Future.EnterprisePolicyPublicKey)
+		})
+	}
 }
 
 func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
