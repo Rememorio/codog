@@ -869,7 +869,12 @@ func AllCandidates(options CandidateOptions) []string {
 		"/settings paths",
 		"/settings model",
 		"/session list",
+		"/session show ",
+		"/session exists ",
 		"/session rename ",
+		"/session prune",
+		"/session prune --confirm",
+		"/session delete ",
 		"/session switch ",
 		"/session fork ",
 		"/share ",
@@ -936,6 +941,8 @@ func AllCandidates(options CandidateOptions) []string {
 	activeSessionID := strings.TrimSpace(options.ActiveSessionID)
 	if activeSessionID != "" {
 		add("/resume " + activeSessionID)
+		add("/session show " + activeSessionID)
+		add("/session exists " + activeSessionID)
 		add("/session switch " + activeSessionID)
 	}
 	for index, sessionID := range options.RecentSessionIDs {
@@ -947,6 +954,8 @@ func AllCandidates(options CandidateOptions) []string {
 			continue
 		}
 		add("/resume " + sessionID)
+		add("/session show " + sessionID)
+		add("/session exists " + sessionID)
 		add("/session switch " + sessionID)
 	}
 	for _, candidate := range options.Extra {

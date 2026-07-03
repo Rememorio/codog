@@ -28328,7 +28328,7 @@ func renderLocalRouteGuard(out io.Writer, command string, args []string, format 
 
 func isSessionAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "", "list", "show", "exists", "fork", "rename", "delete":
+	case "", "list", "show", "exists", "export", "import", "fork", "rename", "prune", "delete":
 		return true
 	default:
 		return false
@@ -40423,6 +40423,7 @@ type sessionPruneRequest struct {
 	EmptyOnly bool
 	Confirm   bool
 	Format    string
+	ExcludeID string
 }
 
 func parseSessionPruneArgs(command string, args []string, defaultFormat string) (sessionPruneRequest, error) {
@@ -40430,7 +40431,7 @@ func parseSessionPruneArgs(command string, args []string, defaultFormat string) 
 	if req.Format == "" {
 		req.Format = "text"
 	}
-	usage := command + " [--empty|--keep N] [--confirm] [--json|--output-format text|json]"
+	usage := command + " [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--json|--output-format text|json]"
 	emptySet := false
 	for index := 0; index < len(args); index++ {
 		arg := strings.TrimSpace(args[index])
@@ -40446,6 +40447,16 @@ func parseSessionPruneArgs(command string, args []string, defaultFormat string) 
 			req.Format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--session" || arg == "--resume":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			req.ExcludeID = strings.TrimSpace(args[index])
+		case strings.HasPrefix(arg, "--session="):
+			req.ExcludeID = strings.TrimSpace(strings.TrimPrefix(arg, "--session="))
+		case strings.HasPrefix(arg, "--resume="):
+			req.ExcludeID = strings.TrimSpace(strings.TrimPrefix(arg, "--resume="))
 		case arg == "--confirm" || arg == "--force":
 			req.Confirm = true
 		case arg == "--empty" || arg == "--empty-only":
@@ -40491,6 +40502,9 @@ func parseSessionPruneArgs(command string, args []string, defaultFormat string) 
 }
 
 func (a *App) pruneSessionsWithReport(req sessionPruneRequest, excludeID string) (session.PruneReport, error) {
+	if strings.TrimSpace(req.ExcludeID) != "" {
+		excludeID = req.ExcludeID
+	}
 	return a.Sessions.Prune(session.PruneOptions{
 		ExcludeID: excludeID,
 		Keep:      req.Keep,
@@ -50662,7 +50676,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			Topic:                   "session",
 			Command:                 "session",
 			Usage:                   "codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. Help is local and does not open a session.\n",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|rename|prune|delete] [ARGS...]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n  codog sessions prune [--empty|--keep N] [--confirm] [--session ID|--resume ID] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,

@@ -9867,6 +9867,40 @@ func TestResumedSessionPruneSkipsActiveSession(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestSessionsCommandPruneResumeFlagSkipsActiveSession(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	_, err = store.Create("active-empty")
+	require.NoError(t, err)
+	_, err = store.Create("other-empty")
+	require.NoError(t, err)
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "sessions", "prune", "--resume", "active-empty", "--confirm", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report session.PruneReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.DeletedCount)
+	require.Equal(t, "other-empty", report.Deleted[0].ID)
+	ok, existsErr := store.Exists("active-empty")
+	require.NoError(t, existsErr)
+	require.True(t, ok)
+	ok, existsErr = store.Exists("other-empty")
+	require.NoError(t, existsErr)
+	require.False(t, ok)
+}
+
 func TestResumedSessionShowJSONDefaultsToActiveSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
@@ -11419,9 +11453,16 @@ func TestSlashCompletionCandidatesIncludeRuntimeContext(t *testing.T) {
 	candidates := app.slashCompletionCandidates("active-session")
 	require.Contains(t, candidates, "/model claude-test")
 	require.Contains(t, candidates, "/resume active-session")
+	require.Contains(t, candidates, "/session show active-session")
+	require.Contains(t, candidates, "/session exists active-session")
 	require.Contains(t, candidates, "/session switch active-session")
 	require.Contains(t, candidates, "/resume source")
+	require.Contains(t, candidates, "/session show source")
+	require.Contains(t, candidates, "/session exists source")
 	require.Contains(t, candidates, "/session switch source")
+	require.Contains(t, candidates, "/session prune")
+	require.Contains(t, candidates, "/session prune --confirm")
+	require.Contains(t, candidates, "/session delete ")
 	require.Contains(t, candidates, "/permissions workspace-write")
 	require.Contains(t, candidates, "/team/review ")
 	require.Contains(t, candidates, "/team/audit ")
