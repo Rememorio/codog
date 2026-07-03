@@ -4055,6 +4055,28 @@ func risky(value any) {
 	require.True(t, resumedDebugToolCall.Success)
 	require.Contains(t, resumedDebugToolCall.Output, "helper")
 
+	out, err = runResumedJSON("/debug-tool-call", "StructuredOutputTool", `{"status":"ok","items":[1,2]}`)
+	require.NoError(t, err)
+	var resumedDebugStructuredOutput debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugStructuredOutput))
+	require.Equal(t, "debug_tool_call", resumedDebugStructuredOutput.Kind)
+	require.Equal(t, "structured_output", resumedDebugStructuredOutput.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugStructuredOutput.Permission)
+	require.True(t, resumedDebugStructuredOutput.Success)
+	require.Contains(t, resumedDebugStructuredOutput.Output, `"status": "ok"`)
+	require.Contains(t, resumedDebugStructuredOutput.Output, `"Structured output provided successfully"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "ToolSearchTool", `{"query":"web fetch","max_results":2}`)
+	require.NoError(t, err)
+	var resumedDebugToolSearch debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugToolSearch))
+	require.Equal(t, "debug_tool_call", resumedDebugToolSearch.Kind)
+	require.Equal(t, "tool_search", resumedDebugToolSearch.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugToolSearch.Permission)
+	require.True(t, resumedDebugToolSearch.Success)
+	require.Contains(t, resumedDebugToolSearch.Output, `"query": "web fetch"`)
+	require.Contains(t, resumedDebugToolSearch.Output, `"name": "web_fetch"`)
+
 	out, err = runResumedJSON("/debug-tool-call", "WebFetch", `{"url":"`+webServer.URL+`/page","prompt":"title"}`)
 	require.NoError(t, err)
 	var resumedDebugWebFetch debugToolCallReport

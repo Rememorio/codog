@@ -27267,6 +27267,8 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"todo_write",
 		"web_fetch",
 		"web_search",
+		"structured_output",
+		"tool_search",
 		"grep",
 		"glob",
 		"ls",
