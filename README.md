@@ -155,6 +155,24 @@ MCP servers can be declared with Codog's `mcp_servers` key, Claude-style
 `mcpServers`, or VS Code-style `mcp.servers`; all three are normalized into the
 same runtime server list.
 
+Use `codog config help --output-format json` to inspect the section names
+supported by the current binary. The main public sections are:
+
+| Section | Examples |
+| --- | --- |
+| `auth` | API key, auth token, OAuth profile, base URL |
+| `model` | model, advisor model, token and turn limits, temperature |
+| `permissions` | permission mode, allow and deny rules |
+| `sandbox` | strategy and sandbox runtime options |
+| `remote` | remote control enablement, auth token, lease duration |
+| `editor_bridge` | local IDE bridge socket and token |
+| `background` | worker state file path |
+| `preferences` | Chrome default, notifications, ultra review preference |
+| `compatibility` | counters and URLs for Claude-Code-compatible commands |
+| `marketplace` | plugin marketplace sources and public keys |
+| `enterprise` | managed policy file and verification key |
+| `updater` | release manifest URL for update checks and downloads |
+
 ## Safety Model
 
 Codog separates assistant intent from host execution.

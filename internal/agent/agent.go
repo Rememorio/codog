@@ -51639,7 +51639,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			helpTopic,
 			"config",
 			"codog config|settings [show|get SECTION|paths|validate|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]",
-			"Config\n\nUsage:\n  codog config [show|get SECTION|paths|validate|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n  codog config validate [--target user|project|local|all|--path PATH]\n  codog settings [same flags]\n\nInspects merged configuration, validates config JSON files, and updates user, project, or local config files.\n",
+			"Config\n\nUsage:\n  codog config [show|get SECTION|paths|validate|set KEY VALUE|unset KEY|reset SECTION] [--output-format text|json]\n  codog config help [--output-format text|json]\n  codog config validate [--target user|project|local|all|--path PATH]\n  codog settings [same flags]\n\nInspects merged configuration, validates config JSON files, and updates user, project, or local config files. Use `codog config help` to list supported sections.\n",
 			[]string{"paths", "config", "key", "value", "target", "errors", "warnings"},
 			[]string{"ok", "error"},
 			true,
