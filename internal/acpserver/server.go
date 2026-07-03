@@ -35,6 +35,10 @@ type Handlers struct {
 	WorkspaceInfo   func(context.Context) (workspaceops.InfoResult, error)
 	WorkspaceFiles  func(context.Context, workspaceops.FilesOptions) (workspaceops.FilesResult, error)
 	WorkspaceSearch func(context.Context, workspaceops.SearchOptions) (workspaceops.SearchResult, error)
+	FileRead        func(context.Context, workspaceops.ReadOptions) (workspaceops.ReadResult, error)
+	FileWrite       func(context.Context, workspaceops.WriteOptions) (workspaceops.WriteResult, error)
+	FileEdit        func(context.Context, workspaceops.EditOptions) (workspaceops.EditResult, error)
+	FileDiff        func(context.Context, workspaceops.DiffOptions) (workspaceops.DiffResult, error)
 }
 
 type SessionInfo struct {
@@ -235,6 +239,14 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleWorkspaceFiles(ctx, out, handlers, req)
 	case "workspace/search":
 		return false, handleWorkspaceSearch(ctx, out, handlers, req)
+	case "file/read":
+		return false, handleFileRead(ctx, out, handlers, req)
+	case "file/write":
+		return false, handleFileWrite(ctx, out, handlers, req)
+	case "file/edit":
+		return false, handleFileEdit(ctx, out, handlers, req)
+	case "file/diff":
+		return false, handleFileDiff(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -292,6 +304,12 @@ func initializeResult(opts Options) map[string]any {
 				"info":   true,
 				"files":  true,
 				"search": true,
+			},
+			"file": map[string]any{
+				"read":  true,
+				"write": true,
+				"edit":  true,
+				"diff":  true,
 			},
 			"prompt": true,
 			"status": true,
@@ -353,6 +371,66 @@ func handleWorkspaceSearch(ctx context.Context, out io.Writer, handlers Handlers
 		}
 	}
 	result, err := handlers.WorkspaceSearch(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleFileRead(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.FileRead == nil {
+		return writeError(out, req.ID, -32603, "file read handler is not configured")
+	}
+	var options workspaceops.ReadOptions
+	if err := unmarshalParams(req.Params, &options); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.FileRead(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleFileWrite(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.FileWrite == nil {
+		return writeError(out, req.ID, -32603, "file write handler is not configured")
+	}
+	var options workspaceops.WriteOptions
+	if err := unmarshalParams(req.Params, &options); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.FileWrite(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleFileEdit(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.FileEdit == nil {
+		return writeError(out, req.ID, -32603, "file edit handler is not configured")
+	}
+	var options workspaceops.EditOptions
+	if err := unmarshalParams(req.Params, &options); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.FileEdit(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleFileDiff(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.FileDiff == nil {
+		return writeError(out, req.ID, -32603, "file diff handler is not configured")
+	}
+	var options workspaceops.DiffOptions
+	if err := unmarshalParams(req.Params, &options); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.FileDiff(ctx, options)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}
@@ -888,6 +966,13 @@ func workspaceName(path string) string {
 		return path[index+1:]
 	}
 	return path
+}
+
+func unmarshalParams(params json.RawMessage, target any) error {
+	if len(params) == 0 {
+		return nil
+	}
+	return json.Unmarshal(params, target)
 }
 
 func writeResult(out io.Writer, id json.RawMessage, result any) error {

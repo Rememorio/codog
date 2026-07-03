@@ -20742,6 +20742,10 @@ var acpJSONRPCMethods = []string{
 	"workspace/info",
 	"workspace/files",
 	"workspace/search",
+	"file/read",
+	"file/write",
+	"file/edit",
+	"file/diff",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20806,7 +20810,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -20969,6 +20973,18 @@ func (a *App) serveACP(ctx context.Context) error {
 		},
 		WorkspaceSearch: func(_ context.Context, options workspaceops.SearchOptions) (workspaceops.SearchResult, error) {
 			return (workspaceops.Service{Workspace: a.Workspace}).Search(options)
+		},
+		FileRead: func(_ context.Context, options workspaceops.ReadOptions) (workspaceops.ReadResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Read(options)
+		},
+		FileWrite: func(_ context.Context, options workspaceops.WriteOptions) (workspaceops.WriteResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Write(options)
+		},
+		FileEdit: func(_ context.Context, options workspaceops.EditOptions) (workspaceops.EditResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Edit(options)
+		},
+		FileDiff: func(_ context.Context, options workspaceops.DiffOptions) (workspaceops.DiffResult, error) {
+			return (workspaceops.Service{Workspace: a.Workspace}).Diff(options)
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

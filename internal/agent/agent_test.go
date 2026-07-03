@@ -5888,6 +5888,10 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "workspace/info")
 	require.Contains(t, report.Protocol.Methods, "workspace/files")
 	require.Contains(t, report.Protocol.Methods, "workspace/search")
+	require.Contains(t, report.Protocol.Methods, "file/read")
+	require.Contains(t, report.Protocol.Methods, "file/write")
+	require.Contains(t, report.Protocol.Methods, "file/edit")
+	require.Contains(t, report.Protocol.Methods, "file/diff")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6157,6 +6161,59 @@ func TestACPServeExposesWorkspaceQueries(t *testing.T) {
 	require.Contains(t, errPayload["message"], "query is required")
 }
 
+func TestACPServeExposesFileOperations(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, "src"), 0o755))
+	outsidePath := filepath.Join(filepath.Dir(workspace), "outside-acp-file.txt")
+	require.NoError(t, os.WriteFile(outsidePath, []byte("outside"), 0o644))
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	outsideRel := "../" + filepath.Base(outsidePath)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"file/write","params":{"path":"src/main.go","content":"package main\nfunc main() {}\n"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"file/read","params":{"path":"src/main.go","limit":12}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"file/diff","params":{"path":"src/main.go","old_string":"main()","new_string":"run()"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"file/edit","params":{"path":"src/main.go","old_string":"main()","new_string":"run()"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"file/read","params":{"path":"src/main.go"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"file/read","params":{"path":"` + outsideRel + `"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 7)
+	writeResult := responses[0]["result"].(map[string]any)
+	require.Equal(t, "src/main.go", writeResult["path"])
+	require.EqualValues(t, len("package main\nfunc main() {}\n"), writeResult["bytes"])
+	readWindow := responses[1]["result"].(map[string]any)
+	require.Equal(t, "src/main.go", readWindow["path"])
+	require.Equal(t, "package main", readWindow["content"])
+	require.Equal(t, true, readWindow["truncated"])
+	diffResult := responses[2]["result"].(map[string]any)
+	require.Equal(t, "src/main.go", diffResult["path"])
+	require.Contains(t, diffResult["diff"], "-func main() {}")
+	require.Contains(t, diffResult["diff"], "+func run() {}")
+	editResult := responses[3]["result"].(map[string]any)
+	require.Equal(t, "src/main.go", editResult["path"])
+	require.EqualValues(t, 1, editResult["replacements"])
+	readUpdated := responses[4]["result"].(map[string]any)
+	require.Contains(t, readUpdated["content"], "func run() {}")
+	errPayload := responses[5]["error"].(map[string]any)
+	require.EqualValues(t, -32603, errPayload["code"])
+	require.Contains(t, errPayload["message"], "escapes workspace")
+	data, err := os.ReadFile(filepath.Join(workspace, "src", "main.go"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "func run() {}")
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6186,6 +6243,11 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, workspaceCaps["info"])
 			require.Equal(t, true, workspaceCaps["files"])
 			require.Equal(t, true, workspaceCaps["search"])
+			fileCaps := capabilities["file"].(map[string]any)
+			require.Equal(t, true, fileCaps["read"])
+			require.Equal(t, true, fileCaps["write"])
+			require.Equal(t, true, fileCaps["edit"])
+			require.Equal(t, true, fileCaps["diff"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])

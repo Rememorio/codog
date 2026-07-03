@@ -111,6 +111,11 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, workspaceCaps["info"])
 	require.Equal(t, true, workspaceCaps["files"])
 	require.Equal(t, true, workspaceCaps["search"])
+	fileCaps := capabilities["file"].(map[string]any)
+	require.Equal(t, true, fileCaps["read"])
+	require.Equal(t, true, fileCaps["write"])
+	require.Equal(t, true, fileCaps["edit"])
+	require.Equal(t, true, fileCaps["diff"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -204,6 +209,59 @@ func TestServeHandlesWorkspaceRequests(t *testing.T) {
 	require.Len(t, files["files"].([]any), 1)
 	search := responses[2]["result"].(map[string]any)
 	require.Len(t, search["matches"].([]any), 1)
+}
+
+func TestServeHandlesFileRequests(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"file/read","params":{"path":"src/main.go","offset":2,"limit":5}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"file/write","params":{"path":"src/new.go","content":"package main\n"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"file/edit","params":{"path":"src/new.go","old_string":"main","new_string":"codog","replace_all":true}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"file/diff","params":{"path":"src/new.go","old_string":"codog","new_string":"main"}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		FileRead: func(_ context.Context, options workspaceops.ReadOptions) (workspaceops.ReadResult, error) {
+			require.Equal(t, "src/main.go", options.Path)
+			require.Equal(t, 2, options.Offset)
+			require.Equal(t, 5, options.Limit)
+			return workspaceops.ReadResult{Path: options.Path, Content: "hello", Bytes: 12, Truncated: true}, nil
+		},
+		FileWrite: func(_ context.Context, options workspaceops.WriteOptions) (workspaceops.WriteResult, error) {
+			require.Equal(t, "src/new.go", options.Path)
+			require.Equal(t, "package main\n", options.Content)
+			return workspaceops.WriteResult{Path: options.Path, Bytes: len(options.Content)}, nil
+		},
+		FileEdit: func(_ context.Context, options workspaceops.EditOptions) (workspaceops.EditResult, error) {
+			require.Equal(t, "src/new.go", options.Path)
+			require.Equal(t, "main", options.OldString)
+			require.Equal(t, "codog", options.NewString)
+			require.True(t, options.ReplaceAll)
+			return workspaceops.EditResult{Path: options.Path, Replacements: 1}, nil
+		},
+		FileDiff: func(_ context.Context, options workspaceops.DiffOptions) (workspaceops.DiffResult, error) {
+			require.Equal(t, "src/new.go", options.Path)
+			require.Equal(t, "codog", options.OldString)
+			require.Equal(t, "main", options.NewString)
+			return workspaceops.DiffResult{Path: options.Path, Diff: "--- src/new.go\n+++ src/new.go\n"}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 4)
+	readResult := responses[0]["result"].(map[string]any)
+	require.Equal(t, "src/main.go", readResult["path"])
+	require.Equal(t, "hello", readResult["content"])
+	require.Equal(t, true, readResult["truncated"])
+	writeResult := responses[1]["result"].(map[string]any)
+	require.Equal(t, "src/new.go", writeResult["path"])
+	require.EqualValues(t, len("package main\n"), writeResult["bytes"])
+	editResult := responses[2]["result"].(map[string]any)
+	require.EqualValues(t, 1, editResult["replacements"])
+	diffResult := responses[3]["result"].(map[string]any)
+	require.Contains(t, diffResult["diff"], "--- src/new.go")
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {
