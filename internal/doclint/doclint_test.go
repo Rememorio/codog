@@ -105,6 +105,52 @@ func TestReadmeStatesCompatibilityBoundaries(t *testing.T) {
 	require.NotRegexp(t, regexp.MustCompile(`/Users/[A-Za-z0-9._-]+/`), readme)
 }
 
+func TestMarkdownAvoidsProgressTrackingDocs(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range listTextFiles(t, root, func(path string) bool {
+		return strings.HasSuffix(path, ".md")
+	}) {
+		t.Run(relPath(t, root, path), func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			lower := strings.ToLower(string(data))
+			for _, disallowed := range []string{
+				"mvp, 4-8",
+				"4-8 weeks",
+				"2-4 months",
+				"6-12 months",
+				"claude code-class",
+				"progress tracking",
+			} {
+				require.NotContains(t, lower, disallowed)
+			}
+		})
+	}
+}
+
+func TestPortableTextArtifactsAvoidLocalLeaks(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range listPortableTextArtifacts(t, root) {
+		t.Run(relPath(t, root, path), func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			text := string(data)
+			lower := strings.ToLower(text)
+
+			for _, disallowed := range []string{
+				"generated with",
+				"made with",
+				"built with cursor",
+				"gocache=",
+				"/tmp/codex-go-build-cache",
+			} {
+				require.NotContains(t, lower, disallowed)
+			}
+			require.NotRegexp(t, regexp.MustCompile(`/Users/[A-Za-z0-9._-]+/`), text)
+		})
+	}
+}
+
 func listInternalPackages(t *testing.T, root string) []string {
 	t.Helper()
 	internalRoot := filepath.Join(root, "internal")
@@ -177,6 +223,53 @@ func listCommandPackages(t *testing.T, root string) []string {
 	require.NoError(t, err)
 	require.NotEmpty(t, packages)
 	return packages
+}
+
+func listPortableTextArtifacts(t *testing.T, root string) []string {
+	t.Helper()
+	paths := []string{filepath.Join(root, "README.md")}
+	for _, dir := range []string{".github", "scripts"} {
+		paths = append(paths, listTextFiles(t, filepath.Join(root, dir), func(path string) bool {
+			switch filepath.Ext(path) {
+			case ".md", ".sh", ".yml", ".yaml":
+				return true
+			default:
+				return false
+			}
+		})...)
+	}
+	return paths
+}
+
+func listTextFiles(t *testing.T, root string, include func(string) bool) []string {
+	t.Helper()
+	paths := []string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor":
+				return filepath.SkipDir
+			default:
+				return nil
+			}
+		}
+		if include(path) {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return paths
+}
+
+func relPath(t *testing.T, root string, path string) string {
+	t.Helper()
+	rel, err := filepath.Rel(root, path)
+	require.NoError(t, err)
+	return filepath.ToSlash(rel)
 }
 
 func repoRoot(t *testing.T) string {
