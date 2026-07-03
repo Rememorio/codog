@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Rememorio/codog/internal/acpserver"
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
@@ -160,6 +161,7 @@ var scenarioOrder = []string{
 	"plugin_lifecycle_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
+	"acp_stdio_roundtrip",
 	"auto_compact_triggered",
 	"token_cost_reporting",
 }
@@ -663,6 +665,7 @@ func Run(ctx context.Context) (Report, error) {
 		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
+		acpStdioScenario(),
 		{
 			name: "auto_compact_triggered",
 			turns: []mockanthropic.Turn{
@@ -1168,6 +1171,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "remote-control",
 		Description: "Starts the local control API handler and verifies public health plus authenticated session routes.",
 		ParityRefs:  []string{"Remote sessions", "IDE bridge", "Control API listener"},
+	},
+	"acp_stdio_roundtrip": {
+		Category:    "editor-bridge",
+		Description: "Runs the ACP/Zed stdio JSON-RPC handshake and verifies initialize, status, session creation, and shutdown responses.",
+		ParityRefs:  []string{"ACP/Zed", "IDE bridge", "JSON-RPC stdio"},
 	},
 }
 
@@ -1691,6 +1699,88 @@ func remoteAPIListenerScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func acpStdioScenario() scenario {
+	return scenario{
+		name: "acp_stdio_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			input := strings.Join([]string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+				`{"jsonrpc":"2.0","id":2,"method":"status","params":{}}`,
+				`{"jsonrpc":"2.0","id":3,"method":"session/new","params":{}}`,
+				`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
+				"",
+			}, "\n")
+			var out bytes.Buffer
+			err := acpserver.Serve(ctx, strings.NewReader(input), &out, acpserver.Handlers{
+				Status: func(context.Context) (any, error) {
+					return map[string]any{"kind": "acp", "status": "ok", "workspace": workspace}, nil
+				},
+				NewSession: func(context.Context) (acpserver.SessionInfo, error) {
+					return acpserver.SessionInfo{SessionID: "acp-harness-session", Workspace: workspace}, nil
+				},
+			}, acpserver.Options{Version: "harness", Workspace: workspace})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			responses, err := decodeLocalJSONRPCResponses(out.String())
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(responses) != 4 {
+				return localScenarioResult{}, fmt.Errorf("expected 4 ACP responses, got %d", len(responses))
+			}
+			initialize, ok := responses[0]["result"].(map[string]any)
+			if !ok {
+				return localScenarioResult{}, fmt.Errorf("initialize response missing result")
+			}
+			serverInfo, ok := initialize["serverInfo"].(map[string]any)
+			if !ok || serverInfo["version"] != "harness" {
+				return localScenarioResult{}, fmt.Errorf("initialize serverInfo missing harness version: %#v", initialize["serverInfo"])
+			}
+			capabilities, ok := initialize["capabilities"].(map[string]any)
+			if !ok || capabilities["prompt"] != true {
+				return localScenarioResult{}, fmt.Errorf("initialize capabilities missing prompt support: %#v", initialize["capabilities"])
+			}
+			status, ok := responses[1]["result"].(map[string]any)
+			if !ok || status["status"] != "ok" {
+				return localScenarioResult{}, fmt.Errorf("status response was not ok: %#v", responses[1]["result"])
+			}
+			sessionResult, ok := responses[2]["result"].(map[string]any)
+			if !ok || sessionResult["session_id"] != "acp-harness-session" {
+				return localScenarioResult{}, fmt.Errorf("session/new response missing session id: %#v", responses[2]["result"])
+			}
+			if _, ok := responses[3]["result"]; !ok {
+				return localScenarioResult{}, fmt.Errorf("shutdown response missing result: %#v", responses[3])
+			}
+
+			message := "acp stdio harness ok"
+			return localScenarioResult{
+				Output:       strings.TrimSpace(out.String()),
+				FinalMessage: message,
+				RequestCount: len(responses),
+				MessageCount: len(responses),
+			}, nil
+		},
+	}
+}
+
+func decodeLocalJSONRPCResponses(output string) ([]map[string]any, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	responses := make([]map[string]any, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var response map[string]any
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			return nil, err
+		}
+		responses = append(responses, response)
+	}
+	return responses, nil
 }
 
 func usageSummaryForResult(result runloop.TurnResult) usage.Summary {

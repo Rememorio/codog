@@ -156,6 +156,18 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 2, remoteControl.Total)
 	require.ElementsMatch(t, []string{"remote_api_listener_roundtrip", "remote_trigger_roundtrip"}, remoteControl.Scenarios)
 
+	acp := findScenario(t, report, "acp_stdio_roundtrip")
+	require.True(t, acp.OK)
+	require.Equal(t, "editor-bridge", acp.Category)
+	require.Equal(t, 0, acp.ToolCalls)
+	require.Equal(t, 4, acp.RequestCount)
+	require.Contains(t, acp.Output, `"protocolVersion"`)
+	require.Contains(t, acp.Output, `"acp-harness-session"`)
+	editorBridge := findCategory(t, report, "editor-bridge")
+	require.True(t, editorBridge.OK)
+	require.Equal(t, 1, editorBridge.Total)
+	require.ElementsMatch(t, []string{"acp_stdio_roundtrip"}, editorBridge.Scenarios)
+
 	autoCompact := findScenario(t, report, "auto_compact_triggered")
 	require.Equal(t, "session-compaction", autoCompact.Category)
 	require.True(t, autoCompact.OK)
@@ -208,6 +220,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)
 	require.Contains(t, remoteAPI.ParityRefs, "Control API listener")
+
+	acp := findManifestScenario(t, manifest, "acp_stdio_roundtrip")
+	require.Equal(t, "editor-bridge", acp.Category)
+	require.Contains(t, acp.ParityRefs, "JSON-RPC stdio")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {
