@@ -22,7 +22,7 @@ It is not yet a polished drop-in replacement for commercial coding agents.
 
 ## Quick Start
 
-Codog requires Go 1.24.2 or newer and at least one model credential.
+Codog requires Go 1.26.4 or newer and at least one model credential.
 
 ```sh
 go install github.com/Rememorio/codog/cmd/codog@latest

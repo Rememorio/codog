@@ -1,3 +1,5 @@
+// Package workspaceops provides bounded workspace file, search, and edit
+// operations used by CLI and protocol surfaces.
 package workspaceops
 
 import (
@@ -14,17 +16,21 @@ import (
 	"time"
 )
 
+// MaxFileBytes is the maximum byte size accepted for whole-file edits and diffs.
 const MaxFileBytes int64 = 2_000_000
 
+// Service resolves and operates on paths relative to a workspace root.
 type Service struct {
 	Workspace string
 }
 
+// InfoResult describes the workspace root.
 type InfoResult struct {
 	Path string `json:"path"`
 	Name string `json:"name"`
 }
 
+// FileEntry describes one file or directory returned by Files.
 type FileEntry struct {
 	Path    string    `json:"path"`
 	IsDir   bool      `json:"is_dir"`
@@ -32,6 +38,7 @@ type FileEntry struct {
 	ModTime time.Time `json:"mod_time,omitempty"`
 }
 
+// FilesOptions controls a workspace file listing.
 type FilesOptions struct {
 	Path          string `json:"path"`
 	Pattern       string `json:"pattern"`
@@ -39,12 +46,14 @@ type FilesOptions struct {
 	IncludeHidden bool   `json:"include_hidden"`
 }
 
+// FilesResult contains files matched under a workspace root.
 type FilesResult struct {
 	Root      string      `json:"root"`
 	Files     []FileEntry `json:"files"`
 	Truncated bool        `json:"truncated"`
 }
 
+// SearchOptions controls a literal or regular-expression workspace search.
 type SearchOptions struct {
 	Query         string `json:"query"`
 	Path          string `json:"path"`
@@ -54,6 +63,7 @@ type SearchOptions struct {
 	IncludeHidden bool   `json:"include_hidden"`
 }
 
+// SearchMatch identifies one matching line in a workspace file.
 type SearchMatch struct {
 	Path   string `json:"path"`
 	Line   int    `json:"line"`
@@ -61,17 +71,20 @@ type SearchMatch struct {
 	Column int    `json:"column,omitempty"`
 }
 
+// SearchResult contains workspace search matches.
 type SearchResult struct {
 	Matches   []SearchMatch `json:"matches"`
 	Truncated bool          `json:"truncated"`
 }
 
+// ReadOptions controls a bounded file read.
 type ReadOptions struct {
 	Path   string `json:"path"`
 	Offset int    `json:"offset"`
 	Limit  int    `json:"limit"`
 }
 
+// ReadResult contains the content window read from a workspace file.
 type ReadResult struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`
@@ -79,16 +92,19 @@ type ReadResult struct {
 	Truncated bool   `json:"truncated"`
 }
 
+// WriteOptions describes a complete file write.
 type WriteOptions struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 }
 
+// WriteResult reports the file written by Write.
 type WriteResult struct {
 	Path  string `json:"path"`
 	Bytes int    `json:"bytes"`
 }
 
+// EditOptions describes a string replacement edit.
 type EditOptions struct {
 	Path       string `json:"path"`
 	OldString  string `json:"old_string"`
@@ -96,11 +112,13 @@ type EditOptions struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+// EditResult reports how many replacements were written.
 type EditResult struct {
 	Path         string `json:"path"`
 	Replacements int    `json:"replacements"`
 }
 
+// DiffOptions describes either a complete content diff or a string-replacement diff.
 type DiffOptions struct {
 	Path      string `json:"path"`
 	Original  string `json:"original"`
@@ -109,11 +127,13 @@ type DiffOptions struct {
 	NewString string `json:"new_string"`
 }
 
+// DiffResult contains a unified diff for a workspace path.
 type DiffResult struct {
 	Path string `json:"path"`
 	Diff string `json:"diff"`
 }
 
+// Info returns the absolute workspace path and its base name.
 func (s Service) Info() (InfoResult, error) {
 	workspace, err := s.WorkspacePath()
 	if err != nil {
@@ -122,6 +142,7 @@ func (s Service) Info() (InfoResult, error) {
 	return InfoResult{Path: workspace, Name: filepath.Base(workspace)}, nil
 }
 
+// Files lists files under the workspace using a bounded glob filter.
 func (s Service) Files(options FilesOptions) (FilesResult, error) {
 	root, relRoot, err := s.ResolveWorkspacePath(options.Path)
 	if err != nil {
@@ -174,6 +195,7 @@ func (s Service) Files(options FilesOptions) (FilesResult, error) {
 	return FilesResult{Root: relRoot, Files: entries, Truncated: len(entries) >= limit}, nil
 }
 
+// Search scans text files under the workspace for literal or regex matches.
 func (s Service) Search(options SearchOptions) (SearchResult, error) {
 	if options.Query == "" {
 		return SearchResult{}, errors.New("query is required")
@@ -253,6 +275,7 @@ func (s Service) Search(options SearchOptions) (SearchResult, error) {
 	return SearchResult{Matches: matches, Truncated: len(matches) >= limit}, nil
 }
 
+// Read returns a bounded byte window from a workspace file.
 func (s Service) Read(options ReadOptions) (ReadResult, error) {
 	path, rel, err := s.Resolve(options.Path, false)
 	if err != nil {
@@ -274,6 +297,7 @@ func (s Service) Read(options ReadOptions) (ReadResult, error) {
 	}, nil
 }
 
+// Write writes complete file content under the workspace.
 func (s Service) Write(options WriteOptions) (WriteResult, error) {
 	path, rel, err := s.Resolve(options.Path, true)
 	if err != nil {
@@ -291,6 +315,7 @@ func (s Service) Write(options WriteOptions) (WriteResult, error) {
 	return WriteResult{Path: rel, Bytes: len(options.Content)}, nil
 }
 
+// Edit applies a string replacement to a workspace file.
 func (s Service) Edit(options EditOptions) (EditResult, error) {
 	if options.OldString == "" {
 		return EditResult{}, errors.New("old_string is required")
@@ -326,6 +351,7 @@ func (s Service) Edit(options EditOptions) (EditResult, error) {
 	return EditResult{Path: rel, Replacements: replacements}, nil
 }
 
+// Diff builds a unified diff for a workspace file without writing changes.
 func (s Service) Diff(options DiffOptions) (DiffResult, error) {
 	path, rel, err := s.Resolve(options.Path, false)
 	if err != nil {
@@ -416,6 +442,7 @@ func safeInt64(value int64) int {
 	return int(value)
 }
 
+// WorkspacePath returns the absolute workspace root or the current directory.
 func (s Service) WorkspacePath() (string, error) {
 	if strings.TrimSpace(s.Workspace) != "" {
 		return filepath.Abs(s.Workspace)
@@ -423,6 +450,7 @@ func (s Service) WorkspacePath() (string, error) {
 	return os.Getwd()
 }
 
+// Resolve returns an absolute path and slash-separated relative path inside the workspace.
 func (s Service) Resolve(requested string, allowMissing bool) (string, string, error) {
 	if strings.TrimSpace(requested) == "" {
 		return "", "", errors.New("path is required")
@@ -463,6 +491,7 @@ func (s Service) Resolve(requested string, allowMissing bool) (string, string, e
 	return resolved, filepath.ToSlash(rel), nil
 }
 
+// ResolveWorkspacePath resolves a directory-like workspace path, defaulting to the root.
 func (s Service) ResolveWorkspacePath(requested string) (string, string, error) {
 	if strings.TrimSpace(requested) == "" {
 		workspace, err := s.WorkspacePath()
@@ -478,6 +507,7 @@ func (s Service) ResolveWorkspacePath(requested string) (string, string, error) 
 	return s.Resolve(requested, false)
 }
 
+// Rel returns a slash-separated path relative to the workspace root.
 func (s Service) Rel(path string) (string, error) {
 	workspace, err := s.WorkspacePath()
 	if err != nil {
@@ -494,6 +524,7 @@ func (s Service) Rel(path string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
+// BoundedLimit applies a default and maximum to a caller-provided limit.
 func BoundedLimit(value, defaultValue, maxValue int) int {
 	if value <= 0 {
 		return defaultValue
@@ -504,6 +535,7 @@ func BoundedLimit(value, defaultValue, maxValue int) int {
 	return value
 }
 
+// PatternMatch matches either a base name or slash-separated relative path.
 func PatternMatch(pattern string, rel string, base string) (bool, error) {
 	target := base
 	if strings.Contains(pattern, "/") {
@@ -513,6 +545,7 @@ func PatternMatch(pattern string, rel string, base string) (bool, error) {
 	return filepath.Match(pattern, target)
 }
 
+// UnifiedDiff returns a simple unified diff for a single workspace path.
 func UnifiedDiff(path string, original string, updated string) string {
 	if original == updated {
 		return ""

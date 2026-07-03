@@ -1,3 +1,4 @@
+// Package acpserver implements Codog's line-delimited JSON-RPC ACP bridge.
 package acpserver
 
 import (
@@ -14,11 +15,13 @@ import (
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
+// Options configures server metadata returned by initialize and status calls.
 type Options struct {
 	Version   string
 	Workspace string
 }
 
+// Handlers contains application callbacks for each ACP method.
 type Handlers struct {
 	NewSession           func(context.Context) (SessionInfo, error)
 	OpenSession          func(context.Context, SessionOpenRequest) (SessionDetail, error)
@@ -94,11 +97,13 @@ type Handlers struct {
 	BridgeFaultsClear    func(context.Context) (any, error)
 }
 
+// SessionInfo describes a newly opened or created session.
 type SessionInfo struct {
 	SessionID string `json:"session_id"`
 	Workspace string `json:"workspace,omitempty"`
 }
 
+// SessionSummary is a compact session record for list responses.
 type SessionSummary struct {
 	SessionID           string           `json:"session_id"`
 	Workspace           string           `json:"workspace,omitempty"`
@@ -112,6 +117,7 @@ type SessionSummary struct {
 	Lifecycle           SessionLifecycle `json:"lifecycle"`
 }
 
+// SessionLifecycle describes the persistence state of a session.
 type SessionLifecycle struct {
 	Kind      string `json:"kind"`
 	Signal    string `json:"signal"`
@@ -119,6 +125,7 @@ type SessionLifecycle struct {
 	Abandoned bool   `json:"abandoned"`
 }
 
+// SessionList contains sessions visible to the ACP client.
 type SessionList struct {
 	Kind      string           `json:"kind"`
 	Count     int              `json:"count"`
@@ -126,14 +133,17 @@ type SessionList struct {
 	Workspace string           `json:"workspace,omitempty"`
 }
 
+// SessionLookupRequest identifies one session.
 type SessionLookupRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
+// SessionOpenRequest identifies a session to open or resume.
 type SessionOpenRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
+// SessionDetail contains session metadata and optional message history.
 type SessionDetail struct {
 	SessionID           string           `json:"session_id"`
 	Workspace           string           `json:"workspace,omitempty"`
@@ -148,11 +158,13 @@ type SessionDetail struct {
 	Messages            any              `json:"messages,omitempty"`
 }
 
+// SessionHistoryRequest controls a bounded history lookup.
 type SessionHistoryRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 }
 
+// SessionHistory contains normalized history entries for a session.
 type SessionHistory struct {
 	Kind      string `json:"kind"`
 	SessionID string `json:"session_id"`
@@ -160,6 +172,7 @@ type SessionHistory struct {
 	Entries   any    `json:"entries"`
 }
 
+// SessionAppendMessageRequest appends a structured or text message.
 type SessionAppendMessageRequest struct {
 	SessionID string             `json:"session_id"`
 	Message   *anthropic.Message `json:"message,omitempty"`
@@ -167,16 +180,19 @@ type SessionAppendMessageRequest struct {
 	Text      string             `json:"text,omitempty"`
 }
 
+// SessionAppendInputRequest appends user input to a session.
 type SessionAppendInputRequest struct {
 	SessionID string `json:"session_id"`
 	Input     string `json:"input"`
 }
 
+// SessionRewindRequest removes recent messages from a session.
 type SessionRewindRequest struct {
 	SessionID      string `json:"session_id"`
 	RemoveMessages int    `json:"remove_messages"`
 }
 
+// SessionRewindResult reports a completed rewind mutation.
 type SessionRewindResult struct {
 	Kind              string `json:"kind"`
 	Action            string `json:"action"`
@@ -188,16 +204,19 @@ type SessionRewindResult struct {
 	RemovedMessages   int    `json:"removed_messages"`
 }
 
+// SessionForkRequest creates a session branch from an existing session.
 type SessionForkRequest struct {
 	SessionID  string `json:"session_id"`
 	BranchName string `json:"branch_name,omitempty"`
 }
 
+// SessionRenameRequest renames an existing session.
 type SessionRenameRequest struct {
 	SessionID    string `json:"session_id"`
 	NewSessionID string `json:"new_session_id"`
 }
 
+// SessionMutationResult reports a session mutation.
 type SessionMutationResult struct {
 	Kind         string `json:"kind"`
 	Action       string `json:"action"`
@@ -208,6 +227,7 @@ type SessionMutationResult struct {
 	MessageCount int    `json:"message_count,omitempty"`
 }
 
+// SessionPruneRequest controls session retention cleanup.
 type SessionPruneRequest struct {
 	Keep      int    `json:"keep,omitempty"`
 	EmptyOnly *bool  `json:"empty_only,omitempty"`
@@ -215,48 +235,58 @@ type SessionPruneRequest struct {
 	ExcludeID string `json:"exclude_id,omitempty"`
 }
 
+// PromptRequest sends one prompt to the agent runtime.
 type PromptRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 	Prompt    string `json:"prompt"`
 }
 
+// PromptResult contains the assistant output for a prompt call.
 type PromptResult struct {
 	SessionID string `json:"session_id"`
 	Output    string `json:"output"`
 }
 
+// DiagnosticsRequest controls Go diagnostics.
 type DiagnosticsRequest struct {
 	Patterns []string `json:"patterns,omitempty"`
 }
 
+// CodeSymbolsRequest controls symbol discovery.
 type CodeSymbolsRequest struct {
 	Path string `json:"path,omitempty"`
 }
 
+// CodeReferencesRequest controls reference lookup.
 type CodeReferencesRequest struct {
 	Symbol string `json:"symbol"`
 	Limit  int    `json:"limit,omitempty"`
 }
 
+// CodeDefinitionRequest controls definition lookup.
 type CodeDefinitionRequest struct {
 	Symbol string `json:"symbol"`
 }
 
+// CodeHoverRequest controls hover information lookup.
 type CodeHoverRequest struct {
 	Symbol       string `json:"symbol"`
 	ContextLines int    `json:"context_lines,omitempty"`
 }
 
+// CodeCompletionRequest controls code completion suggestions.
 type CodeCompletionRequest struct {
 	Query string `json:"query"`
 	Limit int    `json:"limit,omitempty"`
 }
 
+// CodeFormatRequest controls code formatting.
 type CodeFormatRequest struct {
 	Path  string `json:"path"`
 	Write bool   `json:"write,omitempty"`
 }
 
+// NotebookReadRequest controls notebook cell reads.
 type NotebookReadRequest struct {
 	Path           string `json:"path,omitempty"`
 	NotebookPath   string `json:"notebook_path,omitempty"`
@@ -267,6 +297,7 @@ type NotebookReadRequest struct {
 	Outputs        *bool  `json:"outputs,omitempty"`
 }
 
+// NotebookEditRequest controls notebook cell mutations.
 type NotebookEditRequest struct {
 	Path         string  `json:"path,omitempty"`
 	NotebookPath string  `json:"notebook_path,omitempty"`
@@ -281,19 +312,23 @@ type NotebookEditRequest struct {
 	NewSource    *string `json:"new_source,omitempty"`
 }
 
+// LSPStartRequest starts a language server process.
 type LSPStartRequest struct {
 	Language    string   `json:"language"`
 	CommandArgs []string `json:"command_args,omitempty"`
 }
 
+// LSPStatusRequest identifies a language server status query.
 type LSPStatusRequest struct {
 	Language string `json:"language"`
 }
 
+// LSPStopRequest identifies a language server stop request.
 type LSPStopRequest struct {
 	Language string `json:"language"`
 }
 
+// LSPQueryRequest sends a typed request to a language server.
 type LSPQueryRequest struct {
 	Language  string `json:"language"`
 	Action    string `json:"action"`
@@ -304,11 +339,13 @@ type LSPQueryRequest struct {
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
 }
 
+// BackgroundListRequest filters background task listing.
 type BackgroundListRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 }
 
+// BackgroundRunRequest starts a background task.
 type BackgroundRunRequest struct {
 	Command       string                    `json:"command"`
 	Kind          string                    `json:"kind,omitempty"`
@@ -316,20 +353,24 @@ type BackgroundRunRequest struct {
 	RestartPolicy *background.RestartPolicy `json:"restart_policy,omitempty"`
 }
 
+// BackgroundIDRequest identifies a background task.
 type BackgroundIDRequest struct {
 	ID string `json:"id"`
 }
 
+// BackgroundLogsRequest reads bounded task logs.
 type BackgroundLogsRequest struct {
 	ID    string `json:"id"`
 	Limit int64  `json:"limit,omitempty"`
 }
 
+// BackgroundBoardRequest controls background lane board rendering.
 type BackgroundBoardRequest struct {
 	StalledAfterSeconds int `json:"stalled_after_seconds,omitempty"`
 	StalledAfterMS      int `json:"stalled_after_ms,omitempty"`
 }
 
+// BackgroundHeartbeatRequest updates task heartbeat state.
 type BackgroundHeartbeatRequest struct {
 	ID             string     `json:"id"`
 	Status         string     `json:"status,omitempty"`
@@ -337,16 +378,19 @@ type BackgroundHeartbeatRequest struct {
 	ObservedAt     *time.Time `json:"observed_at,omitempty"`
 }
 
+// BackgroundPruneRequest controls background task cleanup.
 type BackgroundPruneRequest struct {
 	OlderThanSeconds int  `json:"older_than_seconds,omitempty"`
 	OlderThanDays    int  `json:"older_than_days,omitempty"`
 	Keep             *int `json:"keep,omitempty"`
 }
 
+// BackgroundSuperviseRequest runs one background supervision pass.
 type BackgroundSuperviseRequest struct {
 	Now *time.Time `json:"now,omitempty"`
 }
 
+// BackgroundWatchRequest streams background task events.
 type BackgroundWatchRequest struct {
 	ID         string `json:"id"`
 	Offset     int64  `json:"offset,omitempty"`
@@ -354,20 +398,24 @@ type BackgroundWatchRequest struct {
 	MaxEvents  int    `json:"max_events,omitempty"`
 }
 
+// AgentRunsListRequest filters agent run listing.
 type AgentRunsListRequest struct {
 	Agent     string `json:"agent,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 }
 
+// AgentRunIDRequest identifies one agent run.
 type AgentRunIDRequest struct {
 	ID string `json:"id"`
 }
 
+// AgentRunLogsRequest reads logs for an agent run.
 type AgentRunLogsRequest struct {
 	ID    string `json:"id"`
 	Limit int64  `json:"limit,omitempty"`
 }
 
+// AgentRunsBoardRequest controls agent run lane board rendering.
 type AgentRunsBoardRequest struct {
 	Agent               string `json:"agent,omitempty"`
 	SessionID           string `json:"session_id,omitempty"`
@@ -375,6 +423,7 @@ type AgentRunsBoardRequest struct {
 	StalledAfterMS      int    `json:"stalled_after_ms,omitempty"`
 }
 
+// AgentRunHeartbeatRequest updates an agent run heartbeat.
 type AgentRunHeartbeatRequest struct {
 	ID             string     `json:"id"`
 	Status         string     `json:"status,omitempty"`
@@ -382,32 +431,38 @@ type AgentRunHeartbeatRequest struct {
 	ObservedAt     *time.Time `json:"observed_at,omitempty"`
 }
 
+// AgentRunsPruneRequest controls agent run cleanup.
 type AgentRunsPruneRequest struct {
 	OlderThanSeconds int  `json:"older_than_seconds,omitempty"`
 	OlderThanDays    int  `json:"older_than_days,omitempty"`
 	Keep             *int `json:"keep,omitempty"`
 }
 
+// MCPListRequest controls MCP server listing.
 type MCPListRequest struct {
 	Inspect *bool `json:"inspect,omitempty"`
 }
 
+// MCPServerRequest identifies an MCP server by server or name.
 type MCPServerRequest struct {
 	Server string `json:"server,omitempty"`
 	Name   string `json:"name,omitempty"`
 }
 
+// MCPCallRequest invokes an MCP tool.
 type MCPCallRequest struct {
 	Server    string          `json:"server,omitempty"`
 	Tool      string          `json:"tool"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+// MCPReadRequest reads an MCP resource.
 type MCPReadRequest struct {
 	Server string `json:"server,omitempty"`
 	URI    string `json:"uri"`
 }
 
+// MCPPromptRequest renders an MCP prompt.
 type MCPPromptRequest struct {
 	Server    string          `json:"server,omitempty"`
 	Prompt    string          `json:"prompt,omitempty"`
@@ -415,6 +470,7 @@ type MCPPromptRequest struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+// EditorIdentifyRequest establishes a trusted editor bridge identity.
 type EditorIdentifyRequest struct {
 	Editor    string `json:"editor"`
 	Version   string `json:"version,omitempty"`
@@ -422,10 +478,12 @@ type EditorIdentifyRequest struct {
 	Token     string `json:"token,omitempty"`
 }
 
+// EditorOpenRequest records the active editor file.
 type EditorOpenRequest struct {
 	Path string `json:"path"`
 }
 
+// EditorSelectionRequest records an editor selection.
 type EditorSelectionRequest struct {
 	Path        string `json:"path,omitempty"`
 	StartLine   int    `json:"start_line"`
@@ -435,6 +493,7 @@ type EditorSelectionRequest struct {
 	Text        string `json:"text,omitempty"`
 }
 
+// BridgeFaultRecordRequest records an editor bridge diagnostic fault.
 type BridgeFaultRecordRequest struct {
 	Action string   `json:"action"`
 	Args   []string `json:"args,omitempty"`
@@ -465,6 +524,7 @@ type notification struct {
 	Params  any    `json:"params,omitempty"`
 }
 
+// Serve processes line-delimited JSON-RPC ACP requests from in and writes responses to out.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, handlers Handlers, opts Options) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
