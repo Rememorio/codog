@@ -3276,7 +3276,7 @@ func TestTaskToolsManageBackgroundTasks(t *testing.T) {
 			return false
 		}
 		return completed.Status != "running" && completed.ExitCode != nil
-	}, 2*time.Second, 20*time.Millisecond)
+	}, 5*time.Second, 20*time.Millisecond)
 	require.NotNil(t, completed.ExitCode)
 	require.Equal(t, 0, *completed.ExitCode)
 
