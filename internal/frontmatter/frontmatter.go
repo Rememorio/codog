@@ -7,6 +7,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Parse extracts a leading YAML frontmatter block and returns the body and
+// parsed values. Text without a complete frontmatter block is returned
+// unchanged with nil values.
 func Parse(text string) (string, map[string]any, error) {
 	text = strings.TrimPrefix(text, "\ufeff")
 	lines := strings.Split(text, "\n")
@@ -28,10 +31,12 @@ func Parse(text string) (string, map[string]any, error) {
 	return text, nil, nil
 }
 
+// String returns a trimmed scalar string for key.
 func String(values map[string]any, key string) string {
 	return strings.TrimSpace(ScalarString(values[key]))
 }
 
+// FirstString returns the first non-empty scalar string from keys.
 func FirstString(values map[string]any, keys ...string) string {
 	for _, key := range keys {
 		value := String(values, key)
@@ -42,6 +47,7 @@ func FirstString(values map[string]any, keys ...string) string {
 	return ""
 }
 
+// ScalarString converts a scalar frontmatter value to a string.
 func ScalarString(value any) string {
 	switch typed := value.(type) {
 	case nil:
@@ -55,6 +61,8 @@ func ScalarString(value any) string {
 	}
 }
 
+// StringList converts strings or YAML lists into a compact list split on commas
+// and newlines.
 func StringList(value any) []string {
 	switch typed := value.(type) {
 	case nil:
@@ -78,6 +86,7 @@ func StringList(value any) []string {
 	}
 }
 
+// ArgumentList converts a frontmatter value into shell-like argument tokens.
 func ArgumentList(value any) []string {
 	switch typed := value.(type) {
 	case nil:
@@ -97,6 +106,8 @@ func splitCommaOrNewline(value string) []string {
 	})
 }
 
+// CompactStrings trims values and removes empties and duplicates while
+// preserving first-seen order.
 func CompactStrings(values []string) []string {
 	out := []string{}
 	seen := map[string]bool{}
@@ -111,6 +122,8 @@ func CompactStrings(values []string) []string {
 	return out
 }
 
+// NormalizePaths normalizes slash style, removes trailing glob suffixes, and
+// compacts the result.
 func NormalizePaths(values []string) []string {
 	out := []string{}
 	for _, value := range values {
@@ -124,6 +137,8 @@ func NormalizePaths(values []string) []string {
 	return CompactStrings(out)
 }
 
+// Bool parses common frontmatter boolean representations and reports whether
+// parsing was successful.
 func Bool(value any) (bool, bool) {
 	switch typed := value.(type) {
 	case nil:
@@ -144,6 +159,8 @@ func Bool(value any) (bool, bool) {
 	}
 }
 
+// DescriptionFromMarkdown returns the first non-empty markdown line with
+// leading heading markers removed.
 func DescriptionFromMarkdown(body string) string {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)

@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// VerifyEd25519 verifies payload against a base64 or hex public key and
+// signature.
 func VerifyEd25519(publicKeyValue, signatureValue string, payload []byte) error {
 	publicKey, err := DecodePublicKey(publicKeyValue)
 	if err != nil {
@@ -23,39 +25,51 @@ func VerifyEd25519(publicKeyValue, signatureValue string, payload []byte) error 
 	return nil
 }
 
+// DecodePublicKey decodes a base64 or hex Ed25519 public key.
 func DecodePublicKey(value string) (ed25519.PublicKey, error) {
-	data, err := decodeBase64OrHex(value)
+	data, err := decodeBase64OrHex(value, ed25519.PublicKeySize)
 	if err != nil {
 		return nil, fmt.Errorf("invalid public key: %w", err)
-	}
-	if len(data) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid public key length: got %d want %d", len(data), ed25519.PublicKeySize)
 	}
 	return ed25519.PublicKey(data), nil
 }
 
+// DecodeSignature decodes a base64 or hex Ed25519 signature, accepting an
+// optional ed25519: prefix.
 func DecodeSignature(value string) ([]byte, error) {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "ed25519:")
-	data, err := decodeBase64OrHex(value)
+	data, err := decodeBase64OrHex(value, ed25519.SignatureSize)
 	if err != nil {
 		return nil, fmt.Errorf("invalid signature: %w", err)
-	}
-	if len(data) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("invalid signature length: got %d want %d", len(data), ed25519.SignatureSize)
 	}
 	return data, nil
 }
 
-func decodeBase64OrHex(value string) ([]byte, error) {
+func decodeBase64OrHex(value string, expectedLen int) ([]byte, error) {
 	value = strings.TrimSpace(value)
-	if data, err := base64.StdEncoding.DecodeString(value); err == nil {
-		return data, nil
+	var firstErr error
+	for _, decode := range []func(string) ([]byte, error){
+		base64.StdEncoding.DecodeString,
+		base64.RawStdEncoding.DecodeString,
+		base64.RawURLEncoding.DecodeString,
+		hex.DecodeString,
+	} {
+		data, err := decode(value)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if len(data) == expectedLen {
+			return data, nil
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf("decoded length: got %d want %d", len(data), expectedLen)
+		}
 	}
-	if data, err := base64.RawStdEncoding.DecodeString(value); err == nil {
-		return data, nil
+	if firstErr != nil {
+		return nil, firstErr
 	}
-	if data, err := base64.RawURLEncoding.DecodeString(value); err == nil {
-		return data, nil
-	}
-	return hex.DecodeString(value)
+	return nil, fmt.Errorf("decoded length: got 0 want %d", expectedLen)
 }

@@ -9,6 +9,8 @@ import (
 	"sync"
 )
 
+// Server serves deterministic Anthropic-compatible streaming responses for
+// tests and local smoke runs.
 type Server struct {
 	Text      string
 	Turns     []Turn
@@ -18,11 +20,13 @@ type Server struct {
 	RetryAfter        string
 }
 
+// Turn describes one streamed assistant response from the mock server.
 type Turn struct {
 	Text     string
 	ToolUses []ToolUse
 }
 
+// ToolUse describes one streamed Anthropic tool_use content block.
 type ToolUse struct {
 	ID          string
 	Name        string
@@ -37,6 +41,7 @@ type handlerState struct {
 	attempt int
 }
 
+// Handler returns an HTTP handler for the Anthropic messages endpoint.
 func (s Server) Handler() http.Handler {
 	state := &handlerState{config: s}
 	mux := http.NewServeMux()
