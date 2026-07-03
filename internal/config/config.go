@@ -446,6 +446,80 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// CompatibilityConfig holds counters for Claude Code compatibility entrypoints.
+type CompatibilityConfig struct {
+	SlackAppInstallCount    int    `json:"slack_app_install_count,omitempty"`
+	StickerOrderCount       int    `json:"sticker_order_count,omitempty"`
+	ExtraUsageVisitCount    int    `json:"extra_usage_visit_count,omitempty"`
+	GuestPassReferralURL    string `json:"guest_pass_referral_url,omitempty"`
+	GuestPassVisitCount     int    `json:"guest_pass_visit_count,omitempty"`
+	slackAppInstallSet      bool
+	stickerOrderSet         bool
+	extraUsageVisitSet      bool
+	guestPassReferralURLSet bool
+	guestPassVisitSet       bool
+}
+
+// UnmarshalJSON accepts snake_case and camelCase compatibility aliases.
+func (c *CompatibilityConfig) UnmarshalJSON(data []byte) error {
+	type plain CompatibilityConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readIntAlias := func(target *int, present *bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed int
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
+			}
+			*target = parsed
+			*present = true
+		}
+		return nil
+	}
+	readStringAlias := func(target *string, present *bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid compatibility.%s: %w", key, err)
+			}
+			*target = parsed
+			*present = true
+		}
+		return nil
+	}
+	if err := readIntAlias(&parsed.SlackAppInstallCount, &parsed.slackAppInstallSet, "slackAppInstallCount", "slack_app_install_count"); err != nil {
+		return err
+	}
+	if err := readIntAlias(&parsed.StickerOrderCount, &parsed.stickerOrderSet, "stickerOrderCount", "sticker_order_count"); err != nil {
+		return err
+	}
+	if err := readIntAlias(&parsed.ExtraUsageVisitCount, &parsed.extraUsageVisitSet, "extraUsageVisitCount", "extra_usage_visit_count"); err != nil {
+		return err
+	}
+	if err := readStringAlias(&parsed.GuestPassReferralURL, &parsed.guestPassReferralURLSet, "guestPassReferralURL", "guest_pass_referral_url"); err != nil {
+		return err
+	}
+	if err := readIntAlias(&parsed.GuestPassVisitCount, &parsed.guestPassVisitSet, "guestPassVisitCount", "guest_pass_visit_count"); err != nil {
+		return err
+	}
+	*c = CompatibilityConfig(parsed)
+	return nil
+}
+
 // PreferencesConfig holds user-facing runtime preferences.
 type PreferencesConfig struct {
 	ChromeDefaultEnabled *bool `json:"chrome_default_enabled,omitempty"`
@@ -864,6 +938,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
 		AllowedTools        []string                   `json:"allowedTools,omitempty"`
 		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
+		Compatibility       CompatibilityConfig        `json:"compatibility,omitempty"`
 		EditorBridge        EditorBridgeConfig         `json:"editor_bridge,omitempty"`
 		Enterprise          EnterpriseConfig           `json:"enterprise,omitempty"`
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
@@ -949,6 +1024,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if preferencesConfigSet(aliases.Preferences) {
 		mergePreferencesConfigIntoFuture(&parsed.Future, aliases.Preferences)
+	}
+	if compatibilityConfigSet(aliases.Compatibility) {
+		mergeCompatibilityConfigIntoFuture(&parsed.Future, aliases.Compatibility)
 	}
 	*c = Config(parsed)
 	return nil
@@ -1954,6 +2032,19 @@ func preferencesConfigSet(cfg PreferencesConfig) bool {
 		cfg.UltraReviewEnabled != nil
 }
 
+func compatibilityConfigSet(cfg CompatibilityConfig) bool {
+	return cfg.slackAppInstallSet ||
+		cfg.stickerOrderSet ||
+		cfg.extraUsageVisitSet ||
+		cfg.guestPassReferralURLSet ||
+		cfg.guestPassVisitSet ||
+		cfg.SlackAppInstallCount != 0 ||
+		cfg.StickerOrderCount != 0 ||
+		cfg.ExtraUsageVisitCount != 0 ||
+		cfg.GuestPassReferralURL != "" ||
+		cfg.GuestPassVisitCount != 0
+}
+
 func sandboxConfigSet(cfg SandboxConfig) bool {
 	return cfg.Strategy != "" ||
 		cfg.Enabled != nil ||
@@ -2017,6 +2108,24 @@ func mergePreferencesConfigIntoFuture(dst *FutureConfig, src PreferencesConfig) 
 	}
 	if src.UltraReviewEnabled != nil {
 		dst.UltraReviewEnabled = src.UltraReviewEnabled
+	}
+}
+
+func mergeCompatibilityConfigIntoFuture(dst *FutureConfig, src CompatibilityConfig) {
+	if src.slackAppInstallSet || src.SlackAppInstallCount != 0 {
+		dst.SlackAppInstallCount = src.SlackAppInstallCount
+	}
+	if src.stickerOrderSet || src.StickerOrderCount != 0 {
+		dst.StickerOrderCount = src.StickerOrderCount
+	}
+	if src.extraUsageVisitSet || src.ExtraUsageVisitCount != 0 {
+		dst.ExtraUsageVisitCount = src.ExtraUsageVisitCount
+	}
+	if src.guestPassReferralURLSet || src.GuestPassReferralURL != "" {
+		dst.GuestPassReferralURL = src.GuestPassReferralURL
+	}
+	if src.guestPassVisitSet || src.GuestPassVisitCount != 0 {
+		dst.GuestPassVisitCount = src.GuestPassVisitCount
 	}
 }
 

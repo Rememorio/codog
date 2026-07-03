@@ -173,6 +173,61 @@ func TestLoadPreferencesConfigCompatibility(t *testing.T) {
 	}
 }
 
+func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name         string
+		body         string
+		slackCount   int
+		stickerCount int
+		extraCount   int
+		referralURL  string
+		passCount    int
+	}{
+		{
+			name:         "legacy future compatibility counters",
+			body:         `{"future":{"slack_app_install_count":3,"sticker_order_count":2,"extra_usage_visit_count":4,"guest_pass_referral_url":"https://example.test/pass","guest_pass_visit_count":5}}`,
+			slackCount:   3,
+			stickerCount: 2,
+			extraCount:   4,
+			referralURL:  "https://example.test/pass",
+			passCount:    5,
+		},
+		{
+			name:         "formal compatibility aliases",
+			body:         `{"compatibility":{"slackAppInstallCount":3,"stickerOrderCount":2,"extraUsageVisitCount":4,"guestPassReferralURL":"https://example.test/pass","guestPassVisitCount":5}}`,
+			slackCount:   3,
+			stickerCount: 2,
+			extraCount:   4,
+			referralURL:  "https://example.test/pass",
+			passCount:    5,
+		},
+		{
+			name:         "formal compatibility wins with zero",
+			body:         `{"future":{"slack_app_install_count":3,"sticker_order_count":2,"extra_usage_visit_count":4,"guest_pass_referral_url":"https://old.example/pass","guest_pass_visit_count":5},"compatibility":{"slack_app_install_count":0,"sticker_order_count":0,"extra_usage_visit_count":0,"guest_pass_referral_url":"","guest_pass_visit_count":0}}`,
+			slackCount:   0,
+			stickerCount: 0,
+			extraCount:   0,
+			referralURL:  "",
+			passCount:    0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.slackCount, cfg.Future.SlackAppInstallCount)
+			require.Equal(t, tc.stickerCount, cfg.Future.StickerOrderCount)
+			require.Equal(t, tc.extraCount, cfg.Future.ExtraUsageVisitCount)
+			require.Equal(t, tc.referralURL, cfg.Future.GuestPassReferralURL)
+			require.Equal(t, tc.passCount, cfg.Future.GuestPassVisitCount)
+		})
+	}
+}
+
 func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

@@ -133,6 +133,14 @@ func TestValidateBytesAcceptsPreferencesSection(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsCompatibilitySection(t *testing.T) {
+	result := ValidateBytes([]byte(`{"compatibility":{"slackAppInstallCount":1,"sticker_order_count":2,"extraUsageVisitCount":3,"guestPassReferralURL":"https://example.test/pass","guest_pass_visit_count":4}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
 

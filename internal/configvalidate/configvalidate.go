@@ -115,6 +115,7 @@ var topLevelFields = []fieldSpec{
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},
+	{"compatibility", FieldObject},
 	{"editor_bridge", FieldObject},
 	{"enterprise", FieldObject},
 	{"env", FieldStringMap},
@@ -308,6 +309,19 @@ var marketplaceFields = []fieldSpec{
 	{"sources", FieldStringArray},
 	{"public_keys", FieldObject},
 	{"publicKeys", FieldObject},
+}
+
+var compatibilityFields = []fieldSpec{
+	{"slack_app_install_count", FieldNumber},
+	{"slackAppInstallCount", FieldNumber},
+	{"sticker_order_count", FieldNumber},
+	{"stickerOrderCount", FieldNumber},
+	{"extra_usage_visit_count", FieldNumber},
+	{"extraUsageVisitCount", FieldNumber},
+	{"guest_pass_referral_url", FieldString},
+	{"guestPassReferralURL", FieldString},
+	{"guest_pass_visit_count", FieldNumber},
+	{"guestPassVisitCount", FieldNumber},
 }
 
 var preferencesFields = []fieldSpec{
@@ -506,6 +520,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "providerFallbacks"); ok {
 		validateObject(result, nested, providerFallbackFields, "providerFallbacks", source, path)
+	}
+	if compatibility, ok := objectAt(object, "compatibility"); ok {
+		validateObject(result, compatibility, compatibilityFields, "compatibility", source, path)
 	}
 	if bridge, ok := objectAt(object, "editor_bridge"); ok {
 		validateObject(result, bridge, editorBridgeFields, "editor_bridge", source, path)

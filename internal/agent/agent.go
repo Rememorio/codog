@@ -17149,6 +17149,30 @@ func unsetPreferenceBool(path, key, legacyKey string) error {
 	return nil
 }
 
+func setCompatibilityValue(path, key, legacyKey string, value any) error {
+	if _, err := config.SetFileValue(path, key, value); err != nil {
+		return err
+	}
+	if legacyKey != "" {
+		if _, err := config.UnsetFileValue(path, legacyKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func unsetCompatibilityValue(path, key, legacyKey string) error {
+	if _, err := config.UnsetFileValue(path, key); err != nil {
+		return err
+	}
+	if legacyKey != "" {
+		if _, err := config.UnsetFileValue(path, legacyKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type keybindingEntry struct {
 	Key           string `json:"key"`
 	NormalizedKey string `json:"normalized_key,omitempty"`
@@ -20549,7 +20573,7 @@ func (a *App) InstallSlackApp(args []string) error {
 		return err
 	}
 	count := a.Config.Future.SlackAppInstallCount + 1
-	if _, err := config.SetFileValue(path, "future.slack_app_install_count", count); err != nil {
+	if err := setCompatibilityValue(path, "compatibility.slack_app_install_count", "future.slack_app_install_count", count); err != nil {
 		return err
 	}
 	a.Config.Future.SlackAppInstallCount = count
@@ -20656,7 +20680,7 @@ func (a *App) Stickers(args []string) error {
 		return err
 	}
 	count := a.Config.Future.StickerOrderCount + 1
-	if _, err := config.SetFileValue(path, "future.sticker_order_count", count); err != nil {
+	if err := setCompatibilityValue(path, "compatibility.sticker_order_count", "future.sticker_order_count", count); err != nil {
 		return err
 	}
 	a.Config.Future.StickerOrderCount = count
@@ -20763,7 +20787,7 @@ func (a *App) ExtraUsage(args []string) error {
 		return err
 	}
 	count := a.Config.Future.ExtraUsageVisitCount + 1
-	if _, err := config.SetFileValue(path, "future.extra_usage_visit_count", count); err != nil {
+	if err := setCompatibilityValue(path, "compatibility.extra_usage_visit_count", "future.extra_usage_visit_count", count); err != nil {
 		return err
 	}
 	a.Config.Future.ExtraUsageVisitCount = count
@@ -20919,7 +20943,7 @@ func (a *App) Passes(args []string) error {
 		if err := validateHTTPURL(req.ReferralURL, "guest pass referral URL"); err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.guest_pass_referral_url", req.ReferralURL); err != nil {
+		if err := setCompatibilityValue(path, "compatibility.guest_pass_referral_url", "future.guest_pass_referral_url", req.ReferralURL); err != nil {
 			return err
 		}
 		a.Config.Future.GuestPassReferralURL = req.ReferralURL
@@ -20927,7 +20951,7 @@ func (a *App) Passes(args []string) error {
 		report.URL = req.ReferralURL
 		report.Message = "Guest pass referral URL saved."
 	case "clear-url":
-		if _, err := config.UnsetFileValue(path, "future.guest_pass_referral_url"); err != nil {
+		if err := unsetCompatibilityValue(path, "compatibility.guest_pass_referral_url", "future.guest_pass_referral_url"); err != nil {
 			return err
 		}
 		a.Config.Future.GuestPassReferralURL = ""
@@ -20936,7 +20960,7 @@ func (a *App) Passes(args []string) error {
 		report.Message = "Guest pass referral URL cleared."
 	case "show", "open":
 		count := a.Config.Future.GuestPassVisitCount + 1
-		if _, err := config.SetFileValue(path, "future.guest_pass_visit_count", count); err != nil {
+		if err := setCompatibilityValue(path, "compatibility.guest_pass_visit_count", "future.guest_pass_visit_count", count); err != nil {
 			return err
 		}
 		a.Config.Future.GuestPassVisitCount = count
@@ -36325,7 +36349,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "preferences", "privacy", "sandbox", "skills", "updater"}
+	sections := []string{"auth", "compatibility", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "preferences", "privacy", "sandbox", "skills", "updater"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36653,6 +36677,7 @@ type resetReport struct {
 
 var resetSectionKeys = map[string][]string{
 	"auth":          []string{"api_key", "auth_token", "oauth_profile", "base_url"},
+	"compatibility": []string{"compatibility", "future.slack_app_install_count", "future.sticker_order_count", "future.extra_usage_visit_count", "future.guest_pass_referral_url", "future.guest_pass_visit_count"},
 	"editor-bridge": []string{"editor_bridge", "future.editor_bridge_socket", "future.editor_bridge_token"},
 	"enterprise":    []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"},
 	"future":        []string{"future"},
@@ -36679,6 +36704,8 @@ var resetSectionAliases = map[string]string{
 	"authentication":    "auth",
 	"defaults":          "all",
 	"bridge":            "editor-bridge",
+	"compat":            "compatibility",
+	"compatibility":     "compatibility",
 	"editor_bridge":     "editor-bridge",
 	"editor-bridge":     "editor-bridge",
 	"everything":        "all",
@@ -36917,6 +36944,12 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.AuthToken = ""
 		a.Config.OAuthProfile = ""
 		a.Config.BaseURL = defaults.BaseURL
+	case "compatibility":
+		a.Config.Future.SlackAppInstallCount = 0
+		a.Config.Future.StickerOrderCount = 0
+		a.Config.Future.ExtraUsageVisitCount = 0
+		a.Config.Future.GuestPassReferralURL = ""
+		a.Config.Future.GuestPassVisitCount = 0
 	case "editor-bridge":
 		a.Config.Future.EditorBridgeSocket = ""
 		a.Config.Future.EditorBridgeToken = ""
@@ -37004,6 +37037,14 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
+	case "compatibility", "compat":
+		return map[string]any{
+			"slack_app_install_count": cfg.Future.SlackAppInstallCount,
+			"sticker_order_count":     cfg.Future.StickerOrderCount,
+			"extra_usage_visit_count": cfg.Future.ExtraUsageVisitCount,
+			"guest_pass_referral_url": cfg.Future.GuestPassReferralURL,
+			"guest_pass_visit_count":  cfg.Future.GuestPassVisitCount,
+		}, nil
 	case "preferences", "pref":
 		return map[string]any{
 			"chrome_default_enabled":   boolPtrEnabled(cfg.Future.ChromeDefaultEnabled),

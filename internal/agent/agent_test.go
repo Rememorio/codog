@@ -13449,6 +13449,11 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 			ChromeDefaultEnabled:      boolPtr(true),
 			NotificationsEnabled:      boolPtr(false),
 			UltraReviewEnabled:        boolPtr(true),
+			SlackAppInstallCount:      3,
+			StickerOrderCount:         2,
+			ExtraUsageVisitCount:      4,
+			GuestPassReferralURL:      "https://example.test/pass",
+			GuestPassVisitCount:       5,
 			SandboxStrategy:           "detect",
 			Sandbox: config.SandboxConfig{
 				FilesystemMode: "allow-list",
@@ -13531,6 +13536,14 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"notifications_configured": true`)
 	require.Contains(t, out.String(), `"ultrareview_enabled": true`)
 	require.Contains(t, out.String(), `"ultrareview_configured": true`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "compatibility", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"slack_app_install_count": 3`)
+	require.Contains(t, out.String(), `"sticker_order_count": 2`)
+	require.Contains(t, out.String(), `"extra_usage_visit_count": 4`)
+	require.Contains(t, out.String(), `"guest_pass_referral_url": "https://example.test/pass"`)
+	require.Contains(t, out.String(), `"guest_pass_visit_count": 5`)
 }
 
 func TestToolRegistryUsesRAGConfig(t *testing.T) {
@@ -13861,6 +13874,31 @@ func TestResetPreferencesConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), "chrome_default_enabled")
 	require.NotContains(t, string(data), "notifications_enabled")
 	require.NotContains(t, string(data), "ultrareview_enabled")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetCompatibilityConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"compatibility": {"slack_app_install_count": 3, "sticker_order_count": 2, "extra_usage_visit_count": 4, "guest_pass_referral_url": "https://example.test/pass", "guest_pass_visit_count": 5},
+		"future": {"slack_app_install_count": 1, "sticker_order_count": 1, "extra_usage_visit_count": 1, "guest_pass_referral_url": "https://old.example/pass", "guest_pass_visit_count": 1}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "compatibility", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "compatibility", report.Section)
+	require.ElementsMatch(t, []string{"compatibility", "future.slack_app_install_count", "future.sticker_order_count", "future.extra_usage_visit_count", "future.guest_pass_referral_url", "future.guest_pass_visit_count"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"compatibility"`)
+	require.NotContains(t, string(data), "slack_app_install_count")
+	require.NotContains(t, string(data), "sticker_order_count")
+	require.NotContains(t, string(data), "extra_usage_visit_count")
+	require.NotContains(t, string(data), "guest_pass_referral_url")
+	require.NotContains(t, string(data), "guest_pass_visit_count")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -19402,7 +19440,9 @@ func TestInstallSlackAppCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, app.Config.Future.SlackAppInstallCount)
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"compatibility"`)
 	require.Contains(t, string(data), `"slack_app_install_count": 1`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 	openedURL = ""
 
@@ -19411,6 +19451,9 @@ func TestInstallSlackAppCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Slack App Setup")
 	require.Contains(t, out.String(), slackAppURL)
 	require.Equal(t, 2, app.Config.Future.SlackAppInstallCount)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"slack_app_install_count": 2`)
 	require.Empty(t, errOut.String())
 }
 
@@ -19436,7 +19479,9 @@ func TestStickersCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, app.Config.Future.StickerOrderCount)
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"compatibility"`)
 	require.Contains(t, string(data), `"sticker_order_count": 1`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 	openedURL = ""
 
@@ -19445,6 +19490,9 @@ func TestStickersCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Sticker Order")
 	require.Contains(t, out.String(), stickerOrderURL)
 	require.Equal(t, 2, app.Config.Future.StickerOrderCount)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"sticker_order_count": 2`)
 	require.Empty(t, errOut.String())
 }
 
@@ -19469,7 +19517,9 @@ func TestPassesCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"referral_url": "`+referralURL+`"`)
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"compatibility"`)
 	require.Contains(t, string(data), `"guest_pass_referral_url": "`+referralURL+`"`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 
 	require.NoError(t, app.Passes([]string{"--json"}))
@@ -19477,12 +19527,18 @@ func TestPassesCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"opened": true`)
 	require.Contains(t, out.String(), `"visit_count": 1`)
 	require.Equal(t, 1, app.Config.Future.GuestPassVisitCount)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"guest_pass_visit_count": 1`)
 	out.Reset()
 	openedURL = ""
 
 	require.True(t, app.handleSlash(context.Background(), "/passes clear-url", &session.Session{ID: "session"}))
 	require.Empty(t, app.Config.Future.GuestPassReferralURL)
 	require.Contains(t, out.String(), "Guest Passes")
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"guest_pass_referral_url"`)
 	require.Empty(t, errOut.String())
 	out.Reset()
 
@@ -19490,6 +19546,9 @@ func TestPassesCommandAndSlash(t *testing.T) {
 	require.Empty(t, openedURL)
 	require.Contains(t, out.String(), guestPassDocsURL)
 	require.Equal(t, 2, app.Config.Future.GuestPassVisitCount)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"guest_pass_visit_count": 2`)
 }
 
 func TestExtraUsageCommandAndSlash(t *testing.T) {
@@ -19515,7 +19574,9 @@ func TestExtraUsageCommandAndSlash(t *testing.T) {
 	require.Equal(t, 1, app.Config.Future.ExtraUsageVisitCount)
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"compatibility"`)
 	require.Contains(t, string(data), `"extra_usage_visit_count": 1`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 	openedURL = ""
 
@@ -19524,6 +19585,9 @@ func TestExtraUsageCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Extra Usage")
 	require.Contains(t, out.String(), extraUsagePersonalURL)
 	require.Equal(t, 2, app.Config.Future.ExtraUsageVisitCount)
+	data, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"extra_usage_visit_count": 2`)
 	require.Empty(t, errOut.String())
 
 	oldWD, err := os.Getwd()
