@@ -189,6 +189,20 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, planTodoCategory.Total)
 	require.ElementsMatch(t, []string{"plan_todo_roundtrip"}, planTodoCategory.Scenarios)
 
+	lspStatic := findScenario(t, report, "lsp_static_roundtrip")
+	require.True(t, lspStatic.OK)
+	require.Equal(t, "code-intelligence", lspStatic.Category)
+	require.Equal(t, 6, lspStatic.ToolCalls)
+	require.Equal(t, []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp"}, lspStatic.ToolUses)
+	require.Contains(t, lspStatic.Output, `"action": "symbols"`)
+	require.Contains(t, lspStatic.Output, `"name": "RunFast"`)
+	require.Contains(t, lspStatic.Output, `"action": "references"`)
+	require.Contains(t, lspStatic.Output, `"action": "format"`)
+	lspStaticCategory := findCategory(t, report, "code-intelligence")
+	require.True(t, lspStaticCategory.OK)
+	require.Equal(t, 1, lspStaticCategory.Total)
+	require.ElementsMatch(t, []string{"lsp_static_roundtrip"}, lspStaticCategory.Scenarios)
+
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
@@ -352,6 +366,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	planTodo := findManifestScenario(t, manifest, "plan_todo_roundtrip")
 	require.Equal(t, "planning", planTodo.Category)
 	require.Contains(t, planTodo.ParityRefs, "Plan mode")
+
+	lspStatic := findManifestScenario(t, manifest, "lsp_static_roundtrip")
+	require.Equal(t, "code-intelligence", lspStatic.Category)
+	require.Contains(t, lspStatic.ParityRefs, "LSP tool")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

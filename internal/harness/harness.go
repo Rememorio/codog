@@ -163,6 +163,7 @@ var scenarioOrder = []string{
 	"web_access_roundtrip",
 	"git_workspace_roundtrip",
 	"plan_todo_roundtrip",
+	"lsp_static_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -642,6 +643,7 @@ func Run(ctx context.Context) (Report, error) {
 		webAccessScenario(),
 		gitWorkspaceScenario(),
 		planTodoScenario(),
+		lspStaticScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1198,6 +1200,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "planning",
 		Description: "Enters plan mode, persists a todo list, reads it back, and exits plan mode with the final plan.",
 		ParityRefs:  []string{"Plan mode", "Todo tools", "Workspace state"},
+	},
+	"lsp_static_roundtrip": {
+		Category:    "code-intelligence",
+		Description: "Queries static Go code intelligence through the LSP tool for symbols, definitions, references, hover, completions, and formatting.",
+		ParityRefs:  []string{"LSP tool", "Code intelligence", "IDE bridge"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -1990,6 +1997,102 @@ func planTodoScenario() scenario {
 				ToolCalls:    4,
 				ToolUses:     []string{"enter_plan_mode", "todo_write", "todo_read", "exit_plan_mode"},
 				RequestCount: 4,
+			}, nil
+		},
+	}
+}
+
+func lspStaticScenario() scenario {
+	return scenario{
+		name: "lsp_static_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			pkgDir := filepath.Join(workspace, "pkg")
+			if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			source := "package pkg\n\ntype Runner struct{}\n\nfunc RunFast() Runner { return Runner{} }\n\nfunc UseRunner() Runner { return RunFast() }\n"
+			if err := os.WriteFile(filepath.Join(pkgDir, "runner.go"), []byte(source), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			messy := "package pkg\n\nfunc messy(){println(\"hi\")}\n"
+			if err := os.WriteFile(filepath.Join(pkgDir, "messy.go"), []byte(messy), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			tool := tools.LSPTool{Workspace: workspace}
+
+			symbolsOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"symbols","path":"pkg/runner.go"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "symbols"`, `"source": "static"`, `"name": "Runner"`, `"name": "RunFast"`, `"total": 3`} {
+				if !strings.Contains(symbolsOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp symbols output missing %s", expected)
+				}
+			}
+
+			definitionOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"definition","query":"RunFast"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "definition"`, `"found": true`, `"name": "RunFast"`, `"path": "pkg/runner.go"`} {
+				if !strings.Contains(definitionOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp definition output missing %s", expected)
+				}
+			}
+
+			referencesOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"references","query":"Runner","limit":10}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "references"`, `"query": "Runner"`, `"path": "pkg/runner.go"`, `"total": 3`} {
+				if !strings.Contains(referencesOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp references output missing %s", expected)
+				}
+			}
+
+			hoverOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"hover","query":"RunFast"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "hover"`, `"found": true`, `"kind": "function"`, `"symbol": "RunFast"`} {
+				if !strings.Contains(hoverOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp hover output missing %s", expected)
+				}
+			}
+
+			completionOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"completion","query":"Run","limit":5}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "completion"`, `"label": "RunFast"`, `"kind": "function"`} {
+				if !strings.Contains(completionOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp completion output missing %s", expected)
+				}
+			}
+
+			formatOut, err := tool.Execute(ctx, json.RawMessage(`{"action":"format","path":"pkg/messy.go"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"action": "format"`, `"kind": "format"`, `"path": "pkg/messy.go"`, `"changed": true`, "func messy()"} {
+				if !strings.Contains(formatOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("lsp format output missing %s", expected)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(pkgDir, "messy.go"))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if string(data) != messy {
+				return localScenarioResult{}, fmt.Errorf("lsp format unexpectedly modified file")
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{symbolsOut, definitionOut, referencesOut, hoverOut, completionOut, formatOut}, "\n"),
+				FinalMessage: "lsp static harness ok",
+				ToolCalls:    6,
+				ToolUses:     []string{"lsp", "lsp", "lsp", "lsp", "lsp", "lsp"},
+				RequestCount: 6,
 			}, nil
 		},
 	}
