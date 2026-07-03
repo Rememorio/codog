@@ -2971,6 +2971,8 @@ func risky(value any) {
 	require.NoError(t, os.WriteFile(filepath.Join(pluginInstallSource, "tool.sh"), []byte("echo ok\n"), 0o755))
 	skillSourcePath := filepath.Join(t.TempDir(), "review.md")
 	require.NoError(t, os.WriteFile(skillSourcePath, []byte("Review resumed skill body."), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(configHome, "skills"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configHome, "skills", "resume-debug.md"), []byte("---\ndescription: Resume debug skill.\n---\nUse this resume debug skill for {{args}}."), 0o644))
 	executableShim := filepath.Join(t.TempDir(), "codog-shim")
 	require.NoError(t, os.WriteFile(executableShim, []byte("#!/bin/sh\necho codog-shim \"$@\"\n"), 0o755))
 	previousExecutableResolver := resolveExecutablePath
@@ -2999,6 +3001,22 @@ func risky(value any) {
 		return captureStdout(t, func() error {
 			return RunCLI(context.Background(), cliArgs, config.FlagOverrides{})
 		})
+	}
+	runResumedJSONWithStdin := func(input string, command string, args ...string) (string, error) {
+		t.Helper()
+		stdinFile, err := os.CreateTemp(t.TempDir(), "stdin-*.txt")
+		require.NoError(t, err)
+		_, err = stdinFile.WriteString(input)
+		require.NoError(t, err)
+		_, err = stdinFile.Seek(0, io.SeekStart)
+		require.NoError(t, err)
+		originalStdin := os.Stdin
+		os.Stdin = stdinFile
+		defer func() {
+			os.Stdin = originalStdin
+			require.NoError(t, stdinFile.Close())
+		}()
+		return runResumedJSON(command, args...)
 	}
 	openedURL := ""
 	previousOpen := openExternalURL
@@ -4107,6 +4125,51 @@ func risky(value any) {
 	require.True(t, resumedDebugToolSearch.Success)
 	require.Contains(t, resumedDebugToolSearch.Output, `"query": "web fetch"`)
 	require.Contains(t, resumedDebugToolSearch.Output, `"name": "web_fetch"`)
+
+	out, err = runResumedJSONWithStdin("2\n", "/debug-tool-call", "AskUserQuestionTool", `{"question":"Pick a resume path","choices":["alpha","beta"],"default":"alpha"}`)
+	require.NoError(t, err)
+	var resumedDebugAskUserQuestion debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugAskUserQuestion))
+	require.Equal(t, "debug_tool_call", resumedDebugAskUserQuestion.Kind)
+	require.Equal(t, "ask_user_question", resumedDebugAskUserQuestion.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugAskUserQuestion.Permission)
+	require.True(t, resumedDebugAskUserQuestion.Success)
+	require.Contains(t, resumedDebugAskUserQuestion.Output, `"question": "Pick a resume path"`)
+	require.Contains(t, resumedDebugAskUserQuestion.Output, `"answer": "beta"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "SkillTool", `{"action":"list","query":"resume","max_results":5}`)
+	require.NoError(t, err)
+	var resumedDebugSkillList debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugSkillList))
+	require.Equal(t, "debug_tool_call", resumedDebugSkillList.Kind)
+	require.Equal(t, "skill", resumedDebugSkillList.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugSkillList.Permission)
+	require.True(t, resumedDebugSkillList.Success)
+	require.Contains(t, resumedDebugSkillList.Output, `"action": "list"`)
+	require.Contains(t, resumedDebugSkillList.Output, `"name": "resume-debug"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "SkillTool", `{"action":"show","skill":"resume-debug"}`)
+	require.NoError(t, err)
+	var resumedDebugSkillShow debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugSkillShow))
+	require.Equal(t, "debug_tool_call", resumedDebugSkillShow.Kind)
+	require.Equal(t, "skill", resumedDebugSkillShow.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugSkillShow.Permission)
+	require.True(t, resumedDebugSkillShow.Success)
+	require.Contains(t, resumedDebugSkillShow.Output, `"action": "show"`)
+	require.Contains(t, resumedDebugSkillShow.Output, `"skill": "resume-debug"`)
+	require.Contains(t, resumedDebugSkillShow.Output, "Resume debug skill.")
+
+	out, err = runResumedJSON("/debug-tool-call", "SkillTool", `{"skill":"resume-debug","args":"contract coverage"}`)
+	require.NoError(t, err)
+	var resumedDebugSkillInvoke debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugSkillInvoke))
+	require.Equal(t, "debug_tool_call", resumedDebugSkillInvoke.Kind)
+	require.Equal(t, "skill", resumedDebugSkillInvoke.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugSkillInvoke.Permission)
+	require.True(t, resumedDebugSkillInvoke.Success)
+	require.Contains(t, resumedDebugSkillInvoke.Output, `"action": "invoke"`)
+	require.Contains(t, resumedDebugSkillInvoke.Output, "contract coverage")
 
 	out, err = runResumedJSON("/debug-tool-call", "BriefTool", `{"message":"resume debug brief","status":"normal","attachments":["main.go"]}`)
 	require.NoError(t, err)
@@ -6002,6 +6065,36 @@ func risky(value any) {
 	require.True(t, resumedDebugTaskStop.Success)
 	require.Contains(t, resumedDebugTaskStop.Output, `"task_id": "`+resumedDebugLaneTask.ID+`"`)
 	require.Contains(t, resumedDebugTaskStop.Output, `"message": "Task stopped"`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "TaskCreateTool", `{"command":"printf supervise-failed && exit 2","kind":"resume-supervise","session_id":"resume-slash","restart_policy":{"enabled":true,"mode":"on-failure","max_attempts":1}}`)
+	require.NoError(t, err)
+	var resumedDebugSupervisedTaskCreate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugSupervisedTaskCreate))
+	require.Equal(t, "debug_tool_call", resumedDebugSupervisedTaskCreate.Kind)
+	require.Equal(t, "task_create", resumedDebugSupervisedTaskCreate.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugSupervisedTaskCreate.Permission)
+	require.True(t, resumedDebugSupervisedTaskCreate.Success)
+	var resumedDebugSupervisedTask background.Task
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugSupervisedTaskCreate.Output), &resumedDebugSupervisedTask))
+	require.NotEmpty(t, resumedDebugSupervisedTask.ID)
+	require.Eventually(t, func() bool {
+		task, err := background.NewStore(configHome).Status(resumedDebugSupervisedTask.ID)
+		return err == nil && task.Status == "failed"
+	}, 5*time.Second, 50*time.Millisecond)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "TaskSuperviseTool", `{}`)
+	require.NoError(t, err)
+	var resumedDebugTaskSupervise debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTaskSupervise))
+	require.Equal(t, "debug_tool_call", resumedDebugTaskSupervise.Kind)
+	require.Equal(t, "task_supervise", resumedDebugTaskSupervise.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugTaskSupervise.Permission)
+	require.True(t, resumedDebugTaskSupervise.Success)
+	var resumedDebugTaskSuperviseResult background.SuperviseResult
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugTaskSupervise.Output), &resumedDebugTaskSuperviseResult))
+	require.Len(t, resumedDebugTaskSuperviseResult.Restarted, 1)
+	require.Equal(t, resumedDebugSupervisedTask.ID, resumedDebugTaskSuperviseResult.Restarted[0].RestartedFrom)
+	require.Equal(t, 1, resumedDebugTaskSuperviseResult.Restarted[0].RestartCount)
 
 	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "TaskCreateTool", `{"prompt":"resume prompt task","description":"exercise executable shim","kind":"resume-prompt","session_id":"resume-slash"}`)
 	require.NoError(t, err)
