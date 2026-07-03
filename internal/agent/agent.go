@@ -16,6 +16,7 @@ import (
 	"io"
 	"math"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -547,7 +548,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		}
 		return nil
 	case "api":
-		if err := app.API(rest); err != nil {
+		if err := app.APIContext(ctx, rest); err != nil {
 			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
 		}
 		return nil
@@ -1692,14 +1693,17 @@ func (a *App) Remote(args []string) error {
 	if len(args) > 1 {
 		addr = args[1]
 	}
+	return a.serveRemoteControl(context.Background(), addr)
+}
+
+func (a *App) remoteControlServer(addr string) control.Server {
 	executable, _ := os.Executable()
 	runtimeReport := remoteruntime.InspectEnv(remoteruntime.Env(), remoteProxyPortFromAddr(addr))
 	remoteEnv := []string(nil)
 	if len(runtimeReport.SubprocessEnv) > 0 {
 		remoteEnv = remoteruntime.MergeEnv(os.Environ(), runtimeReport.SubprocessEnv)
 	}
-	fmt.Fprintf(a.Err, "codog remote control listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, control.Server{
+	return control.Server{
 		Sessions:    a.Sessions,
 		ConfigHome:  a.Config.ConfigHome,
 		Workspace:   a.Workspace,
@@ -1710,13 +1714,35 @@ func (a *App) Remote(args []string) error {
 		Executable:  executable,
 		EditorToken: a.Config.Future.EditorBridgeToken,
 		RemoteEnv:   remoteEnv,
-	}.Handler())
+	}
+}
+
+func (a *App) serveRemoteControl(ctx context.Context, addr string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	normalizedAddr, remoteURL, err := normalizeRemoteHandoffAddr(addr)
+	if err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", normalizedAddr)
+	if err != nil {
+		return err
+	}
+	actualAddr := listener.Addr().String()
+	_, actualURL, urlErr := normalizeRemoteHandoffAddr(actualAddr)
+	if urlErr == nil {
+		remoteURL = actualURL
+	}
+	fmt.Fprintf(a.Err, "codog remote control listening on %s\n", remoteURL)
+	return a.serveControlListener(ctx, listener, actualAddr)
 }
 
 type apiRequest struct {
-	Action string
-	Format string
-	Addr   string
+	Action  string
+	Format  string
+	Addr    string
+	AddrSet bool
 }
 
 type apiReport struct {
@@ -1734,6 +1760,7 @@ type apiReport struct {
 	RemoteURL           string              `json:"remote_url"`
 	HealthURL           string              `json:"health_url"`
 	StateURL            string              `json:"state_url"`
+	Listening           bool                `json:"listening"`
 	RouteCount          int                 `json:"route_count"`
 	PublicRouteCount    int                 `json:"public_route_count"`
 	StreamingRouteCount int                 `json:"streaming_route_count"`
@@ -1742,6 +1769,10 @@ type apiReport struct {
 }
 
 func (a *App) API(args []string) error {
+	return a.APIContext(context.Background(), args)
+}
+
+func (a *App) APIContext(ctx context.Context, args []string) error {
 	req, err := parseAPIArgs(args)
 	if err != nil {
 		return err
@@ -1749,6 +1780,9 @@ func (a *App) API(args []string) error {
 	addr, remoteURL, err := normalizeRemoteHandoffAddr(req.Addr)
 	if err != nil {
 		return err
+	}
+	if req.Action == "serve" {
+		return a.serveAPI(ctx, req, addr)
 	}
 	report := a.buildAPIReport(req, addr, remoteURL)
 	if req.Format == "json" {
@@ -1760,7 +1794,67 @@ func (a *App) API(args []string) error {
 	return nil
 }
 
-const apiUsage = "codog api [routes|status] [--addr ADDR] [--output-format text|json]"
+func (a *App) serveAPI(ctx context.Context, req apiRequest, addr string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	actualAddr := listener.Addr().String()
+	_, remoteURL, err := normalizeRemoteHandoffAddr(actualAddr)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	report := a.buildAPIReport(req, actualAddr, remoteURL)
+	report.Status = "serving"
+	report.Enabled = true
+	report.Ready = true
+	report.Listening = true
+	report.RemoteCommand = "codog api serve " + actualAddr
+	if req.Format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+	} else {
+		renderAPIReport(a.Out, report)
+	}
+	fmt.Fprintf(a.Err, "codog api listening on %s\n", remoteURL)
+	return a.serveControlListener(ctx, listener, actualAddr)
+}
+
+func (a *App) serveControlListener(ctx context.Context, listener net.Listener, addr string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	server := &http.Server{Handler: a.remoteControlServer(addr).Handler()}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return err
+		}
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+const apiUsage = "codog api [routes|status|serve] [ADDR|--addr ADDR] [--output-format text|json]"
 
 func parseAPIArgs(args []string) (apiRequest, error) {
 	req := apiRequest{Action: "routes", Format: "text", Addr: "127.0.0.1:8791"}
@@ -1784,11 +1878,18 @@ func parseAPIArgs(args []string) (apiRequest, error) {
 				return req, missingFlagValueError{Command: "api", Flag: arg, Usage: apiUsage}
 			}
 			req.Addr = args[index]
+			req.AddrSet = true
 		case strings.HasPrefix(arg, "--addr="):
 			req.Addr = strings.TrimPrefix(arg, "--addr=")
+			req.AddrSet = true
 		case strings.HasPrefix(arg, "-"):
 			return req, unknownOptionError{Command: "api", Option: arg, Usage: apiUsage}
 		default:
+			if actionSet && req.Action == "serve" && !req.AddrSet {
+				req.Addr = arg
+				req.AddrSet = true
+				continue
+			}
 			if actionSet {
 				return req, unexpectedExtraArgsError{Command: "api " + req.Action, Args: []string{arg}, Usage: apiUsage}
 			}
@@ -1797,6 +1898,8 @@ func parseAPIArgs(args []string) (apiRequest, error) {
 				req.Action = "routes"
 			case "status":
 				req.Action = "status"
+			case "serve", "listen", "start":
+				req.Action = "serve"
 			default:
 				return req, unexpectedExtraArgsError{Command: "api", Args: []string{arg}, Usage: apiUsage}
 			}
@@ -1831,6 +1934,10 @@ func (a *App) buildAPIReport(req apiRequest, addr, remoteURL string) apiReport {
 	case a.Config.Future.RemoteEnabled:
 		status = "enabled_without_auth"
 	}
+	remoteCommand := "codog remote serve " + addr
+	if req.Action == "serve" {
+		remoteCommand = "codog api serve " + addr
+	}
 	report := apiReport{
 		Kind:                "api",
 		Action:              req.Action,
@@ -1841,7 +1948,7 @@ func (a *App) buildAPIReport(req apiRequest, addr, remoteURL string) apiReport {
 		AuthTokenConfigured: authConfigured,
 		AuthRequired:        authConfigured,
 		LeaseSeconds:        a.Config.Future.RemoteLeaseSeconds,
-		RemoteCommand:       "codog remote serve " + addr,
+		RemoteCommand:       remoteCommand,
 		RemoteAddr:          addr,
 		RemoteURL:           remoteURL,
 		HealthURL:           strings.TrimRight(remoteURL, "/") + "/health",
@@ -1864,6 +1971,7 @@ func renderAPIReport(out io.Writer, report apiReport) {
 	fmt.Fprintln(out, "Remote API")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
 	fmt.Fprintf(out, "  Enabled          %t\n", report.Enabled)
+	fmt.Fprintf(out, "  Listening        %t\n", report.Listening)
 	fmt.Fprintf(out, "  Auth required    %t\n", report.AuthRequired)
 	fmt.Fprintf(out, "  Lease seconds    %d\n", report.LeaseSeconds)
 	fmt.Fprintf(out, "  Remote command   %s\n", report.RemoteCommand)
@@ -51377,10 +51485,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"api",
 			"api",
-			"codog api [routes|status] [--addr ADDR] [--output-format text|json]",
-			"API\n\nUsage:\n  codog api [routes|status] [--addr ADDR] [--output-format text|json]\n\nReports the local remote-control HTTP API URL, auth state, startup command, and route manifest without starting a listener.\n",
-			[]string{"remote_url", "auth_required", "route_count", "routes", "remote_command"},
-			[]string{"disabled", "enabled_without_auth", "ready"},
+			"codog api [routes|status|serve] [ADDR|--addr ADDR] [--output-format text|json]",
+			"API\n\nUsage:\n  codog api [routes|status] [--addr ADDR] [--output-format text|json]\n  codog api serve [ADDR|--addr ADDR] [--output-format text|json]\n\nReports the local remote-control HTTP API URL, auth state, startup command, and route manifest. `serve` starts the same local control API used by remote-control and IDE bridge clients.\n",
+			[]string{"remote_url", "auth_required", "listening", "route_count", "routes", "remote_command"},
+			[]string{"disabled", "enabled_without_auth", "ready", "serving"},
 			false,
 		), true
 	case "model":
@@ -52037,7 +52145,7 @@ Usage:
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]
   %s reset [status|SECTION|all --confirm] [--target user|project|local] [--json|--output-format text|json]
-  %s [flags] api [routes|status] [--addr ADDR] [--json|--output-format text|json]
+  %s [flags] api [routes|status|serve] [ADDR|--addr ADDR] [--json|--output-format text|json]
   %s [flags] api-key [status|set KEY|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] profile [list|show [NAME]|set NAME|clear] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] language [status|LANGUAGE|set LANGUAGE|clear] [--target user|project|local] [--json|--output-format text|json]

@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,6 +80,33 @@ import (
 	"github.com/Rememorio/codog/internal/worktree"
 	"github.com/stretchr/testify/require"
 )
+
+type notifyBuffer struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	writes chan struct{}
+}
+
+func newNotifyBuffer() *notifyBuffer {
+	return &notifyBuffer{writes: make(chan struct{}, 8)}
+}
+
+func (b *notifyBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	n, err := b.buf.Write(p)
+	b.mu.Unlock()
+	select {
+	case b.writes <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
+func (b *notifyBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func TestEnterpriseAuditListsEvents(t *testing.T) {
 	configHome := t.TempDir()
@@ -17743,6 +17771,74 @@ func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8810", report.RemoteURL)
 	require.True(t, report.AuthRequired)
 	require.NotContains(t, cliOut, "secret-token")
+}
+
+func TestAPIServeStartsControlListener(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	out := newNotifyBuffer()
+	errOut := newNotifyBuffer()
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Future: config.FutureConfig{
+				RemoteEnabled:      true,
+				RemoteAuthToken:    "secret-token",
+				RemoteLeaseSeconds: 45,
+			},
+		},
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Workspace: workspace,
+		Out:       out,
+		Err:       errOut,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.APIContext(ctx, []string{"serve", "127.0.0.1:0", "--json"})
+	}()
+	t.Cleanup(cancel)
+
+	select {
+	case <-out.writes:
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "api serve did not write a startup report")
+	}
+	var report apiReport
+	require.NoError(t, json.Unmarshal([]byte(out.String()), &report))
+	require.Equal(t, "api", report.Kind)
+	require.Equal(t, "serve", report.Action)
+	require.Equal(t, "serving", report.Status)
+	require.True(t, report.Listening)
+	require.True(t, report.AuthRequired)
+	require.NotContains(t, out.String(), "secret-token")
+
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(report.HealthURL)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 3*time.Second, 25*time.Millisecond)
+
+	resp, err := http.Get(strings.TrimRight(report.RemoteURL, "/") + "/sessions")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(report.RemoteURL, "/")+"/sessions", nil)
+	require.NoError(t, err)
+	req.Header.Set("authorization", "Bearer secret-token")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	require.Contains(t, errOut.String(), "codog api listening on "+report.RemoteURL)
+
+	cancel()
+	require.NoError(t, <-errCh)
 }
 
 func TestRunCLIRoutesWebSetupAlias(t *testing.T) {
