@@ -3,6 +3,10 @@ package harness
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +24,7 @@ import (
 	"github.com/Rememorio/codog/internal/acpserver"
 	"github.com/Rememorio/codog/internal/agentruns"
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/audit"
 	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/config"
 	"github.com/Rememorio/codog/internal/control"
@@ -28,12 +33,15 @@ import (
 	"github.com/Rememorio/codog/internal/modelrouting"
 	"github.com/Rememorio/codog/internal/oauth"
 	"github.com/Rememorio/codog/internal/plugins"
+	"github.com/Rememorio/codog/internal/policyengine"
 	"github.com/Rememorio/codog/internal/providerdiag"
 	"github.com/Rememorio/codog/internal/runloop"
+	"github.com/Rememorio/codog/internal/sandbox"
 	"github.com/Rememorio/codog/internal/session"
 	"github.com/Rememorio/codog/internal/skills"
 	prompttemplates "github.com/Rememorio/codog/internal/templates"
 	"github.com/Rememorio/codog/internal/tools"
+	"github.com/Rememorio/codog/internal/updater"
 	"github.com/Rememorio/codog/internal/usage"
 )
 
@@ -166,6 +174,7 @@ var scenarioOrder = []string{
 	"bash_permission_prompt_approved",
 	"bash_permission_prompt_denied",
 	"sandbox_bypass_status_roundtrip",
+	"policy_update_sandbox_roundtrip",
 	"notebook_read_edit_roundtrip",
 	"web_access_roundtrip",
 	"git_workspace_roundtrip",
@@ -649,6 +658,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		sandboxBypassStatusScenario(),
+		policyUpdateSandboxScenario(),
 		notebookReadEditScenario(),
 		webAccessScenario(),
 		gitWorkspaceScenario(),
@@ -1203,6 +1213,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "sandbox",
 		Description: "Executes bash with Claude-compatible sandbox bypass and verifies structured sandbox status reporting.",
 		ParityRefs:  []string{"Sandbox", "Bash tool", "Permission safety"},
+	},
+	"policy_update_sandbox_roundtrip": {
+		Category:    "policy-safety",
+		Description: "Evaluates enterprise policy, records an audit event, verifies a signed updater manifest, and resolves sandbox capability status.",
+		ParityRefs:  []string{"Enterprise policy", "Audit events", "Signed updater", "Sandbox capability reporting"},
 	},
 	"notebook_read_edit_roundtrip": {
 		Category:    "notebook",
@@ -2069,6 +2084,195 @@ func sandboxBypassStatusScenario() scenario {
 				ToolCalls:    1,
 				ToolUses:     []string{"bash"},
 				RequestCount: 1,
+			}, nil
+		},
+	}
+}
+
+func policyUpdateSandboxScenario() scenario {
+	return scenario{
+		name: "policy_update_sandbox_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			policyEval := policyengine.DefaultEngine().Evaluate(policyengine.LaneContext{
+				LaneID:              "lane-policy",
+				BranchBehind:        2,
+				VerificationBlocked: true,
+			})
+			if len(policyEval.Actions) != 1 || policyEval.Actions[0].Kind != policyengine.ActionMergeForward {
+				return localScenarioResult{}, fmt.Errorf("unexpected policy actions: %#v", policyEval.Actions)
+			}
+			if len(policyEval.Events) != 1 || policyEval.Events[0].RuleID != "stale-branch-merge-forward" {
+				return localScenarioResult{}, fmt.Errorf("unexpected policy events: %#v", policyEval.Events)
+			}
+
+			auditStore := audit.NewStore(configHome)
+			if err := auditStore.Append(audit.Event{
+				Type:           "policy_decision",
+				SessionID:      "session-policy",
+				Workspace:      "workspace",
+				ToolName:       "branch_freshness",
+				Allowed:        audit.Bool(false),
+				Reason:         policyEval.Actions[0].Reason,
+				PermissionMode: "managed",
+			}); err != nil {
+				return localScenarioResult{}, err
+			}
+			auditEvents, err := auditStore.List(10)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if len(auditEvents) != 1 || auditEvents[0].Type != "policy_decision" || auditEvents[0].Allowed == nil || *auditEvents[0].Allowed {
+				return localScenarioResult{}, fmt.Errorf("unexpected audit events: %#v", auditEvents)
+			}
+
+			network := true
+			logsDir := filepath.Join(workspace, "logs")
+			detected := sandbox.Status{
+				OS:                 "linux",
+				Default:            "bwrap",
+				Available:          true,
+				Strategies:         []string{"bwrap", "unshare"},
+				NamespaceSupported: true,
+				NetworkSupported:   true,
+				StrategyStatuses: []sandbox.StrategyStatus{
+					{Name: "bwrap", Available: true},
+					{Name: "unshare", Available: true},
+				},
+			}
+			sandboxStatus, effective, err := sandbox.ResolveSandboxExecutionStatusFor("detect", workspace, sandbox.SandboxRequestOptions{
+				NetworkIsolation: &network,
+				FilesystemMode:   sandbox.FilesystemIsolationAllowList,
+				AllowedMounts:    []string{logsDir},
+			}, detected)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if effective != "bwrap" || !sandboxStatus.Active || !sandboxStatus.NetworkActive || !sandboxStatus.FilesystemActive || sandboxStatus.ResolutionStatus != "enabled" {
+				return localScenarioResult{}, fmt.Errorf("unexpected sandbox status: %#v effective=%q", sandboxStatus, effective)
+			}
+			if !slices.Contains(sandboxStatus.AllowedMounts, logsDir) {
+				return localScenarioResult{}, fmt.Errorf("sandbox allowed mounts missing logs dir: %v", sandboxStatus.AllowedMounts)
+			}
+			sandboxName, sandboxArgs, err := sandbox.BuildShellCommandWithStatus(effective, workspace, "printf policy-sandbox", sandboxStatus)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if sandboxName != "bwrap" || !slices.Contains(sandboxArgs, "--unshare-net") || !slices.Contains(sandboxArgs, logsDir) {
+				return localScenarioResult{}, fmt.Errorf("unexpected sandbox command: %s %v", sandboxName, sandboxArgs)
+			}
+
+			publicKey, privateKey, err := ed25519.GenerateKey(nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			artifactPayload := []byte("#!/bin/sh\nprintf codog-updated\n")
+			artifactSHA := sha256.Sum256(artifactPayload)
+			var serverURL string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/manifest.json":
+					manifest := updater.Manifest{
+						Version: "0.2.0",
+						Downloads: map[string]string{
+							"test": serverURL + "/codog-test",
+						},
+						Checksums: map[string]string{
+							"test": "sha256:" + hex.EncodeToString(artifactSHA[:]),
+						},
+					}
+					payload, err := json.Marshal(manifest)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, payload))
+					if err := json.NewEncoder(w).Encode(manifest); err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+					}
+				case "/codog-test":
+					_, _ = w.Write(artifactPayload)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			serverURL = server.URL
+			defer server.Close()
+			publicKeyValue := base64.StdEncoding.EncodeToString(publicKey)
+			check, err := updater.CheckSigned(ctx, "0.1.0", server.URL+"/manifest.json", publicKeyValue)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !check.UpdateAvailable || !check.SignatureValid || check.LatestVersion != "0.2.0" {
+				return localScenarioResult{}, fmt.Errorf("unexpected signed update check: %#v", check)
+			}
+			download, err := updater.DownloadSigned(ctx, server.URL+"/manifest.json", "test", filepath.Join(workspace, "downloads"), publicKeyValue)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !download.Verified || download.SHA256 != hex.EncodeToString(artifactSHA[:]) {
+				return localScenarioResult{}, fmt.Errorf("unexpected signed download: %#v", download)
+			}
+			target := filepath.Join(workspace, "bin", "codog")
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(target, []byte("old-codog"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			install, err := updater.Install(download.Path, target)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !install.Installed || install.BackupPath == "" {
+				return localScenarioResult{}, fmt.Errorf("unexpected install result: %#v", install)
+			}
+			rollback, err := updater.Rollback(target)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			restored, err := os.ReadFile(target)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !rollback.RolledBack || string(restored) != "old-codog" {
+				return localScenarioResult{}, fmt.Errorf("unexpected rollback result: %#v restored=%q", rollback, restored)
+			}
+
+			report := map[string]any{
+				"kind": "policy_update_sandbox",
+				"policy": map[string]any{
+					"actions": []string{string(policyEval.Actions[0].Kind)},
+					"rule":    policyEval.Events[0].RuleID,
+				},
+				"audit": map[string]any{
+					"events":  len(auditEvents),
+					"allowed": *auditEvents[0].Allowed,
+				},
+				"sandbox": map[string]any{
+					"strategy":          sandboxStatus.Strategy,
+					"active":            sandboxStatus.Active,
+					"network_active":    sandboxStatus.NetworkActive,
+					"filesystem_active": sandboxStatus.FilesystemActive,
+					"command":           sandboxName,
+				},
+				"updater": map[string]any{
+					"latest_version":    check.LatestVersion,
+					"signature_valid":   check.SignatureValid,
+					"download_verified": download.Verified,
+					"installed":         install.Installed,
+					"rolled_back":       rollback.RolledBack,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "policy update sandbox harness ok",
+				RequestCount: 5,
+				MessageCount: 1,
 			}, nil
 		},
 	}
