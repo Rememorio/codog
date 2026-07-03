@@ -379,7 +379,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	app := &App{
 		Config:     cfg,
 		Client:     anthropicClientFromConfig(cfg),
-		Tools:      tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Tools:      tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, executable)),
 		Sessions:   sessionStore,
 		Workspace:  workspace,
 		Executable: executable,
@@ -1196,7 +1196,7 @@ func renderStatusWithConfigLoadError(out io.Writer, command string, rest []strin
 	app := &App{
 		Config:              cfg,
 		Client:              anthropicClientFromConfig(cfg),
-		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, "")),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
 		Out:                 out,
@@ -1225,7 +1225,7 @@ func renderBootstrapPlanWithConfigLoadError(out io.Writer, rest []string, overri
 	app := &App{
 		Config:              cfg,
 		Client:              anthropicClientFromConfig(cfg),
-		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, "")),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
 		Out:                 out,
@@ -1254,7 +1254,7 @@ func renderDeferredInitWithConfigLoadError(out io.Writer, command string, rest [
 	app := &App{
 		Config:              cfg,
 		Client:              anthropicClientFromConfig(cfg),
-		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, "")),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
 		Out:                 out,
@@ -1287,7 +1287,7 @@ func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []strin
 	app := &App{
 		Config:              cfg,
 		Client:              anthropicClientFromConfig(cfg),
-		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr)),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, "")),
 		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
 		Workspace:           workspace,
 		Out:                 out,
@@ -1565,7 +1565,7 @@ func anthropicClientFromConfig(cfg config.Config) *anthropic.Client {
 	return anthropic.NewWithOptions(cfg.BaseURL, cfg.APIKey, cfg.AuthToken, anthropicClientOptionsFromConfig(cfg))
 }
 
-func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, questionIn io.Reader, questionOut io.Writer) tools.RegistryOptions {
+func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, questionIn io.Reader, questionOut io.Writer, executable string) tools.RegistryOptions {
 	var ragTimeout time.Duration
 	if cfg.RAGTimeoutSeconds > 0 {
 		ragTimeout = time.Duration(cfg.RAGTimeoutSeconds) * time.Second
@@ -1576,6 +1576,7 @@ func toolRegistryOptionsFromConfig(cfg config.Config, additionalDirs []string, q
 		AdditionalDirs:   additionalDirs,
 		ConfigHome:       cfg.ConfigHome,
 		ConfigEnv:        cfg.Env,
+		Executable:       executable,
 		DefaultShell:     cfg.DefaultShell,
 		TrustedRoots:     cfg.TrustedRoots,
 		RespectGitignore: cfg.EffectiveRespectGitignore(),
@@ -6008,7 +6009,11 @@ func (a *App) newToolRegistry() (*tools.Registry, error) {
 	if questionOut == nil {
 		questionOut = io.Discard
 	}
-	return tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut)), nil
+	executable, err := a.executablePath()
+	if err != nil {
+		return nil, err
+	}
+	return tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable)), nil
 }
 
 func parseReloadPluginsArgs(args []string) (reloadPluginsRequest, error) {
@@ -13858,7 +13863,11 @@ func (a *App) refreshBuiltinToolScope() error {
 	if questionOut == nil {
 		questionOut = io.Discard
 	}
-	a.Tools.UpdateBuiltinScope(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut))
+	executable, err := a.executablePath()
+	if err != nil {
+		return err
+	}
+	a.Tools.UpdateBuiltinScope(a.Workspace, toolRegistryOptionsFromConfig(a.Config, additionalDirs, questionIn, questionOut, executable))
 	return nil
 }
 
@@ -27263,6 +27272,7 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"bash",
 		"bash_output",
 		"kill_bash",
+		"agent",
 		"todo_read",
 		"todo_write",
 		"web_fetch",
@@ -27293,7 +27303,12 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"exit_worktree",
 		"brief",
 		"send_user_message",
+		"team_create",
+		"team_list",
+		"team_get",
+		"team_delete",
 		"task_create",
+		"run_task_packet",
 		"task_list",
 		"task_status",
 		"task_get",
@@ -27308,6 +27323,8 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"worker_observe",
 		"worker_await_ready",
 		"worker_resolve_trust",
+		"worker_send_prompt",
+		"worker_restart",
 		"worker_observe_completion",
 		"worker_startup_timeout",
 		"worker_terminate",
@@ -43954,7 +43971,7 @@ func (a *App) mcpServe(ctx context.Context, args []string) error {
 func (a *App) mcpRegistry() *tools.Registry {
 	registry := a.Tools
 	if registry == nil {
-		registry = tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, a.Config.AdditionalDirs, nil, nil))
+		registry = tools.NewRegistryWithOptions(a.Workspace, toolRegistryOptionsFromConfig(a.Config, a.Config.AdditionalDirs, nil, nil, a.Executable))
 	}
 	return registry
 }

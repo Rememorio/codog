@@ -6003,6 +6003,142 @@ func risky(value any) {
 	require.Contains(t, resumedDebugTaskStop.Output, `"task_id": "`+resumedDebugLaneTask.ID+`"`)
 	require.Contains(t, resumedDebugTaskStop.Output, `"message": "Task stopped"`)
 
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "TaskCreateTool", `{"prompt":"resume prompt task","description":"exercise executable shim","kind":"resume-prompt","session_id":"resume-slash"}`)
+	require.NoError(t, err)
+	var resumedDebugPromptTaskCreate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugPromptTaskCreate))
+	require.Equal(t, "debug_tool_call", resumedDebugPromptTaskCreate.Kind)
+	require.Equal(t, "task_create", resumedDebugPromptTaskCreate.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugPromptTaskCreate.Permission)
+	require.True(t, resumedDebugPromptTaskCreate.Success)
+	var resumedDebugPromptTask struct {
+		TaskID string          `json:"task_id"`
+		Status string          `json:"status"`
+		Task   background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugPromptTaskCreate.Output), &resumedDebugPromptTask))
+	require.NotEmpty(t, resumedDebugPromptTask.TaskID)
+	require.Equal(t, "resume-prompt", resumedDebugPromptTask.Task.Kind)
+	require.Contains(t, resumedDebugPromptTask.Task.Command, "codog-shim")
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(resumedDebugPromptTask.TaskID, 4096)
+		return err == nil && strings.Contains(logs, "codog-shim prompt") && strings.Contains(logs, "resume prompt task")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "AgentTool", `{"description":"resume agent","prompt":"inspect executable routing","subagent_type":"reviewer","session_id":"resume-slash"}`)
+	require.NoError(t, err)
+	var resumedDebugAgent debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugAgent))
+	require.Equal(t, "debug_tool_call", resumedDebugAgent.Kind)
+	require.Equal(t, "agent", resumedDebugAgent.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugAgent.Permission)
+	require.True(t, resumedDebugAgent.Success)
+	var resumedDebugAgentOutput struct {
+		Kind  string          `json:"kind"`
+		Agent string          `json:"agent"`
+		Task  background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugAgent.Output), &resumedDebugAgentOutput))
+	require.Equal(t, "agent", resumedDebugAgentOutput.Kind)
+	require.Equal(t, "reviewer", resumedDebugAgentOutput.Agent)
+	require.NotEmpty(t, resumedDebugAgentOutput.Task.ID)
+	require.Equal(t, "agent", resumedDebugAgentOutput.Task.Kind)
+	require.Contains(t, resumedDebugAgentOutput.Task.Command, "codog-shim")
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(resumedDebugAgentOutput.Task.ID, 4096)
+		return err == nil && strings.Contains(logs, "codog-shim prompt") && strings.Contains(logs, "inspect executable routing")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "TeamCreateTool", `{"name":"resume-debug-team","session_id":"resume-slash","tasks":[{"description":"first","prompt":"inspect first route"},{"description":"second","prompt":"inspect second route"}]}`)
+	require.NoError(t, err)
+	var resumedDebugTeamCreate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTeamCreate))
+	require.Equal(t, "debug_tool_call", resumedDebugTeamCreate.Kind)
+	require.Equal(t, "team_create", resumedDebugTeamCreate.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugTeamCreate.Permission)
+	require.True(t, resumedDebugTeamCreate.Success)
+	var resumedDebugTeam struct {
+		TeamID    string   `json:"team_id"`
+		Name      string   `json:"name"`
+		TaskCount int      `json:"task_count"`
+		TaskIDs   []string `json:"task_ids"`
+		Status    string   `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugTeamCreate.Output), &resumedDebugTeam))
+	require.NotEmpty(t, resumedDebugTeam.TeamID)
+	require.Equal(t, "resume-debug-team", resumedDebugTeam.Name)
+	require.Equal(t, 2, resumedDebugTeam.TaskCount)
+	require.Len(t, resumedDebugTeam.TaskIDs, 2)
+	require.Equal(t, "running", resumedDebugTeam.Status)
+	for _, taskID := range resumedDebugTeam.TaskIDs {
+		task, err := background.NewStore(configHome).Get(taskID)
+		require.NoError(t, err)
+		require.Equal(t, "team", task.Kind)
+		require.Contains(t, task.Command, "codog-shim")
+	}
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(resumedDebugTeam.TaskIDs[0], 4096)
+		return err == nil && strings.Contains(logs, "codog-shim prompt") && strings.Contains(logs, "inspect first route")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	out, err = runResumedJSON("/debug-tool-call", "TeamListTool", `{"status":"running"}`)
+	require.NoError(t, err)
+	var resumedDebugTeamList debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTeamList))
+	require.Equal(t, "debug_tool_call", resumedDebugTeamList.Kind)
+	require.Equal(t, "team_list", resumedDebugTeamList.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugTeamList.Permission)
+	require.True(t, resumedDebugTeamList.Success)
+	require.Contains(t, resumedDebugTeamList.Output, `"kind": "team_list"`)
+	require.Contains(t, resumedDebugTeamList.Output, `"team_id": "`+resumedDebugTeam.TeamID+`"`)
+
+	teamIDInput, err := json.Marshal(map[string]string{"team_id": resumedDebugTeam.TeamID})
+	require.NoError(t, err)
+	out, err = runResumedJSON("/debug-tool-call", "TeamGetTool", string(teamIDInput))
+	require.NoError(t, err)
+	var resumedDebugTeamGet debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTeamGet))
+	require.Equal(t, "debug_tool_call", resumedDebugTeamGet.Kind)
+	require.Equal(t, "team_get", resumedDebugTeamGet.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugTeamGet.Permission)
+	require.True(t, resumedDebugTeamGet.Success)
+	require.Contains(t, resumedDebugTeamGet.Output, `"kind": "team"`)
+	require.Contains(t, resumedDebugTeamGet.Output, `"team_id": "`+resumedDebugTeam.TeamID+`"`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "TeamDeleteTool", string(teamIDInput))
+	require.NoError(t, err)
+	var resumedDebugTeamDelete debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTeamDelete))
+	require.Equal(t, "debug_tool_call", resumedDebugTeamDelete.Kind)
+	require.Equal(t, "team_delete", resumedDebugTeamDelete.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugTeamDelete.Permission)
+	require.True(t, resumedDebugTeamDelete.Success)
+	require.Contains(t, resumedDebugTeamDelete.Output, `"status": "deleted"`)
+	require.Contains(t, resumedDebugTeamDelete.Output, `"team_id": "`+resumedDebugTeam.TeamID+`"`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "RunTaskPacketTool", `{"objective":"Route resume packet through shim","scope":"README only","repo":"codog","branch_policy":"main only","acceptance_tests":["go test ./..."],"commit_policy":"single verified commit","reporting_contract":"summarize result","escalation_policy":"ask if blocked"}`)
+	require.NoError(t, err)
+	var resumedDebugRunTaskPacket debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugRunTaskPacket))
+	require.Equal(t, "debug_tool_call", resumedDebugRunTaskPacket.Kind)
+	require.Equal(t, "run_task_packet", resumedDebugRunTaskPacket.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugRunTaskPacket.Permission)
+	require.True(t, resumedDebugRunTaskPacket.Success)
+	var resumedDebugTaskPacket struct {
+		TaskID string          `json:"task_id"`
+		Status string          `json:"status"`
+		Task   background.Task `json:"task"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugRunTaskPacket.Output), &resumedDebugTaskPacket))
+	require.NotEmpty(t, resumedDebugTaskPacket.TaskID)
+	require.Equal(t, "task_packet", resumedDebugTaskPacket.Task.Kind)
+	require.Contains(t, resumedDebugTaskPacket.Task.Command, "codog-shim")
+	require.Contains(t, resumedDebugTaskPacket.Task.Prompt, "Route resume packet through shim")
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(resumedDebugTaskPacket.TaskID, 4096)
+		return err == nil && strings.Contains(logs, "codog-shim prompt") && strings.Contains(logs, "Route resume packet through shim")
+	}, 5*time.Second, 50*time.Millisecond)
+
 	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerCreateTool", `{"cwd":".","trusted_roots":["."],"auto_recover_prompt_misdelivery":false}`)
 	require.NoError(t, err)
 	var resumedDebugWorkerCreate debugToolCallReport
@@ -6081,6 +6217,55 @@ func risky(value any) {
 	require.True(t, resumedDebugWorkerResolveTrust.Success)
 	require.Contains(t, resumedDebugWorkerResolveTrust.Output, `"status": "ready_for_prompt"`)
 	require.Contains(t, resumedDebugWorkerResolveTrust.Output, `"ready_for_prompt": true`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerSendPromptTool", `{"worker_id":"`+resumedDebugWorker.WorkerID+`","prompt":"resume worker prompt","task_receipt":{"repo":"codog","task_kind":"resume-debug","source_surface":"tool","objective_preview":"resume worker prompt"}}`)
+	require.NoError(t, err)
+	var resumedDebugWorkerSendPrompt debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerSendPrompt))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerSendPrompt.Kind)
+	require.Equal(t, "worker_send_prompt", resumedDebugWorkerSendPrompt.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugWorkerSendPrompt.Permission)
+	require.True(t, resumedDebugWorkerSendPrompt.Success)
+	var resumedDebugWorkerSent struct {
+		WorkerID string `json:"worker_id"`
+		Status   string `json:"status"`
+		TaskID   string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugWorkerSendPrompt.Output), &resumedDebugWorkerSent))
+	require.Equal(t, resumedDebugWorker.WorkerID, resumedDebugWorkerSent.WorkerID)
+	require.Equal(t, "running", resumedDebugWorkerSent.Status)
+	require.NotEmpty(t, resumedDebugWorkerSent.TaskID)
+	sentTask, err := background.NewStore(configHome).Get(resumedDebugWorkerSent.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, "worker", sentTask.Kind)
+	require.Contains(t, sentTask.Command, "codog-shim")
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(resumedDebugWorkerSent.TaskID, 4096)
+		return err == nil && strings.Contains(logs, "codog-shim prompt") && strings.Contains(logs, "resume worker prompt")
+	}, 5*time.Second, 50*time.Millisecond)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerRestartTool", string(workerIDInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerRestart debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerRestart))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerRestart.Kind)
+	require.Equal(t, "worker_restart", resumedDebugWorkerRestart.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugWorkerRestart.Permission)
+	require.True(t, resumedDebugWorkerRestart.Success)
+	var resumedDebugWorkerRestarted struct {
+		WorkerID string `json:"worker_id"`
+		Status   string `json:"status"`
+		TaskID   string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugWorkerRestart.Output), &resumedDebugWorkerRestarted))
+	require.Equal(t, resumedDebugWorker.WorkerID, resumedDebugWorkerRestarted.WorkerID)
+	require.Equal(t, "running", resumedDebugWorkerRestarted.Status)
+	require.NotEmpty(t, resumedDebugWorkerRestarted.TaskID)
+	require.NotEqual(t, resumedDebugWorkerSent.TaskID, resumedDebugWorkerRestarted.TaskID)
+	restartedTask, err := background.NewStore(configHome).Get(resumedDebugWorkerRestarted.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, resumedDebugWorkerSent.TaskID, restartedTask.RestartedFrom)
+	require.Contains(t, restartedTask.Command, "codog-shim")
 
 	out, err = runResumedJSON("/debug-tool-call", "WorkerObserveCompletionTool", `{"worker_id":"`+resumedDebugWorker.WorkerID+`","finish_reason":"stop","tokens_output":12}`)
 	require.NoError(t, err)

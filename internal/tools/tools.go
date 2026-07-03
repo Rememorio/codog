@@ -132,6 +132,7 @@ type RegistryOptions struct {
 	AdditionalDirs   []string
 	ConfigHome       string
 	ConfigEnv        map[string]string
+	Executable       string
 	DefaultShell     string
 	TrustedRoots     []string
 	RespectGitignore bool
@@ -636,13 +637,13 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(ExitWorktreeTool{Workspace: workspace})
 	r.Register(EnterPlanModeTool{Workspace: workspace})
 	r.Register(ExitPlanModeTool{Workspace: workspace})
-	r.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
+	r.Register(AgentTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(CronCreateTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronDeleteTool{ConfigHome: opts.ConfigHome})
 	r.Register(CronListTool{ConfigHome: opts.ConfigHome})
 	r.Register(PolicyEvaluateTool{})
 	r.Register(ApprovalTokenTool{ConfigHome: opts.ConfigHome})
-	r.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
+	r.Register(TeamCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(TeamListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TeamDeleteTool{ConfigHome: opts.ConfigHome})
@@ -652,7 +653,7 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(WorkerObserveTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerResolveTrustTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerAwaitReadyTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
-	r.Register(WorkerSendPromptTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
+	r.Register(WorkerSendPromptTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(WorkerRestartTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerTerminateTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(WorkerObserveCompletionTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
@@ -660,8 +661,8 @@ func (r *Registry) registerBuiltinTools(workspace string, opts RegistryOptions) 
 	r.Register(RecoveryRecipeTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryAttemptTool{ConfigHome: opts.ConfigHome})
 	r.Register(RecoveryStatusTool{ConfigHome: opts.ConfigHome})
-	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
-	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv})
+	r.Register(TaskCreateTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
+	r.Register(RunTaskPacketTool{Workspace: workspace, ConfigHome: opts.ConfigHome, ConfigEnv: opts.ConfigEnv, Executable: opts.Executable})
 	r.Register(TaskListTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskStatusTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
 	r.Register(TaskGetTool{Workspace: workspace, ConfigHome: opts.ConfigHome})
