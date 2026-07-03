@@ -4051,6 +4051,18 @@ func risky(value any) {
 	require.True(t, resumedDebugBash.Success)
 	require.Contains(t, resumedDebugBash.Output, "resumed-debug-bash")
 
+	out, err = runResumedJSON("/allowed-tools", "add", "TodoWrite", "--path", configPath)
+	require.NoError(t, err)
+	var resumedAllowedToolsAddTodo allowedToolsReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedAllowedToolsAddTodo))
+	require.Equal(t, "allowed_tools", resumedAllowedToolsAddTodo.Kind)
+	require.Equal(t, "add", resumedAllowedToolsAddTodo.Action)
+	require.Contains(t, resumedAllowedToolsAddTodo.Rules, "TodoWrite")
+	require.Equal(t, configPath, resumedAllowedToolsAddTodo.Path)
+	configData, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.Contains(t, string(configData), "TodoWrite")
+
 	out, err = runResumedJSON("/terminal-setup", "status", "--shell", "zsh", "--path", terminalProfilePath)
 	require.NoError(t, err)
 	var resumedTerminalSetup terminalsetup.Report
@@ -5530,6 +5542,27 @@ func risky(value any) {
 	require.Equal(t, "inactive", resumedPlanClear.Status)
 	require.False(t, resumedPlanClear.State.Active)
 	require.NoFileExists(t, planmode.Path(workspace))
+
+	out, err = runResumedJSON("/debug-tool-call", "TodoWrite", `{"todos":[{"content":"resume debug todo","activeForm":"tracking resume debug todo","status":"in_progress","priority":"high"}]}`)
+	require.NoError(t, err)
+	var resumedDebugTodoWrite debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTodoWrite))
+	require.Equal(t, "debug_tool_call", resumedDebugTodoWrite.Kind)
+	require.Equal(t, "todo_write", resumedDebugTodoWrite.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugTodoWrite.Permission)
+	require.True(t, resumedDebugTodoWrite.Success)
+	require.Contains(t, resumedDebugTodoWrite.Output, "resume debug todo")
+	require.FileExists(t, todos.Path(workspace))
+
+	out, err = runResumedJSON("/debug-tool-call", "TodoRead", `{}`)
+	require.NoError(t, err)
+	var resumedDebugTodoRead debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTodoRead))
+	require.Equal(t, "debug_tool_call", resumedDebugTodoRead.Kind)
+	require.Equal(t, "todo_read", resumedDebugTodoRead.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugTodoRead.Permission)
+	require.True(t, resumedDebugTodoRead.Success)
+	require.Contains(t, resumedDebugTodoRead.Output, "resume debug todo")
 
 	out, err = runResumedJSON("/permissions", "set", "allow", "--path", configPath)
 	require.NoError(t, err)
