@@ -85,6 +85,14 @@ func TestValidateBytesAcceptsSandboxStrategy(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsRemoteSection(t *testing.T) {
+	result := ValidateBytes([]byte(`{"remote":{"enabled":true,"authToken":"token","leaseSeconds":60}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
 

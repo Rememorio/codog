@@ -446,6 +446,79 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// RemoteConfig holds the formal top-level remote-control configuration.
+type RemoteConfig struct {
+	Enabled      *bool  `json:"enabled,omitempty"`
+	AuthToken    string `json:"auth_token,omitempty"`
+	LeaseSeconds int    `json:"lease_seconds,omitempty"`
+}
+
+// UnmarshalJSON accepts both snake_case and camelCase remote field aliases.
+func (r *RemoteConfig) UnmarshalJSON(data []byte) error {
+	type plain RemoteConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readBoolAlias := func(target **bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed bool
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid remote.%s: %w", key, err)
+			}
+			*target = &parsed
+		}
+		return nil
+	}
+	readStringAlias := func(target *string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid remote.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	readIntAlias := func(target *int, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed int
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid remote.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	if err := readBoolAlias(&parsed.Enabled, "enabled"); err != nil {
+		return err
+	}
+	if err := readStringAlias(&parsed.AuthToken, "authToken", "auth_token"); err != nil {
+		return err
+	}
+	if err := readIntAlias(&parsed.LeaseSeconds, "leaseSeconds", "lease_seconds"); err != nil {
+		return err
+	}
+	*r = RemoteConfig(parsed)
+	return nil
+}
+
 type PermissionRules struct {
 	DefaultMode           string   `json:"defaultMode,omitempty"`
 	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
@@ -570,6 +643,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
 		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
+		Remote              RemoteConfig               `json:"remote,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aliases); err != nil {
 		return err
@@ -628,6 +702,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	parsed.Future.Sandbox.Strategy = ""
 	if strings.TrimSpace(aliases.Sandbox.Strategy) != "" {
 		parsed.Future.SandboxStrategy = aliases.Sandbox.Strategy
+	}
+	if remoteConfigSet(aliases.Remote) {
+		mergeRemoteConfigIntoFuture(&parsed.Future, aliases.Remote)
 	}
 	*c = Config(parsed)
 	return nil
@@ -1600,6 +1677,12 @@ func futureConfigSet(cfg FutureConfig) bool {
 		cfg.GuestPassVisitCount != 0
 }
 
+func remoteConfigSet(cfg RemoteConfig) bool {
+	return cfg.Enabled != nil ||
+		cfg.AuthToken != "" ||
+		cfg.LeaseSeconds != 0
+}
+
 func sandboxConfigSet(cfg SandboxConfig) bool {
 	return cfg.Strategy != "" ||
 		cfg.Enabled != nil ||
@@ -1607,6 +1690,18 @@ func sandboxConfigSet(cfg SandboxConfig) bool {
 		cfg.NetworkIsolation != nil ||
 		cfg.FilesystemMode != "" ||
 		cfg.AllowedMounts != nil
+}
+
+func mergeRemoteConfigIntoFuture(dst *FutureConfig, src RemoteConfig) {
+	if src.Enabled != nil {
+		dst.RemoteEnabled = *src.Enabled
+	}
+	if src.AuthToken != "" {
+		dst.RemoteAuthToken = src.AuthToken
+	}
+	if src.LeaseSeconds != 0 {
+		dst.RemoteLeaseSeconds = src.LeaseSeconds
+	}
 }
 
 func mergeFutureConfig(dst *FutureConfig, src FutureConfig) {

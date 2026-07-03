@@ -268,13 +268,45 @@ func TestMergeFutureConfigPreservesSandboxDefaults(t *testing.T) {
 
 func TestLoadRemoteAuthToken(t *testing.T) {
 	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"remote_auth_token":"secret-token","remote_lease_seconds":30}}`), 0o644))
+	cases := []struct {
+		name         string
+		body         string
+		enabled      bool
+		token        string
+		leaseSeconds int
+	}{
+		{
+			name:         "legacy future remote",
+			body:         `{"future":{"remote_auth_token":"legacy-token","remote_lease_seconds":30}}`,
+			token:        "legacy-token",
+			leaseSeconds: 30,
+		},
+		{
+			name:         "formal remote aliases",
+			body:         `{"remote":{"enabled":true,"authToken":"secret-token","leaseSeconds":45}}`,
+			enabled:      true,
+			token:        "secret-token",
+			leaseSeconds: 45,
+		},
+		{
+			name:         "formal remote wins",
+			body:         `{"future":{"remote_auth_token":"legacy-token","remote_lease_seconds":30},"remote":{"auth_token":"secret-token","lease_seconds":60}}`,
+			token:        "secret-token",
+			leaseSeconds: 60,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
 
-	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
-	require.NoError(t, err)
-	require.Equal(t, "secret-token", cfg.Future.RemoteAuthToken)
-	require.Equal(t, 30, cfg.Future.RemoteLeaseSeconds)
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.enabled, cfg.Future.RemoteEnabled)
+			require.Equal(t, tc.token, cfg.Future.RemoteAuthToken)
+			require.Equal(t, tc.leaseSeconds, cfg.Future.RemoteLeaseSeconds)
+		})
+	}
 }
 
 func TestLoadRateLimitConfig(t *testing.T) {

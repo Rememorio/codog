@@ -3328,9 +3328,11 @@ func risky(value any) {
 		"future": map[string]any{
 			"chrome_default_enabled": true,
 			"notifications_enabled":  false,
-			"remote_auth_token":      "remote-secret",
-			"remote_enabled":         true,
-			"remote_lease_seconds":   45,
+		},
+		"remote": map[string]any{
+			"auth_token":    "remote-secret",
+			"enabled":       true,
+			"lease_seconds": 45,
 		},
 		"sandbox": map[string]any{
 			"strategy": "detect",
@@ -13434,7 +13436,10 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		RAGBaseURL:     "http://rag.example.test",
 		RAGTopKMax:     9,
 		Future: config.FutureConfig{
-			SandboxStrategy: "detect",
+			RemoteEnabled:      true,
+			RemoteAuthToken:    "remote-secret",
+			RemoteLeaseSeconds: 45,
+			SandboxStrategy:    "detect",
 			Sandbox: config.SandboxConfig{
 				FilesystemMode: "allow-list",
 				AllowedMounts:  []string{"logs"},
@@ -13470,6 +13475,13 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"rag_base_url": "http://rag.example.test"`)
 	require.Contains(t, out.String(), `"rag_top_k_max": 9`)
 	require.Contains(t, out.String(), `"tool": "retrieve_context"`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "remote", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"enabled": true`)
+	require.Contains(t, out.String(), `"auth_token_configured": true`)
+	require.Contains(t, out.String(), `"lease_seconds": 45`)
+	require.NotContains(t, out.String(), "remote-secret")
 	out.Reset()
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "sandbox", "--output-format", "json"}))
@@ -13673,6 +13685,29 @@ func TestResetSandboxConfigSection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"sandbox"`)
 	require.NotContains(t, string(data), "sandbox_strategy")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetRemoteConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"remote": {"enabled": true, "auth_token": "secret-token", "lease_seconds": 60},
+		"future": {"remote_enabled": true, "remote_auth_token": "legacy-token", "remote_lease_seconds": 30}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "remote", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "remote", report.Section)
+	require.ElementsMatch(t, []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"remote"`)
+	require.NotContains(t, string(data), "remote_enabled")
+	require.NotContains(t, string(data), "remote_auth_token")
+	require.NotContains(t, string(data), "remote_lease_seconds")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -17597,8 +17632,12 @@ func TestRemoteEnvCommandPersistsSettings(t *testing.T) {
 	configPath := filepath.Join(configHome, "config.json")
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"remote_enabled": true`)
-	require.Contains(t, string(data), `"remote_auth_token": "secret-token"`)
+	require.Contains(t, string(data), `"remote"`)
+	require.Contains(t, string(data), `"enabled": true`)
+	require.Contains(t, string(data), `"auth_token": "secret-token"`)
+	require.Contains(t, string(data), `"lease_seconds": 60`)
+	require.NotContains(t, string(data), "remote_enabled")
+	require.NotContains(t, string(data), "remote_auth_token")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/remote-env clear", &session.Session{ID: "session"}))
@@ -17652,8 +17691,12 @@ func TestRemoteSetupCommandPersistsAndReports(t *testing.T) {
 	require.Equal(t, 120, app.Config.Future.RemoteLeaseSeconds)
 	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"remote_enabled": true`)
-	require.Contains(t, string(data), `"remote_auth_token": "secret-token"`)
+	require.Contains(t, string(data), `"remote"`)
+	require.Contains(t, string(data), `"enabled": true`)
+	require.Contains(t, string(data), `"auth_token": "secret-token"`)
+	require.Contains(t, string(data), `"lease_seconds": 120`)
+	require.NotContains(t, string(data), "remote_enabled")
+	require.NotContains(t, string(data), "remote_auth_token")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/remote-setup disable --addr 127.0.0.1:9999", &session.Session{ID: "active-session"}))
@@ -17704,8 +17747,12 @@ func TestRemoteCommandReportsAndPersistsSetup(t *testing.T) {
 	require.NotContains(t, out.String(), "secret-token")
 	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"remote_enabled": true`)
-	require.Contains(t, string(data), `"remote_auth_token": "secret-token"`)
+	require.Contains(t, string(data), `"remote"`)
+	require.Contains(t, string(data), `"enabled": true`)
+	require.Contains(t, string(data), `"auth_token": "secret-token"`)
+	require.Contains(t, string(data), `"lease_seconds": 33`)
+	require.NotContains(t, string(data), "remote_enabled")
+	require.NotContains(t, string(data), "remote_auth_token")
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/remote status --addr 127.0.0.1:8801 --json", &session.Session{ID: "active-session"}))
@@ -17789,10 +17836,10 @@ func TestAPICommandReportsRemoteControlRoutes(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	configData, err := json.Marshal(map[string]any{
 		"config_home": configHome,
-		"future": map[string]any{
-			"remote_enabled":       true,
-			"remote_auth_token":    "secret-token",
-			"remote_lease_seconds": 90,
+		"remote": map[string]any{
+			"enabled":       true,
+			"auth_token":    "secret-token",
+			"lease_seconds": 90,
 		},
 	})
 	require.NoError(t, err)

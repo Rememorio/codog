@@ -2069,25 +2069,28 @@ func (a *App) RemoteEnv(args []string) error {
 			return errors.New("remote-env set requires --enabled, --auth-token, --clear-auth-token, or --lease-seconds")
 		}
 		if req.SetEnabled {
-			if _, err := config.SetFileValue(path, "future.remote_enabled", req.Enabled); err != nil {
+			if _, err := config.SetFileValue(path, "remote.enabled", req.Enabled); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteEnabled = req.Enabled
 		}
 		if req.AuthToken != "" {
-			if _, err := config.SetFileValue(path, "future.remote_auth_token", req.AuthToken); err != nil {
+			if _, err := config.SetFileValue(path, "remote.auth_token", req.AuthToken); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = req.AuthToken
 		}
 		if req.ClearToken {
+			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
+				return err
+			}
 			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = ""
 		}
 		if req.SetLease {
-			if _, err := config.SetFileValue(path, "future.remote_lease_seconds", req.LeaseSeconds); err != nil {
+			if _, err := config.SetFileValue(path, "remote.lease_seconds", req.LeaseSeconds); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteLeaseSeconds = req.LeaseSeconds
@@ -2098,7 +2101,7 @@ func (a *App) RemoteEnv(args []string) error {
 		if err != nil {
 			return err
 		}
-		for _, key := range []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
+		for _, key := range []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
 			if _, err := config.UnsetFileValue(path, key); err != nil {
 				return err
 			}
@@ -2148,24 +2151,27 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.remote_enabled", true); err != nil {
+		if _, err := config.SetFileValue(path, "remote.enabled", true); err != nil {
 			return err
 		}
 		a.Config.Future.RemoteEnabled = true
 		if req.AuthToken != "" {
-			if _, err := config.SetFileValue(path, "future.remote_auth_token", req.AuthToken); err != nil {
+			if _, err := config.SetFileValue(path, "remote.auth_token", req.AuthToken); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = req.AuthToken
 		}
 		if req.ClearToken {
+			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
+				return err
+			}
 			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteAuthToken = ""
 		}
 		if req.SetLease {
-			if _, err := config.SetFileValue(path, "future.remote_lease_seconds", req.LeaseSeconds); err != nil {
+			if _, err := config.SetFileValue(path, "remote.lease_seconds", req.LeaseSeconds); err != nil {
 				return err
 			}
 			a.Config.Future.RemoteLeaseSeconds = req.LeaseSeconds
@@ -2176,11 +2182,14 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.remote_enabled", false); err != nil {
+		if _, err := config.SetFileValue(path, "remote.enabled", false); err != nil {
 			return err
 		}
 		a.Config.Future.RemoteEnabled = false
 		if req.ClearToken {
+			if _, err := config.UnsetFileValue(path, "remote.auth_token"); err != nil {
+				return err
+			}
 			if _, err := config.UnsetFileValue(path, "future.remote_auth_token"); err != nil {
 				return err
 			}
@@ -2192,7 +2201,7 @@ func (a *App) RemoteSetup(args []string, overrides config.FlagOverrides) error {
 		if err != nil {
 			return err
 		}
-		for _, key := range []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
+		for _, key := range []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"} {
 			if _, err := config.UnsetFileValue(path, key); err != nil {
 				return err
 			}
@@ -36607,7 +36616,7 @@ var resetSectionKeys = map[string][]string{
 	"privacy":     []string{"privacy_settings"},
 	"rag":         []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
 	"rate-limit":  []string{"rate_limit"},
-	"remote":      []string{"future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
+	"remote":      []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
 	"sandbox":     []string{"sandbox", "future.sandbox_strategy", "future.sandbox"},
 	"skills":      []string{"enabled_skills"},
 	"voice":       []string{"voice_enabled", "voice_command", "speech_command"},
@@ -36917,6 +36926,12 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
 	case "mcp":
 		return cfg.MCPServers, nil
+	case "remote":
+		return map[string]any{
+			"enabled":               cfg.Future.RemoteEnabled,
+			"auth_token_configured": strings.TrimSpace(cfg.Future.RemoteAuthToken) != "",
+			"lease_seconds":         cfg.Future.RemoteLeaseSeconds,
+		}, nil
 	case "sandbox":
 		return map[string]any{"strategy": cfg.Future.SandboxStrategy, "settings": cfg.Future.Sandbox}, nil
 	case "rag", "retrieve-context", "retrieve_context":

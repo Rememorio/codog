@@ -117,6 +117,7 @@ var topLevelFields = []fieldSpec{
 	{"providerFallbacks", FieldObject},
 	{"env", FieldStringMap},
 	{"trustedRoots", FieldStringArray},
+	{"remote", FieldObject},
 	{"rag_base_url", FieldString},
 	{"rag_timeout_seconds", FieldNumber},
 	{"rag_top_k_max", FieldNumber},
@@ -272,6 +273,14 @@ var futureFields = []fieldSpec{
 	{"extra_usage_visit_count", FieldNumber},
 	{"guest_pass_referral_url", FieldString},
 	{"guest_pass_visit_count", FieldNumber},
+}
+
+var remoteFields = []fieldSpec{
+	{"enabled", FieldBool},
+	{"auth_token", FieldString},
+	{"authToken", FieldString},
+	{"lease_seconds", FieldNumber},
+	{"leaseSeconds", FieldNumber},
 }
 
 var sandboxFields = []fieldSpec{
@@ -482,6 +491,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 		if sandbox, ok := objectAt(nested, "sandbox"); ok {
 			validateObject(result, sandbox, sandboxFields, "future.sandbox", source, path)
 		}
+	}
+	if remote, ok := objectAt(object, "remote"); ok {
+		validateObject(result, remote, remoteFields, "remote", source, path)
 	}
 	if sandbox, ok := objectAt(object, "sandbox"); ok {
 		validateObject(result, sandbox, sandboxFields, "sandbox", source, path)
