@@ -53,12 +53,17 @@ type CategoryReport struct {
 type ScenarioReport struct {
 	Name                 string        `json:"name"`
 	Category             string        `json:"category"`
+	Description          string        `json:"description"`
+	ParityRefs           []string      `json:"parity_refs"`
 	OK                   bool          `json:"ok"`
 	Workspace            string        `json:"workspace"`
 	Output               string        `json:"output,omitempty"`
 	Iterations           int           `json:"iterations,omitempty"`
 	MessageCount         int           `json:"message_count,omitempty"`
 	ToolCalls            int           `json:"tool_calls,omitempty"`
+	ToolUses             []string      `json:"tool_uses"`
+	ToolErrorCount       int           `json:"tool_error_count"`
+	FinalMessage         string        `json:"final_message"`
 	UsageSummary         usage.Summary `json:"usage_summary"`
 	EstimatedCost        float64       `json:"estimated_cost"`
 	RequestMessageCounts []int         `json:"request_message_counts,omitempty"`
@@ -651,22 +656,22 @@ func Run(ctx context.Context) (Report, error) {
 }
 
 func runScenario(ctx context.Context, item scenario) ScenarioReport {
-	category := scenarioCategory(item.name)
+	metadata := scenarioMetadataFor(item.name)
 	workspace, err := os.MkdirTemp("", "codog-harness-*")
 	if err != nil {
-		return ScenarioReport{Name: item.name, Category: category, Error: err.Error()}
+		return scenarioErrorReport(item.name, metadata, "", err)
 	}
 	defer os.RemoveAll(workspace)
 	if item.setup != nil {
 		if err := item.setup(workspace); err != nil {
-			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
+			return scenarioErrorReport(item.name, metadata, workspace, err)
 		}
 	}
 	previous := item.previous
 	if item.loadPrevious != nil {
 		loaded, err := item.loadPrevious(workspace)
 		if err != nil {
-			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
+			return scenarioErrorReport(item.name, metadata, workspace, err)
 		}
 		previous = loaded
 	}
@@ -677,7 +682,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			defer cleanup()
 		}
 		if err != nil {
-			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
+			return scenarioErrorReport(item.name, metadata, workspace, err)
 		}
 		turns = preparedTurns
 	}
@@ -708,12 +713,12 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	if item.configHome {
 		configHome = filepath.Join(workspace, "config-home")
 		if err := os.MkdirAll(configHome, 0o755); err != nil {
-			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
+			return scenarioErrorReport(item.name, metadata, workspace, err)
 		}
 	}
 	registry, err := registryForScenario(workspace, configHome, item)
 	if err != nil {
-		return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
+		return scenarioErrorReport(item.name, metadata, workspace, err)
 	}
 	runner := runloop.Runner{
 		Config: config.Config{
@@ -738,12 +743,17 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport := ScenarioReport{
 		Name:                 item.name,
-		Category:             category,
+		Category:             metadata.Category,
+		Description:          metadata.Description,
+		ParityRefs:           append([]string(nil), metadata.ParityRefs...),
 		Workspace:            workspace,
 		Output:               out.String(),
 		Iterations:           result.Iterations,
 		MessageCount:         len(result.Messages),
 		ToolCalls:            len(result.ToolCalls),
+		ToolUses:             toolUseNames(result.ToolCalls),
+		ToolErrorCount:       toolErrorCount(result.ToolCalls),
+		FinalMessage:         finalAssistantMessage(result.Messages),
 		UsageSummary:         usageSummaryForResult(result),
 		RequestMessageCounts: requestMessageCounts(requests),
 		Compactions:          compactRequestCount(requests),
@@ -803,37 +813,191 @@ func categoryCoverage(scenarios []ScenarioReport) []CategoryReport {
 	return out
 }
 
-func scenarioCategory(name string) string {
-	switch name {
-	case "streaming_text":
-		return "baseline"
-	case "prompt_attachments_roundtrip":
-		return "attachments"
-	case "read_file_roundtrip", "write_file_allowed", "grep_chunk_assembly":
-		return "file-tools"
-	case "write_file_denied", "bash_permission_prompt_approved", "bash_permission_prompt_denied":
-		return "permissions"
-	case "pre_tool_hook_updates_input", "user_prompt_hook_adds_context", "stop_hook_adds_feedback", "post_tool_hook_blocks_result", "post_tool_hook_adds_feedback", "file_changed_hook_adds_feedback":
-		return "hooks"
-	case "multi_tool_turn_roundtrip":
-		return "multi-tool-turns"
-	case "bash_stdout_roundtrip", "bash_output_truncation_roundtrip":
-		return "bash"
-	case "plugin_tool_roundtrip", "plugin_lifecycle_roundtrip":
-		return "plugin-paths"
-	case "config_precedence_roundtrip":
-		return "config"
-	case "session_resume_jsonl_roundtrip":
-		return "session-resume"
-	case "remote_trigger_roundtrip":
-		return "remote-control"
-	case "auto_compact_triggered":
-		return "session-compaction"
-	case "token_cost_reporting":
-		return "token-usage"
-	default:
-		return "runtime"
+type scenarioMetadata struct {
+	Category    string
+	Description string
+	ParityRefs  []string
+}
+
+func scenarioMetadataFor(name string) scenarioMetadata {
+	if metadata, ok := scenarioMetadataByName[name]; ok {
+		return metadata
 	}
+	return scenarioMetadata{
+		Category:    "runtime",
+		Description: "Exercises a runtime behavior covered by the mock parity harness.",
+		ParityRefs:  []string{"Mock parity harness"},
+	}
+}
+
+var scenarioMetadataByName = map[string]scenarioMetadata{
+	"streaming_text": {
+		Category:    "baseline",
+		Description: "Validates streamed assistant text with no tool calls.",
+		ParityRefs:  []string{"Mock parity harness", "Anthropic streaming"},
+	},
+	"prompt_attachments_roundtrip": {
+		Category:    "attachments",
+		Description: "Sends structured user content with an image attachment through the provider request path.",
+		ParityRefs:  []string{"Prompt attachments", "Anthropic content blocks"},
+	},
+	"read_file_roundtrip": {
+		Category:    "file-tools",
+		Description: "Executes read_file and synthesizes the final assistant response.",
+		ParityRefs:  []string{"File tools", "Tool result roundtrip"},
+	},
+	"write_file_allowed": {
+		Category:    "file-tools",
+		Description: "Confirms workspace-write write_file succeeds and changes the filesystem.",
+		ParityRefs:  []string{"File tools", "Workspace-write permissions"},
+	},
+	"write_file_denied": {
+		Category:    "permissions",
+		Description: "Confirms read-only mode blocks write_file with an error tool result.",
+		ParityRefs:  []string{"Permission enforcement", "File tool denial"},
+	},
+	"pre_tool_hook_updates_input": {
+		Category:    "hooks",
+		Description: "Runs a PreToolUse hook that updates tool input before execution.",
+		ParityRefs:  []string{"Hooks", "PreToolUse"},
+	},
+	"user_prompt_hook_adds_context": {
+		Category:    "hooks",
+		Description: "Runs a UserPromptSubmit hook that adds context before the provider request.",
+		ParityRefs:  []string{"Hooks", "UserPromptSubmit"},
+	},
+	"stop_hook_adds_feedback": {
+		Category:    "hooks",
+		Description: "Runs a Stop hook and records feedback on the completed turn.",
+		ParityRefs:  []string{"Hooks", "Stop"},
+	},
+	"post_tool_hook_blocks_result": {
+		Category:    "hooks",
+		Description: "Runs a PostToolUse hook that blocks a tool result with an error response.",
+		ParityRefs:  []string{"Hooks", "PostToolUse blocking"},
+	},
+	"post_tool_hook_adds_feedback": {
+		Category:    "hooks",
+		Description: "Runs a PostToolUse hook that appends feedback to a successful result.",
+		ParityRefs:  []string{"Hooks", "PostToolUse feedback"},
+	},
+	"file_changed_hook_adds_feedback": {
+		Category:    "hooks",
+		Description: "Runs a file-change hook after a write tool mutates workspace files.",
+		ParityRefs:  []string{"Hooks", "File change feedback"},
+	},
+	"multi_tool_turn_roundtrip": {
+		Category:    "multi-tool-turns",
+		Description: "Executes multiple tool uses in one assistant turn before final synthesis.",
+		ParityRefs:  []string{"Multi-tool assistant turns", "Tool result ordering"},
+	},
+	"grep_chunk_assembly": {
+		Category:    "file-tools",
+		Description: "Validates grep_search input chunk assembly and result delivery.",
+		ParityRefs:  []string{"File tools", "Grep chunk assembly"},
+	},
+	"bash_stdout_roundtrip": {
+		Category:    "bash",
+		Description: "Runs bash in danger-full-access mode and returns stdout to the model.",
+		ParityRefs:  []string{"Bash tool", "Shell command output"},
+	},
+	"bash_permission_prompt_approved": {
+		Category:    "permissions",
+		Description: "Exercises a bash escalation prompt that the user approves.",
+		ParityRefs:  []string{"Permission prompts", "Bash approval"},
+	},
+	"bash_permission_prompt_denied": {
+		Category:    "permissions",
+		Description: "Exercises a bash escalation prompt that the user denies.",
+		ParityRefs:  []string{"Permission prompts", "Bash denial"},
+	},
+	"plugin_tool_roundtrip": {
+		Category:    "plugin-paths",
+		Description: "Loads and executes an external plugin tool through the runtime registry.",
+		ParityRefs:  []string{"Plugin tools", "External plugin lifecycle"},
+	},
+	"auto_compact_triggered": {
+		Category:    "session-compaction",
+		Description: "Verifies auto-compaction fires when the message threshold is exceeded.",
+		ParityRefs:  []string{"Auto-compaction", "Session context management"},
+	},
+	"token_cost_reporting": {
+		Category:    "token-usage",
+		Description: "Confirms actual usage tokens and estimated cost are reported.",
+		ParityRefs:  []string{"Token usage", "Cost tracking"},
+	},
+	"config_precedence_roundtrip": {
+		Category:    "config",
+		Description: "Confirms config precedence across file, environment, and runtime overrides.",
+		ParityRefs:  []string{"Configuration", "Precedence rules"},
+	},
+	"session_resume_jsonl_roundtrip": {
+		Category:    "session-resume",
+		Description: "Loads previous JSONL session messages and sends them with the resumed prompt.",
+		ParityRefs:  []string{"Session JSONL", "Resume"},
+	},
+	"bash_output_truncation_roundtrip": {
+		Category:    "bash",
+		Description: "Confirms large bash output is truncated before returning to the model.",
+		ParityRefs:  []string{"Bash tool", "Output truncation"},
+	},
+	"plugin_lifecycle_roundtrip": {
+		Category:    "plugin-paths",
+		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
+		ParityRefs:  []string{"Plugin lifecycle", "Plugin manifest loading"},
+	},
+	"remote_trigger_roundtrip": {
+		Category:    "remote-control",
+		Description: "Executes the remote trigger tool against a local control endpoint.",
+		ParityRefs:  []string{"Remote sessions", "Control endpoint trigger"},
+	},
+}
+
+func scenarioErrorReport(name string, metadata scenarioMetadata, workspace string, err error) ScenarioReport {
+	return ScenarioReport{
+		Name:        name,
+		Category:    metadata.Category,
+		Description: metadata.Description,
+		ParityRefs:  append([]string(nil), metadata.ParityRefs...),
+		Workspace:   workspace,
+		Error:       err.Error(),
+	}
+}
+
+func toolUseNames(calls []runloop.ToolCall) []string {
+	names := make([]string, 0, len(calls))
+	for _, call := range calls {
+		names = append(names, call.Name)
+	}
+	return names
+}
+
+func toolErrorCount(calls []runloop.ToolCall) int {
+	count := 0
+	for _, call := range calls {
+		if call.IsError {
+			count++
+		}
+	}
+	return count
+}
+
+func finalAssistantMessage(messages []anthropic.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		parts := make([]string, 0, len(messages[i].Content))
+		for _, block := range messages[i].Content {
+			if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+				parts = append(parts, block.Text)
+			}
+		}
+		if len(parts) > 0 {
+			return strings.TrimSpace(strings.Join(parts, "\n"))
+		}
+	}
+	return ""
 }
 
 func configPrecedenceScenario() scenario {

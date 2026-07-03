@@ -47674,6 +47674,9 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 		if strings.TrimSpace(scenario.Category) != "" {
 			label += " [" + scenario.Category + "]"
 		}
+		if strings.TrimSpace(scenario.Description) != "" {
+			label += " - " + scenario.Description
+		}
 		if scenario.Error != "" {
 			fmt.Fprintf(out, "    - %s: %s (%s)\n", label, caseStatus, scenario.Error)
 		} else {

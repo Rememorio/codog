@@ -18,6 +18,14 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Greater(t, report.EstimatedCost, 0.0)
 	require.GreaterOrEqual(t, len(report.Coverage), 8)
 	require.Equal(t, report.Total, categoryCoverageTotal(report.Coverage))
+	for _, scenario := range report.Scenarios {
+		require.NotEmpty(t, scenario.Description, scenario.Name)
+		require.NotEmpty(t, scenario.ParityRefs, scenario.Name)
+		require.Len(t, scenario.ToolUses, scenario.ToolCalls, scenario.Name)
+		require.LessOrEqual(t, scenario.ToolErrorCount, scenario.ToolCalls, scenario.Name)
+		_, hasMetadata := scenarioMetadataByName[scenario.Name]
+		require.True(t, hasMetadata, scenario.Name)
+	}
 	fileTools := findCategory(t, report, "file-tools")
 	require.True(t, fileTools.OK)
 	require.Equal(t, 3, fileTools.Total)
@@ -29,6 +37,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 
 	readFile := findScenario(t, report, "read_file_roundtrip")
 	require.Equal(t, "file-tools", readFile.Category)
+	require.NotEmpty(t, readFile.Description)
+	require.Contains(t, readFile.ParityRefs, "File tools")
+	require.Equal(t, []string{"read_file"}, readFile.ToolUses)
+	require.Equal(t, 0, readFile.ToolErrorCount)
+	require.Equal(t, "codog harness ok", readFile.FinalMessage)
 	require.Contains(t, readFile.Output, "codog harness ok")
 	require.Equal(t, 2, readFile.Iterations)
 	require.Equal(t, 1, readFile.ToolCalls)
@@ -43,6 +56,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	writeDenied := findScenario(t, report, "write_file_denied")
 	require.True(t, writeDenied.OK)
 	require.Equal(t, 1, writeDenied.ToolCalls)
+	require.Equal(t, []string{"write_file"}, writeDenied.ToolUses)
+	require.Equal(t, 1, writeDenied.ToolErrorCount)
 
 	preToolHook := findScenario(t, report, "pre_tool_hook_updates_input")
 	require.True(t, preToolHook.OK)
@@ -91,6 +106,9 @@ func TestRunUsesMockProvider(t *testing.T) {
 	bashTruncation := findScenario(t, report, "bash_output_truncation_roundtrip")
 	require.True(t, bashTruncation.OK)
 	require.Equal(t, 1, bashTruncation.ToolCalls)
+	require.Equal(t, []string{"bash"}, bashTruncation.ToolUses)
+	require.Equal(t, 0, bashTruncation.ToolErrorCount)
+	require.Contains(t, bashTruncation.Description, "truncated")
 	require.Contains(t, bashTruncation.Output, "bash truncation harness ok")
 
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")

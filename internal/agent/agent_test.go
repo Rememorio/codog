@@ -2433,7 +2433,12 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.NotEmpty(t, report.Scenarios)
 	require.NotEmpty(t, report.Coverage)
 	require.Equal(t, report.Total, mockParityCoverageTotal(report.Coverage))
-	require.Equal(t, "file-tools", findMockParityScenario(t, report, "read_file_roundtrip").Category)
+	readFile := findMockParityScenario(t, report, "read_file_roundtrip")
+	require.Equal(t, "file-tools", readFile.Category)
+	require.NotEmpty(t, readFile.Description)
+	require.Contains(t, readFile.ParityRefs, "File tools")
+	require.Equal(t, []string{"read_file"}, readFile.ToolUses)
+	require.Equal(t, "codog harness ok", readFile.FinalMessage)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 
 	var text bytes.Buffer
@@ -2446,12 +2451,12 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 		MessageCount:  3,
 		UsageSummary:  usage.Summary{TotalTokens: 42},
 		EstimatedCost: 0.001,
-		Scenarios:     []harness.ScenarioReport{{Name: "streaming_text", Category: "baseline", OK: true}},
+		Scenarios:     []harness.ScenarioReport{{Name: "streaming_text", Category: "baseline", Description: "Validates streamed text.", OK: true}},
 	})
 	require.Contains(t, text.String(), "Mock Parity Harness")
 	require.Contains(t, text.String(), "1/1 passed")
 	require.Contains(t, text.String(), "Coverage      1 categories")
-	require.Contains(t, text.String(), "streaming_text [baseline]: ok")
+	require.Contains(t, text.String(), "streaming_text [baseline] - Validates streamed text.: ok")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"mock-parity", "--help", "--json"}, config.FlagOverrides{})
