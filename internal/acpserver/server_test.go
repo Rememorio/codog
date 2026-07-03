@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/stretchr/testify/require"
 )
@@ -149,6 +150,7 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, backgroundCaps["restart"])
 	require.Equal(t, true, backgroundCaps["prune"])
 	require.Equal(t, true, backgroundCaps["supervise"])
+	require.Equal(t, true, backgroundCaps["watch"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -544,6 +546,41 @@ func TestServeHandlesBackgroundRequests(t *testing.T) {
 	require.Equal(t, "background_restart", responses[7]["result"].(map[string]any)["kind"])
 	require.Equal(t, "background_prune", responses[8]["result"].(map[string]any)["kind"])
 	require.Equal(t, "background_supervise", responses[9]["result"].(map[string]any)["kind"])
+}
+
+func TestServeStreamsBackgroundWatchNotifications(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/watch","params":{"id":"task-1","offset":2,"interval_ms":25,"max_events":2}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		BackgroundWatch: func(_ context.Context, req BackgroundWatchRequest, emit func(background.WatchEvent) error) (any, error) {
+			require.Equal(t, "task-1", req.ID)
+			require.EqualValues(t, 2, req.Offset)
+			require.Equal(t, 25, req.IntervalMS)
+			require.Equal(t, 2, req.MaxEvents)
+			require.NoError(t, emit(background.WatchEvent{Type: "status", ID: req.ID, Status: "running"}))
+			require.NoError(t, emit(background.WatchEvent{Type: "log", ID: req.ID, Offset: 12, Data: "hello"}))
+			return map[string]any{"id": req.ID, "events": 2}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 3)
+	require.Equal(t, "background/event", responses[0]["method"])
+	firstEvent := responses[0]["params"].(map[string]any)
+	require.Equal(t, "status", firstEvent["type"])
+	require.Equal(t, "running", firstEvent["status"])
+	require.Equal(t, "background/event", responses[1]["method"])
+	secondEvent := responses[1]["params"].(map[string]any)
+	require.Equal(t, "log", secondEvent["type"])
+	require.Equal(t, "hello", secondEvent["data"])
+	result := responses[2]["result"].(map[string]any)
+	require.Equal(t, "task-1", result["id"])
+	require.EqualValues(t, 2, result["events"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {

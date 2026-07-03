@@ -20772,6 +20772,7 @@ var acpJSONRPCMethods = []string{
 	"background/restart",
 	"background/prune",
 	"background/supervise",
+	"background/watch",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20836,7 +20837,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21375,6 +21376,28 @@ func (a *App) serveACP(ctx context.Context) error {
 				a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
 			}
 			return result, nil
+		},
+		BackgroundWatch: func(ctx context.Context, req acpserver.BackgroundWatchRequest, emit func(background.WatchEvent) error) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			options := background.WatchOptions{
+				Offset:    req.Offset,
+				MaxEvents: req.MaxEvents,
+			}
+			if req.IntervalMS > 0 {
+				options.Interval = time.Duration(req.IntervalMS) * time.Millisecond
+			}
+			events := 0
+			err = store.Watch(ctx, req.ID, options, func(event background.WatchEvent) error {
+				events++
+				return emit(event)
+			})
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"id": req.ID, "events": events}, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

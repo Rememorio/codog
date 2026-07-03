@@ -67,6 +67,7 @@ type Handlers struct {
 	BackgroundRestart   func(context.Context, BackgroundIDRequest) (any, error)
 	BackgroundPrune     func(context.Context, BackgroundPruneRequest) (any, error)
 	BackgroundSupervise func(context.Context, BackgroundSuperviseRequest) (any, error)
+	BackgroundWatch     func(context.Context, BackgroundWatchRequest, func(background.WatchEvent) error) (any, error)
 }
 
 type SessionInfo struct {
@@ -322,6 +323,13 @@ type BackgroundSuperviseRequest struct {
 	Now *time.Time `json:"now,omitempty"`
 }
 
+type BackgroundWatchRequest struct {
+	ID         string `json:"id"`
+	Offset     int64  `json:"offset,omitempty"`
+	IntervalMS int    `json:"interval_ms,omitempty"`
+	MaxEvents  int    `json:"max_events,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -339,6 +347,12 @@ type response struct {
 type responseError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type notification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 func Serve(ctx context.Context, in io.Reader, out io.Writer, handlers Handlers, opts Options) error {
@@ -449,6 +463,8 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleBackgroundPrune(ctx, out, handlers, req)
 	case "background/supervise":
 		return false, handleBackgroundSupervise(ctx, out, handlers, req)
+	case "background/watch":
+		return false, handleBackgroundWatch(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -548,6 +564,7 @@ func initializeResult(opts Options) map[string]any {
 				"restart":   true,
 				"prune":     true,
 				"supervise": true,
+				"watch":     true,
 			},
 			"prompt": true,
 			"status": true,
@@ -1083,6 +1100,36 @@ func handleBackgroundSupervise(ctx context.Context, out io.Writer, handlers Hand
 		return writeError(out, req.ID, -32602, err.Error())
 	}
 	result, err := handlers.BackgroundSupervise(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundWatch(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundWatch == nil {
+		return writeError(out, req.ID, -32603, "background watch handler is not configured")
+	}
+	var request BackgroundWatchRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.ID) == "" {
+		return writeError(out, req.ID, -32602, "id is required")
+	}
+	if request.Offset < 0 {
+		return writeError(out, req.ID, -32602, "offset must be non-negative")
+	}
+	if request.IntervalMS < 0 {
+		return writeError(out, req.ID, -32602, "interval_ms must be non-negative")
+	}
+	if request.MaxEvents < 0 {
+		return writeError(out, req.ID, -32602, "max_events must be non-negative")
+	}
+	emit := func(event background.WatchEvent) error {
+		return writeNotification(out, "background/event", event)
+	}
+	result, err := handlers.BackgroundWatch(ctx, request, emit)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}
@@ -1694,6 +1741,15 @@ func unmarshalParams(params json.RawMessage, target any) error {
 
 func writeResult(out io.Writer, id json.RawMessage, result any) error {
 	data, err := json.Marshal(response{JSONRPC: "2.0", ID: id, Result: result})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "%s\n", data)
+	return err
+}
+
+func writeNotification(out io.Writer, method string, params any) error {
+	data, err := json.Marshal(notification{JSONRPC: "2.0", Method: method, Params: params})
 	if err != nil {
 		return err
 	}

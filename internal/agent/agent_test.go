@@ -5919,6 +5919,7 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "background/restart")
 	require.Contains(t, report.Protocol.Methods, "background/prune")
 	require.Contains(t, report.Protocol.Methods, "background/supervise")
+	require.Contains(t, report.Protocol.Methods, "background/watch")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6617,6 +6618,50 @@ func TestACPServeExposesBackgroundControls(t *testing.T) {
 	require.Equal(t, restartedID, stopped["id"])
 }
 
+func TestACPServeStreamsBackgroundWatch(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	bg := background.NewStore(configHome)
+	task, err := bg.Run("printf acp-watch", workspace)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := bg.Logs(task.ID, 100)
+		return err == nil && strings.Contains(logs, "acp-watch")
+	}, 2*time.Second, 50*time.Millisecond)
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/watch","params":{"id":"` + task.ID + `","max_events":2}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 4)
+	require.Equal(t, "background/event", responses[0]["method"])
+	statusEvent := responses[0]["params"].(map[string]any)
+	require.Equal(t, "status", statusEvent["type"])
+	require.Equal(t, task.ID, statusEvent["id"])
+	require.Equal(t, "background/event", responses[1]["method"])
+	logEvent := responses[1]["params"].(map[string]any)
+	require.Equal(t, "log", logEvent["type"])
+	require.Equal(t, task.ID, logEvent["id"])
+	require.Contains(t, logEvent["data"], "acp-watch")
+	result := responses[2]["result"].(map[string]any)
+	require.Equal(t, task.ID, result["id"])
+	require.EqualValues(t, 2, result["events"])
+	require.NotNil(t, responses[3]["result"])
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6682,6 +6727,7 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, backgroundCaps["restart"])
 			require.Equal(t, true, backgroundCaps["prune"])
 			require.Equal(t, true, backgroundCaps["supervise"])
+			require.Equal(t, true, backgroundCaps["watch"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])
