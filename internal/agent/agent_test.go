@@ -2909,6 +2909,13 @@ func risky(value any) {
 		"permission_rules": map[string]any{
 			"allow": []string{"read_file", "edit_file", "multi_edit"},
 		},
+		"mcp_servers": map[string]any{
+			"resume": map[string]any{
+				"command": os.Args[0],
+				"args":    []string{"-test.run=TestResumeMCPToolHelperProcess"},
+				"env":     []string{"CODOG_RESUME_MCP_HELPER=1"},
+			},
+		},
 		"hooks": map[string]any{
 			"pre_tool_use": []map[string]any{{
 				"matcher": "read_*",
@@ -4266,7 +4273,19 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionReadOnly, resumedDebugMCPResources.Permission)
 	require.True(t, resumedDebugMCPResources.Success)
 	require.Contains(t, resumedDebugMCPResources.Output, `"kind": "mcp_resources"`)
-	require.Contains(t, resumedDebugMCPResources.Output, `"total": 0`)
+	require.Contains(t, resumedDebugMCPResources.Output, `"server": "resume"`)
+	require.Contains(t, resumedDebugMCPResources.Output, "codog://resume-note")
+
+	out, err = runResumedJSON("/debug-tool-call", "ReadMcpResourceTool", `{"server":"resume","uri":"codog://resume-note"}`)
+	require.NoError(t, err)
+	var resumedDebugReadMCPResource debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugReadMCPResource))
+	require.Equal(t, "debug_tool_call", resumedDebugReadMCPResource.Kind)
+	require.Equal(t, "read_mcp_resource", resumedDebugReadMCPResource.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugReadMCPResource.Permission)
+	require.True(t, resumedDebugReadMCPResource.Success)
+	require.Contains(t, resumedDebugReadMCPResource.Output, `"uri": "codog://resume-note"`)
+	require.Contains(t, resumedDebugReadMCPResource.Output, "resume note body")
 
 	out, err = runResumedJSON("/debug-tool-call", "ListMcpResourceTemplatesTool", `{}`)
 	require.NoError(t, err)
@@ -4277,7 +4296,8 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionReadOnly, resumedDebugMCPResourceTemplates.Permission)
 	require.True(t, resumedDebugMCPResourceTemplates.Success)
 	require.Contains(t, resumedDebugMCPResourceTemplates.Output, `"kind": "mcp_resource_templates"`)
-	require.Contains(t, resumedDebugMCPResourceTemplates.Output, `"total": 0`)
+	require.Contains(t, resumedDebugMCPResourceTemplates.Output, `"server": "resume"`)
+	require.Contains(t, resumedDebugMCPResourceTemplates.Output, `"uriTemplate": "codog://resume/{name}"`)
 
 	out, err = runResumedJSON("/debug-tool-call", "ListMcpPromptsTool", `{}`)
 	require.NoError(t, err)
@@ -4288,7 +4308,41 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionReadOnly, resumedDebugMCPPrompts.Permission)
 	require.True(t, resumedDebugMCPPrompts.Success)
 	require.Contains(t, resumedDebugMCPPrompts.Output, `"kind": "mcp_prompts"`)
-	require.Contains(t, resumedDebugMCPPrompts.Output, `"total": 0`)
+	require.Contains(t, resumedDebugMCPPrompts.Output, `"server": "resume"`)
+	require.Contains(t, resumedDebugMCPPrompts.Output, `"name": "review"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "GetMcpPromptTool", `{"server":"resume","prompt":"review","arguments":{"topic":"resume"}}`)
+	require.NoError(t, err)
+	var resumedDebugGetMCPPrompt debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugGetMCPPrompt))
+	require.Equal(t, "debug_tool_call", resumedDebugGetMCPPrompt.Kind)
+	require.Equal(t, "get_mcp_prompt", resumedDebugGetMCPPrompt.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugGetMCPPrompt.Permission)
+	require.True(t, resumedDebugGetMCPPrompt.Success)
+	require.Contains(t, resumedDebugGetMCPPrompt.Output, `"prompt": "review"`)
+	require.Contains(t, resumedDebugGetMCPPrompt.Output, "Review resume")
+
+	out, err = runResumedJSONWithStdin("y\n", "/debug-tool-call", "McpAuthTool", `{"server":"resume"}`)
+	require.NoError(t, err)
+	var resumedDebugMCPAuth debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugMCPAuth))
+	require.Equal(t, "debug_tool_call", resumedDebugMCPAuth.Kind)
+	require.Equal(t, "mcp_auth", resumedDebugMCPAuth.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugMCPAuth.Permission)
+	require.True(t, resumedDebugMCPAuth.Success)
+	require.Contains(t, resumedDebugMCPAuth.Output, `"server": "resume"`)
+	require.Contains(t, resumedDebugMCPAuth.Output, `"status": "ok"`)
+	require.Contains(t, resumedDebugMCPAuth.Output, `"tool_count": 1`)
+
+	out, err = runResumedJSONWithStdin("y\n", "/debug-tool-call", "MCP", `{"server":"resume","tool":"echo","arguments":{"text":"hi"}}`)
+	require.NoError(t, err)
+	var resumedDebugMCPDispatch debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugMCPDispatch))
+	require.Equal(t, "debug_tool_call", resumedDebugMCPDispatch.Kind)
+	require.Equal(t, "mcp", resumedDebugMCPDispatch.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugMCPDispatch.Permission)
+	require.True(t, resumedDebugMCPDispatch.Success)
+	require.Contains(t, resumedDebugMCPDispatch.Output, `"text":"resume-echo"`)
 
 	if gitAvailable {
 		currentBranch, err := gitops.Branch(workspace)
@@ -7006,6 +7060,68 @@ func risky(value any) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "commit")
+}
+
+func TestResumeMCPToolHelperProcess(t *testing.T) {
+	if os.Getenv("CODOG_RESUME_MCP_HELPER") != "1" {
+		return
+	}
+	reader := bufio.NewScanner(os.Stdin)
+	for reader.Scan() {
+		var req map[string]any
+		if err := json.Unmarshal([]byte(reader.Text()), &req); err != nil {
+			continue
+		}
+		method, _ := req["method"].(string)
+		id := req["id"]
+		switch method {
+		case "initialize":
+			writeResumeMCPResponse(id, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]any{"name": "resume", "version": "0.0.0"},
+			})
+		case "tools/list":
+			writeResumeMCPResponse(id, map[string]any{"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echo text.",
+				"inputSchema": map[string]any{"type": "object"},
+			}}})
+		case "tools/call":
+			writeResumeMCPResponse(id, map[string]any{"content": []map[string]any{{"type": "text", "text": "resume-echo"}}})
+		case "resources/list":
+			writeResumeMCPResponse(id, map[string]any{"resources": []map[string]any{{"uri": "codog://resume-note", "name": "resume note", "mimeType": "text/plain"}}})
+		case "resources/templates/list":
+			writeResumeMCPResponse(id, map[string]any{"resourceTemplates": []map[string]any{{
+				"uriTemplate": "codog://resume/{name}",
+				"name":        "resume named note",
+			}}})
+		case "resources/read":
+			params, _ := req["params"].(map[string]any)
+			uri, _ := params["uri"].(string)
+			writeResumeMCPResponse(id, map[string]any{"contents": []map[string]any{{"uri": uri, "mimeType": "text/plain", "text": "resume note body"}}})
+		case "prompts/list":
+			writeResumeMCPResponse(id, map[string]any{"prompts": []map[string]any{{
+				"name":        "review",
+				"description": "Review a resume topic.",
+			}}})
+		case "prompts/get":
+			params, _ := req["params"].(map[string]any)
+			args, _ := params["arguments"].(map[string]any)
+			topic, _ := args["topic"].(string)
+			writeResumeMCPResponse(id, map[string]any{"messages": []map[string]any{{
+				"role":    "user",
+				"content": map[string]any{"type": "text", "text": "Review " + topic},
+			}}})
+		}
+	}
+	os.Exit(0)
+}
+
+func writeResumeMCPResponse(id any, result map[string]any) {
+	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
+	data, _ := json.Marshal(payload)
+	fmt.Println(strings.TrimSpace(string(data)))
 }
 
 func TestInvalidPermissionModeJSONContract(t *testing.T) {
