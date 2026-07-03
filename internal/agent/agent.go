@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"html"
 	"io"
 	"math"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Rememorio/codog/internal/acpserver"
 	"github.com/Rememorio/codog/internal/agentdefs"
@@ -475,7 +478,7 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 			}
 			return renderMissingPrompt(app.Out, req.Format)
 		}
-		return app.promptWithOutput(ctx, input, overrides, req.Format, req.Compact)
+		return app.promptWithOutputOptions(ctx, input, overrides, req.Format, req.Compact, turnOptions{Attachments: req.Attachments})
 	case "acp":
 		return wrapStructured(app.ACP(ctx, rest))
 	case "btw":
@@ -30919,6 +30922,7 @@ func (a *App) btwSideSession(source *session.Session) (*session.Session, error) 
 
 type turnOptions struct {
 	Skill        *skills.Skill
+	Attachments  []string
 	AllowedTools []string
 	Out          io.Writer
 }
@@ -30929,6 +30933,7 @@ type promptCLIRequest struct {
 	PromptProvided bool
 	Compact        bool
 	UseStdin       bool
+	Attachments    []string
 }
 
 func parsePromptArgs(args []string) (promptCLIRequest, error) {
@@ -30957,6 +30962,18 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 			req.Compact = true
 		case arg == "--stdin" || arg == "--prompt-stdin":
 			req.UseStdin = true
+		case arg == "--attach" || arg == "--attachment" || arg == "--file":
+			index++
+			if index >= len(args) {
+				return req, errors.New("prompt attachment path is required")
+			}
+			req.Attachments = append(req.Attachments, args[index])
+		case strings.HasPrefix(arg, "--attach="):
+			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--attach="))
+		case strings.HasPrefix(arg, "--attachment="):
+			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--attachment="))
+		case strings.HasPrefix(arg, "--file="):
+			req.Attachments = append(req.Attachments, strings.TrimPrefix(arg, "--file="))
 		default:
 			req.PromptProvided = true
 			parts = append(parts, arg)
@@ -31006,6 +31023,104 @@ func mergePromptWithStdin(prompt string, stdin string) string {
 	return prompt + "\n\n" + stdin
 }
 
+const maxPromptAttachmentBytes int64 = 5 * 1024 * 1024
+
+func (a *App) promptContentBlocks(prompt string, attachmentPaths []string) ([]anthropic.ContentBlock, error) {
+	blocks := []anthropic.ContentBlock{{Type: "text", Text: prompt}}
+	for _, attachmentPath := range attachmentPaths {
+		block, err := a.promptAttachmentBlock(attachmentPath)
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks, nil
+}
+
+func (a *App) promptAttachmentBlock(attachmentPath string) (anthropic.ContentBlock, error) {
+	displayPath := strings.TrimSpace(attachmentPath)
+	if displayPath == "" {
+		return anthropic.ContentBlock{}, errors.New("prompt attachment path is required")
+	}
+	path := displayPath
+	if !filepath.IsAbs(path) && strings.TrimSpace(a.Workspace) != "" {
+		path = filepath.Join(a.Workspace, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return anthropic.ContentBlock{}, fmt.Errorf("read prompt attachment %q: %w", displayPath, err)
+	}
+	if info.IsDir() {
+		return anthropic.ContentBlock{}, fmt.Errorf("prompt attachment %q is a directory", displayPath)
+	}
+	if info.Size() > maxPromptAttachmentBytes {
+		return anthropic.ContentBlock{}, fmt.Errorf("prompt attachment %q is too large: %d bytes exceeds %d", displayPath, info.Size(), maxPromptAttachmentBytes)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return anthropic.ContentBlock{}, fmt.Errorf("read prompt attachment %q: %w", displayPath, err)
+	}
+	mediaType := promptAttachmentMediaType(path, data)
+	if isPromptImageMediaType(mediaType) {
+		return anthropic.ContentBlock{
+			Type:  "image",
+			Title: displayPath,
+			Source: &anthropic.ContentSource{
+				Type:      "base64",
+				MediaType: mediaType,
+				Data:      base64.StdEncoding.EncodeToString(data),
+			},
+		}, nil
+	}
+	if mediaType == "application/pdf" {
+		return anthropic.ContentBlock{
+			Type:  "document",
+			Title: displayPath,
+			Source: &anthropic.ContentSource{
+				Type:      "base64",
+				MediaType: mediaType,
+				Data:      base64.StdEncoding.EncodeToString(data),
+			},
+		}, nil
+	}
+	if !utf8.Valid(data) {
+		return anthropic.ContentBlock{}, fmt.Errorf("prompt attachment %q is not a supported text, image, or PDF file", displayPath)
+	}
+	text := fmt.Sprintf("<attachment path=%q media_type=%q bytes=%d>\n%s\n</attachment>", displayPath, mediaType, len(data), string(data))
+	return anthropic.ContentBlock{Type: "text", Text: text, Title: displayPath}, nil
+}
+
+func promptAttachmentMediaType(path string, data []byte) string {
+	if mediaType := mime.TypeByExtension(strings.ToLower(filepath.Ext(path))); mediaType != "" {
+		return cleanMediaType(mediaType)
+	}
+	if len(data) > 0 {
+		return cleanMediaType(http.DetectContentType(data))
+	}
+	return "text/plain"
+}
+
+func cleanMediaType(value string) string {
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		mediaType = value
+	}
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if mediaType == "" {
+		return "application/octet-stream"
+	}
+	return mediaType
+}
+
+func isPromptImageMediaType(mediaType string) bool {
+	switch cleanMediaType(mediaType) {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) runSessionTurn(ctx context.Context, mode string, sess *session.Session, input string, successStatus string) error {
 	return a.runSessionTurnWithOptions(ctx, mode, sess, input, successStatus, turnOptions{})
 }
@@ -31033,6 +31148,14 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		allowedTools = append(allowedTools, activeSkill.AllowedTools...)
 	}
 	modelInput = a.expandPromptReferences(modelInput)
+	userContent := []anthropic.ContentBlock{{Type: "text", Text: modelInput}}
+	if len(opts.Attachments) > 0 {
+		var err error
+		userContent, err = a.promptContentBlocks(modelInput, opts.Attachments)
+		if err != nil {
+			return err
+		}
+	}
 	a.writeWorkerState(mode, "running", sess, "")
 	if err := a.runInstructionsLoadedHooks(ctx, sess.ID, "session_start"); err != nil {
 		a.writeWorkerState(mode, "error", sess, err.Error())
@@ -31051,7 +31174,7 @@ func (a *App) runSessionTurnWithOptions(ctx context.Context, mode string, sess *
 		System:           a.systemPromptForInput(input),
 		OnToolUse:        a.onToolUse(sess.ID),
 	}
-	result, err := runner.Run(ctx, sess.Messages, modelInput)
+	result, err := runner.RunWithUserContent(ctx, sess.Messages, userContent, modelInput)
 	if err != nil {
 		a.writeWorkerState(mode, "error", sess, err.Error())
 		return err
@@ -49805,8 +49928,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return providerCommandHelpSpec(
 			"prompt",
 			"prompt",
-			`codog [flags] prompt [--stdin] "MESSAGE" [--json|--output-format text|json|stream-json]`,
-			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt.\n",
+			`codog [flags] prompt [--stdin] [--attach PATH] "MESSAGE" [--json|--output-format text|json|stream-json]`,
+			"Prompt\n\nUsage:\n  codog [flags] prompt [--stdin] [--attach PATH] \"MESSAGE\" [--json|--output-format text|json|stream-json]\n  codog -p \"MESSAGE\"\n\nRuns one provider-backed agent turn, streams assistant text by default, executes approved tools, and persists the turn to a JSONL session. Pass --stdin to append piped input to the prompt, and --attach to include local text, image, or PDF files in the model request.\n",
 			[]string{"session_id", "message", "tool_calls", "usage", "cost"},
 			[]string{"ok", "error"},
 		), true
@@ -50861,7 +50984,7 @@ func helpText(exe string) string {
 	help := `%s is a Go-native coding agent CLI.
 
 Usage:
-  %s [flags] prompt [--stdin] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
+  %s [flags] prompt [--stdin] [--attach PATH] "explain this repo" [--json|--output-format text|json|stream-json] | -p "explain this repo"
   %s [flags] btw "quick side question" [--session ID|--resume ID]
   %s version [--json|--output-format text|json]
   %s config [get SECTION|paths|set KEY VALUE|unset KEY|reset SECTION] [--json|--output-format text|json]

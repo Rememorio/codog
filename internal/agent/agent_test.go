@@ -9608,6 +9608,11 @@ func TestParsePromptArgsExtractsOutputFormat(t *testing.T) {
 	require.True(t, req.UseStdin)
 	require.True(t, req.PromptProvided)
 	require.False(t, strings.Contains(req.Prompt, "--stdin"))
+
+	req, err = parsePromptArgs([]string{"Describe", "--attach", "notes.txt", "--attachment=image.png", "--file=report.pdf"})
+	require.NoError(t, err)
+	require.Equal(t, "Describe", req.Prompt)
+	require.Equal(t, []string{"notes.txt", "image.png", "report.pdf"}, req.Attachments)
 }
 
 func TestMergePromptWithStdin(t *testing.T) {
@@ -9793,6 +9798,87 @@ func TestPromptStdinFlagAppendsPipeContext(t *testing.T) {
 	body := string(raw)
 	require.Contains(t, body, "Use stdin context")
 	require.Contains(t, body, "pipe context body")
+}
+
+func TestPromptWithAttachmentsBuildsStructuredUserContent(t *testing.T) {
+	captured := make(chan json.RawMessage, 1)
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "attachments done",
+		OnRequest: func(raw json.RawMessage) {
+			select {
+			case captured <- append(json.RawMessage(nil), raw...):
+			default:
+			}
+		},
+	}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("attachment notes\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pixel.png"), []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"prompt", "Describe attachments",
+			"--attach", "notes.txt",
+			"--attach", "pixel.png",
+			"--output-format", "json",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report promptReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "attachments done", report.Response)
+
+	var raw json.RawMessage
+	select {
+	case raw = <-captured:
+	default:
+		require.FailNow(t, "expected provider request to be captured")
+	}
+	var body struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type   string `json:"type"`
+				Text   string `json:"text"`
+				Title  string `json:"title"`
+				Source *struct {
+					Type      string `json:"type"`
+					MediaType string `json:"media_type"`
+					Data      string `json:"data"`
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Messages, 1)
+	require.Equal(t, "user", body.Messages[0].Role)
+	require.Len(t, body.Messages[0].Content, 3)
+	require.Equal(t, "text", body.Messages[0].Content[0].Type)
+	require.Equal(t, "Describe attachments", body.Messages[0].Content[0].Text)
+	require.Equal(t, "text", body.Messages[0].Content[1].Type)
+	require.Contains(t, body.Messages[0].Content[1].Text, `<attachment path="notes.txt"`)
+	require.Contains(t, body.Messages[0].Content[1].Text, "attachment notes")
+	require.Equal(t, "image", body.Messages[0].Content[2].Type)
+	require.Equal(t, "pixel.png", body.Messages[0].Content[2].Title)
+	require.NotNil(t, body.Messages[0].Content[2].Source)
+	require.Equal(t, "base64", body.Messages[0].Content[2].Source.Type)
+	require.Equal(t, "image/png", body.Messages[0].Content[2].Source.MediaType)
+	require.NotEmpty(t, body.Messages[0].Content[2].Source.Data)
 }
 
 func TestTopLevelPipedStdinRunsOneShotPrompt(t *testing.T) {

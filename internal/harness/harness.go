@@ -59,6 +59,7 @@ type scenario struct {
 	name                string
 	turns               []mockanthropic.Turn
 	prompt              string
+	userContent         []anthropic.ContentBlock
 	promptIn            string
 	previous            []anthropic.Message
 	autoCompactMessages int
@@ -87,6 +88,37 @@ func Run(ctx context.Context) (Report, error) {
 				}
 				if len(result.ToolCalls) != 0 {
 					return fmt.Errorf("expected no tool calls, got %d", len(result.ToolCalls))
+				}
+				return nil
+			},
+		},
+		{
+			name:   "prompt_attachments_roundtrip",
+			turns:  []mockanthropic.Turn{{Text: "attachment harness ok"}},
+			prompt: "describe attached image",
+			userContent: []anthropic.ContentBlock{
+				{Type: "text", Text: "describe attached image"},
+				{Type: "image", Title: "pixel.png", Source: &anthropic.ContentSource{Type: "base64", MediaType: "image/png", Data: "aW1n"}},
+			},
+			verify: func(_ string, result runloop.TurnResult, output string) error {
+				if !strings.Contains(output, "attachment harness ok") {
+					return fmt.Errorf("missing attachment response")
+				}
+				if len(result.Messages) == 0 || len(result.Messages[0].Content) != 2 {
+					return fmt.Errorf("expected structured attachment content in first user message")
+				}
+				return nil
+			},
+			verifyRequests: func(requests []anthropic.Request) error {
+				if len(requests) == 0 {
+					return fmt.Errorf("expected provider request")
+				}
+				content := requests[0].Messages[0].Content
+				if len(content) != 2 || content[1].Type != "image" {
+					return fmt.Errorf("expected image content block in provider request")
+				}
+				if content[1].Source == nil || content[1].Source.MediaType != "image/png" || content[1].Source.Data == "" {
+					return fmt.Errorf("expected base64 image source in provider request")
 				}
 				return nil
 			},
@@ -670,7 +702,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	if err != nil {
 		return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
 	}
-	result, err := runloop.Runner{
+	runner := runloop.Runner{
 		Config: config.Config{
 			Model:               "mock",
 			MaxTokens:           128,
@@ -683,7 +715,14 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		Prompter:  &tools.Prompter{Mode: permission, In: strings.NewReader(item.promptIn), Err: io.Discard},
 		Workspace: workspace,
 		Out:       &out,
-	}.Run(ctx, previous, item.prompt)
+	}
+	var result runloop.TurnResult
+	var runErr error
+	if len(item.userContent) > 0 {
+		result, runErr = runner.RunWithUserContent(ctx, previous, item.userContent, item.prompt)
+	} else {
+		result, runErr = runner.Run(ctx, previous, item.prompt)
+	}
 	scenarioReport := ScenarioReport{
 		Name:                 item.name,
 		Workspace:            workspace,
@@ -696,8 +735,8 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		Compactions:          compactRequestCount(requests),
 	}
 	scenarioReport.EstimatedCost = scenarioReport.UsageSummary.EstimatedUSD
-	if err != nil {
-		scenarioReport.Error = err.Error()
+	if runErr != nil {
+		scenarioReport.Error = runErr.Error()
 		return scenarioReport
 	}
 	if item.verify != nil {

@@ -68,15 +68,25 @@ type Runner struct {
 // Run submits input with prior messages, executes tool loops until the model
 // stops, and returns the updated conversation state.
 func (r Runner) Run(ctx context.Context, previous []anthropic.Message, input string) (TurnResult, error) {
+	return r.RunWithUserContent(ctx, previous, []anthropic.ContentBlock{{Type: "text", Text: input}}, input)
+}
+
+// RunWithUserContent submits structured user content with prior messages,
+// executes tool loops until the model stops, and returns the updated
+// conversation state. The plain input is still used for hooks and diagnostics.
+func (r Runner) RunWithUserContent(ctx context.Context, previous []anthropic.Message, content []anthropic.ContentBlock, input string) (TurnResult, error) {
 	if r.Client == nil {
 		return TurnResult{}, errors.New("missing model client")
 	}
 	if r.Tools == nil {
 		return TurnResult{}, errors.New("missing tool registry")
 	}
+	if len(content) == 0 {
+		content = []anthropic.ContentBlock{{Type: "text", Text: input}}
+	}
 
 	messages := append([]anthropic.Message(nil), previous...)
-	messages = append(messages, anthropic.TextMessage("user", input))
+	messages = append(messages, anthropic.Message{Role: "user", Content: append([]anthropic.ContentBlock(nil), content...)})
 
 	system := r.System
 	if system == "" {

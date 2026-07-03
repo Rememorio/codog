@@ -313,11 +313,21 @@ type openAIRequest struct {
 
 type openAIMessage struct {
 	Role             string           `json:"role"`
-	Content          string           `json:"content,omitempty"`
+	Content          any              `json:"content,omitempty"`
 	ReasoningContent string           `json:"reasoning_content,omitempty"`
 	ToolCallID       string           `json:"tool_call_id,omitempty"`
 	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
 	IsError          *bool            `json:"is_error,omitempty"`
+}
+
+type openAIContentPart struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL *openAIImageURL `json:"image_url,omitempty"`
+}
+
+type openAIImageURL struct {
+	URL string `json:"url"`
 }
 
 type openAIToolCall struct {
@@ -465,10 +475,26 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 	if role == "user" {
 		var out []openAIMessage
 		var text strings.Builder
+		var rich []openAIContentPart
+		hasRichContent := false
 		flushText := func() {
-			if strings.TrimSpace(text.String()) != "" {
-				out = append(out, openAIMessage{Role: "user", Content: text.String()})
+			value := text.String()
+			if strings.TrimSpace(value) == "" {
 				text.Reset()
+				return
+			}
+			if hasRichContent {
+				rich = append(rich, openAIContentPart{Type: "text", Text: value})
+			} else {
+				out = append(out, openAIMessage{Role: "user", Content: value})
+			}
+			text.Reset()
+		}
+		flushRich := func() {
+			if len(rich) > 0 {
+				out = append(out, openAIMessage{Role: "user", Content: rich})
+				rich = nil
+				hasRichContent = false
 			}
 		}
 		for _, block := range msg.Content {
@@ -478,8 +504,30 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 					text.WriteString("\n")
 				}
 				text.WriteString(block.Text)
+			case "image":
+				if block.Source != nil && strings.TrimSpace(block.Source.Data) != "" {
+					hasRichContent = true
+					flushText()
+					rich = append(rich, openAIContentPart{
+						Type:     "image_url",
+						ImageURL: &openAIImageURL{URL: dataURL(block.Source.MediaType, block.Source.Data)},
+					})
+				}
+			case "document":
+				label := strings.TrimSpace(block.Title)
+				if label == "" && block.Source != nil {
+					label = strings.TrimSpace(block.Source.MediaType)
+				}
+				if label == "" {
+					label = "document"
+				}
+				if text.Len() > 0 {
+					text.WriteString("\n")
+				}
+				text.WriteString("[Attached " + label + " omitted by OpenAI-compatible adapter]")
 			case "tool_result":
 				flushText()
+				flushRich()
 				toolMessage := openAIMessage{Role: "tool", ToolCallID: block.ToolUseID, Content: block.Content}
 				if !modelrouting.ModelRejectsIsErrorField(model) {
 					isError := block.IsError
@@ -489,6 +537,7 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 			}
 		}
 		flushText()
+		flushRich()
 		return out, nil
 	}
 	if role == "assistant" {
@@ -533,6 +582,14 @@ func openAIMessagesFromAnthropic(msg Message, model string) ([]openAIMessage, er
 		return []openAIMessage{assistant}, nil
 	}
 	return []openAIMessage{{Role: role, Content: contentText(msg.Content)}}, nil
+}
+
+func dataURL(mediaType string, base64Data string) string {
+	mediaType = strings.TrimSpace(mediaType)
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	return "data:" + mediaType + ";base64," + base64Data
 }
 
 func sanitizeOpenAIToolMessagePairing(messages []openAIMessage) []openAIMessage {

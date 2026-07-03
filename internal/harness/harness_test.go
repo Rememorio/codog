@@ -23,6 +23,11 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, readFile.ToolCalls)
 	require.GreaterOrEqual(t, readFile.MessageCount, 4)
 
+	attachments := findScenario(t, report, "prompt_attachments_roundtrip")
+	require.True(t, attachments.OK)
+	require.Equal(t, 0, attachments.ToolCalls)
+	require.Contains(t, attachments.Output, "attachment harness ok")
+
 	writeDenied := findScenario(t, report, "write_file_denied")
 	require.True(t, writeDenied.OK)
 	require.Equal(t, 1, writeDenied.ToolCalls)

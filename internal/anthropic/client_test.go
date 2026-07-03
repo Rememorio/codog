@@ -567,6 +567,30 @@ func TestOpenAICompatibleToolResultsIncludeIsErrorForNonKimiModels(t *testing.T)
 	require.False(t, *wire.Messages[1].IsError)
 }
 
+func TestOpenAICompatibleConvertsImageContentParts(t *testing.T) {
+	wire, err := openAIRequestFromAnthropic(Request{
+		Model:     "openai/gpt-4o",
+		MaxTokens: 64,
+		Messages: []Message{{
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "text", Text: "describe"},
+				{Type: "image", Source: &ContentSource{Type: "base64", MediaType: "image/png", Data: "aW1n"}},
+			},
+		}},
+	}, "https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Len(t, wire.Messages, 1)
+	parts, ok := wire.Messages[0].Content.([]openAIContentPart)
+	require.True(t, ok)
+	require.Len(t, parts, 2)
+	require.Equal(t, "text", parts[0].Type)
+	require.Equal(t, "describe", parts[0].Text)
+	require.Equal(t, "image_url", parts[1].Type)
+	require.NotNil(t, parts[1].ImageURL)
+	require.Equal(t, "data:image/png;base64,aW1n", parts[1].ImageURL.URL)
+}
+
 func TestOpenAICompatibleAssistantThinkingHistoryForDeepSeekV4(t *testing.T) {
 	wire, err := openAIRequestFromAnthropic(Request{
 		Model:     "openai/deepseek-v4-pro",
