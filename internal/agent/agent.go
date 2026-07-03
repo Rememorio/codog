@@ -27269,6 +27269,8 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"web_search",
 		"structured_output",
 		"tool_search",
+		"sleep",
+		"repl",
 		"grep",
 		"glob",
 		"ls",

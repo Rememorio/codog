@@ -4077,6 +4077,16 @@ func risky(value any) {
 	require.Contains(t, resumedDebugToolSearch.Output, `"query": "web fetch"`)
 	require.Contains(t, resumedDebugToolSearch.Output, `"name": "web_fetch"`)
 
+	out, err = runResumedJSON("/debug-tool-call", "SleepTool", `{"duration_ms":1}`)
+	require.NoError(t, err)
+	var resumedDebugSleep debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugSleep))
+	require.Equal(t, "debug_tool_call", resumedDebugSleep.Kind)
+	require.Equal(t, "sleep", resumedDebugSleep.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugSleep.Permission)
+	require.True(t, resumedDebugSleep.Success)
+	require.Contains(t, resumedDebugSleep.Output, "Slept for 1ms")
+
 	out, err = runResumedJSON("/debug-tool-call", "WebFetch", `{"url":"`+webServer.URL+`/page","prompt":"title"}`)
 	require.NoError(t, err)
 	var resumedDebugWebFetch debugToolCallReport
@@ -5626,6 +5636,16 @@ func risky(value any) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedPermissionsSet))
 	require.Equal(t, "allow", resumedPermissionsSet.PermissionMode)
+
+	out, err = runResumedJSON("/debug-tool-call", "REPLTool", `{"language":"sh","code":"printf resumed-repl","timeout_ms":1000}`)
+	require.NoError(t, err)
+	var resumedDebugREPL debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugREPL))
+	require.Equal(t, "debug_tool_call", resumedDebugREPL.Kind)
+	require.Equal(t, "repl", resumedDebugREPL.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugREPL.Permission)
+	require.True(t, resumedDebugREPL.Success)
+	require.Contains(t, resumedDebugREPL.Output, `"stdout": "resumed-repl"`)
 
 	out, err = runResumedJSON("/debug-tool-call", "Bash", `{"command":"printf resumed-bg; sleep 5","run_in_background":true}`)
 	require.NoError(t, err)
