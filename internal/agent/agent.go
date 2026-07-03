@@ -20743,6 +20743,9 @@ var acpJSONRPCMethods = []string{
 	"session/list",
 	"session/get",
 	"session/history",
+	"session/append_message",
+	"session/append_input",
+	"session/rewind",
 	"session/fork",
 	"session/rename",
 	"session/delete",
@@ -20799,7 +20802,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21005,6 +21008,71 @@ func (a *App) serveACP(ctx context.Context) error {
 				SessionID: sessionID,
 				Count:     len(entries),
 				Entries:   entries,
+			}, nil
+		},
+		AppendMessage: func(_ context.Context, req acpserver.SessionAppendMessageRequest) (acpserver.SessionMutationResult, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionMutationResult{}, errors.New("session store is unavailable")
+			}
+			var msg anthropic.Message
+			if req.Message != nil {
+				msg = *req.Message
+			} else {
+				msg = anthropic.TextMessage(req.Role, req.Text)
+			}
+			if err := a.Sessions.Append(req.SessionID, msg); err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			sess, err := a.Sessions.Open(req.SessionID)
+			if err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			return acpserver.SessionMutationResult{
+				Kind:         "session_mutation",
+				Action:       "append_message",
+				Status:       "ok",
+				SessionID:    sess.ID,
+				Path:         sess.Path,
+				MessageCount: len(sess.Messages),
+			}, nil
+		},
+		AppendInput: func(_ context.Context, req acpserver.SessionAppendInputRequest) (acpserver.SessionMutationResult, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionMutationResult{}, errors.New("session store is unavailable")
+			}
+			if err := a.Sessions.AppendInput(req.SessionID, req.Input); err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			sess, err := a.Sessions.Open(req.SessionID)
+			if err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			return acpserver.SessionMutationResult{
+				Kind:         "session_mutation",
+				Action:       "append_input",
+				Status:       "ok",
+				SessionID:    sess.ID,
+				Path:         sess.Path,
+				MessageCount: len(sess.Messages),
+			}, nil
+		},
+		RewindSession: func(_ context.Context, req acpserver.SessionRewindRequest) (acpserver.SessionRewindResult, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionRewindResult{}, errors.New("session store is unavailable")
+			}
+			result, err := a.Sessions.Rewind(req.SessionID, req.RemoveMessages)
+			if err != nil {
+				return acpserver.SessionRewindResult{}, err
+			}
+			return acpserver.SessionRewindResult{
+				Kind:              "session_mutation",
+				Action:            "rewind",
+				Status:            "ok",
+				SessionID:         result.SessionID,
+				Path:              result.Path,
+				OriginalMessages:  result.OriginalMessages,
+				RemainingMessages: result.RemainingMessages,
+				RemovedMessages:   result.RemovedMessages,
 			}, nil
 		},
 		ForkSession: func(_ context.Context, req acpserver.SessionForkRequest) (acpserver.SessionMutationResult, error) {

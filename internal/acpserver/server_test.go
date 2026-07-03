@@ -20,11 +20,14 @@ func TestServeHandlesACPRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"session/get","params":{"sessionId":"session-1"}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"session/history","params":{"session_id":"session-1","limit":1}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"session/fork","params":{"session_id":"session-1","branchName":"scratch"}}`,
-		`{"jsonrpc":"2.0","id":9,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"session/delete","params":{"session_id":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"session/prune","params":{"keep":3,"confirm":true,"excludeSessionId":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":12,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"session/append_input","params":{"session_id":"session-1","input":"next prompt"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"session/append_message","params":{"session_id":"session-1","role":"assistant","text":"saved answer"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"session/rewind","params":{"session_id":"session-1","removeMessages":1}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"session/fork","params":{"session_id":"session-1","branchName":"scratch"}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":13,"method":"session/delete","params":{"session_id":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":14,"method":"session/prune","params":{"keep":3,"confirm":true,"excludeSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -53,6 +56,23 @@ func TestServeHandlesACPRequests(t *testing.T) {
 			require.Equal(t, 1, req.Limit)
 			return SessionHistory{SessionID: "session-1", Entries: []map[string]any{{"text": "hello"}}}, nil
 		},
+		AppendInput: func(_ context.Context, req SessionAppendInputRequest) (SessionMutationResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, "next prompt", req.Input)
+			return SessionMutationResult{SessionID: req.SessionID, MessageCount: 2}, nil
+		},
+		AppendMessage: func(_ context.Context, req SessionAppendMessageRequest) (SessionMutationResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Nil(t, req.Message)
+			require.Equal(t, "assistant", req.Role)
+			require.Equal(t, "saved answer", req.Text)
+			return SessionMutationResult{SessionID: req.SessionID, MessageCount: 3}, nil
+		},
+		RewindSession: func(_ context.Context, req SessionRewindRequest) (SessionRewindResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, 1, req.RemoveMessages)
+			return SessionRewindResult{SessionID: req.SessionID, RemovedMessages: 1}, nil
+		},
 		ForkSession: func(_ context.Context, req SessionForkRequest) (SessionMutationResult, error) {
 			require.Equal(t, "session-1", req.SessionID)
 			require.Equal(t, "scratch", req.BranchName)
@@ -77,12 +97,14 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 12)
+	require.Len(t, responses, 15)
 	require.Equal(t, "test", responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)["version"])
 	capabilities := responses[0]["result"].(map[string]any)["capabilities"].(map[string]any)
 	require.Equal(t, true, capabilities["prompt"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["history"])
+	require.Equal(t, true, sessionCaps["append"])
+	require.Equal(t, true, sessionCaps["rewind"])
 	require.Equal(t, true, sessionCaps["fork"])
 	require.Equal(t, true, sessionCaps["rename"])
 	require.Equal(t, true, sessionCaps["delete"])
@@ -100,22 +122,34 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	historyResult := responses[6]["result"].(map[string]any)
 	require.Equal(t, "session_history", historyResult["kind"])
 	require.Equal(t, "session-1", historyResult["session_id"])
-	forkResult := responses[7]["result"].(map[string]any)
+	appendInputResult := responses[7]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", appendInputResult["kind"])
+	require.Equal(t, "append_input", appendInputResult["action"])
+	require.Equal(t, "session-1", appendInputResult["session_id"])
+	appendMessageResult := responses[8]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", appendMessageResult["kind"])
+	require.Equal(t, "append_message", appendMessageResult["action"])
+	require.Equal(t, "session-1", appendMessageResult["session_id"])
+	rewindResult := responses[9]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", rewindResult["kind"])
+	require.Equal(t, "rewind", rewindResult["action"])
+	require.EqualValues(t, 1, rewindResult["removed_messages"])
+	forkResult := responses[10]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", forkResult["kind"])
 	require.Equal(t, "fork", forkResult["action"])
 	require.Equal(t, "session-fork", forkResult["session_id"])
-	renameResult := responses[8]["result"].(map[string]any)
+	renameResult := responses[11]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", renameResult["kind"])
 	require.Equal(t, "rename", renameResult["action"])
 	require.Equal(t, "session-2", renameResult["new_session_id"])
-	deleteResult := responses[9]["result"].(map[string]any)
+	deleteResult := responses[12]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", deleteResult["kind"])
 	require.Equal(t, "delete", deleteResult["action"])
 	require.Equal(t, "session-2", deleteResult["session_id"])
-	pruneResult := responses[10]["result"].(map[string]any)
+	pruneResult := responses[13]["result"].(map[string]any)
 	require.Equal(t, "session_prune", pruneResult["kind"])
 	require.EqualValues(t, 1, pruneResult["deleted_count"])
-	require.NotNil(t, responses[11]["result"])
+	require.NotNil(t, responses[14]["result"])
 }
 
 func TestServeReportsPromptValidationErrors(t *testing.T) {
@@ -138,6 +172,68 @@ func TestServeReportsPromptValidationErrors(t *testing.T) {
 	errPayload := responses[0]["error"].(map[string]any)
 	require.EqualValues(t, -32602, errPayload["code"])
 	require.Contains(t, errPayload["message"], "prompt is required")
+}
+
+func TestServeParsesStructuredAppendMessageAndRewindAliases(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"sessions/append_message","params":{"id":"session-1","message":{"role":"assistant","content":[{"type":"text","text":"structured"}]}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"sessions/rewind","params":{"id":"session-1","count":2}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		AppendMessage: func(_ context.Context, req SessionAppendMessageRequest) (SessionMutationResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.NotNil(t, req.Message)
+			require.Equal(t, "assistant", req.Message.Role)
+			require.Equal(t, "structured", req.Message.Content[0].Text)
+			return SessionMutationResult{SessionID: req.SessionID}, nil
+		},
+		RewindSession: func(_ context.Context, req SessionRewindRequest) (SessionRewindResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, 2, req.RemoveMessages)
+			return SessionRewindResult{}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 2)
+	require.Equal(t, "append_message", responses[0]["result"].(map[string]any)["action"])
+	require.Equal(t, "rewind", responses[1]["result"].(map[string]any)["action"])
+}
+
+func TestServeReportsSessionMutationValidationErrors(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"sessions/append_message","params":{"id":"session-1"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"sessions/append_input","params":{"id":"session-1"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"sessions/rewind","params":{"id":"session-1","remove_messages":0}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		AppendMessage: func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error) {
+			t.Fatal("append message handler should not be called")
+			return SessionMutationResult{}, nil
+		},
+		AppendInput: func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error) {
+			t.Fatal("append input handler should not be called")
+			return SessionMutationResult{}, nil
+		},
+		RewindSession: func(context.Context, SessionRewindRequest) (SessionRewindResult, error) {
+			t.Fatal("rewind handler should not be called")
+			return SessionRewindResult{}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 3)
+	require.Contains(t, responses[0]["error"].(map[string]any)["message"], "text is required")
+	require.Contains(t, responses[1]["error"].(map[string]any)["message"], "input is required")
+	require.Contains(t, responses[2]["error"].(map[string]any)["message"], "remove_messages must be positive")
 }
 
 func decodeACPResponses(t *testing.T, output string) []map[string]any {

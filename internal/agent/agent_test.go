@@ -5886,6 +5886,9 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.True(t, report.Protocol.ServeStartsDaemon)
 	require.Contains(t, report.Protocol.Methods, "initialize")
 	require.Contains(t, report.Protocol.Methods, "session/list")
+	require.Contains(t, report.Protocol.Methods, "session/append_message")
+	require.Contains(t, report.Protocol.Methods, "session/append_input")
+	require.Contains(t, report.Protocol.Methods, "session/rewind")
 	require.Contains(t, report.Protocol.Methods, "session/fork")
 	require.Contains(t, report.Protocol.Methods, "session/prune")
 	require.Contains(t, report.Protocol.Methods, "prompt")
@@ -5959,13 +5962,16 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"session/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"session/fork","params":{"session_id":"` + sess.ID + `","branch_name":"acp-branch"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/append_input","params":{"session_id":"` + sess.ID + `","input":"third prompt"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"session/history","params":{"session_id":"` + sess.ID + `","limit":1}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"session/rename","params":{"session_id":"` + sess.ID + `","new_session_id":"renamed-acp-session"}}`,
-		`{"jsonrpc":"2.0","id":5,"method":"session/delete","params":{"session_id":"renamed-acp-session"}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"session/prune","params":{}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"session/prune","params":{"confirm":true}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"session/append_message","params":{"session_id":"` + sess.ID + `","role":"user","text":"manual note"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"session/rewind","params":{"session_id":"` + sess.ID + `","remove_messages":1}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"session/fork","params":{"session_id":"` + sess.ID + `","branch_name":"acp-branch"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"session/rename","params":{"session_id":"` + sess.ID + `","new_session_id":"renamed-acp-session"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"session/delete","params":{"session_id":"renamed-acp-session"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"session/prune","params":{}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"session/prune","params":{"confirm":true}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -5979,7 +5985,7 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 
 	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
 	responses := decodeJSONRPCResponses(t, out.String())
-	require.Len(t, responses, 8)
+	require.Len(t, responses, 11)
 	listResult := responses[0]["result"].(map[string]any)
 	require.Equal(t, "session_list", listResult["kind"])
 	require.EqualValues(t, 2, listResult["count"])
@@ -5999,7 +6005,33 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	}
 	require.EqualValues(t, 1, sessionSummaries[sess.ID]["message_count"])
 
-	forkResult := responses[1]["result"].(map[string]any)
+	appendInputResult := responses[1]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", appendInputResult["kind"])
+	require.Equal(t, "append_input", appendInputResult["action"])
+	require.Equal(t, sess.ID, appendInputResult["session_id"])
+
+	historyResult := responses[2]["result"].(map[string]any)
+	require.Equal(t, "session_history", historyResult["kind"])
+	require.Equal(t, sess.ID, historyResult["session_id"])
+	require.EqualValues(t, 1, historyResult["count"])
+	entries := historyResult["entries"].([]any)
+	require.Equal(t, "third prompt", entries[0].(map[string]any)["text"])
+
+	appendMessageResult := responses[3]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", appendMessageResult["kind"])
+	require.Equal(t, "append_message", appendMessageResult["action"])
+	require.Equal(t, sess.ID, appendMessageResult["session_id"])
+	require.EqualValues(t, 2, appendMessageResult["message_count"])
+
+	rewindResult := responses[4]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", rewindResult["kind"])
+	require.Equal(t, "rewind", rewindResult["action"])
+	require.Equal(t, sess.ID, rewindResult["session_id"])
+	require.EqualValues(t, 2, rewindResult["original_messages"])
+	require.EqualValues(t, 1, rewindResult["remaining_messages"])
+	require.EqualValues(t, 1, rewindResult["removed_messages"])
+
+	forkResult := responses[5]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", forkResult["kind"])
 	require.Equal(t, "fork", forkResult["action"])
 	forkedID := forkResult["session_id"].(string)
@@ -6009,15 +6041,9 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.Equal(t, sess.ID, forked.Metadata.ParentSessionID)
 	require.Equal(t, "acp-branch", forked.Metadata.BranchName)
 	require.Equal(t, "fork:acp-branch", forked.Identity.Purpose)
+	require.Len(t, forked.Messages, 1)
 
-	historyResult := responses[2]["result"].(map[string]any)
-	require.Equal(t, "session_history", historyResult["kind"])
-	require.Equal(t, sess.ID, historyResult["session_id"])
-	require.EqualValues(t, 1, historyResult["count"])
-	entries := historyResult["entries"].([]any)
-	require.Equal(t, "second prompt", entries[0].(map[string]any)["text"])
-
-	renameResult := responses[3]["result"].(map[string]any)
+	renameResult := responses[6]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", renameResult["kind"])
 	require.Equal(t, "rename", renameResult["action"])
 	require.Equal(t, sess.ID, renameResult["session_id"])
@@ -6026,16 +6052,16 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exists)
 
-	deleteResult := responses[4]["result"].(map[string]any)
+	deleteResult := responses[7]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", deleteResult["kind"])
 	require.Equal(t, "delete", deleteResult["action"])
 	require.Equal(t, "renamed-acp-session", deleteResult["session_id"])
-	dryRun := responses[5]["result"].(map[string]any)
+	dryRun := responses[8]["result"].(map[string]any)
 	require.Equal(t, "session_prune", dryRun["kind"])
 	require.Equal(t, "dry_run", dryRun["status"])
 	require.Equal(t, true, dryRun["dry_run"])
 	require.EqualValues(t, 1, dryRun["candidate_count"])
-	confirmed := responses[6]["result"].(map[string]any)
+	confirmed := responses[9]["result"].(map[string]any)
 	require.Equal(t, "session_prune", confirmed["kind"])
 	require.Equal(t, "ok", confirmed["status"])
 	require.EqualValues(t, 1, confirmed["deleted_count"])
@@ -6073,6 +6099,8 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, "codog-acp-0.1", result["protocolVersion"])
 			capabilities := result["capabilities"].(map[string]any)
 			sessions := capabilities["sessions"].(map[string]any)
+			require.Equal(t, true, sessions["append"])
+			require.Equal(t, true, sessions["rewind"])
 			require.Equal(t, true, sessions["fork"])
 			require.Equal(t, true, sessions["prune"])
 		})

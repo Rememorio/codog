@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/Rememorio/codog/internal/anthropic"
 )
 
 type Options struct {
@@ -19,6 +21,9 @@ type Handlers struct {
 	ListSessions  func(context.Context) (SessionList, error)
 	GetSession    func(context.Context, SessionLookupRequest) (SessionDetail, error)
 	History       func(context.Context, SessionHistoryRequest) (SessionHistory, error)
+	AppendMessage func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
+	AppendInput   func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
+	RewindSession func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
 	ForkSession   func(context.Context, SessionForkRequest) (SessionMutationResult, error)
 	RenameSession func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
 	DeleteSession func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
@@ -87,6 +92,34 @@ type SessionHistory struct {
 	SessionID string `json:"session_id"`
 	Count     int    `json:"count"`
 	Entries   any    `json:"entries"`
+}
+
+type SessionAppendMessageRequest struct {
+	SessionID string             `json:"session_id"`
+	Message   *anthropic.Message `json:"message,omitempty"`
+	Role      string             `json:"role,omitempty"`
+	Text      string             `json:"text,omitempty"`
+}
+
+type SessionAppendInputRequest struct {
+	SessionID string `json:"session_id"`
+	Input     string `json:"input"`
+}
+
+type SessionRewindRequest struct {
+	SessionID      string `json:"session_id"`
+	RemoveMessages int    `json:"remove_messages"`
+}
+
+type SessionRewindResult struct {
+	Kind              string `json:"kind"`
+	Action            string `json:"action"`
+	Status            string `json:"status"`
+	SessionID         string `json:"session_id"`
+	Path              string `json:"path,omitempty"`
+	OriginalMessages  int    `json:"original_messages"`
+	RemainingMessages int    `json:"remaining_messages"`
+	RemovedMessages   int    `json:"removed_messages"`
 }
 
 type SessionForkRequest struct {
@@ -195,6 +228,12 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleGetSession(ctx, out, handlers, opts, req)
 	case "session/history", "sessions/history", "history":
 		return false, handleHistory(ctx, out, handlers, req)
+	case "session/append_message", "sessions/append_message":
+		return false, handleAppendMessage(ctx, out, handlers, req)
+	case "session/append_input", "sessions/append_input":
+		return false, handleAppendInput(ctx, out, handlers, req)
+	case "session/rewind", "sessions/rewind":
+		return false, handleRewindSession(ctx, out, handlers, req)
 	case "session/fork", "sessions/fork":
 		return false, handleForkSession(ctx, out, handlers, req)
 	case "session/rename", "sessions/rename":
@@ -224,6 +263,8 @@ func initializeResult(opts Options) map[string]any {
 				"list":    true,
 				"get":     true,
 				"history": true,
+				"append":  true,
+				"rewind":  true,
 				"fork":    true,
 				"rename":  true,
 				"delete":  true,
@@ -316,6 +357,78 @@ func handleHistory(ctx context.Context, out io.Writer, handlers Handlers, req re
 		history.Kind = "session_history"
 	}
 	return writeResult(out, req.ID, history)
+}
+
+func handleAppendMessage(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AppendMessage == nil {
+		return writeError(out, req.ID, -32603, "session append_message handler is not configured")
+	}
+	appendReq, err := parseSessionAppendMessageRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.AppendMessage(ctx, appendReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(result.Kind) == "" {
+		result.Kind = "session_mutation"
+	}
+	if strings.TrimSpace(result.Action) == "" {
+		result.Action = "append_message"
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "ok"
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAppendInput(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AppendInput == nil {
+		return writeError(out, req.ID, -32603, "session append_input handler is not configured")
+	}
+	appendReq, err := parseSessionAppendInputRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.AppendInput(ctx, appendReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(result.Kind) == "" {
+		result.Kind = "session_mutation"
+	}
+	if strings.TrimSpace(result.Action) == "" {
+		result.Action = "append_input"
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "ok"
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleRewindSession(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.RewindSession == nil {
+		return writeError(out, req.ID, -32603, "session rewind handler is not configured")
+	}
+	rewindReq, err := parseSessionRewindRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.RewindSession(ctx, rewindReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(result.Kind) == "" {
+		result.Kind = "session_mutation"
+	}
+	if strings.TrimSpace(result.Action) == "" {
+		result.Action = "rewind"
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "ok"
+	}
+	return writeResult(out, req.ID, result)
 }
 
 func handleForkSession(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
@@ -461,6 +574,91 @@ func parseSessionHistoryRequest(params json.RawMessage) (SessionHistoryRequest, 
 	return SessionHistoryRequest{SessionID: sessionID, Limit: raw.Limit}, nil
 }
 
+func parseSessionAppendMessageRequest(params json.RawMessage) (SessionAppendMessageRequest, error) {
+	var raw struct {
+		SessionID      string             `json:"session_id"`
+		SessionIDCamel string             `json:"sessionId"`
+		ID             string             `json:"id"`
+		Message        *anthropic.Message `json:"message"`
+		Role           string             `json:"role"`
+		Text           string             `json:"text"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionAppendMessageRequest{}, err
+		}
+	}
+	sessionID := firstNonEmpty(raw.SessionID, raw.SessionIDCamel, raw.ID)
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionAppendMessageRequest{}, fmt.Errorf("session_id is required")
+	}
+	if raw.Message != nil {
+		if strings.TrimSpace(raw.Message.Role) == "" || len(raw.Message.Content) == 0 {
+			return SessionAppendMessageRequest{}, fmt.Errorf("message role and content are required")
+		}
+		return SessionAppendMessageRequest{SessionID: sessionID, Message: raw.Message}, nil
+	}
+	role := strings.TrimSpace(raw.Role)
+	if role == "" {
+		role = "user"
+	}
+	text := strings.TrimSpace(raw.Text)
+	if text == "" {
+		return SessionAppendMessageRequest{}, fmt.Errorf("text is required")
+	}
+	return SessionAppendMessageRequest{SessionID: sessionID, Role: role, Text: text}, nil
+}
+
+func parseSessionAppendInputRequest(params json.RawMessage) (SessionAppendInputRequest, error) {
+	var raw struct {
+		SessionID      string `json:"session_id"`
+		SessionIDCamel string `json:"sessionId"`
+		ID             string `json:"id"`
+		Input          string `json:"input"`
+		Prompt         string `json:"prompt"`
+		Text           string `json:"text"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionAppendInputRequest{}, err
+		}
+	}
+	sessionID := firstNonEmpty(raw.SessionID, raw.SessionIDCamel, raw.ID)
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionAppendInputRequest{}, fmt.Errorf("session_id is required")
+	}
+	input := firstNonEmpty(raw.Input, raw.Prompt, raw.Text)
+	if strings.TrimSpace(input) == "" {
+		return SessionAppendInputRequest{}, fmt.Errorf("input is required")
+	}
+	return SessionAppendInputRequest{SessionID: sessionID, Input: input}, nil
+}
+
+func parseSessionRewindRequest(params json.RawMessage) (SessionRewindRequest, error) {
+	var raw struct {
+		SessionID           string `json:"session_id"`
+		SessionIDCamel      string `json:"sessionId"`
+		ID                  string `json:"id"`
+		RemoveMessages      int    `json:"remove_messages"`
+		RemoveMessagesCamel int    `json:"removeMessages"`
+		Count               int    `json:"count"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionRewindRequest{}, err
+		}
+	}
+	sessionID := firstNonEmpty(raw.SessionID, raw.SessionIDCamel, raw.ID)
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionRewindRequest{}, fmt.Errorf("session_id is required")
+	}
+	removeMessages := firstPositive(raw.RemoveMessages, raw.RemoveMessagesCamel, raw.Count)
+	if removeMessages <= 0 {
+		return SessionRewindRequest{}, fmt.Errorf("remove_messages must be positive")
+	}
+	return SessionRewindRequest{SessionID: sessionID, RemoveMessages: removeMessages}, nil
+}
+
 func parseSessionForkRequest(params json.RawMessage) (SessionForkRequest, error) {
 	var raw struct {
 		SessionID       string `json:"session_id"`
@@ -569,6 +767,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func writeResult(out io.Writer, id json.RawMessage, result any) error {
