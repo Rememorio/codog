@@ -192,6 +192,7 @@ var scenarioOrder = []string{
 	"remote_bridge_workspace_roundtrip",
 	"mcp_lifecycle_roundtrip",
 	"mcp_auth_oauth_refresh_roundtrip",
+	"mcp_auth_recovery_roundtrip",
 	"acp_stdio_roundtrip",
 	"auto_compact_triggered",
 	"token_cost_reporting",
@@ -709,6 +710,7 @@ func Run(ctx context.Context) (Report, error) {
 		remoteBridgeWorkspaceScenario(),
 		mcpLifecycleScenario(),
 		mcpAuthOAuthRefreshScenario(),
+		mcpAuthRecoveryScenario(),
 		acpStdioScenario(),
 		{
 			name: "auto_compact_triggered",
@@ -1280,6 +1282,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "mcp-auth",
 		Description: "Exercises MCP auth diagnostics with an expired refreshable OAuth token and verifies redacted refresh output.",
 		ParityRefs:  []string{"MCP auth", "OAuth refresh", "Token redaction"},
+	},
+	"mcp_auth_recovery_roundtrip": {
+		Category:    "mcp-auth",
+		Description: "Exercises MCP auth failure diagnostics, recovery actions, and secret redaction for missing and unauthorized servers.",
+		ParityRefs:  []string{"MCP auth", "Recovery actions", "Error diagnostics", "Token redaction"},
 	},
 	"acp_stdio_roundtrip": {
 		Category:    "editor-bridge",
@@ -3527,6 +3534,84 @@ func mcpAuthOAuthRefreshScenario() scenario {
 				ToolCalls:    1,
 				ToolUses:     []string{"mcp_auth"},
 				RequestCount: 1,
+			}, nil
+		},
+	}
+}
+
+func mcpAuthRecoveryScenario() scenario {
+	return scenario{
+		name: "mcp_auth_recovery_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			tool := tools.MCPAuthTool{
+				Servers:      map[string]config.MCPServerConfig{},
+				ConfigHome:   configHome,
+				OAuthProfile: "work",
+			}
+			missingOut, err := tool.Execute(ctx, json.RawMessage(`{"server":"missing"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"server": "missing"`, `"status": "unknown"`, `"error": "server is not configured"`, `"oauth_profile": "work"`, `"profile_configured": false`, `"command": "codog mcp show missing"`, `"command": "codog mcp auth missing"`, `"command": "codog oauth provider save work ISSUER_URL CLIENT_ID [SCOPE...]"`} {
+				if !strings.Contains(missingOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("missing-server MCP auth output missing %s: %s", expected, missingOut)
+				}
+			}
+
+			unauthorizedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.RawQuery, "secret-token") || r.Header.Get("Authorization") == "Bearer secret-header" {
+					http.Error(w, "unauthorized token rejected", http.StatusUnauthorized)
+					return
+				}
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+			}))
+			defer unauthorizedServer.Close()
+			tool.Servers = map[string]config.MCPServerConfig{
+				"repo": {
+					URL:     unauthorizedServer.URL + "/mcp?token=secret-token",
+					Headers: map[string]string{"Authorization": "Bearer secret-header"},
+				},
+			}
+			unauthorizedOut, err := tool.Execute(ctx, json.RawMessage(`{"server":"repo"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"server": "repo"`, `"status": "error"`, `"oauth_profile": "work"`, `"command": "codog mcp show repo"`, `"command": "codog mcp auth repo"`, `"command": "codog oauth provider save work ISSUER_URL CLIENT_ID [SCOPE...]"`} {
+				if !strings.Contains(unauthorizedOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("unauthorized MCP auth output missing %s: %s", expected, unauthorizedOut)
+				}
+			}
+			for _, leaked := range []string{"secret-token", "secret-header"} {
+				if strings.Contains(unauthorizedOut, leaked) || strings.Contains(missingOut, leaked) {
+					return localScenarioResult{}, fmt.Errorf("MCP auth recovery output leaked secret %q", leaked)
+				}
+			}
+
+			report := map[string]any{
+				"kind": "mcp_auth_recovery",
+				"missing": map[string]any{
+					"status":             "unknown",
+					"profile_configured": false,
+					"actions":            []string{"inspect", "retry", "oauth_provider", "oauth_login"},
+				},
+				"unauthorized": map[string]any{
+					"status":   "error",
+					"actions":  []string{"inspect", "retry", "oauth_provider", "oauth_login"},
+					"redacted": true,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "mcp auth recovery harness ok",
+				ToolCalls:    1,
+				ToolUses:     []string{"mcp_auth"},
+				RequestCount: 2,
+				MessageCount: 1,
 			}, nil
 		},
 	}
