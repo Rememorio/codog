@@ -33,8 +33,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	}
 	fileTools := findCategory(t, report, "file-tools")
 	require.True(t, fileTools.OK)
-	require.Equal(t, 4, fileTools.Total)
-	require.ElementsMatch(t, []string{"edit_glob_ls_roundtrip", "grep_chunk_assembly", "read_file_roundtrip", "write_file_allowed"}, fileTools.Scenarios)
+	require.Equal(t, 5, fileTools.Total)
+	require.ElementsMatch(t, []string{"edit_glob_ls_roundtrip", "grep_chunk_assembly", "multi_edit_apply_patch_roundtrip", "read_file_roundtrip", "write_file_allowed"}, fileTools.Scenarios)
 	hooks := findCategory(t, report, "hooks")
 	require.Equal(t, 6, hooks.Total)
 	permissions := findCategory(t, report, "permissions")
@@ -59,6 +59,13 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, []string{"edit_file", "glob", "ls"}, editGlobLS.ToolUses)
 	require.Equal(t, 3, editGlobLS.ToolCalls)
 	require.Contains(t, editGlobLS.FinalMessage, "edit glob ls harness ok")
+
+	multiEditApplyPatch := findScenario(t, report, "multi_edit_apply_patch_roundtrip")
+	require.True(t, multiEditApplyPatch.OK)
+	require.Equal(t, "file-tools", multiEditApplyPatch.Category)
+	require.Equal(t, []string{"multi_edit", "apply_patch"}, multiEditApplyPatch.ToolUses)
+	require.Equal(t, 2, multiEditApplyPatch.ToolCalls)
+	require.Contains(t, multiEditApplyPatch.FinalMessage, "multi edit apply patch harness ok")
 
 	attachments := findScenario(t, report, "prompt_attachments_roundtrip")
 	require.Equal(t, "attachments", attachments.Category)

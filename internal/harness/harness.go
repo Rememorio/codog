@@ -170,6 +170,7 @@ var scenarioOrder = []string{
 	"multi_tool_turn_roundtrip",
 	"grep_chunk_assembly",
 	"edit_glob_ls_roundtrip",
+	"multi_edit_apply_patch_roundtrip",
 	"bash_stdout_roundtrip",
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
@@ -587,6 +588,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		editGlobLSScenario(),
+		multiEditApplyPatchScenario(),
 		{
 			name:       "bash_stdout_roundtrip",
 			permission: tools.PermissionAllow,
@@ -1167,6 +1169,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Executes edit_file, glob, and ls in one tool turn and verifies the edited workspace file.",
 		ParityRefs:  []string{"File tools", "Edit tool", "Glob tool", "LS tool"},
 	},
+	"multi_edit_apply_patch_roundtrip": {
+		Category:    "file-tools",
+		Description: "Executes multi_edit followed by apply_patch and verifies the atomic file mutation chain.",
+		ParityRefs:  []string{"File tools", "MultiEdit tool", "ApplyPatch tool", "Unified diff patches"},
+	},
 	"bash_stdout_roundtrip": {
 		Category:    "bash",
 		Description: "Runs bash in danger-full-access mode and returns stdout to the model.",
@@ -1603,6 +1610,67 @@ func editGlobLSScenario() scenario {
 			for _, expected := range []string{`"kind": "ls"`, `"name": "app.txt"`, `"type": "file"`} {
 				if !strings.Contains(outputs["ls"], expected) {
 					return fmt.Errorf("ls output missing %s: %s", expected, outputs["ls"])
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func multiEditApplyPatchScenario() scenario {
+	return scenario{
+		name:       "multi_edit_apply_patch_roundtrip",
+		permission: tools.PermissionWorkspace,
+		turns: []mockanthropic.Turn{
+			{ToolUses: []mockanthropic.ToolUse{
+				{
+					ID:    "tool-1",
+					Name:  "multi_edit",
+					Input: json.RawMessage(`{"path":"src/app.txt","edits":[{"old_string":"title: alpha","new_string":"title: beta"},{"old_string":"count = 1","new_string":"count = 2"}]}`),
+				},
+				{
+					ID:    "tool-2",
+					Name:  "apply_patch",
+					Input: json.RawMessage(`{"patch":"--- a/src/app.txt\n+++ b/src/app.txt\n@@ -1,3 +1,4 @@\n title: beta\n count = 2\n status: draft\n+status_detail: patched"}`),
+				},
+			}},
+			{Text: "multi edit apply patch harness ok"},
+		},
+		prompt: "perform multi edit and patch",
+		setup: func(workspace string) error {
+			srcDir := filepath.Join(workspace, "src")
+			if err := os.MkdirAll(srcDir, 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(srcDir, "app.txt"), []byte("title: alpha\ncount = 1\nstatus: draft\n"), 0o644)
+		},
+		verify: func(workspace string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "multi edit apply patch harness ok") {
+				return fmt.Errorf("missing multi_edit/apply_patch final response")
+			}
+			if err := expectToolCalls(result, 2, false); err != nil {
+				return err
+			}
+			updated, err := os.ReadFile(filepath.Join(workspace, "src", "app.txt"))
+			if err != nil {
+				return err
+			}
+			want := "title: beta\ncount = 2\nstatus: draft\nstatus_detail: patched\n"
+			if string(updated) != want {
+				return fmt.Errorf("unexpected patched file content: %q", string(updated))
+			}
+			outputs := map[string]string{}
+			for _, call := range result.ToolCalls {
+				outputs[call.Name] = call.Output
+			}
+			for _, expected := range []string{`"edits": 2`, `"replacements": 2`, `"undo_available": true`} {
+				if !strings.Contains(outputs["multi_edit"], expected) {
+					return fmt.Errorf("multi_edit output missing %s: %s", expected, outputs["multi_edit"])
+				}
+			}
+			for _, expected := range []string{`"kind": "apply_patch"`, `"files_changed": 1`, `"operation": "update"`, `"path": "src/app.txt"`} {
+				if !strings.Contains(outputs["apply_patch"], expected) {
+					return fmt.Errorf("apply_patch output missing %s: %s", expected, outputs["apply_patch"])
 				}
 			}
 			return nil
