@@ -68,6 +68,13 @@ type Handlers struct {
 	BackgroundPrune     func(context.Context, BackgroundPruneRequest) (any, error)
 	BackgroundSupervise func(context.Context, BackgroundSuperviseRequest) (any, error)
 	BackgroundWatch     func(context.Context, BackgroundWatchRequest, func(background.WatchEvent) error) (any, error)
+	AgentRunsList       func(context.Context, AgentRunsListRequest) (any, error)
+	AgentRunsGet        func(context.Context, AgentRunIDRequest) (any, error)
+	AgentRunsLogs       func(context.Context, AgentRunLogsRequest) (any, error)
+	AgentRunsBoard      func(context.Context, AgentRunsBoardRequest) (any, error)
+	AgentRunsHeartbeat  func(context.Context, AgentRunHeartbeatRequest) (any, error)
+	AgentRunsStop       func(context.Context, AgentRunIDRequest) (any, error)
+	AgentRunsPrune      func(context.Context, AgentRunsPruneRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -330,6 +337,40 @@ type BackgroundWatchRequest struct {
 	MaxEvents  int    `json:"max_events,omitempty"`
 }
 
+type AgentRunsListRequest struct {
+	Agent     string `json:"agent,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+type AgentRunIDRequest struct {
+	ID string `json:"id"`
+}
+
+type AgentRunLogsRequest struct {
+	ID    string `json:"id"`
+	Limit int64  `json:"limit,omitempty"`
+}
+
+type AgentRunsBoardRequest struct {
+	Agent               string `json:"agent,omitempty"`
+	SessionID           string `json:"session_id,omitempty"`
+	StalledAfterSeconds int    `json:"stalled_after_seconds,omitempty"`
+	StalledAfterMS      int    `json:"stalled_after_ms,omitempty"`
+}
+
+type AgentRunHeartbeatRequest struct {
+	ID             string     `json:"id"`
+	Status         string     `json:"status,omitempty"`
+	TransportAlive *bool      `json:"transport_alive,omitempty"`
+	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+}
+
+type AgentRunsPruneRequest struct {
+	OlderThanSeconds int  `json:"older_than_seconds,omitempty"`
+	OlderThanDays    int  `json:"older_than_days,omitempty"`
+	Keep             *int `json:"keep,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -465,6 +506,20 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleBackgroundSupervise(ctx, out, handlers, req)
 	case "background/watch":
 		return false, handleBackgroundWatch(ctx, out, handlers, req)
+	case "agent-runs/list":
+		return false, handleAgentRunsList(ctx, out, handlers, req)
+	case "agent-runs/get", "agent-runs/status":
+		return false, handleAgentRunsGet(ctx, out, handlers, req)
+	case "agent-runs/logs":
+		return false, handleAgentRunsLogs(ctx, out, handlers, req)
+	case "agent-runs/board":
+		return false, handleAgentRunsBoard(ctx, out, handlers, req)
+	case "agent-runs/heartbeat":
+		return false, handleAgentRunsHeartbeat(ctx, out, handlers, req)
+	case "agent-runs/stop":
+		return false, handleAgentRunsStop(ctx, out, handlers, req)
+	case "agent-runs/prune":
+		return false, handleAgentRunsPrune(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -565,6 +620,15 @@ func initializeResult(opts Options) map[string]any {
 				"prune":     true,
 				"supervise": true,
 				"watch":     true,
+			},
+			"agent_runs": map[string]any{
+				"list":      true,
+				"get":       true,
+				"logs":      true,
+				"board":     true,
+				"heartbeat": true,
+				"stop":      true,
+				"prune":     true,
 			},
 			"prompt": true,
 			"status": true,
@@ -1136,6 +1200,135 @@ func handleBackgroundWatch(ctx context.Context, out io.Writer, handlers Handlers
 	return writeResult(out, req.ID, result)
 }
 
+func handleAgentRunsList(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsList == nil {
+		return writeError(out, req.ID, -32603, "agent runs list handler is not configured")
+	}
+	var request AgentRunsListRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.AgentRunsList(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAgentRunsGet(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsGet == nil {
+		return writeError(out, req.ID, -32603, "agent runs get handler is not configured")
+	}
+	request, err := parseAgentRunIDRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.AgentRunsGet(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAgentRunsLogs(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsLogs == nil {
+		return writeError(out, req.ID, -32603, "agent runs logs handler is not configured")
+	}
+	var request AgentRunLogsRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.ID) == "" {
+		return writeError(out, req.ID, -32602, "id is required")
+	}
+	if request.Limit < 0 {
+		return writeError(out, req.ID, -32602, "limit must be non-negative")
+	}
+	result, err := handlers.AgentRunsLogs(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAgentRunsBoard(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsBoard == nil {
+		return writeError(out, req.ID, -32603, "agent runs board handler is not configured")
+	}
+	var request AgentRunsBoardRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if request.StalledAfterMS < 0 {
+		return writeError(out, req.ID, -32602, "stalled_after_ms must be non-negative")
+	}
+	if request.StalledAfterSeconds < 0 {
+		return writeError(out, req.ID, -32602, "stalled_after_seconds must be non-negative")
+	}
+	result, err := handlers.AgentRunsBoard(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAgentRunsHeartbeat(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsHeartbeat == nil {
+		return writeError(out, req.ID, -32603, "agent runs heartbeat handler is not configured")
+	}
+	var request AgentRunHeartbeatRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.ID) == "" {
+		return writeError(out, req.ID, -32602, "id is required")
+	}
+	result, err := handlers.AgentRunsHeartbeat(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAgentRunsStop(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsStop == nil {
+		return writeError(out, req.ID, -32603, "agent runs stop handler is not configured")
+	}
+	request, err := parseAgentRunIDRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.AgentRunsStop(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleAgentRunsPrune(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.AgentRunsPrune == nil {
+		return writeError(out, req.ID, -32603, "agent runs prune handler is not configured")
+	}
+	var request AgentRunsPruneRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if request.OlderThanSeconds < 0 {
+		return writeError(out, req.ID, -32602, "older_than_seconds must be non-negative")
+	}
+	if request.OlderThanDays < 0 {
+		return writeError(out, req.ID, -32602, "older_than_days must be non-negative")
+	}
+	if request.Keep != nil && *request.Keep < 0 {
+		return writeError(out, req.ID, -32602, "keep must be non-negative")
+	}
+	result, err := handlers.AgentRunsPrune(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
 func handleNewSession(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
 	if handlers.NewSession == nil {
 		return writeError(out, req.ID, -32603, "session handler is not configured")
@@ -1698,6 +1891,26 @@ func parseBackgroundIDRequest(params json.RawMessage) (BackgroundIDRequest, erro
 	}
 	if strings.TrimSpace(raw.ID) == "" {
 		return BackgroundIDRequest{}, fmt.Errorf("id is required")
+	}
+	return raw, nil
+}
+
+func parseAgentRunIDRequest(params json.RawMessage) (AgentRunIDRequest, error) {
+	var raw AgentRunIDRequest
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err == nil && strings.TrimSpace(raw.ID) != "" {
+			return raw, nil
+		}
+		var id string
+		if err := json.Unmarshal(params, &id); err == nil && strings.TrimSpace(id) != "" {
+			return AgentRunIDRequest{ID: id}, nil
+		}
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return AgentRunIDRequest{}, err
+		}
+	}
+	if strings.TrimSpace(raw.ID) == "" {
+		return AgentRunIDRequest{}, fmt.Errorf("id is required")
 	}
 	return raw, nil
 }

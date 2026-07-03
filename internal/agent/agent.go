@@ -6616,6 +6616,25 @@ func filterAgentRuns(runs []agentruns.Run, filter string) []agentruns.Run {
 	return out
 }
 
+func filterACPAgentRuns(runs []agentruns.Run, agent string, sessionID string) []agentruns.Run {
+	agent = strings.TrimSpace(agent)
+	sessionID = strings.TrimSpace(sessionID)
+	if agent == "" && sessionID == "" {
+		return runs
+	}
+	out := make([]agentruns.Run, 0, len(runs))
+	for _, run := range runs {
+		if agent != "" && !strings.EqualFold(run.Agent, agent) {
+			continue
+		}
+		if sessionID != "" && run.SessionID != sessionID {
+			continue
+		}
+		out = append(out, run)
+	}
+	return out
+}
+
 func renderAgentRunsReport(out io.Writer, report agentRunsReport, format string) error {
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -20773,6 +20792,13 @@ var acpJSONRPCMethods = []string{
 	"background/prune",
 	"background/supervise",
 	"background/watch",
+	"agent-runs/list",
+	"agent-runs/get",
+	"agent-runs/logs",
+	"agent-runs/board",
+	"agent-runs/heartbeat",
+	"agent-runs/stop",
+	"agent-runs/prune",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20837,7 +20863,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, agent-runs/list, agent-runs/get, agent-runs/logs, agent-runs/board, agent-runs/heartbeat, agent-runs/stop, agent-runs/prune, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -20986,6 +21012,12 @@ func (a *App) serveACP(ctx context.Context) error {
 			return background.Store{}, errors.New("config home is required")
 		}
 		return background.NewStore(a.Config.ConfigHome), nil
+	}
+	agentRunStores := func() (agentruns.Store, background.Store, error) {
+		if strings.TrimSpace(a.Config.ConfigHome) == "" {
+			return agentruns.Store{}, background.Store{}, errors.New("config home is required")
+		}
+		return agentruns.NewStore(a.Config.ConfigHome), background.NewStore(a.Config.ConfigHome), nil
 	}
 	return acpserver.Serve(ctx, in, out, acpserver.Handlers{
 		NewSession: func(context.Context) (acpserver.SessionInfo, error) {
@@ -21398,6 +21430,138 @@ func (a *App) serveACP(ctx context.Context) error {
 				return nil, err
 			}
 			return map[string]any{"id": req.ID, "events": events}, nil
+		},
+		AgentRunsList: func(_ context.Context, req acpserver.AgentRunsListRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			runs, err := runStore.List()
+			if err != nil {
+				return nil, err
+			}
+			runs = filterACPAgentRuns(runs, req.Agent, req.SessionID)
+			statuses := make([]agentruns.Status, 0, len(runs))
+			for _, run := range runs {
+				statuses = append(statuses, agentruns.StatusForTask(taskStore, run))
+			}
+			return statuses, nil
+		},
+		AgentRunsGet: func(_ context.Context, req acpserver.AgentRunIDRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			run, err := runStore.Get(req.ID)
+			if err != nil {
+				return nil, err
+			}
+			return agentruns.StatusForTask(taskStore, run), nil
+		},
+		AgentRunsLogs: func(_ context.Context, req acpserver.AgentRunLogsRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			run, err := runStore.Get(req.ID)
+			if err != nil {
+				return nil, err
+			}
+			limit := req.Limit
+			if limit <= 0 {
+				limit = 64 * 1024
+			}
+			logs, err := taskStore.Logs(run.TaskID, limit)
+			if err != nil {
+				return nil, err
+			}
+			_, _ = runStore.Touch(run.ID)
+			return map[string]any{"id": req.ID, "task_id": run.TaskID, "logs": logs}, nil
+		},
+		AgentRunsBoard: func(_ context.Context, req acpserver.AgentRunsBoardRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			runs, err := runStore.List()
+			if err != nil {
+				return nil, err
+			}
+			runs = filterACPAgentRuns(runs, req.Agent, req.SessionID)
+			stalledAfter := 30 * time.Second
+			switch {
+			case req.StalledAfterMS > 0:
+				stalledAfter = time.Duration(req.StalledAfterMS) * time.Millisecond
+			case req.StalledAfterSeconds > 0:
+				stalledAfter = time.Duration(req.StalledAfterSeconds) * time.Second
+			}
+			return agentruns.BuildBoard(taskStore, runs, time.Now().UTC(), stalledAfter), nil
+		},
+		AgentRunsHeartbeat: func(_ context.Context, req acpserver.AgentRunHeartbeatRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			run, err := runStore.Get(req.ID)
+			if err != nil {
+				return nil, err
+			}
+			transportAlive := true
+			if req.TransportAlive != nil {
+				transportAlive = *req.TransportAlive
+			}
+			heartbeat := background.LaneHeartbeat{
+				TransportAlive: transportAlive,
+				Status:         req.Status,
+			}
+			if req.ObservedAt != nil {
+				heartbeat.ObservedAt = *req.ObservedAt
+			}
+			task, err := taskStore.UpdateHeartbeat(run.TaskID, heartbeat)
+			if err != nil {
+				return nil, err
+			}
+			run, err = runStore.Touch(run.ID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"run": run, "task": task}, nil
+		},
+		AgentRunsStop: func(_ context.Context, req acpserver.AgentRunIDRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			run, err := runStore.Get(req.ID)
+			if err != nil {
+				return nil, err
+			}
+			task, err := taskStore.Stop(run.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			run, err = runStore.Touch(run.ID)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"run": run, "task": task}, nil
+		},
+		AgentRunsPrune: func(_ context.Context, req acpserver.AgentRunsPruneRequest) (any, error) {
+			runStore, taskStore, err := agentRunStores()
+			if err != nil {
+				return nil, err
+			}
+			options := background.DefaultPruneOptions()
+			switch {
+			case req.OlderThanSeconds > 0:
+				options.OlderThan = time.Duration(req.OlderThanSeconds) * time.Second
+			case req.OlderThanDays > 0:
+				options.OlderThan = time.Duration(req.OlderThanDays) * 24 * time.Hour
+			}
+			if req.Keep != nil {
+				options.Keep = *req.Keep
+			}
+			return agentruns.Prune(runStore, taskStore, options)
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

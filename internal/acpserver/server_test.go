@@ -151,6 +151,14 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, backgroundCaps["prune"])
 	require.Equal(t, true, backgroundCaps["supervise"])
 	require.Equal(t, true, backgroundCaps["watch"])
+	agentRunCaps := capabilities["agent_runs"].(map[string]any)
+	require.Equal(t, true, agentRunCaps["list"])
+	require.Equal(t, true, agentRunCaps["get"])
+	require.Equal(t, true, agentRunCaps["logs"])
+	require.Equal(t, true, agentRunCaps["board"])
+	require.Equal(t, true, agentRunCaps["heartbeat"])
+	require.Equal(t, true, agentRunCaps["stop"])
+	require.Equal(t, true, agentRunCaps["prune"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -581,6 +589,75 @@ func TestServeStreamsBackgroundWatchNotifications(t *testing.T) {
 	result := responses[2]["result"].(map[string]any)
 	require.Equal(t, "task-1", result["id"])
 	require.EqualValues(t, 2, result["events"])
+}
+
+func TestServeHandlesAgentRunsRequests(t *testing.T) {
+	observedAt := time.Date(2026, 7, 3, 1, 0, 0, 0, time.UTC)
+	keep := 1
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"agent-runs/list","params":{"agent":"reviewer","session_id":"session-1"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"agent-runs/get","params":{"id":"run-1"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"agent-runs/logs","params":{"id":"run-1","limit":4096}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"agent-runs/board","params":{"agent":"reviewer","session_id":"session-1","stalled_after_ms":500}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"agent-runs/heartbeat","params":{"id":"run-1","status":"working","transport_alive":false,"observed_at":"` + observedAt.Format(time.RFC3339) + `"}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"agent-runs/stop","params":"run-1"}`,
+		`{"jsonrpc":"2.0","id":7,"method":"agent-runs/prune","params":{"older_than_days":2,"keep":1}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		AgentRunsList: func(_ context.Context, req AgentRunsListRequest) (any, error) {
+			require.Equal(t, "reviewer", req.Agent)
+			require.Equal(t, "session-1", req.SessionID)
+			return []map[string]any{{"id": "run-1", "kind": "agent_run"}}, nil
+		},
+		AgentRunsGet: func(_ context.Context, req AgentRunIDRequest) (any, error) {
+			require.Equal(t, "run-1", req.ID)
+			return map[string]any{"id": req.ID, "kind": "agent_run_status"}, nil
+		},
+		AgentRunsLogs: func(_ context.Context, req AgentRunLogsRequest) (any, error) {
+			require.Equal(t, "run-1", req.ID)
+			require.EqualValues(t, 4096, req.Limit)
+			return map[string]any{"id": req.ID, "kind": "agent_run_logs"}, nil
+		},
+		AgentRunsBoard: func(_ context.Context, req AgentRunsBoardRequest) (any, error) {
+			require.Equal(t, "reviewer", req.Agent)
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, 500, req.StalledAfterMS)
+			return map[string]any{"kind": "agent_run_board"}, nil
+		},
+		AgentRunsHeartbeat: func(_ context.Context, req AgentRunHeartbeatRequest) (any, error) {
+			require.Equal(t, "run-1", req.ID)
+			require.Equal(t, "working", req.Status)
+			require.NotNil(t, req.TransportAlive)
+			require.False(t, *req.TransportAlive)
+			require.NotNil(t, req.ObservedAt)
+			require.Equal(t, observedAt, req.ObservedAt.UTC())
+			return map[string]any{"id": req.ID, "kind": "agent_run_heartbeat"}, nil
+		},
+		AgentRunsStop: func(_ context.Context, req AgentRunIDRequest) (any, error) {
+			require.Equal(t, "run-1", req.ID)
+			return map[string]any{"id": req.ID, "kind": "agent_run_stop"}, nil
+		},
+		AgentRunsPrune: func(_ context.Context, req AgentRunsPruneRequest) (any, error) {
+			require.Equal(t, 2, req.OlderThanDays)
+			require.NotNil(t, req.Keep)
+			require.Equal(t, keep, *req.Keep)
+			return map[string]any{"kind": "agent_run_prune"}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 7)
+	require.Len(t, responses[0]["result"].([]any), 1)
+	require.Equal(t, "agent_run_status", responses[1]["result"].(map[string]any)["kind"])
+	require.Equal(t, "agent_run_logs", responses[2]["result"].(map[string]any)["kind"])
+	require.Equal(t, "agent_run_board", responses[3]["result"].(map[string]any)["kind"])
+	require.Equal(t, "agent_run_heartbeat", responses[4]["result"].(map[string]any)["kind"])
+	require.Equal(t, "agent_run_stop", responses[5]["result"].(map[string]any)["kind"])
+	require.Equal(t, "agent_run_prune", responses[6]["result"].(map[string]any)["kind"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {

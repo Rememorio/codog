@@ -5920,6 +5920,13 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "background/prune")
 	require.Contains(t, report.Protocol.Methods, "background/supervise")
 	require.Contains(t, report.Protocol.Methods, "background/watch")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/list")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/get")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/logs")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/board")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/heartbeat")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/stop")
+	require.Contains(t, report.Protocol.Methods, "agent-runs/prune")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6662,6 +6669,116 @@ func TestACPServeStreamsBackgroundWatch(t *testing.T) {
 	require.NotNil(t, responses[3]["result"])
 }
 
+func TestACPServeExposesAgentRunsControls(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	bg := background.NewStore(configHome)
+	runs := agentruns.NewStore(configHome)
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+
+	task, err := bg.RunWithOptions("printf agent-acp", workspace, background.RunOptions{
+		Kind:      "agent",
+		AgentType: "reviewer",
+		SessionID: "session-acp",
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		logs, err := bg.Logs(task.ID, 4096)
+		return err == nil && strings.Contains(logs, "agent-acp")
+	}, 2*time.Second, 50*time.Millisecond)
+	run, err := runs.Save(agentruns.Run{
+		ID:        "run-" + task.ID,
+		Agent:     "reviewer",
+		Workspace: workspace,
+		SessionID: "session-acp",
+		TaskID:    task.ID,
+		CreatedAt: task.StartedAt,
+		UpdatedAt: task.StartedAt,
+	})
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	orphan, err := runs.Save(agentruns.Run{
+		ID:        "orphan-acp",
+		Agent:     "reviewer",
+		Workspace: workspace,
+		SessionID: "old-session",
+		TaskID:    "missing-task",
+		CreatedAt: now.Add(-2 * time.Hour),
+		UpdatedAt: now.Add(-2 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	longTask, err := bg.RunWithOptions("sleep 5", workspace, background.RunOptions{
+		Kind:      "agent",
+		AgentType: "reviewer",
+	})
+	require.NoError(t, err)
+	longRun, err := runs.Save(agentruns.Run{
+		ID:        "run-" + longTask.ID,
+		Agent:     "reviewer",
+		Workspace: workspace,
+		TaskID:    longTask.ID,
+		CreatedAt: longTask.StartedAt,
+		UpdatedAt: longTask.StartedAt,
+	})
+	require.NoError(t, err)
+
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"agent-runs/list","params":{"agent":"reviewer","session_id":"session-acp"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"agent-runs/get","params":{"id":"` + run.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"agent-runs/logs","params":{"id":"` + run.ID + `","limit":4096}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"agent-runs/heartbeat","params":{"id":"` + run.ID + `","status":"working","transport_alive":true,"observed_at":"` + now.Format(time.RFC3339) + `"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"agent-runs/board","params":{"agent":"reviewer","session_id":"session-acp","stalled_after_seconds":3600}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"agent-runs/prune","params":{"older_than_seconds":3600,"keep":1}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"agent-runs/stop","params":"` + longRun.ID + `"}`,
+		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 8)
+	list := responses[0]["result"].([]any)
+	require.Len(t, list, 1)
+	listRun := list[0].(map[string]any)["run"].(map[string]any)
+	require.Equal(t, run.ID, listRun["id"])
+	get := responses[1]["result"].(map[string]any)
+	getRun := get["run"].(map[string]any)
+	require.Equal(t, run.ID, getRun["id"])
+	logs := responses[2]["result"].(map[string]any)
+	require.Equal(t, run.ID, logs["id"])
+	require.Equal(t, task.ID, logs["task_id"])
+	require.Contains(t, logs["logs"], "agent-acp")
+	heartbeat := responses[3]["result"].(map[string]any)
+	heartbeatTask := heartbeat["task"].(map[string]any)
+	heartbeatPayload := heartbeatTask["heartbeat"].(map[string]any)
+	require.Equal(t, "working", heartbeatPayload["status"])
+	board := responses[4]["result"].(map[string]any)
+	require.NotNil(t, board["generated_at"])
+	require.NotNil(t, board["active"])
+	require.NotNil(t, board["finished"])
+	prune := responses[5]["result"].(map[string]any)
+	require.EqualValues(t, 1, prune["removed_count"])
+	require.Contains(t, prune["removed"].([]any), orphan.ID)
+	require.NoFileExists(t, filepath.Join(configHome, "agent-runs", orphan.ID+".json"))
+	stop := responses[6]["result"].(map[string]any)
+	stopRun := stop["run"].(map[string]any)
+	stopTask := stop["task"].(map[string]any)
+	require.Equal(t, longRun.ID, stopRun["id"])
+	require.Equal(t, "stopped", stopTask["status"])
+	require.NotNil(t, responses[7]["result"])
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6728,6 +6845,14 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, backgroundCaps["prune"])
 			require.Equal(t, true, backgroundCaps["supervise"])
 			require.Equal(t, true, backgroundCaps["watch"])
+			agentRunCaps := capabilities["agent_runs"].(map[string]any)
+			require.Equal(t, true, agentRunCaps["list"])
+			require.Equal(t, true, agentRunCaps["get"])
+			require.Equal(t, true, agentRunCaps["logs"])
+			require.Equal(t, true, agentRunCaps["board"])
+			require.Equal(t, true, agentRunCaps["heartbeat"])
+			require.Equal(t, true, agentRunCaps["stop"])
+			require.Equal(t, true, agentRunCaps["prune"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])
