@@ -2210,6 +2210,34 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.False(t, routes.RequiresProviderRequest)
 
 	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "models", "search", "kimi", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var search modelSearchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &search))
+	require.Equal(t, "models", search.Kind)
+	require.Equal(t, "search", search.Action)
+	require.Equal(t, "ok", search.Status)
+	require.Equal(t, "kimi", search.Query)
+	require.GreaterOrEqual(t, search.MatchCount, 3)
+	require.True(t, modelAliasExists(search.Aliases, "kimi", "kimi-k2.5", modelrouting.ProviderDashScope))
+	require.True(t, modelRouteExists(search.Routes, "kimi/ or kimi-", modelrouting.ProviderDashScope))
+	require.NotEmpty(t, search.Models)
+	require.Equal(t, "kimi-k2.5", search.Models[0].ResolvedModel)
+	require.False(t, search.RequiresProviderRequest)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "models", "search"}, config.FlagOverrides{})
+	})
+	require.Error(t, err)
+	var searchError actionErrorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &searchError))
+	require.Equal(t, "models", searchError.Kind)
+	require.Equal(t, "search", searchError.Action)
+	require.Equal(t, "missing_argument", searchError.ErrorKind)
+	require.Equal(t, "query", searchError.Argument)
+
+	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "models", "show", "kimi", "--json"}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
@@ -2248,6 +2276,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "models", modelHelp.Command)
 	require.Contains(t, modelHelp.Usage, "aliases")
 	require.Contains(t, modelHelp.Usage, "routes")
+	require.Contains(t, modelHelp.Usage, "search")
 	require.Contains(t, modelHelp.Usage, "show")
 	require.NotNil(t, modelHelp.RequiresProviderRequest)
 	require.False(t, *modelHelp.RequiresProviderRequest)
@@ -2263,6 +2292,7 @@ func TestDirectSlashCLIContracts(t *testing.T) {
 	require.Equal(t, "unsupported_models_action", modelsError.ErrorKind)
 	require.Contains(t, modelsError.Hint, "aliases")
 	require.Contains(t, modelsError.Hint, "routes")
+	require.Contains(t, modelsError.Hint, "search")
 	require.Contains(t, modelsError.Hint, "show")
 
 	out, err = captureStdout(t, func() error {

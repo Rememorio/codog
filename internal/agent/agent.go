@@ -30263,6 +30263,20 @@ type modelRoutesInventoryReport struct {
 	Message                 string             `json:"message"`
 }
 
+type modelSearchReport struct {
+	Kind                    string              `json:"kind"`
+	Action                  string              `json:"action"`
+	Status                  string              `json:"status"`
+	Query                   string              `json:"query"`
+	MatchCount              int                 `json:"match_count"`
+	Aliases                 []modelAliasReport  `json:"aliases,omitempty"`
+	Routes                  []modelRouteReport  `json:"routes,omitempty"`
+	Models                  []modelDetailReport `json:"models,omitempty"`
+	LocalOnly               bool                `json:"local_only"`
+	RequiresProviderRequest bool                `json:"requires_provider_request"`
+	Message                 string              `json:"message"`
+}
+
 type modelDetailReport struct {
 	Kind                            string `json:"kind"`
 	Action                          string `json:"action"`
@@ -30346,6 +30360,11 @@ func (a *App) Models(args []string) error {
 			RequiresProviderRequest: false,
 			Message:                 "Routes are selected from the resolved model name without making a provider request.",
 		}, req.Format)
+	case "search":
+		if strings.TrimSpace(req.Model) == "" {
+			return renderMissingActionArgument(a.Out, "models", "search", "query", "models search requires a query", "Usage: codog models search QUERY [--output-format text|json].", req.Format)
+		}
+		return renderModelSearchReport(a.Out, a.buildModelSearchReport(req.Model), req.Format)
 	case "show":
 		return renderModelDetailReport(a.Out, a.buildModelDetailReport(req.Model), req.Format)
 	default:
@@ -30355,7 +30374,7 @@ func (a *App) Models(args []string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_models_action",
 			Message:   fmt.Sprintf("unsupported models action %q", req.Action),
-			Hint:      "Usage: codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json].",
+			Hint:      "Usage: codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json].",
 		}, req.Format)
 	}
 }
@@ -30384,6 +30403,94 @@ func (a *App) buildModelsReport() modelsReport {
 	return report
 }
 
+func (a *App) buildModelSearchReport(query string) modelSearchReport {
+	query = strings.TrimSpace(query)
+	aliases := matchingModelAliases(query, modelAliases())
+	routes := matchingModelRoutes(query, modelRoutes())
+	models := matchingModelDetails(a, query, aliases)
+	return modelSearchReport{
+		Kind:                    "models",
+		Action:                  "search",
+		Status:                  "ok",
+		Query:                   query,
+		MatchCount:              len(aliases) + len(routes) + len(models),
+		Aliases:                 aliases,
+		Routes:                  routes,
+		Models:                  models,
+		LocalOnly:               true,
+		RequiresProviderRequest: false,
+		Message:                 "Model search is resolved locally across aliases, providers, routes, and compatibility metadata.",
+	}
+}
+
+func matchingModelAliases(query string, aliases []modelAliasReport) []modelAliasReport {
+	out := []modelAliasReport{}
+	for _, alias := range aliases {
+		if modelSearchMatches(query, alias.Name, alias.Model, alias.Provider) {
+			out = append(out, alias)
+		}
+	}
+	return out
+}
+
+func matchingModelRoutes(query string, routes []modelRouteReport) []modelRouteReport {
+	out := []modelRouteReport{}
+	for _, route := range routes {
+		if modelSearchMatches(query, route.Prefix, route.Provider, route.WireProtocol, route.AuthEnv, route.BaseURLEnv, route.DefaultBaseURL, route.Description) {
+			out = append(out, route)
+		}
+	}
+	return out
+}
+
+func matchingModelDetails(a *App, query string, aliases []modelAliasReport) []modelDetailReport {
+	seen := map[string]bool{}
+	out := []modelDetailReport{}
+	add := func(model string) {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return
+		}
+		key := strings.ToLower(resolveModelAlias(model))
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, a.buildModelDetailReport(model))
+	}
+	for _, alias := range aliases {
+		add(alias.Name)
+	}
+	if modelSearchLooksLikeModel(query) {
+		add(query)
+	}
+	return out
+}
+
+func modelSearchMatches(query string, values ...string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func modelSearchLooksLikeModel(query string) bool {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return false
+	}
+	if modelAliasName(query) != "" {
+		return true
+	}
+	return strings.ContainsAny(query, "/-.") || strings.HasPrefix(strings.ToLower(query), "gpt") || strings.HasPrefix(strings.ToLower(query), "claude")
+}
+
 func (a *App) ResumedModel(args []string) error {
 	req, err := parseModelArgs(args)
 	if err != nil {
@@ -30401,7 +30508,7 @@ func (a *App) ResumedModel(args []string) error {
 
 const (
 	modelUsage  = "codog model [MODEL] [--output-format text|json]"
-	modelsUsage = "codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]"
+	modelsUsage = "codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json]"
 )
 
 func parseModelArgs(args []string) (modelRequest, error) {
@@ -30475,10 +30582,12 @@ func parseModelsArgs(args []string) (modelsRequest, error) {
 		req.Action = "routes"
 	case "show", "info", "describe", "resolve", "current":
 		req.Action = "show"
+	case "search", "find":
+		req.Action = "search"
 	default:
 		req.Action = action
 	}
-	if req.Action == "show" {
+	if req.Action == "show" || req.Action == "search" {
 		if action == "current" {
 			if len(positionals) > 1 {
 				return req, unexpectedExtraArgsError{
@@ -30798,6 +30907,37 @@ func renderModelRoutesInventoryReport(out io.Writer, report modelRoutesInventory
 	}
 	for _, route := range report.Routes {
 		fmt.Fprintf(out, "  %-18s -> %-10s protocol=%s env=%s\n", route.Prefix, route.Provider, route.WireProtocol, route.AuthEnv)
+	}
+	return nil
+}
+
+func renderModelSearchReport(out io.Writer, report modelSearchReport, format string) error {
+	report.MatchCount = len(report.Aliases) + len(report.Routes) + len(report.Models)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Model Search")
+	fmt.Fprintf(out, "  Query            %s\n", report.Query)
+	fmt.Fprintf(out, "  Matches          %d\n", report.MatchCount)
+	if len(report.Aliases) != 0 {
+		fmt.Fprintln(out, "  Aliases")
+		for _, alias := range report.Aliases {
+			fmt.Fprintf(out, "    %-14s -> %-28s provider=%s\n", alias.Name, alias.Model, alias.Provider)
+		}
+	}
+	if len(report.Routes) != 0 {
+		fmt.Fprintln(out, "  Routes")
+		for _, route := range report.Routes {
+			fmt.Fprintf(out, "    %-18s -> %-10s protocol=%s\n", route.Prefix, route.Provider, route.WireProtocol)
+		}
+	}
+	if len(report.Models) != 0 {
+		fmt.Fprintln(out, "  Models")
+		for _, model := range report.Models {
+			fmt.Fprintf(out, "    %-28s provider=%s wire=%s\n", model.ResolvedModel, model.Provider, model.WireModel)
+		}
 	}
 	return nil
 }
@@ -47736,8 +47876,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"models",
 			"models",
-			"codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]",
-			"Models\n\nUsage:\n  codog models [list|aliases|routes|show [MODEL]|current|help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, and local model diagnostics without making a provider request.\n",
+			"codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json]",
+			"Models\n\nUsage:\n  codog models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--output-format text|json]\n  codog model help [--output-format text|json]\n\nShows bounded local model-selection guidance, built-in aliases, routing rules, searchable model metadata, and local model diagnostics without making a provider request.\n",
 			[]string{"default_model", "aliases", "routes", "configured_model", "resolved_configured_model", "provider", "wire_model", "requires_provider_request"},
 			[]string{"ok", "error"},
 			false,
@@ -48399,7 +48539,7 @@ Usage:
   %s [flags] templates [list|show|apply]
   %s [flags] hooks [list|health EVENT|run EVENT|watch-paths list|check] [--tool NAME] [--input JSON] [--output TEXT] [--reason TEXT] [--notification-type TYPE] [--title TEXT] [--agent-id ID] [--agent-type TYPE] [--worktree-id ID] [--worktree-path PATH] [--ref REF] [--old-cwd PATH] [--new-cwd PATH] [--task-id ID] [--task-kind KIND] [--task-status STATUS] [--path PATH] [--operation NAME] [--memory-type TYPE] [--load-reason REASON] [--json|--output-format text|json]
   %s [flags] output-style [list|show|set|clear] [NAME] [--json|--output-format text|json]
-  %s [flags] model [NAME] | models [list|aliases|routes|show [MODEL]|current|help] [--json|--output-format text|json]
+  %s [flags] model [NAME] | models [list|aliases|routes|search QUERY|show [MODEL]|current|help] [--json|--output-format text|json]
   %s [flags] advisor [MODEL|off] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] budget [status|set|reset] [--max-tokens N] [--max-turns N] [--target user|project|local] [--json|--output-format text|json]
   %s [flags] max-tokens [N]
