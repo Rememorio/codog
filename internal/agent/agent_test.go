@@ -5893,6 +5893,13 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "file/write")
 	require.Contains(t, report.Protocol.Methods, "file/edit")
 	require.Contains(t, report.Protocol.Methods, "file/diff")
+	require.Contains(t, report.Protocol.Methods, "editor/identify")
+	require.Contains(t, report.Protocol.Methods, "editor/state")
+	require.Contains(t, report.Protocol.Methods, "editor/open")
+	require.Contains(t, report.Protocol.Methods, "editor/selection")
+	require.Contains(t, report.Protocol.Methods, "bridge/faults/list")
+	require.Contains(t, report.Protocol.Methods, "bridge/faults/record")
+	require.Contains(t, report.Protocol.Methods, "bridge/faults/clear")
 	require.Contains(t, report.Protocol.Methods, "diagnostics/go")
 	require.Contains(t, report.Protocol.Methods, "code/symbols")
 	require.Contains(t, report.Protocol.Methods, "code/references")
@@ -6257,6 +6264,65 @@ func TestACPServeExposesFileOperations(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(workspace, "src", "main.go"))
 	require.NoError(t, err)
 	require.Contains(t, string(data), "func run() {}")
+}
+
+func TestACPServeExposesEditorBridgeControls(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644))
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"editor/identify","params":{"editor":"VS Code","version":"1.0","workspace":"` + filepath.ToSlash(workspace) + `","token":"secret"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"editor/open","params":{"path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"editor/selection","params":{"start_line":1,"start_column":1,"end_line":1,"end_column":8}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"editor/state","params":{}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"bridge/faults/record","params":{"action":"latency","args":["250ms"]}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"bridge/faults/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"bridge/faults/clear","params":{}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			Future: config.FutureConfig{
+				EditorBridgeToken: "secret",
+			},
+		},
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 8)
+	identity := responses[0]["result"].(map[string]any)
+	require.Equal(t, "VS Code", identity["editor"])
+	require.Equal(t, true, identity["trusted"])
+	openFile := responses[1]["result"].(map[string]any)
+	require.Equal(t, "main.go", openFile["path"])
+	selection := responses[2]["result"].(map[string]any)
+	require.Equal(t, "main.go", selection["path"])
+	require.Equal(t, "package", selection["text"])
+	state := responses[3]["result"].(map[string]any)
+	require.NotNil(t, state["identity"])
+	require.NotNil(t, state["open_file"])
+	require.NotNil(t, state["selection"])
+	recorded := responses[4]["result"].(map[string]any)
+	require.Equal(t, "bridge_faults", recorded["kind"])
+	require.EqualValues(t, 1, recorded["total"])
+	require.Equal(t, "latency", recorded["recorded"].(map[string]any)["action"])
+	list := responses[5]["result"].(map[string]any)
+	require.EqualValues(t, 1, list["total"])
+	cleared := responses[6]["result"].(map[string]any)
+	require.Equal(t, true, cleared["cleared"])
+	require.NotNil(t, responses[7]["result"])
+	require.FileExists(t, filepath.Join(configHome, "bridge", "editor-state.json"))
+	require.NoFileExists(t, filepath.Join(configHome, "bridge", "faults.json"))
 }
 
 func TestACPServeExposesCodeIntelQueries(t *testing.T) {
@@ -6895,6 +6961,15 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, fileCaps["write"])
 			require.Equal(t, true, fileCaps["edit"])
 			require.Equal(t, true, fileCaps["diff"])
+			editorCaps := capabilities["editor"].(map[string]any)
+			require.Equal(t, true, editorCaps["identify"])
+			require.Equal(t, true, editorCaps["state"])
+			require.Equal(t, true, editorCaps["open"])
+			require.Equal(t, true, editorCaps["selection"])
+			bridgeFaultCaps := capabilities["bridge_faults"].(map[string]any)
+			require.Equal(t, true, bridgeFaultCaps["list"])
+			require.Equal(t, true, bridgeFaultCaps["record"])
+			require.Equal(t, true, bridgeFaultCaps["clear"])
 			diagnosticsCaps := capabilities["diagnostics"].(map[string]any)
 			require.Equal(t, true, diagnosticsCaps["go"])
 			codeCaps := capabilities["code"].(map[string]any)

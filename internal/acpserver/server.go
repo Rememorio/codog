@@ -85,6 +85,13 @@ type Handlers struct {
 	MCPRead              func(context.Context, MCPReadRequest) (any, error)
 	MCPPrompts           func(context.Context, MCPServerRequest) (any, error)
 	MCPPrompt            func(context.Context, MCPPromptRequest) (any, error)
+	EditorIdentify       func(context.Context, EditorIdentifyRequest) (any, error)
+	EditorState          func(context.Context) (any, error)
+	EditorOpen           func(context.Context, EditorOpenRequest) (any, error)
+	EditorSelection      func(context.Context, EditorSelectionRequest) (any, error)
+	BridgeFaultsList     func(context.Context) (any, error)
+	BridgeFaultsRecord   func(context.Context, BridgeFaultRecordRequest) (any, error)
+	BridgeFaultsClear    func(context.Context) (any, error)
 }
 
 type SessionInfo struct {
@@ -408,6 +415,31 @@ type MCPPromptRequest struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+type EditorIdentifyRequest struct {
+	Editor    string `json:"editor"`
+	Version   string `json:"version,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Token     string `json:"token,omitempty"`
+}
+
+type EditorOpenRequest struct {
+	Path string `json:"path"`
+}
+
+type EditorSelectionRequest struct {
+	Path        string `json:"path,omitempty"`
+	StartLine   int    `json:"start_line"`
+	StartColumn int    `json:"start_column,omitempty"`
+	EndLine     int    `json:"end_line,omitempty"`
+	EndColumn   int    `json:"end_column,omitempty"`
+	Text        string `json:"text,omitempty"`
+}
+
+type BridgeFaultRecordRequest struct {
+	Action string   `json:"action"`
+	Args   []string `json:"args,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -489,6 +521,20 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleFileEdit(ctx, out, handlers, req)
 	case "file/diff":
 		return false, handleFileDiff(ctx, out, handlers, req)
+	case "editor/identify":
+		return false, handleEditorIdentify(ctx, out, handlers, req)
+	case "editor/state":
+		return false, handleEditorState(ctx, out, handlers, req)
+	case "editor/open":
+		return false, handleEditorOpen(ctx, out, handlers, req)
+	case "editor/selection":
+		return false, handleEditorSelection(ctx, out, handlers, req)
+	case "bridge/faults/list":
+		return false, handleBridgeFaultsList(ctx, out, handlers, req)
+	case "bridge/faults/record":
+		return false, handleBridgeFaultsRecord(ctx, out, handlers, req)
+	case "bridge/faults/clear":
+		return false, handleBridgeFaultsClear(ctx, out, handlers, req)
 	case "diagnostics/go":
 		return false, handleDiagnosticsGo(ctx, out, handlers, req)
 	case "code/symbols":
@@ -640,6 +686,17 @@ func initializeResult(opts Options) map[string]any {
 				"write": true,
 				"edit":  true,
 				"diff":  true,
+			},
+			"editor": map[string]any{
+				"identify":  true,
+				"state":     true,
+				"open":      true,
+				"selection": true,
+			},
+			"bridge_faults": map[string]any{
+				"list":   true,
+				"record": true,
+				"clear":  true,
 			},
 			"diagnostics": map[string]any{
 				"go": true,
@@ -819,6 +876,120 @@ func handleFileDiff(ctx context.Context, out io.Writer, handlers Handlers, req r
 		return writeError(out, req.ID, -32602, err.Error())
 	}
 	result, err := handlers.FileDiff(ctx, options)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleEditorIdentify(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.EditorIdentify == nil {
+		return writeError(out, req.ID, -32603, "editor identify handler is not configured")
+	}
+	var request EditorIdentifyRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.Editor) == "" {
+		return writeError(out, req.ID, -32602, "editor is required")
+	}
+	result, err := handlers.EditorIdentify(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleEditorState(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.EditorState == nil {
+		return writeError(out, req.ID, -32603, "editor state handler is not configured")
+	}
+	result, err := handlers.EditorState(ctx)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleEditorOpen(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.EditorOpen == nil {
+		return writeError(out, req.ID, -32603, "editor open handler is not configured")
+	}
+	var request EditorOpenRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.Path) == "" {
+		return writeError(out, req.ID, -32602, "path is required")
+	}
+	result, err := handlers.EditorOpen(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleEditorSelection(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.EditorSelection == nil {
+		return writeError(out, req.ID, -32603, "editor selection handler is not configured")
+	}
+	var request EditorSelectionRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if request.StartLine <= 0 {
+		return writeError(out, req.ID, -32602, "start_line is required")
+	}
+	if request.EndLine < 0 {
+		return writeError(out, req.ID, -32602, "end_line must be non-negative")
+	}
+	if request.StartColumn < 0 {
+		return writeError(out, req.ID, -32602, "start_column must be non-negative")
+	}
+	if request.EndColumn < 0 {
+		return writeError(out, req.ID, -32602, "end_column must be non-negative")
+	}
+	result, err := handlers.EditorSelection(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBridgeFaultsList(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BridgeFaultsList == nil {
+		return writeError(out, req.ID, -32603, "bridge faults list handler is not configured")
+	}
+	result, err := handlers.BridgeFaultsList(ctx)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBridgeFaultsRecord(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BridgeFaultsRecord == nil {
+		return writeError(out, req.ID, -32603, "bridge faults record handler is not configured")
+	}
+	var request BridgeFaultRecordRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.Action) == "" {
+		return writeError(out, req.ID, -32602, "action is required")
+	}
+	result, err := handlers.BridgeFaultsRecord(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBridgeFaultsClear(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BridgeFaultsClear == nil {
+		return writeError(out, req.ID, -32603, "bridge faults clear handler is not configured")
+	}
+	result, err := handlers.BridgeFaultsClear(ctx)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}

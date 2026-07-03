@@ -20765,6 +20765,13 @@ var acpJSONRPCMethods = []string{
 	"file/write",
 	"file/edit",
 	"file/diff",
+	"editor/identify",
+	"editor/state",
+	"editor/open",
+	"editor/selection",
+	"bridge/faults/list",
+	"bridge/faults/record",
+	"bridge/faults/clear",
 	"diagnostics/go",
 	"code/symbols",
 	"code/references",
@@ -20873,7 +20880,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, agent-runs/list, agent-runs/get, agent-runs/logs, agent-runs/board, agent-runs/heartbeat, agent-runs/stop, agent-runs/prune, mcp/list, mcp/show, mcp/auth, mcp/tools, mcp/call, mcp/resources, mcp/resource-templates, mcp/read, mcp/prompts, mcp/prompt, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, editor/identify, editor/state, editor/open, editor/selection, bridge/faults/list, bridge/faults/record, bridge/faults/clear, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, agent-runs/list, agent-runs/get, agent-runs/logs, agent-runs/board, agent-runs/heartbeat, agent-runs/stop, agent-runs/prune, mcp/list, mcp/show, mcp/auth, mcp/tools, mcp/call, mcp/resources, mcp/resource-templates, mcp/read, mcp/prompts, mcp/prompt, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21029,6 +21036,16 @@ func (a *App) serveACP(ctx context.Context) error {
 		}
 		return agentruns.NewStore(a.Config.ConfigHome), background.NewStore(a.Config.ConfigHome), nil
 	}
+	bridgeServer := func() bridge.Server {
+		return bridge.Server{
+			Sessions:   a.Sessions,
+			Version:    version,
+			Workspace:  a.Workspace,
+			ConfigHome: a.Config.ConfigHome,
+			TrustToken: a.Config.Future.EditorBridgeToken,
+			MCPServers: a.Config.MCPServers,
+		}
+	}
 	mcpServer := func(name string) (config.MCPServerConfig, error) {
 		name = strings.TrimSpace(name)
 		server, ok := a.Config.MCPServers[name]
@@ -21068,6 +21085,55 @@ func (a *App) serveACP(ctx context.Context) error {
 		},
 		FileDiff: func(_ context.Context, options workspaceops.DiffOptions) (workspaceops.DiffResult, error) {
 			return (workspaceops.Service{Workspace: a.Workspace}).Diff(options)
+		},
+		EditorIdentify: func(_ context.Context, req acpserver.EditorIdentifyRequest) (any, error) {
+			params, err := json.Marshal(req)
+			if err != nil {
+				return nil, err
+			}
+			return bridgeServer().IdentifyEditor(params)
+		},
+		EditorState: func(context.Context) (any, error) {
+			return bridgeServer().EditorState()
+		},
+		EditorOpen: func(_ context.Context, req acpserver.EditorOpenRequest) (any, error) {
+			params, err := json.Marshal(req)
+			if err != nil {
+				return nil, err
+			}
+			return bridgeServer().OpenEditorFile(params)
+		},
+		EditorSelection: func(_ context.Context, req acpserver.EditorSelectionRequest) (any, error) {
+			params, err := json.Marshal(req)
+			if err != nil {
+				return nil, err
+			}
+			return bridgeServer().SetEditorSelection(params)
+		},
+		BridgeFaultsList: func(context.Context) (any, error) {
+			events, err := bridgeServer().BridgeFaults()
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "bridge_faults", "total": len(events), "events": events}, nil
+		},
+		BridgeFaultsRecord: func(_ context.Context, req acpserver.BridgeFaultRecordRequest) (any, error) {
+			server := bridgeServer()
+			event, err := server.RecordBridgeFault(req.Action, req.Args)
+			if err != nil {
+				return nil, err
+			}
+			events, err := server.BridgeFaults()
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "bridge_faults", "total": len(events), "recorded": event, "events": events}, nil
+		},
+		BridgeFaultsClear: func(context.Context) (any, error) {
+			if err := bridgeServer().ClearBridgeFaults(); err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "bridge_faults", "cleared": true, "total": 0, "events": []bridge.FaultEvent{}}, nil
 		},
 		DiagnosticsGo: func(ctx context.Context, req acpserver.DiagnosticsRequest) (any, error) {
 			diagnostics, err := codeintel.GoDiagnostics(ctx, a.Workspace, req.Patterns)

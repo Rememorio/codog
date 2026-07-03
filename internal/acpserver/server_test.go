@@ -119,6 +119,15 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, fileCaps["write"])
 	require.Equal(t, true, fileCaps["edit"])
 	require.Equal(t, true, fileCaps["diff"])
+	editorCaps := capabilities["editor"].(map[string]any)
+	require.Equal(t, true, editorCaps["identify"])
+	require.Equal(t, true, editorCaps["state"])
+	require.Equal(t, true, editorCaps["open"])
+	require.Equal(t, true, editorCaps["selection"])
+	bridgeFaultCaps := capabilities["bridge_faults"].(map[string]any)
+	require.Equal(t, true, bridgeFaultCaps["list"])
+	require.Equal(t, true, bridgeFaultCaps["record"])
+	require.Equal(t, true, bridgeFaultCaps["clear"])
 	diagnosticsCaps := capabilities["diagnostics"].(map[string]any)
 	require.Equal(t, true, diagnosticsCaps["go"])
 	codeCaps := capabilities["code"].(map[string]any)
@@ -316,6 +325,66 @@ func TestServeHandlesFileRequests(t *testing.T) {
 	require.EqualValues(t, 1, editResult["replacements"])
 	diffResult := responses[3]["result"].(map[string]any)
 	require.Contains(t, diffResult["diff"], "--- src/new.go")
+}
+
+func TestServeHandlesEditorBridgeRequests(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"editor/identify","params":{"editor":"VS Code","version":"1.0","workspace":"/workspace","token":"secret"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"editor/open","params":{"path":"main.go"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"editor/selection","params":{"start_line":1,"start_column":1,"end_line":1,"end_column":8}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"editor/state","params":{}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"bridge/faults/record","params":{"action":"latency","args":["250ms"]}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"bridge/faults/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"bridge/faults/clear","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		EditorIdentify: func(_ context.Context, req EditorIdentifyRequest) (any, error) {
+			require.Equal(t, "VS Code", req.Editor)
+			require.Equal(t, "1.0", req.Version)
+			require.Equal(t, "/workspace", req.Workspace)
+			require.Equal(t, "secret", req.Token)
+			return map[string]any{"kind": "editor_identity", "trusted": true}, nil
+		},
+		EditorOpen: func(_ context.Context, req EditorOpenRequest) (any, error) {
+			require.Equal(t, "main.go", req.Path)
+			return map[string]any{"kind": "editor_open"}, nil
+		},
+		EditorSelection: func(_ context.Context, req EditorSelectionRequest) (any, error) {
+			require.Equal(t, 1, req.StartLine)
+			require.Equal(t, 1, req.StartColumn)
+			require.Equal(t, 1, req.EndLine)
+			require.Equal(t, 8, req.EndColumn)
+			return map[string]any{"kind": "editor_selection"}, nil
+		},
+		EditorState: func(context.Context) (any, error) {
+			return map[string]any{"kind": "editor_state"}, nil
+		},
+		BridgeFaultsRecord: func(_ context.Context, req BridgeFaultRecordRequest) (any, error) {
+			require.Equal(t, "latency", req.Action)
+			require.Equal(t, []string{"250ms"}, req.Args)
+			return map[string]any{"kind": "bridge_faults", "recorded": true}, nil
+		},
+		BridgeFaultsList: func(context.Context) (any, error) {
+			return map[string]any{"kind": "bridge_faults", "total": 1}, nil
+		},
+		BridgeFaultsClear: func(context.Context) (any, error) {
+			return map[string]any{"kind": "bridge_faults", "cleared": true}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 7)
+	require.Equal(t, "editor_identity", responses[0]["result"].(map[string]any)["kind"])
+	require.Equal(t, "editor_open", responses[1]["result"].(map[string]any)["kind"])
+	require.Equal(t, "editor_selection", responses[2]["result"].(map[string]any)["kind"])
+	require.Equal(t, "editor_state", responses[3]["result"].(map[string]any)["kind"])
+	require.Equal(t, "bridge_faults", responses[4]["result"].(map[string]any)["kind"])
+	require.EqualValues(t, 1, responses[5]["result"].(map[string]any)["total"])
+	require.Equal(t, true, responses[6]["result"].(map[string]any)["cleared"])
 }
 
 func TestServeHandlesCodeIntelRequests(t *testing.T) {
