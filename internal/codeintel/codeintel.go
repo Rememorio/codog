@@ -640,6 +640,7 @@ type NotebookEditOptions struct {
 
 // NotebookEditResult reports the applied notebook cell edit.
 type NotebookEditResult struct {
+	Kind        string `json:"kind"`
 	Path        string `json:"path"`
 	Mode        string `json:"mode"`
 	Index       int    `json:"index"`
@@ -836,6 +837,7 @@ func EditNotebook(path string, options NotebookEditOptions) (NotebookEditResult,
 		return NotebookEditResult{}, err
 	}
 	return NotebookEditResult{
+		Kind:        "notebook_edit",
 		Path:        path,
 		Mode:        mode,
 		Index:       options.Index,

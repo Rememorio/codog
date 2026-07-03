@@ -130,6 +130,20 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, sandboxCategory.Total)
 	require.ElementsMatch(t, []string{"sandbox_bypass_status_roundtrip"}, sandboxCategory.Scenarios)
 
+	notebook := findScenario(t, report, "notebook_read_edit_roundtrip")
+	require.True(t, notebook.OK)
+	require.Equal(t, "notebook", notebook.Category)
+	require.Equal(t, 4, notebook.ToolCalls)
+	require.Equal(t, []string{"notebook_read", "notebook_edit", "notebook_edit", "notebook_read"}, notebook.ToolUses)
+	require.Contains(t, notebook.Output, `"kind": "notebook_read"`)
+	require.Contains(t, notebook.Output, `"kind": "notebook_edit"`)
+	require.Contains(t, notebook.Output, "# Renamed")
+	require.Contains(t, notebook.Output, "print(2)")
+	notebookCategory := findCategory(t, report, "notebook")
+	require.True(t, notebookCategory.OK)
+	require.Equal(t, 1, notebookCategory.Total)
+	require.ElementsMatch(t, []string{"notebook_read_edit_roundtrip"}, notebookCategory.Scenarios)
+
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
@@ -277,6 +291,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	sandboxBypass := findManifestScenario(t, manifest, "sandbox_bypass_status_roundtrip")
 	require.Equal(t, "sandbox", sandboxBypass.Category)
 	require.Contains(t, sandboxBypass.ParityRefs, "Sandbox")
+
+	notebook := findManifestScenario(t, manifest, "notebook_read_edit_roundtrip")
+	require.Equal(t, "notebook", notebook.Category)
+	require.Contains(t, notebook.ParityRefs, "Notebook edit")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

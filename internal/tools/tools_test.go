@@ -2667,6 +2667,7 @@ func TestNotebookEditToolUpdatesNotebook(t *testing.T) {
 
 	out, err := NotebookEditTool{Workspace: workspace}.Execute(context.Background(), []byte(`{"notebook_path":"analysis.ipynb","edit_mode":"insert","cell_type":"markdown","new_source":"# Title"}`))
 	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "notebook_edit"`)
 	require.Contains(t, out, `"cell_type": "markdown"`)
 	require.Contains(t, out, `"cell_id": "cell-1"`)
 	require.Contains(t, out, `"cell_count": 1`)

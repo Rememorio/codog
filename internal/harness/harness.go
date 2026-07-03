@@ -158,6 +158,7 @@ var scenarioOrder = []string{
 	"bash_permission_prompt_approved",
 	"bash_permission_prompt_denied",
 	"sandbox_bypass_status_roundtrip",
+	"notebook_read_edit_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -633,6 +634,7 @@ func Run(ctx context.Context) (Report, error) {
 			},
 		},
 		sandboxBypassStatusScenario(),
+		notebookReadEditScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1170,6 +1172,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Executes bash with Claude-compatible sandbox bypass and verifies structured sandbox status reporting.",
 		ParityRefs:  []string{"Sandbox", "Bash tool", "Permission safety"},
 	},
+	"notebook_read_edit_roundtrip": {
+		Category:    "notebook",
+		Description: "Reads a Jupyter notebook cell with outputs, edits notebook cells, and verifies the persisted notebook content.",
+		ParityRefs:  []string{"Notebook read", "Notebook edit", "Code intelligence"},
+	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
 		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
@@ -1607,6 +1614,80 @@ func sandboxBypassStatusScenario() scenario {
 				ToolCalls:    1,
 				ToolUses:     []string{"bash"},
 				RequestCount: 1,
+			}, nil
+		},
+	}
+}
+
+func notebookReadEditScenario() scenario {
+	return scenario{
+		name: "notebook_read_edit_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			notebookPath := filepath.Join(workspace, "analysis.ipynb")
+			initial := `{
+  "cells": [
+    {"cell_type":"markdown","id":"intro","source":["# Title\n","notes"],"metadata":{}},
+    {"cell_type":"code","id":"calc","execution_count":1,"source":["print('hi')\n"],"metadata":{},"outputs":[{"output_type":"stream","name":"stdout","text":["hi\n"]}]}
+  ],
+  "metadata": {"kernelspec":{"language":"python"}},
+  "nbformat": 4,
+  "nbformat_minor": 5
+}`
+			if err := os.WriteFile(notebookPath, []byte(initial), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			readOut, err := tools.NotebookReadTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"notebook_path":"analysis.ipynb","cell_index":1,"include_outputs":true}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "notebook_read"`, `"path": "analysis.ipynb"`, `"cell_count": 2`, `"cell_id": "calc"`, `"output_count": 1`, `"outputs": [`} {
+				if !strings.Contains(readOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("notebook read output missing %s", expected)
+				}
+			}
+
+			replaceOut, err := tools.NotebookEditTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"notebook_path":"analysis.ipynb","cell_id":"intro","cell_type":"markdown","new_source":"# Renamed\n"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(replaceOut, `"kind": "notebook_edit"`) || !strings.Contains(replaceOut, `"mode": "replace"`) || !strings.Contains(replaceOut, `"cell_id": "intro"`) {
+				return localScenarioResult{}, fmt.Errorf("unexpected notebook replace output: %s", replaceOut)
+			}
+
+			insertOut, err := tools.NotebookEditTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"notebook_path":"analysis.ipynb","cell_id":"intro","edit_mode":"insert","cell_type":"code","new_source":"print(2)\n"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(insertOut, `"mode": "insert"`) || !strings.Contains(insertOut, `"cell_type": "code"`) || !strings.Contains(insertOut, `"cell_count": 3`) {
+				return localScenarioResult{}, fmt.Errorf("unexpected notebook insert output: %s", insertOut)
+			}
+
+			finalRead, err := tools.NotebookReadTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"notebook_path":"analysis.ipynb","limit":3,"include_outputs":true}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			data, err := os.ReadFile(notebookPath)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{"# Renamed", "print(2)", `"id": "cell-3"`, `"kernelspec"`} {
+				if !strings.Contains(string(data), expected) {
+					return localScenarioResult{}, fmt.Errorf("persisted notebook missing %s", expected)
+				}
+			}
+			if strings.Contains(string(data), "# Title") {
+				return localScenarioResult{}, fmt.Errorf("persisted notebook still contains replaced title")
+			}
+			if !strings.Contains(finalRead, `"cell_count": 3`) || !strings.Contains(finalRead, "# Renamed") || !strings.Contains(finalRead, "print(2)") {
+				return localScenarioResult{}, fmt.Errorf("final notebook read missing edited cells: %s", finalRead)
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{readOut, replaceOut, insertOut, finalRead}, "\n"),
+				FinalMessage: "notebook read edit harness ok",
+				ToolCalls:    4,
+				ToolUses:     []string{"notebook_read", "notebook_edit", "notebook_edit", "notebook_read"},
+				RequestCount: 4,
 			}, nil
 		},
 	}

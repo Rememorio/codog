@@ -105,6 +105,7 @@ func TestEditNotebookCell(t *testing.T) {
 
 	result, err := EditNotebook(path, NotebookEditOptions{Index: 0, Mode: "insert", CellType: "markdown", Source: "# Title"})
 	require.NoError(t, err)
+	require.Equal(t, "notebook_edit", result.Kind)
 	require.Equal(t, "cell-1", result.CellID)
 	require.Equal(t, "python", result.Language)
 	require.NoError(t, EditNotebookCell(path, 0, "markdown", "# Renamed"))
