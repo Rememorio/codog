@@ -9621,6 +9621,21 @@ func TestMergePromptWithStdin(t *testing.T) {
 	require.Equal(t, "Review this\n\nfn main() {}", mergePromptWithStdin("Review this", "\nfn main() {}\n"))
 }
 
+func TestParseAttachSlashArgs(t *testing.T) {
+	prompt, attachments, err := parseAttachSlashArgs([]string{"notes.txt", "pixel.png", "--", "Describe", "these"})
+	require.NoError(t, err)
+	require.Equal(t, "Describe these", prompt)
+	require.Equal(t, []string{"notes.txt", "pixel.png"}, attachments)
+
+	prompt, attachments, err = parseAttachSlashArgs([]string{"notes.txt"})
+	require.NoError(t, err)
+	require.Equal(t, "Inspect the attached file(s) and summarize what matters.", prompt)
+	require.Equal(t, []string{"notes.txt"}, attachments)
+
+	_, _, err = parseAttachSlashArgs(nil)
+	require.ErrorContains(t, err, "usage: /attach")
+}
+
 func TestPromptMissingPromptOutputContract(t *testing.T) {
 	configHome := t.TempDir()
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -9879,6 +9894,79 @@ func TestPromptWithAttachmentsBuildsStructuredUserContent(t *testing.T) {
 	require.Equal(t, "base64", body.Messages[0].Content[2].Source.Type)
 	require.Equal(t, "image/png", body.Messages[0].Content[2].Source.MediaType)
 	require.NotEmpty(t, body.Messages[0].Content[2].Source.Data)
+}
+
+func TestAttachSlashSendsStructuredUserContent(t *testing.T) {
+	captured := make(chan json.RawMessage, 1)
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "slash attachment done",
+		OnRequest: func(raw json.RawMessage) {
+			select {
+			case captured <- append(json.RawMessage(nil), raw...):
+			default:
+			}
+		},
+	}.Handler())
+	defer server.Close()
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	store := session.NewWorkspaceStore(configHome, workspace)
+	sess, err := store.Create("attach-slash")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("slash attachment notes\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "pixel.png"), []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, 0o644))
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "mock",
+			MaxTokens:      128,
+			MaxTurns:       1,
+			PermissionMode: "read-only",
+		},
+		Client:    anthropic.New(server.URL, "test-key", ""),
+		Tools:     tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome}),
+		Sessions:  store,
+		Workspace: workspace,
+		Out:       &out,
+		Err:       &errOut,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/attach notes.txt pixel.png -- Explain the attached files", sess))
+	require.Empty(t, errOut.String())
+	require.Contains(t, out.String(), "slash attachment done")
+	require.Len(t, sess.Messages, 2)
+	require.Len(t, sess.Messages[0].Content, 3)
+	require.Equal(t, "Explain the attached files", sess.Messages[0].Content[0].Text)
+	require.Equal(t, "image", sess.Messages[0].Content[2].Type)
+
+	var raw json.RawMessage
+	select {
+	case raw = <-captured:
+	default:
+		require.FailNow(t, "expected provider request to be captured")
+	}
+	var body struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type   string `json:"type"`
+				Text   string `json:"text"`
+				Source *struct {
+					MediaType string `json:"media_type"`
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &body))
+	require.Len(t, body.Messages, 1)
+	require.Equal(t, "user", body.Messages[0].Role)
+	require.Equal(t, "Explain the attached files", body.Messages[0].Content[0].Text)
+	require.Contains(t, body.Messages[0].Content[1].Text, "slash attachment notes")
+	require.Equal(t, "image", body.Messages[0].Content[2].Type)
+	require.NotNil(t, body.Messages[0].Content[2].Source)
+	require.Equal(t, "image/png", body.Messages[0].Content[2].Source.MediaType)
 }
 
 func TestTopLevelPipedStdinRunsOneShotPrompt(t *testing.T) {

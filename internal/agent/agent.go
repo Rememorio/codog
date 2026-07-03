@@ -28238,7 +28238,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/new", "/resume", "/exit", "/quit":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach", "/new", "/resume", "/exit", "/quit":
 		return true
 	default:
 		return false
@@ -30988,6 +30988,33 @@ func parsePromptArgs(args []string) (promptCLIRequest, error) {
 	return req, nil
 }
 
+func parseAttachSlashArgs(args []string) (string, []string, error) {
+	attachments := []string{}
+	promptParts := []string{}
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		if arg == "" {
+			continue
+		}
+		if arg == "--" {
+			promptParts = append(promptParts, args[index+1:]...)
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			return "", nil, fmt.Errorf("unknown /attach option %q", arg)
+		}
+		attachments = append(attachments, arg)
+	}
+	if len(attachments) == 0 {
+		return "", nil, errors.New("usage: /attach PATH [PATH...] [-- PROMPT]")
+	}
+	prompt := strings.TrimSpace(strings.Join(promptParts, " "))
+	if prompt == "" {
+		prompt = "Inspect the attached file(s) and summarize what matters."
+	}
+	return prompt, attachments, nil
+}
+
 func readPromptInput(in io.Reader) (string, error) {
 	input, _, err := readPromptInputState(in)
 	return input, err
@@ -32088,6 +32115,15 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/acp":
 		if err := a.ACP(ctx, fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/attach":
+		prompt, attachments, err := parseAttachSlashArgs(fields[1:])
+		if err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+			break
+		}
+		if err := a.runSessionTurnWithOptions(ctx, "repl", sess, prompt, "idle", turnOptions{Attachments: attachments}); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/brief":
