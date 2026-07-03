@@ -25629,25 +25629,27 @@ func hookValidationIssue(event string, index int, hook config.HookCommand, kind 
 }
 
 type capabilitiesReport struct {
-	Kind              string            `json:"kind"`
-	Action            string            `json:"action"`
-	Status            string            `json:"status"`
-	Version           string            `json:"version"`
-	Workspace         string            `json:"workspace"`
-	Model             string            `json:"model"`
-	PermissionMode    string            `json:"permission_mode"`
-	CommandCount      int               `json:"command_count"`
-	Commands          []string          `json:"commands"`
-	SlashCommandCount int               `json:"slash_command_count"`
-	SlashCommands     []capabilitySlash `json:"slash_commands"`
-	ToolCount         int               `json:"tool_count"`
-	Tools             []capabilityTool  `json:"tools"`
-	ToolAliasCount    int               `json:"tool_alias_count"`
-	ToolAliases       map[string]string `json:"tool_aliases,omitempty"`
-	MCP               capabilityMCP     `json:"mcp"`
-	Features          []string          `json:"features"`
-	Protocols         []string          `json:"protocols"`
-	OutputFormats     []string          `json:"output_formats"`
+	Kind                    string            `json:"kind"`
+	Action                  string            `json:"action"`
+	Status                  string            `json:"status"`
+	Version                 string            `json:"version"`
+	Workspace               string            `json:"workspace"`
+	Model                   string            `json:"model"`
+	PermissionMode          string            `json:"permission_mode"`
+	CommandCount            int               `json:"command_count"`
+	Commands                []string          `json:"commands"`
+	SlashCommandCount       int               `json:"slash_command_count"`
+	SlashCommands           []capabilitySlash `json:"slash_commands"`
+	ResumeSafeSlashCount    int               `json:"resume_safe_slash_count"`
+	ResumeSafeSlashCommands []string          `json:"resume_safe_slash_commands"`
+	ToolCount               int               `json:"tool_count"`
+	Tools                   []capabilityTool  `json:"tools"`
+	ToolAliasCount          int               `json:"tool_alias_count"`
+	ToolAliases             map[string]string `json:"tool_aliases,omitempty"`
+	MCP                     capabilityMCP     `json:"mcp"`
+	Features                []string          `json:"features"`
+	Protocols               []string          `json:"protocols"`
+	OutputFormats           []string          `json:"output_formats"`
 }
 
 type capabilityResolveReport struct {
@@ -25790,6 +25792,7 @@ func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
 func (a *App) capabilitiesReport() capabilitiesReport {
 	commands := builtInCommandNames()
 	slashCommands := slashCapabilities()
+	resumeSafeSlashCommands := slash.ResumeSupportedNames()
 	toolInfos := []tools.ToolInfo{}
 	if a.Tools != nil {
 		toolInfos = a.Tools.Infos()
@@ -25818,21 +25821,23 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 	localTemplates := mcpserver.LocalResourceTemplates()
 	localPrompts := mcpserver.LocalPrompts()
 	return capabilitiesReport{
-		Kind:              "capabilities",
-		Action:            "show",
-		Status:            "ok",
-		Version:           version,
-		Workspace:         a.Workspace,
-		Model:             a.Config.Model,
-		PermissionMode:    a.Config.PermissionMode,
-		CommandCount:      len(commands),
-		Commands:          commands,
-		SlashCommandCount: len(slashCommands),
-		SlashCommands:     slashCommands,
-		ToolCount:         len(capTools),
-		Tools:             capTools,
-		ToolAliasCount:    len(toolAliases),
-		ToolAliases:       toolAliases,
+		Kind:                    "capabilities",
+		Action:                  "show",
+		Status:                  "ok",
+		Version:                 version,
+		Workspace:               a.Workspace,
+		Model:                   a.Config.Model,
+		PermissionMode:          a.Config.PermissionMode,
+		CommandCount:            len(commands),
+		Commands:                commands,
+		SlashCommandCount:       len(slashCommands),
+		SlashCommands:           slashCommands,
+		ResumeSafeSlashCount:    len(resumeSafeSlashCommands),
+		ResumeSafeSlashCommands: resumeSafeSlashCommands,
+		ToolCount:               len(capTools),
+		Tools:                   capTools,
+		ToolAliasCount:          len(toolAliases),
+		ToolAliases:             toolAliases,
 		MCP: capabilityMCP{
 			ConfiguredServerCount:  len(a.Config.MCPServers),
 			ConfiguredServers:      sortedMCPServerNames(a.Config.MCPServers),
@@ -26098,6 +26103,7 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  Version           %s\n", report.Version)
 	fmt.Fprintf(out, "  Commands          %d\n", report.CommandCount)
 	fmt.Fprintf(out, "  Slash commands    %d\n", report.SlashCommandCount)
+	fmt.Fprintf(out, "  Resume-safe       %d slash commands\n", report.ResumeSafeSlashCount)
 	fmt.Fprintf(out, "  Tools             %d\n", report.ToolCount)
 	fmt.Fprintf(out, "  Tool aliases      %d\n", report.ToolAliasCount)
 	fmt.Fprintf(out, "  MCP servers       %d configured\n", report.MCP.ConfiguredServerCount)

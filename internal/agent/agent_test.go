@@ -881,6 +881,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 
 	require.NoError(t, app.Capabilities(nil))
 	require.Contains(t, out.String(), "Codog Capabilities")
+	require.Contains(t, out.String(), "Resume-safe")
 	require.Contains(t, out.String(), "Tool aliases")
 	require.Contains(t, out.String(), "MCP local data")
 	out.Reset()
@@ -1016,6 +1017,11 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.OutputFormats, "stream-json")
 	require.Greater(t, report.CommandCount, 20)
 	require.Greater(t, report.SlashCommandCount, 20)
+	require.Greater(t, report.ResumeSafeSlashCount, 20)
+	require.Equal(t, report.ResumeSafeSlashCount, len(report.ResumeSafeSlashCommands))
+	require.ElementsMatch(t, capabilityReportResumeSafeSlashNames(report), report.ResumeSafeSlashCommands)
+	require.Contains(t, report.ResumeSafeSlashCommands, "/status")
+	require.Contains(t, report.ResumeSafeSlashCommands, "/capabilities")
 	require.Greater(t, report.ToolCount, 10)
 	require.Greater(t, report.ToolAliasCount, 40)
 	statusSlash, ok := capabilityReportSlash(report, "/status")
@@ -7439,6 +7445,16 @@ func capabilityReportTool(report capabilitiesReport, name string) (capabilityToo
 func capabilityReportHasSlash(report capabilitiesReport, name string) bool {
 	_, ok := capabilityReportSlash(report, name)
 	return ok
+}
+
+func capabilityReportResumeSafeSlashNames(report capabilitiesReport) []string {
+	names := []string{}
+	for _, command := range report.SlashCommands {
+		if command.ResumeSupported {
+			names = append(names, command.Name)
+		}
+	}
+	return names
 }
 
 func capabilityReportSlash(report capabilitiesReport, name string) (capabilitySlash, bool) {
