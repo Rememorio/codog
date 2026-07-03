@@ -162,6 +162,7 @@ var scenarioOrder = []string{
 	"notebook_read_edit_roundtrip",
 	"web_access_roundtrip",
 	"git_workspace_roundtrip",
+	"plan_todo_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -640,6 +641,7 @@ func Run(ctx context.Context) (Report, error) {
 		notebookReadEditScenario(),
 		webAccessScenario(),
 		gitWorkspaceScenario(),
+		planTodoScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1191,6 +1193,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "git-workspace",
 		Description: "Exercises git status, diff, log, show, blame, and stale-branch freshness checks against a local repository.",
 		ParityRefs:  []string{"Git tools", "Branch freshness", "Workspace state"},
+	},
+	"plan_todo_roundtrip": {
+		Category:    "planning",
+		Description: "Enters plan mode, persists a todo list, reads it back, and exits plan mode with the final plan.",
+		ParityRefs:  []string{"Plan mode", "Todo tools", "Workspace state"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -1901,6 +1908,91 @@ func runHarnessGit(workspace string, args ...string) error {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func planTodoScenario() scenario {
+	return scenario{
+		name: "plan_todo_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			enterOut, err := tools.EnterPlanModeTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"plan":"1. Inspect workspace\n2. Update tests"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "plan"`, `"action": "enter"`, `"status": "active"`, "Inspect workspace"} {
+				if !strings.Contains(enterOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("plan enter output missing %s", expected)
+				}
+			}
+
+			writeOut, err := tools.TodoWriteTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{
+				"todos": [
+					{
+						"content": "write focused parity test",
+						"activeForm": "writing focused parity test",
+						"status": "in_progress",
+						"priority": "high"
+					},
+					{
+						"content": "run smoke",
+						"activeForm": "running smoke",
+						"status": "pending",
+						"priority": "medium"
+					}
+				]
+			}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "todos"`, `"action": "replace"`, `"total": 2`, `"content": "write focused parity test"`, `"status": "in_progress"`, `"newTodos": [`} {
+				if !strings.Contains(writeOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("todo write output missing %s", expected)
+				}
+			}
+
+			readOut, err := tools.TodoReadTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "todos"`, `"action": "list"`, `"total": 2`, `"content": "run smoke"`} {
+				if !strings.Contains(readOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("todo read output missing %s", expected)
+				}
+			}
+
+			exitOut, err := tools.ExitPlanModeTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"plan":"Final plan: implement, test, smoke"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "plan"`, `"action": "exit"`, `"status": "inactive"`, "Final plan: implement, test, smoke"} {
+				if !strings.Contains(exitOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("plan exit output missing %s", expected)
+				}
+			}
+
+			planData, err := os.ReadFile(filepath.Join(workspace, ".codog", "plan.json"))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(planData), `"active": false`) || !strings.Contains(string(planData), "Final plan: implement, test, smoke") {
+				return localScenarioResult{}, fmt.Errorf("persisted plan state was not finalized: %s", string(planData))
+			}
+			todoData, err := os.ReadFile(filepath.Join(workspace, ".codog", "todos.json"))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(string(todoData), `"kind": "todos"`) || !strings.Contains(string(todoData), "write focused parity test") {
+				return localScenarioResult{}, fmt.Errorf("persisted todo state missing active items: %s", string(todoData))
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{enterOut, writeOut, readOut, exitOut}, "\n"),
+				FinalMessage: "plan todo harness ok",
+				ToolCalls:    4,
+				ToolUses:     []string{"enter_plan_mode", "todo_write", "todo_read", "exit_plan_mode"},
+				RequestCount: 4,
+			}, nil
+		},
+	}
 }
 
 func pluginLifecycleScenario() scenario {

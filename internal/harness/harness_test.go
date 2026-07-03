@@ -174,6 +174,21 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, gitWorkspaceCategory.Total)
 	require.ElementsMatch(t, []string{"git_workspace_roundtrip"}, gitWorkspaceCategory.Scenarios)
 
+	planTodo := findScenario(t, report, "plan_todo_roundtrip")
+	require.True(t, planTodo.OK)
+	require.Equal(t, "planning", planTodo.Category)
+	require.Equal(t, 4, planTodo.ToolCalls)
+	require.Equal(t, []string{"enter_plan_mode", "todo_write", "todo_read", "exit_plan_mode"}, planTodo.ToolUses)
+	require.Contains(t, planTodo.Output, `"action": "enter"`)
+	require.Contains(t, planTodo.Output, `"status": "active"`)
+	require.Contains(t, planTodo.Output, `"content": "write focused parity test"`)
+	require.Contains(t, planTodo.Output, `"action": "exit"`)
+	require.Contains(t, planTodo.Output, `"status": "inactive"`)
+	planTodoCategory := findCategory(t, report, "planning")
+	require.True(t, planTodoCategory.OK)
+	require.Equal(t, 1, planTodoCategory.Total)
+	require.ElementsMatch(t, []string{"plan_todo_roundtrip"}, planTodoCategory.Scenarios)
+
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
@@ -333,6 +348,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	gitWorkspace := findManifestScenario(t, manifest, "git_workspace_roundtrip")
 	require.Equal(t, "git-workspace", gitWorkspace.Category)
 	require.Contains(t, gitWorkspace.ParityRefs, "Branch freshness")
+
+	planTodo := findManifestScenario(t, manifest, "plan_todo_roundtrip")
+	require.Equal(t, "planning", planTodo.Category)
+	require.Contains(t, planTodo.ParityRefs, "Plan mode")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {
