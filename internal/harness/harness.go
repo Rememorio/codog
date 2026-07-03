@@ -157,6 +157,7 @@ var scenarioOrder = []string{
 	"bash_output_truncation_roundtrip",
 	"bash_permission_prompt_approved",
 	"bash_permission_prompt_denied",
+	"sandbox_bypass_status_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -631,6 +632,7 @@ func Run(ctx context.Context) (Report, error) {
 				return nil
 			},
 		},
+		sandboxBypassStatusScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1163,6 +1165,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Confirms large bash output is truncated before returning to the model.",
 		ParityRefs:  []string{"Bash tool", "Output truncation"},
 	},
+	"sandbox_bypass_status_roundtrip": {
+		Category:    "sandbox",
+		Description: "Executes bash with Claude-compatible sandbox bypass and verifies structured sandbox status reporting.",
+		ParityRefs:  []string{"Sandbox", "Bash tool", "Permission safety"},
+	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
 		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
@@ -1514,6 +1521,93 @@ func bashOutputTruncationScenario() scenario {
 				return fmt.Errorf("unexpected persisted bash output metadata: kind=%q stdout=%d fields=%v", persisted.Kind, len(persisted.Stdout), persisted.TruncatedFields)
 			}
 			return nil
+		},
+	}
+}
+
+func sandboxBypassStatusScenario() scenario {
+	return scenario{
+		name: "sandbox_bypass_status_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			out, err := tools.BashTool{
+				Workspace:       workspace,
+				ConfigHome:      configHome,
+				SandboxStrategy: "detect",
+			}.Execute(ctx, json.RawMessage(`{
+				"command":"printf sandbox-bypass-ok",
+				"timeout_ms":1000,
+				"dangerouslyDisableSandbox":true,
+				"namespaceRestrictions":true,
+				"isolateNetwork":true,
+				"filesystemMode":"allow-list",
+				"allowedMounts":["logs"]
+			}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var payload struct {
+				Stdout                    string `json:"stdout"`
+				DangerouslyDisableSandbox bool   `json:"dangerouslyDisableSandbox"`
+				Sandbox                   string `json:"sandbox,omitempty"`
+				SandboxStatus             struct {
+					Enabled             bool     `json:"enabled"`
+					Active              bool     `json:"active"`
+					Supported           bool     `json:"supported"`
+					ConfiguredStrategy  string   `json:"configured_strategy"`
+					ResolutionStatus    string   `json:"resolution_status"`
+					ResolutionAvailable bool     `json:"resolution_available"`
+					FilesystemMode      string   `json:"filesystem_mode"`
+					FilesystemActive    bool     `json:"filesystem_active"`
+					AllowedMounts       []string `json:"allowed_mounts"`
+					Requested           struct {
+						Enabled               bool     `json:"enabled"`
+						NamespaceRestrictions bool     `json:"namespace_restrictions"`
+						NetworkIsolation      bool     `json:"network_isolation"`
+						FilesystemMode        string   `json:"filesystem_mode"`
+						AllowedMounts         []string `json:"allowed_mounts"`
+					} `json:"requested"`
+				} `json:"sandboxStatus"`
+			}
+			if err := json.Unmarshal([]byte(out), &payload); err != nil {
+				return localScenarioResult{}, err
+			}
+			if payload.Stdout != "sandbox-bypass-ok" {
+				return localScenarioResult{}, fmt.Errorf("unexpected bash stdout %q", payload.Stdout)
+			}
+			if !payload.DangerouslyDisableSandbox {
+				return localScenarioResult{}, fmt.Errorf("sandbox bypass flag was not preserved")
+			}
+			if payload.Sandbox != "" {
+				return localScenarioResult{}, fmt.Errorf("sandbox command should not be active when bypassed: %q", payload.Sandbox)
+			}
+			status := payload.SandboxStatus
+			if status.Enabled || status.Active || !status.Supported || status.ResolutionStatus != "disabled" || status.ConfiguredStrategy != "off" {
+				return localScenarioResult{}, fmt.Errorf("unexpected sandbox status: %#v", status)
+			}
+			if status.Requested.Enabled ||
+				!status.Requested.NamespaceRestrictions ||
+				!status.Requested.NetworkIsolation ||
+				status.Requested.FilesystemMode != "allow-list" ||
+				status.FilesystemMode != "allow-list" ||
+				status.FilesystemActive {
+				return localScenarioResult{}, fmt.Errorf("unexpected sandbox request/status: %#v", status)
+			}
+			expectedMount := filepath.Join(workspace, "logs")
+			if !slices.Contains(status.AllowedMounts, expectedMount) {
+				return localScenarioResult{}, fmt.Errorf("sandbox allowed mounts missing %q: %v", expectedMount, status.AllowedMounts)
+			}
+			if !slices.Contains(status.Requested.AllowedMounts, "logs") {
+				return localScenarioResult{}, fmt.Errorf("sandbox requested mounts missing logs: %v", status.Requested.AllowedMounts)
+			}
+
+			return localScenarioResult{
+				Output:       out,
+				FinalMessage: "sandbox bypass status harness ok",
+				ToolCalls:    1,
+				ToolUses:     []string{"bash"},
+				RequestCount: 1,
+			}, nil
 		},
 	}
 }

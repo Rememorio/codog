@@ -117,6 +117,19 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, bashTruncation.Description, "truncated")
 	require.Contains(t, bashTruncation.Output, "bash truncation harness ok")
 
+	sandboxBypass := findScenario(t, report, "sandbox_bypass_status_roundtrip")
+	require.True(t, sandboxBypass.OK)
+	require.Equal(t, "sandbox", sandboxBypass.Category)
+	require.Equal(t, 1, sandboxBypass.ToolCalls)
+	require.Equal(t, []string{"bash"}, sandboxBypass.ToolUses)
+	require.Contains(t, sandboxBypass.Output, `"dangerouslyDisableSandbox": true`)
+	require.Contains(t, sandboxBypass.Output, `"resolution_status": "disabled"`)
+	require.Contains(t, sandboxBypass.Output, "sandbox-bypass-ok")
+	sandboxCategory := findCategory(t, report, "sandbox")
+	require.True(t, sandboxCategory.OK)
+	require.Equal(t, 1, sandboxCategory.Total)
+	require.ElementsMatch(t, []string{"sandbox_bypass_status_roundtrip"}, sandboxCategory.Scenarios)
+
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
@@ -260,6 +273,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	mcpAuth := findManifestScenario(t, manifest, "mcp_auth_oauth_refresh_roundtrip")
 	require.Equal(t, "mcp-auth", mcpAuth.Category)
 	require.Contains(t, mcpAuth.ParityRefs, "OAuth refresh")
+
+	sandboxBypass := findManifestScenario(t, manifest, "sandbox_bypass_status_roundtrip")
+	require.Equal(t, "sandbox", sandboxBypass.Category)
+	require.Contains(t, sandboxBypass.ParityRefs, "Sandbox")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {
