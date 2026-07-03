@@ -393,24 +393,30 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 	if err := app.validateGlobalToolRules(overrides, requestedOutputFormat(originalArgs)); err != nil {
 		return err
 	}
+	format := requestedOutputFormat(originalArgs)
+	wrapStructured := func(err error) error {
+		if err != nil {
+			return renderCLIErrorWhenStructured(app.Out, err, format)
+		}
+		return nil
+	}
 	if strings.HasPrefix(command, "/") && strings.TrimSpace(overrides.Resume) != "" {
-		return app.RunResumedSlash(ctx, command, rest, overrides, requestedOutputFormat(originalArgs))
+		return app.RunResumedSlash(ctx, command, rest, overrides, format)
 	}
 	if strings.HasPrefix(command, "/") {
-		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, requestedOutputFormat(originalArgs), app.customSlashCompletionCandidates())
+		if directSlashCommandName(command) == "" && !directSlashInteractiveOnly(command) {
+			if handled, err := app.runDirectCustomSlash(ctx, command, rest, overrides, format); handled {
+				return wrapStructured(err)
+			}
+		}
+		mappedCommand, mappedRest, err := normalizeDirectSlashInvocation(os.Stdout, command, rest, format, app.customSlashCompletionCandidates())
 		if err != nil {
 			return err
 		}
 		command, rest = mappedCommand, mappedRest
-		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, requestedOutputFormat(originalArgs)); handled {
+		if handled, err := renderCommandHelpRequest(os.Stdout, command, rest, format); handled {
 			return err
 		}
-	}
-	wrapStructured := func(err error) error {
-		if err != nil {
-			return renderCLIErrorWhenStructured(app.Out, err, requestedOutputFormat(originalArgs))
-		}
-		return nil
 	}
 
 	switch command {
@@ -26678,6 +26684,21 @@ func normalizeDirectSlashInvocation(out io.Writer, command string, args []string
 	return mapped, injectGlobalOutputFormat(mapped, args, format), nil
 }
 
+func (a *App) runDirectCustomSlash(ctx context.Context, command string, args []string, overrides config.FlagOverrides, format string) (bool, error) {
+	custom, err := customcommands.Find(a.Config.ConfigHome, a.Workspace, command)
+	if err != nil {
+		if errors.Is(err, customcommands.ErrNotFound) {
+			return false, nil
+		}
+		return true, err
+	}
+	rendered := customcommands.Render(custom, strings.Join(args, " "))
+	if strings.TrimSpace(rendered.Rendered) == "" {
+		return true, fmt.Errorf("custom command %s rendered an empty prompt", command)
+	}
+	return true, a.promptWithOutputOptions(ctx, rendered.Rendered, overrides, format, false, turnOptions{AllowedTools: custom.AllowedTools})
+}
+
 // RunResumedSlash executes a supported slash command against a resumed session.
 func (a *App) RunResumedSlash(ctx context.Context, command string, args []string, overrides config.FlagOverrides, format string) error {
 	name := strings.ToLower(strings.TrimSpace(command))
@@ -30346,6 +30367,10 @@ func (a *App) PromptWithOutput(ctx context.Context, input string, overrides conf
 }
 
 func (a *App) promptWithOutput(ctx context.Context, input string, overrides config.FlagOverrides, format string, compact bool) error {
+	return a.promptWithOutputOptions(ctx, input, overrides, format, compact, turnOptions{})
+}
+
+func (a *App) promptWithOutputOptions(ctx context.Context, input string, overrides config.FlagOverrides, format string, compact bool, opts turnOptions) error {
 	format = strings.TrimSpace(strings.ToLower(format))
 	if format == "" {
 		format = "text"
@@ -30391,7 +30416,9 @@ func (a *App) promptWithOutput(ctx context.Context, input string, overrides conf
 		}
 		turnOut = writer
 	}
-	runErr := a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", turnOptions{Out: turnOut})
+	turnOpts := opts
+	turnOpts.Out = turnOut
+	runErr := a.runSessionTurnWithOptions(ctx, "prompt", sess, input, "completed", turnOpts)
 	endReason := "completed"
 	if runErr != nil {
 		endReason = "error"

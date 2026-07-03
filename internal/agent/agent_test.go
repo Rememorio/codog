@@ -11884,6 +11884,49 @@ func TestUnknownSlashInREPLShowsSuggestions(t *testing.T) {
 	require.Contains(t, errOut.String(), "/team/review")
 }
 
+func TestDirectCustomSlashRunsOMCCommand(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".omc", "commands", "oh-my-claudecode"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".omc", "commands", "oh-my-claudecode", "hud.md"), []byte(`---
+allowed-tools: Read
+---
+OMC HUD $ARGUMENTS`), 0o644))
+	requests := []json.RawMessage{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "omc direct ok",
+		OnRequest: func(data json.RawMessage) {
+			requests = append(requests, data)
+		},
+	}.Handler())
+	defer server.Close()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/oh-my-claudecode:hud", "session"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "prompt"`)
+	require.Contains(t, out, "omc direct ok")
+	require.Len(t, requests, 1)
+	require.Contains(t, string(requests[0]), "OMC HUD session")
+	require.NotContains(t, out, "unknown_slash_command")
+}
+
 func TestDoctorReportsConfigValidationChecks(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
