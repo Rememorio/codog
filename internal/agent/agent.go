@@ -354,6 +354,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isPrefetchCommand(command) {
 			return renderPrefetchWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
 		}
+		if config.IsFileError(err) && isCapabilitiesCommand(command) {
+			return renderCapabilitiesWithConfigLoadError(os.Stdout, rest, overrides, originalArgs)
+		}
 		if config.IsFileError(err) && isDoctorCommand(command) {
 			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -1147,6 +1150,15 @@ func isPrefetchCommand(command string) bool {
 	}
 }
 
+func isCapabilitiesCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "capabilities", "/capabilities":
+		return true
+	default:
+		return false
+	}
+}
+
 func isConfigCommand(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "config", "settings", "/config", "/settings":
@@ -1314,6 +1326,38 @@ func renderPrefetchWithConfigLoadError(out io.Writer, rest []string, overrides c
 		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
 	}
 	return app.Prefetch(prefetchArgs)
+}
+
+func renderCapabilitiesWithConfigLoadError(out io.Writer, rest []string, overrides config.FlagOverrides, originalArgs []string) error {
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	capabilityArgs := append([]string(nil), rest...)
+	if !argsHaveOutputFormat(capabilityArgs) {
+		capabilityArgs = injectGlobalOutputFormat("capabilities", capabilityArgs, requestedOutputFormat(originalArgs))
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	app := &App{
+		Config:    cfg,
+		Tools:     tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, "")),
+		Sessions:  session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Workspace: workspace,
+		Out:       out,
+		Err:       os.Stderr,
+		In:        os.Stdin,
+	}
+	if err := app.Capabilities(capabilityArgs); err != nil {
+		return renderCLIErrorWhenStructured(out, err, requestedOutputFormat(originalArgs))
+	}
+	return nil
 }
 
 func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
@@ -25576,6 +25620,29 @@ type capabilitiesReport struct {
 	OutputFormats     []string          `json:"output_formats"`
 }
 
+type capabilityResolveReport struct {
+	Kind        string                    `json:"kind"`
+	Action      string                    `json:"action"`
+	Status      string                    `json:"status"`
+	Query       string                    `json:"query"`
+	MatchCount  int                       `json:"match_count"`
+	Matches     []capabilityRegistryMatch `json:"matches"`
+	Suggestions []string                  `json:"suggestions,omitempty"`
+}
+
+type capabilityRegistryMatch struct {
+	Kind            string   `json:"kind"`
+	Name            string   `json:"name"`
+	Canonical       string   `json:"canonical,omitempty"`
+	Usage           string   `json:"usage,omitempty"`
+	Description     string   `json:"description,omitempty"`
+	Permission      string   `json:"permission,omitempty"`
+	Aliases         []string `json:"aliases,omitempty"`
+	ResumeSupported bool     `json:"resume_supported,omitempty"`
+	ExposedOverMCP  bool     `json:"exposed_over_mcp,omitempty"`
+	SourceHint      string   `json:"source_hint,omitempty"`
+}
+
 type capabilitySlash struct {
 	Name            string `json:"name"`
 	Usage           string `json:"usage"`
@@ -25607,18 +25674,87 @@ type capabilityMCP struct {
 }
 
 func (a *App) Capabilities(args []string) error {
-	format, err := parseSimpleOutputFormat("capabilities", args)
+	req, err := parseCapabilitiesArgs(args)
 	if err != nil {
 		return err
 	}
+	if req.Action == "resolve" {
+		report := a.capabilityResolveReport(req.Query)
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderCapabilityResolveText(a.Out, report)
+		return nil
+	}
 	report := a.capabilitiesReport()
-	if format == "json" {
+	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
 	renderCapabilitiesText(a.Out, report)
 	return nil
+}
+
+type capabilitiesRequest struct {
+	Action string
+	Query  string
+	Format string
+}
+
+func parseCapabilitiesArgs(args []string) (capabilitiesRequest, error) {
+	req := capabilitiesRequest{Action: "show", Format: "text"}
+	positionals := []string{}
+	usage := "codog capabilities [show|list|resolve NAME] [--json|--output-format text|json]"
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+			continue
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: "capabilities", Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: "capabilities", Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if err := validateTextOrJSON(req.Format, "capabilities"); err != nil {
+		return req, err
+	}
+	if len(positionals) == 0 {
+		return req, nil
+	}
+	action := strings.ToLower(positionals[0])
+	switch action {
+	case "show", "list":
+		if len(positionals) > 1 {
+			return req, unexpectedExtraArgsError{Command: "capabilities " + action, Args: positionals[1:], Usage: usage}
+		}
+		req.Action = "show"
+	case "resolve", "lookup", "find":
+		if len(positionals) < 2 {
+			return req, requiredArgumentError{Command: "capabilities resolve", Argument: "NAME", Usage: usage}
+		}
+		if len(positionals) > 2 {
+			return req, unexpectedExtraArgsError{Command: "capabilities resolve", Args: positionals[2:], Usage: usage}
+		}
+		req.Action = "resolve"
+		req.Query = positionals[1]
+	default:
+		return req, unknownOptionError{Command: "capabilities", Option: positionals[0], Usage: usage}
+	}
+	return req, nil
 }
 
 func (a *App) capabilitiesReport() capabilitiesReport {
@@ -25681,6 +25817,249 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 		Features:      codogCapabilityFeatures(),
 		Protocols:     codogCapabilityProtocols(),
 		OutputFormats: []string{"text", "json", "stream-json"},
+	}
+}
+
+func (a *App) capabilityResolveReport(query string) capabilityResolveReport {
+	query = strings.TrimSpace(query)
+	matches := a.capabilityRegistryMatches(query)
+	report := capabilityResolveReport{
+		Kind:       "capabilities",
+		Action:     "resolve",
+		Status:     "ok",
+		Query:      query,
+		Matches:    matches,
+		MatchCount: len(matches),
+	}
+	if len(matches) == 0 {
+		report.Status = "not_found"
+		report.Suggestions = a.capabilityRegistrySuggestions(query, 8)
+	}
+	return report
+}
+
+func (a *App) capabilityRegistryMatches(query string) []capabilityRegistryMatch {
+	normalized := strings.ToLower(strings.TrimSpace(query))
+	normalizedNoSlash := strings.TrimPrefix(normalized, "/")
+	if normalized == "" {
+		return nil
+	}
+	matches := []capabilityRegistryMatch{}
+	seen := map[string]bool{}
+	add := func(match capabilityRegistryMatch) {
+		key := match.Kind + "\x00" + match.Name + "\x00" + match.Canonical
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		matches = append(matches, match)
+	}
+	for _, command := range builtInCommandNames() {
+		if strings.EqualFold(command, query) {
+			match := capabilityRegistryMatch{
+				Kind:       "command",
+				Name:       command,
+				Canonical:  command,
+				SourceHint: "built_in_command",
+			}
+			if spec, ok := commandHelpSpecFor(command); ok {
+				match.Usage = spec.Usage
+				match.Description = firstHelpParagraph(spec.Text)
+				match.Aliases = append([]string(nil), spec.Aliases...)
+			}
+			add(match)
+		}
+	}
+	for _, spec := range slash.Specs() {
+		slashName := strings.ToLower(strings.TrimSpace(spec.Name))
+		if slashName == normalized || strings.TrimPrefix(slashName, "/") == normalizedNoSlash {
+			add(capabilityRegistryMatch{
+				Kind:            "slash",
+				Name:            spec.Name,
+				Canonical:       spec.Name,
+				Usage:           spec.Usage,
+				Description:     spec.Description,
+				ResumeSupported: spec.ResumeSupported,
+				SourceHint:      "slash_command",
+			})
+		}
+	}
+	registry := a.activeToolRegistry()
+	exposed := capabilityExposedToolNames(registry)
+	if registry != nil {
+		if info, ok := registry.Info(query); ok {
+			kind := "tool"
+			canonical := info.Name
+			if !strings.EqualFold(query, info.Name) {
+				kind = "tool_alias"
+			}
+			add(capabilityRegistryMatch{
+				Kind:           kind,
+				Name:           query,
+				Canonical:      canonical,
+				Description:    info.Description,
+				Permission:     string(info.Permission),
+				Aliases:        toolDetailAliases(info.Name),
+				ExposedOverMCP: exposed[info.Name],
+				SourceHint:     "tool_registry",
+			})
+		}
+	}
+	for alias, canonical := range tools.ClaudeToolAliases() {
+		if !strings.EqualFold(alias, query) {
+			continue
+		}
+		match := capabilityRegistryMatch{
+			Kind:       "tool_alias",
+			Name:       alias,
+			Canonical:  canonical,
+			SourceHint: "claude_tool_alias",
+		}
+		if registry != nil {
+			if info, ok := registry.Info(canonical); ok {
+				match.Description = info.Description
+				match.Permission = string(info.Permission)
+				match.Aliases = toolDetailAliases(info.Name)
+				match.ExposedOverMCP = exposed[info.Name]
+			}
+		}
+		add(match)
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Kind != matches[j].Kind {
+			return capabilityMatchKindRank(matches[i].Kind) < capabilityMatchKindRank(matches[j].Kind)
+		}
+		return matches[i].Name < matches[j].Name
+	})
+	return matches
+}
+
+func capabilityMatchKindRank(kind string) int {
+	switch kind {
+	case "command":
+		return 0
+	case "slash":
+		return 1
+	case "tool":
+		return 2
+	case "tool_alias":
+		return 3
+	default:
+		return 9
+	}
+}
+
+func capabilityExposedToolNames(registry *tools.Registry) map[string]bool {
+	out := map[string]bool{}
+	for _, tool := range mcpserver.ExposedTools(registry) {
+		if name, ok := tool["name"].(string); ok && name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func (a *App) capabilityRegistrySuggestions(query string, limit int) []string {
+	query = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(query, "/")))
+	if query == "" || limit <= 0 {
+		return nil
+	}
+	candidates := []string{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			candidates = append(candidates, value)
+		}
+	}
+	for _, command := range builtInCommandNames() {
+		add(command)
+	}
+	for _, spec := range slash.Specs() {
+		add(spec.Name)
+	}
+	if registry := a.activeToolRegistry(); registry != nil {
+		for _, info := range registry.Infos() {
+			add(info.Name)
+		}
+	}
+	for alias := range tools.ClaudeToolAliases() {
+		add(alias)
+	}
+	type rankedSuggestion struct {
+		score int
+		name  string
+	}
+	seen := map[string]bool{}
+	ranked := []rankedSuggestion{}
+	for _, candidate := range candidates {
+		key := strings.ToLower(candidate)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		normalized := strings.ToLower(strings.TrimPrefix(candidate, "/"))
+		score := levenshteinDistance(normalized, query)
+		if strings.HasPrefix(normalized, query) {
+			score = 0
+		} else if strings.Contains(normalized, query) {
+			score = min(score, 1)
+		}
+		if score <= 3 {
+			ranked = append(ranked, rankedSuggestion{score: score, name: candidate})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score < ranked[j].score
+		}
+		return ranked[i].name < ranked[j].name
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]string, 0, len(ranked))
+	for _, candidate := range ranked {
+		out = append(out, candidate.name)
+	}
+	return out
+}
+
+func firstHelpParagraph(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	paragraph := []string{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if len(paragraph) > 0 {
+				break
+			}
+			continue
+		}
+		paragraph = append(paragraph, line)
+	}
+	return strings.Join(paragraph, " ")
+}
+
+func renderCapabilityResolveText(out io.Writer, report capabilityResolveReport) {
+	fmt.Fprintln(out, "Capability Resolve")
+	fmt.Fprintf(out, "  Query            %s\n", report.Query)
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Matches          %d\n", report.MatchCount)
+	for _, match := range report.Matches {
+		fmt.Fprintf(out, "    - %-10s %s", match.Kind, match.Name)
+		if match.Canonical != "" && match.Canonical != match.Name {
+			fmt.Fprintf(out, " -> %s", match.Canonical)
+		}
+		fmt.Fprintln(out)
+		if match.Usage != "" {
+			fmt.Fprintf(out, "      usage=%s\n", match.Usage)
+		}
+		if match.Permission != "" {
+			fmt.Fprintf(out, "      permission=%s exposed_over_mcp=%t\n", match.Permission, match.ExposedOverMCP)
+		}
+	}
+	if len(report.Suggestions) > 0 {
+		fmt.Fprintf(out, "  Suggestions      %s\n", strings.Join(report.Suggestions, ", "))
 	}
 }
 
@@ -25785,6 +26164,7 @@ func codogCapabilityFeatures() []string {
 		"permission_confirmation",
 		"policy_engine",
 		"prefetch_preflight",
+		"execution_registry_resolve",
 		"plugin_lifecycle",
 		"plugin_marketplace",
 		"plugins_config_load_degraded",
@@ -50820,10 +51200,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"capabilities",
 			"capabilities",
-			"codog capabilities [--output-format text|json]",
-			"Capabilities\n\nUsage:\n  codog capabilities [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build.\n",
-			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp"},
-			[]string{"ok", "error"},
+			"codog capabilities [show|list|resolve NAME] [--output-format text|json]",
+			"Capabilities\n\nUsage:\n  codog capabilities [show|list] [--output-format text|json]\n  codog capabilities resolve NAME [--output-format text|json]\n\nReports the commands, slash commands, tools, protocols, MCP resources, and feature flags supported by this build. `resolve` projects the live execution registry for one command, slash command, tool, or Claude-style tool alias.\n",
+			[]string{"commands", "slash_commands", "tools", "features", "protocols", "mcp", "matches", "suggestions"},
+			[]string{"ok", "not_found", "error"},
 			false,
 		), true
 	case "cost":
@@ -51460,7 +51840,7 @@ Usage:
   %s [flags] allowed-tools [list|add|remove|clear] [TOOL...]
   %s [flags] brief [MESSAGE] [--status normal|proactive] [--attach PATH] [--json|--output-format text|json]
   %s [flags] mcp [list|serve|self|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt]
-  %s [flags] capabilities [--json|--output-format text|json]
+  %s [flags] capabilities [show|list|resolve NAME] [--json|--output-format text|json]
   %s [flags] bootstrap-plan [--json|--output-format text|json]
   %s [flags] prefetch [run|status] [--json|--output-format text|json]
   %s [flags] deferred-init|startup-report [--json|--output-format text|json]

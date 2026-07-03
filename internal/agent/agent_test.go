@@ -984,6 +984,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "deferred_init")
 	require.Contains(t, report.Features, "doctor_config_load_degraded")
 	require.Contains(t, report.Features, "doctor_config_validation")
+	require.Contains(t, report.Features, "execution_registry_resolve")
 	require.Contains(t, report.Features, "hooks_health")
 	require.Contains(t, report.Features, "interface_language")
 	require.Contains(t, report.Features, "lane_event_projection")
@@ -1290,6 +1291,56 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("upgrade"))
 	require.True(t, commandAcceptsGlobalOutputFormat("workspace"))
 	require.True(t, commandAcceptsGlobalOutputFormat("cwd"))
+}
+
+func TestCapabilitiesResolveProjectsExecutionRegistry(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "read-only",
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Capabilities([]string{"resolve", "BashTool", "--json"}))
+	var aliasReport capabilityResolveReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &aliasReport))
+	require.Equal(t, "capabilities", aliasReport.Kind)
+	require.Equal(t, "resolve", aliasReport.Action)
+	require.Equal(t, "ok", aliasReport.Status)
+	aliasMatch, ok := capabilityResolveMatch(aliasReport, "tool_alias", "BashTool")
+	require.True(t, ok)
+	require.Equal(t, "bash", aliasMatch.Canonical)
+	require.Contains(t, aliasMatch.Aliases, "BashTool")
+	require.NotEmpty(t, aliasMatch.Permission)
+	out.Reset()
+
+	require.NoError(t, app.Capabilities([]string{"resolve", "prefetch", "--json"}))
+	var commandReport capabilityResolveReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &commandReport))
+	require.Equal(t, "ok", commandReport.Status)
+	commandMatch, ok := capabilityResolveMatch(commandReport, "command", "prefetch")
+	require.True(t, ok)
+	require.Contains(t, commandMatch.Usage, "codog prefetch")
+	slashMatch, ok := capabilityResolveMatch(commandReport, "slash", "/prefetch")
+	require.True(t, ok)
+	require.True(t, slashMatch.ResumeSupported)
+	out.Reset()
+
+	require.NoError(t, app.Capabilities([]string{"resolve", "prefetxh", "--json"}))
+	var missingReport capabilityResolveReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &missingReport))
+	require.Equal(t, "not_found", missingReport.Status)
+	require.Empty(t, missingReport.Matches)
+	require.Contains(t, missingReport.Suggestions, "prefetch")
 }
 
 func TestBootstrapPlanCommandOutputsTextAndJSON(t *testing.T) {
@@ -7343,6 +7394,15 @@ func TestInvalidOutputFormatJSONContract(t *testing.T) {
 func capabilityReportHasTool(report capabilitiesReport, name string) bool {
 	_, ok := capabilityReportTool(report, name)
 	return ok
+}
+
+func capabilityResolveMatch(report capabilityResolveReport, kind string, name string) (capabilityRegistryMatch, bool) {
+	for _, match := range report.Matches {
+		if match.Kind == kind && match.Name == name {
+			return match, true
+		}
+	}
+	return capabilityRegistryMatch{}, false
 }
 
 func modelRouteExists(routes []modelRouteReport, prefix string, provider string) bool {
