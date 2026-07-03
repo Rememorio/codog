@@ -2811,6 +2811,19 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	}))
 	t.Cleanup(webServer.Close)
 	t.Setenv("CODOG_WEB_SEARCH_BASE_URL", webServer.URL+"/search")
+	var ragQuery struct {
+		Query string `json:"query"`
+		TopK  int    `json:"top_k"`
+	}
+	ragServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/query", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&ragQuery))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"phase":"1-sqlite","hits":[{"path":"internal/agent/agent.go","score":0.75,"snippet":"func resumedDebugToolCallAllowed(name string) bool {}"}]}`)
+	}))
+	t.Cleanup(ragServer.Close)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
 	require.NoError(t, err)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", oauthServer.URL, "client-work", []string{"profile"})
@@ -2901,14 +2914,17 @@ func risky(value any) {
 		"rate_limit": map[string]any{
 			"max_retries": 4,
 		},
-		"language":         "Japanese",
-		"theme":            "dark",
-		"reasoning_effort": "high",
-		"fast_mode":        true,
-		"speech_command":   "codog-test-speech-helper",
-		"voice_command":    "codog-test-voice-helper",
-		"voice_enabled":    true,
-		"editorMode":       "vim",
+		"rag_base_url":        ragServer.URL,
+		"rag_timeout_seconds": 2,
+		"rag_top_k_max":       3,
+		"language":            "Japanese",
+		"theme":               "dark",
+		"reasoning_effort":    "high",
+		"fast_mode":           true,
+		"speech_command":      "codog-test-speech-helper",
+		"voice_command":       "codog-test-voice-helper",
+		"voice_enabled":       true,
+		"editorMode":          "vim",
 		"privacy_settings": map[string]any{
 			"telemetry_enabled":      true,
 			"prompt_history_enabled": false,
@@ -4086,6 +4102,19 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionReadOnly, resumedDebugSleep.Permission)
 	require.True(t, resumedDebugSleep.Success)
 	require.Contains(t, resumedDebugSleep.Output, "Slept for 1ms")
+
+	out, err = runResumedJSON("/debug-tool-call", "RetrieveContextTool", `{"query":" resumed debug routing ","top_k":9}`)
+	require.NoError(t, err)
+	var resumedDebugRetrieveContext debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugRetrieveContext))
+	require.Equal(t, "debug_tool_call", resumedDebugRetrieveContext.Kind)
+	require.Equal(t, "retrieve_context", resumedDebugRetrieveContext.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugRetrieveContext.Permission)
+	require.True(t, resumedDebugRetrieveContext.Success)
+	require.Equal(t, "resumed debug routing", ragQuery.Query)
+	require.Equal(t, 3, ragQuery.TopK)
+	require.Contains(t, resumedDebugRetrieveContext.Output, "phase: 1-sqlite")
+	require.Contains(t, resumedDebugRetrieveContext.Output, "path=internal/agent/agent.go")
 
 	out, err = runResumedJSON("/debug-tool-call", "WebFetch", `{"url":"`+webServer.URL+`/page","prompt":"title"}`)
 	require.NoError(t, err)
