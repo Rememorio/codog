@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -62,6 +63,36 @@ func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 			requireExportedDocComments(t, pkg, files)
 		})
 	}
+}
+
+func TestReadmeStatesCompatibilityBoundaries(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	require.NoError(t, err)
+	readme := string(data)
+	lower := strings.ToLower(readme)
+
+	for _, required := range []string{
+		"experimental Go-native coding agent",
+		"not an Anthropic product",
+		"not yet a polished drop-in replacement",
+		"not a complete security sandbox",
+	} {
+		require.Contains(t, readme, required)
+	}
+
+	for _, disallowed := range []string{
+		"full parity",
+		"complete parity",
+		"feature complete",
+		"generated with",
+		"made with",
+		"built with cursor",
+		"gocache=",
+	} {
+		require.NotContains(t, lower, disallowed)
+	}
+	require.NotRegexp(t, regexp.MustCompile(`/Users/[A-Za-z0-9._-]+/`), readme)
 }
 
 func listInternalPackages(t *testing.T, root string) []string {
