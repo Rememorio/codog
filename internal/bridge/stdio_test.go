@@ -37,6 +37,7 @@ func TestBridgeInitialize(t *testing.T) {
 	require.Contains(t, out.String(), `"sessions/fork"`)
 	require.Contains(t, out.String(), `"sessions/rename"`)
 	require.Contains(t, out.String(), `"sessions/delete"`)
+	require.Contains(t, out.String(), `"sessions/prune"`)
 	require.Contains(t, out.String(), `"sessions/prompt"`)
 	require.Contains(t, out.String(), `"workspace/files"`)
 	require.Contains(t, out.String(), `"workspace/search"`)
@@ -150,6 +151,30 @@ func TestBridgeSessionHistoryForkRenameAndDelete(t *testing.T) {
 	require.Len(t, sessions, 1)
 	require.Equal(t, "hello", sessions[0].Messages[0].Content[0].Text)
 	require.Equal(t, "fork:investigation", sessions[0].Identity.Purpose)
+}
+
+func TestBridgeSessionPruneDryRunAndConfirm(t *testing.T) {
+	store := &session.Store{Dir: filepath.Join(t.TempDir(), "sessions")}
+	_, err := store.Create("empty-ide-session")
+	require.NoError(t, err)
+	require.NoError(t, store.Append("kept-ide-session", anthropic.TextMessage("user", "keep me")))
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"sessions/prune"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"sessions/prune","params":{"confirm":true}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	err = Server{Sessions: store, Version: "test"}.Serve(strings.NewReader(input), &out)
+	require.NoError(t, err)
+	require.Contains(t, out.String(), `"kind":"session_prune"`)
+	require.Contains(t, out.String(), `"status":"dry_run"`)
+	require.Contains(t, out.String(), `"dry_run":true`)
+	require.Contains(t, out.String(), `"candidate_count":1`)
+	require.Contains(t, out.String(), `"status":"ok"`)
+	require.Contains(t, out.String(), `"deleted_count":1`)
+	require.Contains(t, out.String(), `"id":"empty-ide-session"`)
+	require.NoFileExists(t, filepath.Join(store.Dir, "empty-ide-session.jsonl"))
+	require.FileExists(t, filepath.Join(store.Dir, "kept-ide-session.jsonl"))
 }
 
 func TestBridgeSessionPromptStartsBackgroundTask(t *testing.T) {

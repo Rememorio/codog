@@ -98,6 +98,7 @@ func (s Server) handle(req Request) (any, *Error) {
 				"sessions/fork",
 				"sessions/rename",
 				"sessions/delete",
+				"sessions/prune",
 				"sessions/prompt",
 				"workspace/info",
 				"workspace/files",
@@ -233,6 +234,12 @@ func (s Server) handle(req Request) (any, *Error) {
 		return result, nil
 	case "sessions/delete":
 		result, err := s.sessionDelete(req.Params)
+		if err != nil {
+			return nil, &Error{Code: -32000, Message: err.Error()}
+		}
+		return result, nil
+	case "sessions/prune":
+		result, err := s.sessionPrune(req.Params)
 		if err != nil {
 			return nil, &Error{Code: -32000, Message: err.Error()}
 		}
@@ -1861,6 +1868,38 @@ func (s Server) sessionDelete(params json.RawMessage) (any, error) {
 		"path":          sess.Path,
 		"message_count": len(sess.Messages),
 	}, nil
+}
+
+func (s Server) sessionPrune(params json.RawMessage) (any, error) {
+	var payload struct {
+		Keep      int    `json:"keep"`
+		EmptyOnly *bool  `json:"empty_only"`
+		Confirm   bool   `json:"confirm"`
+		ExcludeID string `json:"exclude_id"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &payload); err != nil {
+			return nil, err
+		}
+	}
+	if payload.Keep < 0 {
+		return nil, errors.New("keep must be non-negative")
+	}
+	emptyOnly := false
+	if payload.EmptyOnly != nil {
+		emptyOnly = *payload.EmptyOnly
+	} else if payload.Keep == 0 {
+		emptyOnly = true
+	}
+	if payload.Keep == 0 && !emptyOnly {
+		return nil, errors.New("empty_only=false requires keep")
+	}
+	return s.Sessions.Prune(session.PruneOptions{
+		ExcludeID: strings.TrimSpace(payload.ExcludeID),
+		Keep:      payload.Keep,
+		EmptyOnly: emptyOnly,
+		Confirm:   payload.Confirm,
+	})
 }
 
 func (s Server) sessionPrompt(params json.RawMessage) (any, error) {
