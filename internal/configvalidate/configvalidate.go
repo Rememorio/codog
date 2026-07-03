@@ -99,6 +99,7 @@ var topLevelFields = []fieldSpec{
 	{"permissions", FieldObject},
 	{"allowedTools", FieldStringArray},
 	{"disallowedTools", FieldStringArray},
+	{"background", FieldObject},
 	{"privacy_settings", FieldObject},
 	{"auto_compact_messages", FieldNumber},
 	{"cleanupPeriodDays", FieldNumber},
@@ -311,6 +312,13 @@ var marketplaceFields = []fieldSpec{
 	{"publicKeys", FieldObject},
 }
 
+var backgroundFields = []fieldSpec{
+	{"state_path", FieldString},
+	{"statePath", FieldString},
+	{"worker_state_path", FieldString},
+	{"workerStatePath", FieldString},
+}
+
 var compatibilityFields = []fieldSpec{
 	{"slack_app_install_count", FieldNumber},
 	{"slackAppInstallCount", FieldNumber},
@@ -508,6 +516,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "permissions"); ok {
 		validateObject(result, nested, permissionRuleFields, "permissions", source, path)
+	}
+	if background, ok := objectAt(object, "background"); ok {
+		validateObject(result, background, backgroundFields, "background", source, path)
 	}
 	if nested, ok := objectAt(object, "privacy_settings"); ok {
 		validateObject(result, nested, privacyFields, "privacy_settings", source, path)

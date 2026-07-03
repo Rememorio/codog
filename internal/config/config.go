@@ -446,6 +446,43 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// BackgroundConfig holds local background worker state settings.
+type BackgroundConfig struct {
+	StatePath string `json:"state_path,omitempty"`
+}
+
+// UnmarshalJSON accepts snake_case and camelCase state path aliases.
+func (b *BackgroundConfig) UnmarshalJSON(data []byte) error {
+	type plain BackgroundConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readStringAlias := func(target *string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid background.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	if err := readStringAlias(&parsed.StatePath, "statePath", "state_path", "workerStatePath", "worker_state_path"); err != nil {
+		return err
+	}
+	*b = BackgroundConfig(parsed)
+	return nil
+}
+
 // CompatibilityConfig holds counters for Claude Code compatibility entrypoints.
 type CompatibilityConfig struct {
 	SlackAppInstallCount    int    `json:"slack_app_install_count,omitempty"`
@@ -938,6 +975,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
 		AllowedTools        []string                   `json:"allowedTools,omitempty"`
 		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
+		Background          BackgroundConfig           `json:"background,omitempty"`
 		Compatibility       CompatibilityConfig        `json:"compatibility,omitempty"`
 		EditorBridge        EditorBridgeConfig         `json:"editor_bridge,omitempty"`
 		Enterprise          EnterpriseConfig           `json:"enterprise,omitempty"`
@@ -1027,6 +1065,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if compatibilityConfigSet(aliases.Compatibility) {
 		mergeCompatibilityConfigIntoFuture(&parsed.Future, aliases.Compatibility)
+	}
+	if backgroundConfigSet(aliases.Background) {
+		mergeBackgroundConfigIntoFuture(&parsed.Future, aliases.Background)
 	}
 	*c = Config(parsed)
 	return nil
@@ -2045,6 +2086,10 @@ func compatibilityConfigSet(cfg CompatibilityConfig) bool {
 		cfg.GuestPassVisitCount != 0
 }
 
+func backgroundConfigSet(cfg BackgroundConfig) bool {
+	return cfg.StatePath != ""
+}
+
 func sandboxConfigSet(cfg SandboxConfig) bool {
 	return cfg.Strategy != "" ||
 		cfg.Enabled != nil ||
@@ -2126,6 +2171,12 @@ func mergeCompatibilityConfigIntoFuture(dst *FutureConfig, src CompatibilityConf
 	}
 	if src.guestPassVisitSet || src.GuestPassVisitCount != 0 {
 		dst.GuestPassVisitCount = src.GuestPassVisitCount
+	}
+}
+
+func mergeBackgroundConfigIntoFuture(dst *FutureConfig, src BackgroundConfig) {
+	if src.StatePath != "" {
+		dst.BackgroundStatePath = src.StatePath
 	}
 }
 

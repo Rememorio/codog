@@ -228,6 +228,41 @@ func TestLoadCompatibilityConfigCompatibility(t *testing.T) {
 	}
 }
 
+func TestLoadBackgroundConfigCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name      string
+		body      string
+		statePath string
+	}{
+		{
+			name:      "legacy future background state path",
+			body:      `{"future":{"background_state_path":".codog/state.json"}}`,
+			statePath: ".codog/state.json",
+		},
+		{
+			name:      "formal background aliases",
+			body:      `{"background":{"statePath":".codog/state.json"}}`,
+			statePath: ".codog/state.json",
+		},
+		{
+			name:      "formal background wins",
+			body:      `{"future":{"background_state_path":".codog/old-state.json"},"background":{"worker_state_path":".codog/state.json"}}`,
+			statePath: ".codog/state.json",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.statePath, cfg.Future.BackgroundStatePath)
+		})
+	}
+}
+
 func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

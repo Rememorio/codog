@@ -3,6 +3,7 @@ package workerstate
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -42,6 +43,24 @@ func TestSaveLoadAndRenderState(t *testing.T) {
 	require.Contains(t, out.String(), "Worker           worker-1")
 	require.Contains(t, out.String(), "Status           idle")
 	require.Contains(t, out.String(), "Session          session-1")
+}
+
+func TestSavePathAndLoadPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "state.json")
+	state := New(Options{
+		WorkerID: "worker-custom",
+		Mode:     "prompt",
+		Status:   "running",
+		PID:      1234,
+	})
+
+	require.NoError(t, SavePath(path, state))
+	require.FileExists(t, path)
+
+	loaded, err := LoadPath(path)
+	require.NoError(t, err)
+	require.Equal(t, "worker-custom", loaded.WorkerID)
+	require.Equal(t, "running", loaded.Status)
 }
 
 func TestLoadMissingStateReturnsActionableError(t *testing.T) {

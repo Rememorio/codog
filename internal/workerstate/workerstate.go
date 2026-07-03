@@ -100,7 +100,15 @@ func Path(workspace string) string {
 
 // Save writes state atomically to the workspace worker state file.
 func Save(workspace string, state State) error {
-	path := Path(workspace)
+	return SavePath(Path(workspace), state)
+}
+
+// SavePath writes state atomically to an explicit worker state file.
+func SavePath(path string, state State) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = Path("")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -126,7 +134,15 @@ func Save(workspace string, state State) error {
 
 // Load reads and validates the workspace worker state file.
 func Load(workspace string) (State, error) {
-	path := Path(workspace)
+	return LoadPath(Path(workspace))
+}
+
+// LoadPath reads and validates an explicit worker state file.
+func LoadPath(path string) (State, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = Path("")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -12188,7 +12188,7 @@ func parseInitVerifiersArgs(args []string) (initVerifiersRequest, error) {
 }
 
 func (a *App) State(args []string) error {
-	return renderWorkerState(a.Out, a.Workspace, args)
+	return renderWorkerStateFromPath(a.Out, a.Workspace, a.workerStatePath(), args)
 }
 
 func (a *App) Memory(args []string) error {
@@ -23120,11 +23120,19 @@ func scanMemoryOutputFormat(args []string) (string, bool) {
 }
 
 func renderWorkerState(out io.Writer, workspace string, args []string) error {
+	return renderWorkerStateFromPath(out, workspace, workerstate.Path(workspace), args)
+}
+
+func renderWorkerStateFromPath(out io.Writer, workspace string, statePath string, args []string) error {
 	format, err := parseSimpleOutputFormat("state", args)
 	if err != nil {
 		return err
 	}
-	state, err := workerstate.Load(workspace)
+	statePath = strings.TrimSpace(statePath)
+	if statePath == "" {
+		statePath = workerstate.Path(workspace)
+	}
+	state, err := workerstate.LoadPath(statePath)
 	if err != nil {
 		var missing workerstate.MissingError
 		if errors.As(err, &missing) {
@@ -36349,7 +36357,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "compatibility", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "preferences", "privacy", "sandbox", "skills", "updater"}
+	sections := []string{"auth", "background", "compatibility", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "preferences", "privacy", "sandbox", "skills", "updater"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36677,6 +36685,7 @@ type resetReport struct {
 
 var resetSectionKeys = map[string][]string{
 	"auth":          []string{"api_key", "auth_token", "oauth_profile", "base_url"},
+	"background":    []string{"background", "future.background_state_path"},
 	"compatibility": []string{"compatibility", "future.slack_app_install_count", "future.sticker_order_count", "future.extra_usage_visit_count", "future.guest_pass_referral_url", "future.guest_pass_visit_count"},
 	"editor-bridge": []string{"editor_bridge", "future.editor_bridge_socket", "future.editor_bridge_token"},
 	"enterprise":    []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"},
@@ -36702,6 +36711,7 @@ var resetSectionAliases = map[string]string{
 	"all":               "all",
 	"auth":              "auth",
 	"authentication":    "auth",
+	"background":        "background",
 	"defaults":          "all",
 	"bridge":            "editor-bridge",
 	"compat":            "compatibility",
@@ -36944,6 +36954,8 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.AuthToken = ""
 		a.Config.OAuthProfile = ""
 		a.Config.BaseURL = defaults.BaseURL
+	case "background":
+		a.Config.Future.BackgroundStatePath = ""
 	case "compatibility":
 		a.Config.Future.SlackAppInstallCount = 0
 		a.Config.Future.StickerOrderCount = 0
@@ -37037,6 +37049,13 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
+	case "background":
+		return map[string]any{
+			"state_path":        cfg.Future.BackgroundStatePath,
+			"state_configured":  strings.TrimSpace(cfg.Future.BackgroundStatePath) != "",
+			"default_filename":  workerstate.FileName,
+			"default_directory": ".codog",
+		}, nil
 	case "compatibility", "compat":
 		return map[string]any{
 			"slack_app_install_count": cfg.Future.SlackAppInstallCount,
@@ -49733,9 +49752,17 @@ func (a *App) writeWorkerState(mode string, status string, sess *session.Session
 		PermissionMode: cfg.PermissionMode,
 		LastError:      lastError,
 	})
-	if err := workerstate.Save(a.Workspace, state); err != nil && a.Err != nil {
+	if err := workerstate.SavePath(a.workerStatePath(), state); err != nil && a.Err != nil {
 		fmt.Fprintln(a.Err, "state:", err)
 	}
+}
+
+func (a *App) workerStatePath() string {
+	path := strings.TrimSpace(a.Config.Future.BackgroundStatePath)
+	if path == "" {
+		return workerstate.Path(a.Workspace)
+	}
+	return a.resolveOutputPath(path)
 }
 
 func (a *App) sessionIDFromOverrides(overrides config.FlagOverrides) (string, error) {

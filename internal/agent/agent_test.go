@@ -13446,6 +13446,7 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 			RemoteAuthToken:           "remote-secret",
 			RemoteLeaseSeconds:        45,
 			UpdaterManifestURL:        "https://updates.example/manifest.json",
+			BackgroundStatePath:       ".codog/custom-worker-state.json",
 			ChromeDefaultEnabled:      boolPtr(true),
 			NotificationsEnabled:      boolPtr(false),
 			UltraReviewEnabled:        boolPtr(true),
@@ -13544,6 +13545,11 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"extra_usage_visit_count": 4`)
 	require.Contains(t, out.String(), `"guest_pass_referral_url": "https://example.test/pass"`)
 	require.Contains(t, out.String(), `"guest_pass_visit_count": 5`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "background", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"state_path": ".codog/custom-worker-state.json"`)
+	require.Contains(t, out.String(), `"state_configured": true`)
 }
 
 func TestToolRegistryUsesRAGConfig(t *testing.T) {
@@ -13899,6 +13905,27 @@ func TestResetCompatibilityConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), "extra_usage_visit_count")
 	require.NotContains(t, string(data), "guest_pass_referral_url")
 	require.NotContains(t, string(data), "guest_pass_visit_count")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetBackgroundConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"background": {"state_path": ".codog/custom-worker-state.json"},
+		"future": {"background_state_path": ".codog/old-worker-state.json"}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "background", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "background", report.Section)
+	require.ElementsMatch(t, []string{"background", "future.background_state_path"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"background"`)
+	require.NotContains(t, string(data), "background_state_path")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -19770,12 +19797,16 @@ func TestInitVerifiersCommandAndSlash(t *testing.T) {
 func TestStateCommandAndREPLWritesWorkerState(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
+	customStatePath := filepath.Join(".codog", "custom-worker-state.json")
 	var out bytes.Buffer
 	app := &App{
 		Config: config.Config{
 			ConfigHome:     configHome,
 			Model:          "claude-test",
 			PermissionMode: "workspace-write",
+			Future: config.FutureConfig{
+				BackgroundStatePath: customStatePath,
+			},
 		},
 		Sessions:  session.NewWorkspaceStore(configHome, workspace),
 		Workspace: workspace,
@@ -19785,8 +19816,9 @@ func TestStateCommandAndREPLWritesWorkerState(t *testing.T) {
 	}
 
 	require.NoError(t, app.REPL(context.Background(), config.FlagOverrides{SessionID: "session-1"}))
-	require.FileExists(t, workerstate.Path(workspace))
-	loaded, err := workerstate.Load(workspace)
+	require.NoFileExists(t, workerstate.Path(workspace))
+	require.FileExists(t, filepath.Join(workspace, customStatePath))
+	loaded, err := workerstate.LoadPath(filepath.Join(workspace, customStatePath))
 	require.NoError(t, err)
 	require.Equal(t, "repl", loaded.Mode)
 	require.Equal(t, "idle", loaded.Status)
