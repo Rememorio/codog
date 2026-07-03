@@ -26692,11 +26692,15 @@ func (a *App) runDirectCustomSlash(ctx context.Context, command string, args []s
 		}
 		return true, err
 	}
-	rendered := customcommands.Render(custom, strings.Join(args, " "))
+	rendered := customcommands.RenderWithSession(custom, strings.Join(args, " "), directCustomSlashSessionID(overrides))
 	if strings.TrimSpace(rendered.Rendered) == "" {
 		return true, fmt.Errorf("custom command %s rendered an empty prompt", command)
 	}
 	return true, a.promptWithOutputOptions(ctx, rendered.Rendered, overrides, format, false, turnOptions{AllowedTools: custom.AllowedTools})
+}
+
+func directCustomSlashSessionID(overrides config.FlagOverrides) string {
+	return firstNonEmpty(strings.TrimSpace(overrides.Resume), strings.TrimSpace(overrides.SessionID))
 }
 
 // RunResumedSlash executes a supported slash command against a resumed session.
@@ -26707,6 +26711,9 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 	}
 	if _, ok := slash.Lookup(name); !ok {
 		if mapped := directSlashCommandName(name); mapped == "" {
+			if handled, err := a.runDirectCustomSlash(ctx, command, args, overrides, format); handled {
+				return err
+			}
 			return renderUnknownSlashCommand(a.Out, command, format, a.customSlashCompletionCandidates())
 		}
 	}

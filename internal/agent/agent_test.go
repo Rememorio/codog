@@ -11927,6 +11927,51 @@ OMC HUD $ARGUMENTS`), 0o644))
 	require.NotContains(t, out, "unknown_slash_command")
 }
 
+func TestResumedCustomSlashRunsOMCCommand(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(workspace, ".omc", "commands", "oh-my-claudecode"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".omc", "commands", "oh-my-claudecode", "hud.md"), []byte("Resumed OMC ${CLAUDE_SESSION_ID} $ARGUMENTS"), 0o644))
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("resume-omc", anthropic.TextMessage("user", "existing context")))
+	requests := []json.RawMessage{}
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "resumed omc ok",
+		OnRequest: func(data json.RawMessage) {
+			requests = append(requests, data)
+		},
+	}.Handler())
+	defer server.Close()
+	configPath := filepath.Join(configHome, "config.json")
+	configData, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, configData, 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-omc", "--output-format", "json", "/oh-my-claudecode:hud", "panel"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, `"kind": "prompt"`)
+	require.Contains(t, out, `"session_id": "resume-omc"`)
+	require.Contains(t, out, "resumed omc ok")
+	require.Len(t, requests, 1)
+	require.Contains(t, string(requests[0]), "Resumed OMC resume-omc panel")
+	opened, err := store.OpenExisting("resume-omc")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(opened.Messages), 3)
+}
+
 func TestDoctorReportsConfigValidationChecks(t *testing.T) {
 	configHome := t.TempDir()
 	workspace := t.TempDir()
