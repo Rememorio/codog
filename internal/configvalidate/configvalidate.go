@@ -115,6 +115,7 @@ var topLevelFields = []fieldSpec{
 	{"rate_limit", FieldObject},
 	{"apiTimeout", FieldObject},
 	{"providerFallbacks", FieldObject},
+	{"editor_bridge", FieldObject},
 	{"enterprise", FieldObject},
 	{"env", FieldStringMap},
 	{"trustedRoots", FieldStringArray},
@@ -283,6 +284,14 @@ var enterpriseFields = []fieldSpec{
 	{"policyPublicKey", FieldString},
 	{"public_key", FieldString},
 	{"publicKey", FieldString},
+}
+
+var editorBridgeFields = []fieldSpec{
+	{"socket", FieldString},
+	{"path", FieldString},
+	{"token", FieldString},
+	{"auth_token", FieldString},
+	{"authToken", FieldString},
 }
 
 var remoteFields = []fieldSpec{
@@ -479,6 +488,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if nested, ok := objectAt(object, "providerFallbacks"); ok {
 		validateObject(result, nested, providerFallbackFields, "providerFallbacks", source, path)
+	}
+	if bridge, ok := objectAt(object, "editor_bridge"); ok {
+		validateObject(result, bridge, editorBridgeFields, "editor_bridge", source, path)
 	}
 	if enterprise, ok := objectAt(object, "enterprise"); ok {
 		validateObject(result, enterprise, enterpriseFields, "enterprise", source, path)

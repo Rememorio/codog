@@ -13436,6 +13436,8 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 		RAGBaseURL:     "http://rag.example.test",
 		RAGTopKMax:     9,
 		Future: config.FutureConfig{
+			EditorBridgeSocket:        "codog.sock",
+			EditorBridgeToken:         "bridge-secret",
 			EnterprisePolicy:          "policy.json",
 			EnterprisePolicyPublicKey: "enterprise-public-key",
 			PluginMarketplaces:        []string{"https://market.example/index.json"},
@@ -13479,6 +13481,12 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"rag_base_url": "http://rag.example.test"`)
 	require.Contains(t, out.String(), `"rag_top_k_max": 9`)
 	require.Contains(t, out.String(), `"tool": "retrieve_context"`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "editor-bridge", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"socket": "codog.sock"`)
+	require.Contains(t, out.String(), `"token_configured": true`)
+	require.NotContains(t, out.String(), "bridge-secret")
 	out.Reset()
 
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "enterprise", "--output-format", "json"}))
@@ -13747,6 +13755,28 @@ func TestResetEnterpriseConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), `"enterprise"`)
 	require.NotContains(t, string(data), "enterprise_policy")
 	require.NotContains(t, string(data), "enterprise_policy_public_key")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetEditorBridgeConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"editor_bridge": {"socket": "codog.sock", "token": "bridge-token"},
+		"future": {"editor_bridge_socket": "legacy.sock", "editor_bridge_token": "legacy-token"}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "editor-bridge", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "editor-bridge", report.Section)
+	require.ElementsMatch(t, []string{"editor_bridge", "future.editor_bridge_socket", "future.editor_bridge_token"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"editor_bridge"`)
+	require.NotContains(t, string(data), "editor_bridge_socket")
+	require.NotContains(t, string(data), "editor_bridge_token")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 

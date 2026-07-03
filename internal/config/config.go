@@ -487,6 +487,47 @@ func (e *EnterpriseConfig) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// EditorBridgeConfig holds local editor bridge connection settings.
+type EditorBridgeConfig struct {
+	Socket string `json:"socket,omitempty"`
+	Token  string `json:"token,omitempty"`
+}
+
+// UnmarshalJSON accepts socket and token aliases used by editor integrations.
+func (e *EditorBridgeConfig) UnmarshalJSON(data []byte) error {
+	type plain EditorBridgeConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readStringAlias := func(target *string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid editor_bridge.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	if err := readStringAlias(&parsed.Socket, "socket", "path"); err != nil {
+		return err
+	}
+	if err := readStringAlias(&parsed.Token, "token", "authToken", "auth_token"); err != nil {
+		return err
+	}
+	*e = EditorBridgeConfig(parsed)
+	return nil
+}
+
 // MarketplaceConfig holds trusted plugin marketplace index sources.
 type MarketplaceConfig struct {
 	Sources       []string          `json:"sources,omitempty"`
@@ -740,6 +781,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		PermissionRules     PermissionRules            `json:"permissions,omitempty"`
 		AllowedTools        []string                   `json:"allowedTools,omitempty"`
 		DisallowedTools     []string                   `json:"disallowedTools,omitempty"`
+		EditorBridge        EditorBridgeConfig         `json:"editor_bridge,omitempty"`
 		Enterprise          EnterpriseConfig           `json:"enterprise,omitempty"`
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
@@ -797,6 +839,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if enterpriseConfigSet(aliases.Enterprise) {
 		mergeEnterpriseConfigIntoFuture(&parsed.Future, aliases.Enterprise)
+	}
+	if editorBridgeConfigSet(aliases.EditorBridge) {
+		mergeEditorBridgeConfigIntoFuture(&parsed.Future, aliases.EditorBridge)
 	}
 	if sandboxConfigSet(aliases.Sandbox) {
 		mergeSandboxConfig(&parsed.Future.Sandbox, aliases.Sandbox)
@@ -1796,6 +1841,11 @@ func enterpriseConfigSet(cfg EnterpriseConfig) bool {
 		cfg.PolicyPublicKey != ""
 }
 
+func editorBridgeConfigSet(cfg EditorBridgeConfig) bool {
+	return cfg.Socket != "" ||
+		cfg.Token != ""
+}
+
 func marketplaceConfigSet(cfg MarketplaceConfig) bool {
 	return cfg.sourcesSet ||
 		cfg.publicKeysSet ||
@@ -1830,6 +1880,15 @@ func mergeEnterpriseConfigIntoFuture(dst *FutureConfig, src EnterpriseConfig) {
 	}
 	if src.PolicyPublicKey != "" {
 		dst.EnterprisePolicyPublicKey = src.PolicyPublicKey
+	}
+}
+
+func mergeEditorBridgeConfigIntoFuture(dst *FutureConfig, src EditorBridgeConfig) {
+	if src.Socket != "" {
+		dst.EditorBridgeSocket = src.Socket
+	}
+	if src.Token != "" {
+		dst.EditorBridgeToken = src.Token
 	}
 }
 

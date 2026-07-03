@@ -36285,7 +36285,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
+	sections := []string{"auth", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36612,22 +36612,23 @@ type resetReport struct {
 }
 
 var resetSectionKeys = map[string][]string{
-	"auth":        []string{"api_key", "auth_token", "oauth_profile", "base_url"},
-	"enterprise":  []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"},
-	"future":      []string{"future"},
-	"hooks":       []string{"hooks"},
-	"interface":   []string{"language", "theme", "editorMode"},
-	"marketplace": []string{"marketplace", "future.plugin_marketplaces", "future.plugin_marketplace_public_keys"},
-	"mcp":         []string{"mcp_servers"},
-	"model":       []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
-	"permissions": []string{"permission_mode", "permission_rules"},
-	"privacy":     []string{"privacy_settings"},
-	"rag":         []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
-	"rate-limit":  []string{"rate_limit"},
-	"remote":      []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
-	"sandbox":     []string{"sandbox", "future.sandbox_strategy", "future.sandbox"},
-	"skills":      []string{"enabled_skills"},
-	"voice":       []string{"voice_enabled", "voice_command", "speech_command"},
+	"auth":          []string{"api_key", "auth_token", "oauth_profile", "base_url"},
+	"editor-bridge": []string{"editor_bridge", "future.editor_bridge_socket", "future.editor_bridge_token"},
+	"enterprise":    []string{"enterprise", "future.enterprise_policy", "future.enterprise_policy_public_key"},
+	"future":        []string{"future"},
+	"hooks":         []string{"hooks"},
+	"interface":     []string{"language", "theme", "editorMode"},
+	"marketplace":   []string{"marketplace", "future.plugin_marketplaces", "future.plugin_marketplace_public_keys"},
+	"mcp":           []string{"mcp_servers"},
+	"model":         []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
+	"permissions":   []string{"permission_mode", "permission_rules"},
+	"privacy":       []string{"privacy_settings"},
+	"rag":           []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
+	"rate-limit":    []string{"rate_limit"},
+	"remote":        []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
+	"sandbox":       []string{"sandbox", "future.sandbox_strategy", "future.sandbox"},
+	"skills":        []string{"enabled_skills"},
+	"voice":         []string{"voice_enabled", "voice_command", "speech_command"},
 }
 
 var resetSectionAliases = map[string]string{
@@ -36635,7 +36636,11 @@ var resetSectionAliases = map[string]string{
 	"auth":              "auth",
 	"authentication":    "auth",
 	"defaults":          "all",
+	"bridge":            "editor-bridge",
+	"editor_bridge":     "editor-bridge",
+	"editor-bridge":     "editor-bridge",
 	"everything":        "all",
+	"ide":               "editor-bridge",
 	"enterprise":        "enterprise",
 	"enterprise-policy": "enterprise",
 	"policy":            "enterprise",
@@ -36865,6 +36870,9 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.AuthToken = ""
 		a.Config.OAuthProfile = ""
 		a.Config.BaseURL = defaults.BaseURL
+	case "editor-bridge":
+		a.Config.Future.EditorBridgeSocket = ""
+		a.Config.Future.EditorBridgeToken = ""
 	case "enterprise":
 		a.Config.Future.EnterprisePolicy = ""
 		a.Config.Future.EnterprisePolicyPublicKey = ""
@@ -36943,6 +36951,11 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
+	case "editor_bridge", "editor-bridge", "bridge", "ide":
+		return map[string]any{
+			"socket":           cfg.Future.EditorBridgeSocket,
+			"token_configured": strings.TrimSpace(cfg.Future.EditorBridgeToken) != "",
+		}, nil
 	case "enterprise", "enterprise-policy", "policy":
 		return map[string]any{
 			"policy":                cfg.Future.EnterprisePolicy,

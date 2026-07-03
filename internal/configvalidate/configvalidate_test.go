@@ -109,6 +109,14 @@ func TestValidateBytesAcceptsEnterpriseSection(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsEditorBridgeSection(t *testing.T) {
+	result := ValidateBytes([]byte(`{"editor_bridge":{"socket":"codog.sock","authToken":"token"}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
 

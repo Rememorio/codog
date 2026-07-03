@@ -1958,12 +1958,42 @@ func TestLoadPermissionsAdditionalDirectoriesAlias(t *testing.T) {
 
 func TestLoadEditorBridgeToken(t *testing.T) {
 	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	require.NoError(t, os.WriteFile(configPath, []byte(`{"future":{"editor_bridge_token":"bridge-token"}}`), 0o644))
+	cases := []struct {
+		name   string
+		body   string
+		socket string
+		token  string
+	}{
+		{
+			name:   "legacy future bridge",
+			body:   `{"future":{"editor_bridge_socket":"legacy.sock","editor_bridge_token":"legacy-token"}}`,
+			socket: "legacy.sock",
+			token:  "legacy-token",
+		},
+		{
+			name:   "formal editor bridge aliases",
+			body:   `{"editor_bridge":{"path":"codog.sock","authToken":"bridge-token"}}`,
+			socket: "codog.sock",
+			token:  "bridge-token",
+		},
+		{
+			name:   "formal editor bridge wins",
+			body:   `{"future":{"editor_bridge_socket":"legacy.sock","editor_bridge_token":"legacy-token"},"editor_bridge":{"socket":"formal.sock","token":"formal-token"}}`,
+			socket: "formal.sock",
+			token:  "formal-token",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
 
-	cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
-	require.NoError(t, err)
-	require.Equal(t, "bridge-token", cfg.Future.EditorBridgeToken)
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.socket, cfg.Future.EditorBridgeSocket)
+			require.Equal(t, tc.token, cfg.Future.EditorBridgeToken)
+		})
+	}
 }
 
 func TestLoadSandboxConfigAliases(t *testing.T) {
