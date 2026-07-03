@@ -188,8 +188,18 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NotContains(t, webAccess.Output, "Blocked result")
 	webAccessCategory := findCategory(t, report, "web-access")
 	require.True(t, webAccessCategory.OK)
-	require.Equal(t, 1, webAccessCategory.Total)
-	require.ElementsMatch(t, []string{"web_access_roundtrip"}, webAccessCategory.Scenarios)
+	require.Equal(t, 2, webAccessCategory.Total)
+	require.ElementsMatch(t, []string{"web_access_limits_roundtrip", "web_access_roundtrip"}, webAccessCategory.Scenarios)
+
+	webAccessLimits := findScenario(t, report, "web_access_limits_roundtrip")
+	require.True(t, webAccessLimits.OK)
+	require.Equal(t, "web-access", webAccessLimits.Category)
+	require.Equal(t, 2, webAccessLimits.ToolCalls)
+	require.Equal(t, []string{"web_fetch", "web_search"}, webAccessLimits.ToolUses)
+	require.Contains(t, webAccessLimits.Output, `"truncated": true`)
+	require.Contains(t, webAccessLimits.Output, `"hits": []`)
+	require.Contains(t, webAccessLimits.Output, "No web search results matched")
+	require.NotContains(t, webAccessLimits.Output, "Filtered docs")
 
 	gitWorkspace := findScenario(t, report, "git_workspace_roundtrip")
 	require.True(t, gitWorkspace.OK)
@@ -490,6 +500,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	webAccess := findManifestScenario(t, manifest, "web_access_roundtrip")
 	require.Equal(t, "web-access", webAccess.Category)
 	require.Contains(t, webAccess.ParityRefs, "Web search")
+
+	webAccessLimits := findManifestScenario(t, manifest, "web_access_limits_roundtrip")
+	require.Equal(t, "web-access", webAccessLimits.Category)
+	require.Contains(t, webAccessLimits.ParityRefs, "Web fetch truncation")
 
 	gitWorkspace := findManifestScenario(t, manifest, "git_workspace_roundtrip")
 	require.Equal(t, "git-workspace", gitWorkspace.Category)

@@ -179,6 +179,7 @@ var scenarioOrder = []string{
 	"policy_update_sandbox_roundtrip",
 	"notebook_read_edit_roundtrip",
 	"web_access_roundtrip",
+	"web_access_limits_roundtrip",
 	"git_workspace_roundtrip",
 	"plan_todo_roundtrip",
 	"todo_completion_verification_roundtrip",
@@ -669,6 +670,7 @@ func Run(ctx context.Context) (Report, error) {
 		policyUpdateSandboxScenario(),
 		notebookReadEditScenario(),
 		webAccessScenario(),
+		webAccessLimitsScenario(),
 		gitWorkspaceScenario(),
 		planTodoScenario(),
 		todoCompletionVerificationScenario(),
@@ -1255,6 +1257,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "web-access",
 		Description: "Fetches HTML content and searches a configured endpoint with domain filtering and source result blocks.",
 		ParityRefs:  []string{"Web fetch", "Web search", "Sources block"},
+	},
+	"web_access_limits_roundtrip": {
+		Category:    "web-access",
+		Description: "Fetches bounded content and verifies filtered no-result search output.",
+		ParityRefs:  []string{"Web fetch truncation", "Web search domain filters", "No-result source blocks"},
 	},
 	"git_workspace_roundtrip": {
 		Category:    "git-workspace",
@@ -2697,6 +2704,69 @@ func webAccessScenario() scenario {
 			return localScenarioResult{
 				Output:       strings.Join([]string{fetchOut, searchOut}, "\n"),
 				FinalMessage: "web access harness ok",
+				ToolCalls:    2,
+				ToolUses:     []string{"web_fetch", "web_search"},
+				RequestCount: 2,
+			}, nil
+		},
+	}
+}
+
+func webAccessLimitsScenario() scenario {
+	return scenario{
+		name: "web_access_limits_roundtrip",
+		runLocal: func(ctx context.Context, _ string) (localScenarioResult, error) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/large":
+					w.Header().Set("Content-Type", "text/plain")
+					io.WriteString(w, strings.Repeat("bounded fetch content ", 8))
+				case "/search":
+					if got := r.URL.Query().Get("q"); got != "codog blocked parity" {
+						http.Error(w, "unexpected query "+got, http.StatusBadRequest)
+						return
+					}
+					w.Header().Set("Content-Type", "text/html")
+					io.WriteString(w, `
+<html><body>
+  <a class="result__a" href="https://example.com/blocked">Filtered docs</a>
+  <div class="result__snippet">This result should be removed by the blocked domain filter.</div>
+</body></html>`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			fetchInput := json.RawMessage(fmt.Sprintf(`{"url":%q,"prompt":"Summarize briefly","max_bytes":32,"timeout_ms":5000}`, server.URL+"/large"))
+			fetchOut, err := tools.WebFetchTool{}.Execute(ctx, fetchInput)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"code": 200`, `"bytes": 32`, `"truncated": true`, `"result": "bounded fetch content bounded fe"`} {
+				if !strings.Contains(fetchOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("bounded web fetch output missing %s", expected)
+				}
+			}
+
+			restoreSearchEnv := setenvForScenario("CODOG_WEB_SEARCH_BASE_URL", server.URL+"/search")
+			defer restoreSearchEnv()
+			searchOut, err := tools.WebSearchTool{}.Execute(ctx, json.RawMessage(`{"query":"codog blocked parity","blocked_domains":["example.com"],"timeout_ms":5000}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"query": "codog blocked parity"`, `"tool_use_id": "web_search_1"`, `"hits": []`, `"content": []`, "No web search results matched"} {
+				if !strings.Contains(searchOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("filtered web search output missing %s", expected)
+				}
+			}
+			if strings.Contains(searchOut, "Filtered docs") || strings.Contains(searchOut, "example.com/blocked") {
+				return localScenarioResult{}, fmt.Errorf("filtered web search output included blocked result: %s", searchOut)
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{fetchOut, searchOut}, "\n"),
+				FinalMessage: "web access limits harness ok",
 				ToolCalls:    2,
 				ToolUses:     []string{"web_fetch", "web_search"},
 				RequestCount: 2,
