@@ -5901,6 +5901,9 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "code/format")
 	require.Contains(t, report.Protocol.Methods, "notebook/read")
 	require.Contains(t, report.Protocol.Methods, "notebook/edit")
+	require.Contains(t, report.Protocol.Methods, "lsp/actions")
+	require.Contains(t, report.Protocol.Methods, "lsp/discover")
+	require.Contains(t, report.Protocol.Methods, "lsp/list")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6378,6 +6381,44 @@ func TestACPServeExposesNotebookReadAndEdit(t *testing.T) {
 	require.Contains(t, string(data), "print('updated')")
 }
 
+func TestACPServeExposesLSPMetadata(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"lsp/actions","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"lsp/discover","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"lsp/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: t.TempDir()},
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 4)
+	actions := responses[0]["result"].(map[string]any)
+	require.Equal(t, "lsp_actions", actions["kind"])
+	require.Equal(t, "ok", actions["status"])
+	require.Greater(t, int(actions["count"].(float64)), 0)
+	require.NotEmpty(t, actions["actions"].([]any))
+	discover := responses[1]["result"].(map[string]any)
+	require.Equal(t, "lsp_discover", discover["kind"])
+	require.Greater(t, int(discover["count"].(float64)), 0)
+	require.NotEmpty(t, discover["candidates"].([]any))
+	list := responses[2]["result"].(map[string]any)
+	require.Equal(t, "lsp_list", list["kind"])
+	require.EqualValues(t, 0, list["count"])
+	require.Empty(t, list["servers"].([]any))
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6424,6 +6465,10 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			notebookCaps := capabilities["notebook"].(map[string]any)
 			require.Equal(t, true, notebookCaps["read"])
 			require.Equal(t, true, notebookCaps["edit"])
+			lspCaps := capabilities["lsp"].(map[string]any)
+			require.Equal(t, true, lspCaps["actions"])
+			require.Equal(t, true, lspCaps["discover"])
+			require.Equal(t, true, lspCaps["list"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])

@@ -129,6 +129,10 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	notebookCaps := capabilities["notebook"].(map[string]any)
 	require.Equal(t, true, notebookCaps["read"])
 	require.Equal(t, true, notebookCaps["edit"])
+	lspCaps := capabilities["lsp"].(map[string]any)
+	require.Equal(t, true, lspCaps["actions"])
+	require.Equal(t, true, lspCaps["discover"])
+	require.Equal(t, true, lspCaps["list"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -373,6 +377,36 @@ func TestServeHandlesNotebookRequests(t *testing.T) {
 	require.Len(t, responses, 2)
 	require.Equal(t, "notebook_read", responses[0]["result"].(map[string]any)["kind"])
 	require.Equal(t, "notebook_edit", responses[1]["result"].(map[string]any)["kind"])
+}
+
+func TestServeHandlesLSPRequests(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"lsp/actions","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"lsp/discover","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"lsp/list","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		LSPActions: func(context.Context) (any, error) {
+			return map[string]any{"kind": "lsp_actions", "count": 1}, nil
+		},
+		LSPDiscover: func(context.Context) (any, error) {
+			return map[string]any{"kind": "lsp_discover", "count": 1}, nil
+		},
+		LSPList: func(context.Context) (any, error) {
+			return map[string]any{"kind": "lsp_list", "count": 0, "servers": []any{}}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 3)
+	require.Equal(t, "lsp_actions", responses[0]["result"].(map[string]any)["kind"])
+	require.Equal(t, "lsp_discover", responses[1]["result"].(map[string]any)["kind"])
+	require.Equal(t, "lsp_list", responses[2]["result"].(map[string]any)["kind"])
+	require.Empty(t, responses[2]["result"].(map[string]any)["servers"].([]any))
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {

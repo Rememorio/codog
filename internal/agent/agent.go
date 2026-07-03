@@ -20755,6 +20755,9 @@ var acpJSONRPCMethods = []string{
 	"code/format",
 	"notebook/read",
 	"notebook/edit",
+	"lsp/actions",
+	"lsp/discover",
+	"lsp/list",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20819,7 +20822,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21135,6 +21138,36 @@ func (a *App) serveACP(ctx context.Context) error {
 			}
 			result.Path = displayCodeIntelNotebookPath(a.Workspace, path)
 			return map[string]any{"kind": "notebook_edit", "result": result}, nil
+		},
+		LSPActions: func(context.Context) (any, error) {
+			actions := codeintel.SupportedLSPActions()
+			return map[string]any{
+				"kind":    "lsp_actions",
+				"action":  "actions",
+				"status":  "ok",
+				"count":   len(actions),
+				"actions": actions,
+			}, nil
+		},
+		LSPDiscover: func(context.Context) (any, error) {
+			candidates := codeintel.DefaultLSPCandidates()
+			return map[string]any{
+				"kind":       "lsp_discover",
+				"candidates": candidates,
+				"count":      len(candidates),
+			}, nil
+		},
+		LSPList: func(context.Context) (any, error) {
+			store := codeintel.NewLSPStore(a.Config.ConfigHome, a.Workspace)
+			statuses, err := store.List()
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"kind":    "lsp_list",
+				"count":   len(statuses),
+				"servers": statuses,
+			}, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

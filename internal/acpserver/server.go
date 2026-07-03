@@ -48,6 +48,9 @@ type Handlers struct {
 	CodeFormat      func(context.Context, CodeFormatRequest) (any, error)
 	NotebookRead    func(context.Context, NotebookReadRequest) (any, error)
 	NotebookEdit    func(context.Context, NotebookEditRequest) (any, error)
+	LSPActions      func(context.Context) (any, error)
+	LSPDiscover     func(context.Context) (any, error)
+	LSPList         func(context.Context) (any, error)
 }
 
 type SessionInfo struct {
@@ -330,6 +333,12 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleNotebookRead(ctx, out, handlers, req)
 	case "notebook/edit":
 		return false, handleNotebookEdit(ctx, out, handlers, req)
+	case "lsp/actions":
+		return false, handleLSPActions(ctx, out, handlers, req)
+	case "lsp/discover":
+		return false, handleLSPDiscover(ctx, out, handlers, req)
+	case "lsp/list":
+		return false, handleLSPList(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -408,6 +417,11 @@ func initializeResult(opts Options) map[string]any {
 			"notebook": map[string]any{
 				"read": true,
 				"edit": true,
+			},
+			"lsp": map[string]any{
+				"actions":  true,
+				"discover": true,
+				"list":     true,
 			},
 			"prompt": true,
 			"status": true,
@@ -664,6 +678,39 @@ func handleNotebookEdit(ctx context.Context, out io.Writer, handlers Handlers, r
 		return writeError(out, req.ID, -32602, err.Error())
 	}
 	result, err := handlers.NotebookEdit(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPActions(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPActions == nil {
+		return writeError(out, req.ID, -32603, "lsp actions handler is not configured")
+	}
+	result, err := handlers.LSPActions(ctx)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPDiscover(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPDiscover == nil {
+		return writeError(out, req.ID, -32603, "lsp discover handler is not configured")
+	}
+	result, err := handlers.LSPDiscover(ctx)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleLSPList(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.LSPList == nil {
+		return writeError(out, req.ID, -32603, "lsp list handler is not configured")
+	}
+	result, err := handlers.LSPList(ctx)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}
