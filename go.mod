@@ -1,6 +1,8 @@
 module github.com/Rememorio/codog
 
-go 1.26.4
+go 1.26
+
+toolchain go1.26.4
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

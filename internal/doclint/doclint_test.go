@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestInternalPackagesHavePackageDocs(t *testing.T) {
+	root := repoRoot(t)
+	for _, pkg := range listInternalPackages(t, root) {
+		t.Run(pkg, func(t *testing.T) {
+			dir := filepath.Join(root, filepath.FromSlash(pkg))
+			requirePackageDoc(t, pkg, parsePackageFiles(t, dir))
+		})
+	}
+}
 
 func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	root := repoRoot(t)
@@ -37,6 +48,43 @@ func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	}
 }
 
+func listInternalPackages(t *testing.T, root string) []string {
+	t.Helper()
+	internalRoot := filepath.Join(root, "internal")
+	packages := []string{}
+	err := filepath.WalkDir(internalRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() != "." && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		files, err := parsePackageFilesAllowEmpty(path)
+		if err != nil {
+			return err
+		}
+		if len(files) == 0 {
+			return nil
+		}
+		name := files[0].Name.Name
+		if name == "main" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		packages = append(packages, filepath.ToSlash(rel))
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, packages)
+	return packages
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -53,8 +101,17 @@ func repoRoot(t *testing.T) string {
 
 func parsePackageFiles(t *testing.T, dir string) []*ast.File {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
+	files, err := parsePackageFilesAllowEmpty(dir)
 	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	return files
+}
+
+func parsePackageFilesAllowEmpty(dir string) ([]*ast.File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 	fset := token.NewFileSet()
 	files := []*ast.File{}
 	for _, entry := range entries {
@@ -63,11 +120,12 @@ func parsePackageFiles(t *testing.T, dir string) []*ast.File {
 			continue
 		}
 		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
-		require.NoError(t, err)
+		if err != nil {
+			return nil, err
+		}
 		files = append(files, file)
 	}
-	require.NotEmpty(t, files)
-	return files
+	return files, nil
 }
 
 func requirePackageDoc(t *testing.T, pkg string, files []*ast.File) {
