@@ -125,6 +125,14 @@ func TestValidateBytesAcceptsUpdaterSection(t *testing.T) {
 	require.Empty(t, result.Warnings)
 }
 
+func TestValidateBytesAcceptsPreferencesSection(t *testing.T) {
+	result := ValidateBytes([]byte(`{"preferences":{"chromeDefaultEnabled":true,"notifications_enabled":false,"ultraReviewEnabled":true}}`), "config.json")
+
+	require.Equal(t, "ok", result.Status)
+	require.Empty(t, result.Errors)
+	require.Empty(t, result.Warnings)
+}
+
 func TestValidateBytesReportsClaudePermissionToolAliases(t *testing.T) {
 	result := ValidateBytes([]byte(`{"allowedTools":["Bash(git *)"],"disallowedTools":["Bash(rm *)"],"permissions":{"deniedTools":["Write"]}}`), "config.json")
 

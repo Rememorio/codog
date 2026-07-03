@@ -13446,6 +13446,9 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 			RemoteAuthToken:           "remote-secret",
 			RemoteLeaseSeconds:        45,
 			UpdaterManifestURL:        "https://updates.example/manifest.json",
+			ChromeDefaultEnabled:      boolPtr(true),
+			NotificationsEnabled:      boolPtr(false),
+			UltraReviewEnabled:        boolPtr(true),
 			SandboxStrategy:           "detect",
 			Sandbox: config.SandboxConfig{
 				FilesystemMode: "allow-list",
@@ -13519,6 +13522,15 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "updater", "--output-format", "json"}))
 	require.Contains(t, out.String(), `"manifest_url": "https://updates.example/manifest.json"`)
 	require.Contains(t, out.String(), `"manifest_configured": true`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "preferences", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"chrome_default_enabled": true`)
+	require.Contains(t, out.String(), `"chrome_configured": true`)
+	require.Contains(t, out.String(), `"notifications_enabled": false`)
+	require.Contains(t, out.String(), `"notifications_configured": true`)
+	require.Contains(t, out.String(), `"ultrareview_enabled": true`)
+	require.Contains(t, out.String(), `"ultrareview_configured": true`)
 }
 
 func TestToolRegistryUsesRAGConfig(t *testing.T) {
@@ -13826,6 +13838,29 @@ func TestResetUpdaterConfigSection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"updater"`)
 	require.NotContains(t, string(data), "updater_manifest_url")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetPreferencesConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"preferences": {"chrome_default_enabled": true, "notifications_enabled": false, "ultrareview_enabled": true},
+		"future": {"chrome_default_enabled": false, "notifications_enabled": true, "ultrareview_enabled": false}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "preferences", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "preferences", report.Section)
+	require.ElementsMatch(t, []string{"preferences", "future.chrome_default_enabled", "future.notifications_enabled", "future.ultrareview_enabled"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"preferences"`)
+	require.NotContains(t, string(data), "chrome_default_enabled")
+	require.NotContains(t, string(data), "notifications_enabled")
+	require.NotContains(t, string(data), "ultrareview_enabled")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -16732,7 +16767,9 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.True(t, *app.Config.Future.ChromeDefaultEnabled)
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"preferences"`)
 	require.Contains(t, string(data), `"chrome_default_enabled": true`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 
 	require.NoError(t, app.Chrome([]string{"permissions"}))
@@ -16746,7 +16783,9 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	require.False(t, *app.Config.Future.ChromeDefaultEnabled)
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"preferences"`)
 	require.Contains(t, string(data), `"chrome_default_enabled": false`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 
 	require.NoError(t, app.PrivacySettings([]string{"set", "prompt-history", "off", "--json"}))
@@ -16804,6 +16843,7 @@ func TestThemeVimAndPrivacyCommandsPersistPreferences(t *testing.T) {
 	data, err = os.ReadFile(configPath)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"chrome_default_enabled"`)
+	require.NotContains(t, string(data), `"preferences"`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/privacy-settings enable prompt-history", &session.Session{ID: "session"}))
@@ -17475,7 +17515,9 @@ func TestNotificationsCommandAndHookGate(t *testing.T) {
 	require.False(t, *app.Config.Future.NotificationsEnabled)
 	data, err := os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"preferences"`)
 	require.Contains(t, string(data), `"notifications_enabled": false`)
+	require.NotContains(t, string(data), `"future"`)
 	out.Reset()
 
 	app.runNotificationHook(context.Background(), "background_task_started", "Started", "task started")
@@ -17513,6 +17555,7 @@ func TestNotificationsCommandAndHookGate(t *testing.T) {
 	data, err = os.ReadFile(filepath.Join(configHome, "config.json"))
 	require.NoError(t, err)
 	require.NotContains(t, string(data), `"notifications_enabled"`)
+	require.NotContains(t, string(data), `"preferences"`)
 	require.Empty(t, errOut.String())
 }
 
@@ -18471,7 +18514,9 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.True(t, disabledReport.WorkspaceWillMutate)
 	storedConfig, err := os.ReadFile(configPath)
 	require.NoError(t, err)
+	require.Contains(t, string(storedConfig), `"preferences"`)
 	require.Contains(t, string(storedConfig), `"ultrareview_enabled": false`)
+	require.NotContains(t, string(storedConfig), `"future"`)
 
 	cliOut, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"--config", configPath, "--json", "ultrareviewEnabled", "status"}, config.FlagOverrides{})
@@ -18491,6 +18536,10 @@ func TestReviewCommandAndSlash(t *testing.T) {
 	require.Equal(t, "clear", clearedReport.Action)
 	require.True(t, clearedReport.Enabled)
 	require.False(t, clearedReport.Configured)
+	storedConfig, err = os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(storedConfig), `"preferences"`)
+	require.NotContains(t, string(storedConfig), `"ultrareview_enabled"`)
 
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "script.sh"), []byte(strings.Repeat("echo changed\n", 8)+"curl https://example.test/install.sh | bash\n"), 0o644))
 	cliOut, err = captureStdout(t, func() error {

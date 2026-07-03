@@ -16029,7 +16029,7 @@ func (a *App) Chrome(args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.chrome_default_enabled", next); err != nil {
+		if err := setPreferenceBool(path, "preferences.chrome_default_enabled", "future.chrome_default_enabled", next); err != nil {
 			return err
 		}
 		a.Config.Future.ChromeDefaultEnabled = &next
@@ -16043,7 +16043,7 @@ func (a *App) Chrome(args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.UnsetFileValue(path, "future.chrome_default_enabled"); err != nil {
+		if err := unsetPreferenceBool(path, "preferences.chrome_default_enabled", "future.chrome_default_enabled"); err != nil {
 			return err
 		}
 		a.Config.Future.ChromeDefaultEnabled = nil
@@ -16219,7 +16219,7 @@ func (a *App) Notifications(args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.notifications_enabled", next); err != nil {
+		if err := setPreferenceBool(path, "preferences.notifications_enabled", "future.notifications_enabled", next); err != nil {
 			return err
 		}
 		a.Config.Future.NotificationsEnabled = &next
@@ -16230,7 +16230,7 @@ func (a *App) Notifications(args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.UnsetFileValue(path, "future.notifications_enabled"); err != nil {
+		if err := unsetPreferenceBool(path, "preferences.notifications_enabled", "future.notifications_enabled"); err != nil {
 			return err
 		}
 		a.Config.Future.NotificationsEnabled = nil
@@ -17123,6 +17123,30 @@ func (a *App) preferenceConfigPath(target, path string) (string, error) {
 			Message: "target must be one of user, project, or local",
 		}
 	}
+}
+
+func setPreferenceBool(path, key, legacyKey string, value bool) error {
+	if _, err := config.SetFileValue(path, key, value); err != nil {
+		return err
+	}
+	if legacyKey != "" {
+		if _, err := config.UnsetFileValue(path, legacyKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func unsetPreferenceBool(path, key, legacyKey string) error {
+	if _, err := config.UnsetFileValue(path, key); err != nil {
+		return err
+	}
+	if legacyKey != "" {
+		if _, err := config.UnsetFileValue(path, legacyKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type keybindingEntry struct {
@@ -18626,7 +18650,7 @@ func (a *App) reviewEnabledCompatibility(command string, args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.SetFileValue(path, "future.ultrareview_enabled", next); err != nil {
+		if err := setPreferenceBool(path, "preferences.ultrareview_enabled", "future.ultrareview_enabled", next); err != nil {
 			return err
 		}
 		a.Config.Future.UltraReviewEnabled = &next
@@ -18647,7 +18671,7 @@ func (a *App) reviewEnabledCompatibility(command string, args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := config.UnsetFileValue(path, "future.ultrareview_enabled"); err != nil {
+		if err := unsetPreferenceBool(path, "preferences.ultrareview_enabled", "future.ultrareview_enabled"); err != nil {
 			return err
 		}
 		a.Config.Future.UltraReviewEnabled = nil
@@ -36301,7 +36325,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills", "updater"}
+	sections := []string{"auth", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "preferences", "privacy", "sandbox", "skills", "updater"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36638,6 +36662,7 @@ var resetSectionKeys = map[string][]string{
 	"mcp":           []string{"mcp_servers"},
 	"model":         []string{"model", "advisor_model", "max_tokens", "max_turns", "temperature", "reasoning_effort", "fast_mode"},
 	"permissions":   []string{"permission_mode", "permission_rules"},
+	"preferences":   []string{"preferences", "future.chrome_default_enabled", "future.notifications_enabled", "future.ultrareview_enabled"},
 	"privacy":       []string{"privacy_settings"},
 	"rag":           []string{"rag_base_url", "rag_timeout_seconds", "rag_top_k_max"},
 	"rate-limit":    []string{"rate_limit"},
@@ -36671,6 +36696,9 @@ var resetSectionAliases = map[string]string{
 	"models":            "model",
 	"permission":        "permissions",
 	"permissions":       "permissions",
+	"pref":              "preferences",
+	"preference":        "preferences",
+	"preferences":       "preferences",
 	"privacy":           "privacy",
 	"privacy-settings":  "privacy",
 	"rag":               "rag",
@@ -36919,6 +36947,10 @@ func (a *App) applyConfigReset(section string) {
 	case "permissions":
 		a.Config.PermissionMode = defaults.PermissionMode
 		a.Config.PermissionRules = config.PermissionRules{}
+	case "preferences":
+		a.Config.Future.ChromeDefaultEnabled = nil
+		a.Config.Future.NotificationsEnabled = nil
+		a.Config.Future.UltraReviewEnabled = nil
 	case "privacy":
 		a.Config.Privacy = config.PrivacyConfig{}
 	case "rag":
@@ -36972,6 +37004,15 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		return map[string]any{"privacy_settings": cfg.Privacy}, nil
 	case "permissions", "permission":
 		return map[string]any{"permission_mode": cfg.PermissionMode, "permission_rules": cfg.PermissionRules}, nil
+	case "preferences", "pref":
+		return map[string]any{
+			"chrome_default_enabled":   boolPtrEnabled(cfg.Future.ChromeDefaultEnabled),
+			"chrome_configured":        cfg.Future.ChromeDefaultEnabled != nil,
+			"notifications_enabled":    notificationsEnabled(cfg.Future.NotificationsEnabled),
+			"notifications_configured": cfg.Future.NotificationsEnabled != nil,
+			"ultrareview_enabled":      ultraReviewEnabled(cfg.Future.UltraReviewEnabled),
+			"ultrareview_configured":   cfg.Future.UltraReviewEnabled != nil,
+		}, nil
 	case "editor_bridge", "editor-bridge", "bridge", "ide":
 		return map[string]any{
 			"socket":           cfg.Future.EditorBridgeSocket,
@@ -51942,7 +51983,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		text := fmt.Sprintf("%s\n\nUsage:\n  codog %s [--staged] [--base REF] [--limit N] [--output-format text|json]\n\nCompatibility entrypoint for Claude Code ultra review helpers. `ultrareviewCommand` delegates to local review; `UltrareviewOverageDialog` checks the current diff against a local review line threshold; `ultrareviewEnabled` reports or updates the stored local preference.\n", command, command)
 		if command == "ultrareviewEnabled" {
 			usage = "codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]"
-			text = "ultrareviewEnabled\n\nUsage:\n  codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code ultra review enabled helper. It reports or updates the local `future.ultrareview_enabled` preference; the default is enabled when unset.\n"
+			text = "ultrareviewEnabled\n\nUsage:\n  codog ultrareviewEnabled [status|on|off|toggle|clear] [--target user|project|local] [--output-format text|json]\n\nCompatibility entrypoint for the Claude Code ultra review enabled helper. It reports or updates the local `preferences.ultrareview_enabled` preference; the default is enabled when unset.\n"
 		}
 		return localCommandHelpSpec(
 			command,

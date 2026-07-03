@@ -118,6 +118,7 @@ var topLevelFields = []fieldSpec{
 	{"editor_bridge", FieldObject},
 	{"enterprise", FieldObject},
 	{"env", FieldStringMap},
+	{"preferences", FieldObject},
 	{"trustedRoots", FieldStringArray},
 	{"remote", FieldObject},
 	{"rag_base_url", FieldString},
@@ -307,6 +308,16 @@ var marketplaceFields = []fieldSpec{
 	{"sources", FieldStringArray},
 	{"public_keys", FieldObject},
 	{"publicKeys", FieldObject},
+}
+
+var preferencesFields = []fieldSpec{
+	{"chrome_default_enabled", FieldBool},
+	{"chromeDefaultEnabled", FieldBool},
+	{"notifications_enabled", FieldBool},
+	{"notificationsEnabled", FieldBool},
+	{"ultrareview_enabled", FieldBool},
+	{"ultrareviewEnabled", FieldBool},
+	{"ultraReviewEnabled", FieldBool},
 }
 
 var updaterFields = []fieldSpec{
@@ -526,6 +537,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if marketplace, ok := objectAt(object, "marketplace"); ok {
 		validateObject(result, marketplace, marketplaceFields, "marketplace", source, path)
+	}
+	if preferences, ok := objectAt(object, "preferences"); ok {
+		validateObject(result, preferences, preferencesFields, "preferences", source, path)
 	}
 	if updater, ok := objectAt(object, "updater"); ok {
 		validateObject(result, updater, updaterFields, "updater", source, path)

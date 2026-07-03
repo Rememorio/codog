@@ -446,6 +446,52 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// PreferencesConfig holds user-facing runtime preferences.
+type PreferencesConfig struct {
+	ChromeDefaultEnabled *bool `json:"chrome_default_enabled,omitempty"`
+	NotificationsEnabled *bool `json:"notifications_enabled,omitempty"`
+	UltraReviewEnabled   *bool `json:"ultrareview_enabled,omitempty"`
+}
+
+// UnmarshalJSON accepts snake_case and camelCase preference aliases.
+func (p *PreferencesConfig) UnmarshalJSON(data []byte) error {
+	type plain PreferencesConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readBoolAlias := func(target **bool, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed bool
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid preferences.%s: %w", key, err)
+			}
+			copy := parsed
+			*target = &copy
+		}
+		return nil
+	}
+	if err := readBoolAlias(&parsed.ChromeDefaultEnabled, "chromeDefaultEnabled", "chrome_default_enabled"); err != nil {
+		return err
+	}
+	if err := readBoolAlias(&parsed.NotificationsEnabled, "notificationsEnabled", "notifications_enabled"); err != nil {
+		return err
+	}
+	if err := readBoolAlias(&parsed.UltraReviewEnabled, "ultrareviewEnabled", "ultrareview_enabled", "ultraReviewEnabled"); err != nil {
+		return err
+	}
+	*p = PreferencesConfig(parsed)
+	return nil
+}
+
 // UpdaterConfig holds manifest-based binary update configuration.
 type UpdaterConfig struct {
 	ManifestURL string `json:"manifest_url,omitempty"`
@@ -823,6 +869,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		MCPServers          map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 		MCP                 nestedMCPConfig            `json:"mcp,omitempty"`
 		Marketplace         MarketplaceConfig          `json:"marketplace,omitempty"`
+		Preferences         PreferencesConfig          `json:"preferences,omitempty"`
 		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
 		Remote              RemoteConfig               `json:"remote,omitempty"`
 		Updater             UpdaterConfig              `json:"updater,omitempty"`
@@ -899,6 +946,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if updaterConfigSet(aliases.Updater) {
 		mergeUpdaterConfigIntoFuture(&parsed.Future, aliases.Updater)
+	}
+	if preferencesConfigSet(aliases.Preferences) {
+		mergePreferencesConfigIntoFuture(&parsed.Future, aliases.Preferences)
 	}
 	*c = Config(parsed)
 	return nil
@@ -1898,6 +1948,12 @@ func updaterConfigSet(cfg UpdaterConfig) bool {
 	return cfg.ManifestURL != ""
 }
 
+func preferencesConfigSet(cfg PreferencesConfig) bool {
+	return cfg.ChromeDefaultEnabled != nil ||
+		cfg.NotificationsEnabled != nil ||
+		cfg.UltraReviewEnabled != nil
+}
+
 func sandboxConfigSet(cfg SandboxConfig) bool {
 	return cfg.Strategy != "" ||
 		cfg.Enabled != nil ||
@@ -1949,6 +2005,18 @@ func mergeMarketplaceConfigIntoFuture(dst *FutureConfig, src MarketplaceConfig) 
 func mergeUpdaterConfigIntoFuture(dst *FutureConfig, src UpdaterConfig) {
 	if src.ManifestURL != "" {
 		dst.UpdaterManifestURL = src.ManifestURL
+	}
+}
+
+func mergePreferencesConfigIntoFuture(dst *FutureConfig, src PreferencesConfig) {
+	if src.ChromeDefaultEnabled != nil {
+		dst.ChromeDefaultEnabled = src.ChromeDefaultEnabled
+	}
+	if src.NotificationsEnabled != nil {
+		dst.NotificationsEnabled = src.NotificationsEnabled
+	}
+	if src.UltraReviewEnabled != nil {
+		dst.UltraReviewEnabled = src.UltraReviewEnabled
 	}
 }
 

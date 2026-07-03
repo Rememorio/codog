@@ -125,6 +125,54 @@ func TestLoadUpdaterConfigCompatibility(t *testing.T) {
 	}
 }
 
+func TestLoadPreferencesConfigCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name              string
+		body              string
+		chromeEnabled     bool
+		notificationsOn   bool
+		ultraReviewEnable bool
+	}{
+		{
+			name:              "legacy future preferences",
+			body:              `{"future":{"chrome_default_enabled":true,"notifications_enabled":false,"ultrareview_enabled":false}}`,
+			chromeEnabled:     true,
+			notificationsOn:   false,
+			ultraReviewEnable: false,
+		},
+		{
+			name:              "formal preferences aliases",
+			body:              `{"preferences":{"chromeDefaultEnabled":true,"notificationsEnabled":true,"ultraReviewEnabled":false}}`,
+			chromeEnabled:     true,
+			notificationsOn:   true,
+			ultraReviewEnable: false,
+		},
+		{
+			name:              "formal preferences win",
+			body:              `{"future":{"chrome_default_enabled":false,"notifications_enabled":false,"ultrareview_enabled":false},"preferences":{"chrome_default_enabled":true,"notifications_enabled":true,"ultrareview_enabled":true}}`,
+			chromeEnabled:     true,
+			notificationsOn:   true,
+			ultraReviewEnable: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.NotNil(t, cfg.Future.ChromeDefaultEnabled)
+			require.Equal(t, tc.chromeEnabled, *cfg.Future.ChromeDefaultEnabled)
+			require.NotNil(t, cfg.Future.NotificationsEnabled)
+			require.Equal(t, tc.notificationsOn, *cfg.Future.NotificationsEnabled)
+			require.NotNil(t, cfg.Future.UltraReviewEnabled)
+			require.Equal(t, tc.ultraReviewEnable, *cfg.Future.UltraReviewEnabled)
+		})
+	}
+}
+
 func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")
