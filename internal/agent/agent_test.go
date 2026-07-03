@@ -6003,6 +6003,141 @@ func risky(value any) {
 	require.Contains(t, resumedDebugTaskStop.Output, `"task_id": "`+resumedDebugLaneTask.ID+`"`)
 	require.Contains(t, resumedDebugTaskStop.Output, `"message": "Task stopped"`)
 
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerCreateTool", `{"cwd":".","trusted_roots":["."],"auto_recover_prompt_misdelivery":false}`)
+	require.NoError(t, err)
+	var resumedDebugWorkerCreate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerCreate))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerCreate.Kind)
+	require.Equal(t, "worker_create", resumedDebugWorkerCreate.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugWorkerCreate.Permission)
+	require.True(t, resumedDebugWorkerCreate.Success)
+	var resumedDebugWorker struct {
+		WorkerID       string   `json:"worker_id"`
+		Status         string   `json:"status"`
+		ReadyForPrompt bool     `json:"ready_for_prompt"`
+		TrustedRoots   []string `json:"trusted_roots"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugWorkerCreate.Output), &resumedDebugWorker))
+	require.NotEmpty(t, resumedDebugWorker.WorkerID)
+	require.Equal(t, "ready_for_prompt", resumedDebugWorker.Status)
+	require.True(t, resumedDebugWorker.ReadyForPrompt)
+	require.Equal(t, []string{"."}, resumedDebugWorker.TrustedRoots)
+
+	out, err = runResumedJSON("/debug-tool-call", "WorkerListTool", `{"status":"ready_for_prompt"}`)
+	require.NoError(t, err)
+	var resumedDebugWorkerList debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerList))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerList.Kind)
+	require.Equal(t, "worker_list", resumedDebugWorkerList.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWorkerList.Permission)
+	require.True(t, resumedDebugWorkerList.Success)
+	require.Contains(t, resumedDebugWorkerList.Output, `"kind": "worker_list"`)
+	require.Contains(t, resumedDebugWorkerList.Output, `"worker_id": "`+resumedDebugWorker.WorkerID+`"`)
+
+	workerIDInput, err := json.Marshal(map[string]string{"worker_id": resumedDebugWorker.WorkerID})
+	require.NoError(t, err)
+	out, err = runResumedJSON("/debug-tool-call", "WorkerGetTool", string(workerIDInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerGet debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerGet))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerGet.Kind)
+	require.Equal(t, "worker_get", resumedDebugWorkerGet.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWorkerGet.Permission)
+	require.True(t, resumedDebugWorkerGet.Success)
+	require.Contains(t, resumedDebugWorkerGet.Output, `"worker_id": "`+resumedDebugWorker.WorkerID+`"`)
+	require.Contains(t, resumedDebugWorkerGet.Output, `"status": "ready_for_prompt"`)
+
+	workerObserveInput, err := json.Marshal(map[string]string{"worker_id": resumedDebugWorker.WorkerID, "screen_text": "Do you trust this folder?"})
+	require.NoError(t, err)
+	out, err = runResumedJSON("/debug-tool-call", "WorkerObserveTool", string(workerObserveInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerObserve debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerObserve))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerObserve.Kind)
+	require.Equal(t, "worker_observe", resumedDebugWorkerObserve.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWorkerObserve.Permission)
+	require.True(t, resumedDebugWorkerObserve.Success)
+	require.Contains(t, resumedDebugWorkerObserve.Output, `"status": "trust_prompt"`)
+	require.Contains(t, resumedDebugWorkerObserve.Output, `"ready_for_prompt": false`)
+
+	out, err = runResumedJSON("/debug-tool-call", "WorkerAwaitReadyTool", string(workerIDInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerAwaitReady debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerAwaitReady))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerAwaitReady.Kind)
+	require.Equal(t, "worker_await_ready", resumedDebugWorkerAwaitReady.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWorkerAwaitReady.Permission)
+	require.True(t, resumedDebugWorkerAwaitReady.Success)
+	require.Contains(t, resumedDebugWorkerAwaitReady.Output, `"status": "trust_prompt"`)
+	require.Contains(t, resumedDebugWorkerAwaitReady.Output, `"ready_for_prompt": false`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerResolveTrustTool", string(workerIDInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerResolveTrust debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerResolveTrust))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerResolveTrust.Kind)
+	require.Equal(t, "worker_resolve_trust", resumedDebugWorkerResolveTrust.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugWorkerResolveTrust.Permission)
+	require.True(t, resumedDebugWorkerResolveTrust.Success)
+	require.Contains(t, resumedDebugWorkerResolveTrust.Output, `"status": "ready_for_prompt"`)
+	require.Contains(t, resumedDebugWorkerResolveTrust.Output, `"ready_for_prompt": true`)
+
+	out, err = runResumedJSON("/debug-tool-call", "WorkerObserveCompletionTool", `{"worker_id":"`+resumedDebugWorker.WorkerID+`","finish_reason":"stop","tokens_output":12}`)
+	require.NoError(t, err)
+	var resumedDebugWorkerObserveCompletion debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerObserveCompletion))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerObserveCompletion.Kind)
+	require.Equal(t, "worker_observe_completion", resumedDebugWorkerObserveCompletion.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWorkerObserveCompletion.Permission)
+	require.True(t, resumedDebugWorkerObserveCompletion.Success)
+	require.Contains(t, resumedDebugWorkerObserveCompletion.Output, `"status": "finished"`)
+	require.Contains(t, resumedDebugWorkerObserveCompletion.Output, `"finish_reason": "stop"`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerTerminateTool", string(workerIDInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerTerminate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerTerminate))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerTerminate.Kind)
+	require.Equal(t, "worker_terminate", resumedDebugWorkerTerminate.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugWorkerTerminate.Permission)
+	require.True(t, resumedDebugWorkerTerminate.Success)
+	require.Contains(t, resumedDebugWorkerTerminate.Output, `"status": "terminated"`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "WorkerCreateTool", `{"cwd":"."}`)
+	require.NoError(t, err)
+	var resumedDebugTimeoutWorkerCreate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTimeoutWorkerCreate))
+	require.Equal(t, "debug_tool_call", resumedDebugTimeoutWorkerCreate.Kind)
+	require.Equal(t, "worker_create", resumedDebugTimeoutWorkerCreate.Tool)
+	require.True(t, resumedDebugTimeoutWorkerCreate.Success)
+	var resumedDebugTimeoutWorker struct {
+		WorkerID string `json:"worker_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugTimeoutWorkerCreate.Output), &resumedDebugTimeoutWorker))
+	require.NotEmpty(t, resumedDebugTimeoutWorker.WorkerID)
+
+	workerStartupTimeoutInput, err := json.Marshal(map[string]any{
+		"worker_id":             resumedDebugTimeoutWorker.WorkerID,
+		"last_lifecycle_state":  "trust_prompt",
+		"pane_command":          "codog repl",
+		"transport_healthy":     true,
+		"mcp_healthy":           true,
+		"elapsed_seconds":       42,
+		"trust_prompt_detected": true,
+	})
+	require.NoError(t, err)
+	out, err = runResumedJSON("/debug-tool-call", "WorkerStartupTimeoutTool", string(workerStartupTimeoutInput))
+	require.NoError(t, err)
+	var resumedDebugWorkerStartupTimeout debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWorkerStartupTimeout))
+	require.Equal(t, "debug_tool_call", resumedDebugWorkerStartupTimeout.Kind)
+	require.Equal(t, "worker_startup_timeout", resumedDebugWorkerStartupTimeout.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWorkerStartupTimeout.Permission)
+	require.True(t, resumedDebugWorkerStartupTimeout.Success)
+	require.Contains(t, resumedDebugWorkerStartupTimeout.Output, `"status": "failed"`)
+	require.Contains(t, resumedDebugWorkerStartupTimeout.Output, `"classification": "trust_required"`)
+	require.Contains(t, resumedDebugWorkerStartupTimeout.Output, `"lane_event": "lane.blocked"`)
+
 	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "ConfigTool", `{"setting":"model"}`)
 	require.NoError(t, err)
 	var resumedDebugConfig debugToolCallReport
