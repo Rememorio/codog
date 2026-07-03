@@ -144,6 +144,21 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, notebookCategory.Total)
 	require.ElementsMatch(t, []string{"notebook_read_edit_roundtrip"}, notebookCategory.Scenarios)
 
+	webAccess := findScenario(t, report, "web_access_roundtrip")
+	require.True(t, webAccess.OK)
+	require.Equal(t, "web-access", webAccess.Category)
+	require.Equal(t, 2, webAccess.ToolCalls)
+	require.Equal(t, []string{"web_fetch", "web_search"}, webAccess.ToolUses)
+	require.Contains(t, webAccess.Output, `"title": "Codog Web Parity"`)
+	require.Contains(t, webAccess.Output, `"summary": "Title: Codog Web Parity"`)
+	require.Contains(t, webAccess.Output, `"tool_use_id": "web_search_1"`)
+	require.Contains(t, webAccess.Output, `"url": "https://example.com/codog"`)
+	require.NotContains(t, webAccess.Output, "Blocked result")
+	webAccessCategory := findCategory(t, report, "web-access")
+	require.True(t, webAccessCategory.OK)
+	require.Equal(t, 1, webAccessCategory.Total)
+	require.ElementsMatch(t, []string{"web_access_roundtrip"}, webAccessCategory.Scenarios)
+
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
@@ -295,6 +310,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	notebook := findManifestScenario(t, manifest, "notebook_read_edit_roundtrip")
 	require.Equal(t, "notebook", notebook.Category)
 	require.Contains(t, notebook.ParityRefs, "Notebook edit")
+
+	webAccess := findManifestScenario(t, manifest, "web_access_roundtrip")
+	require.Equal(t, "web-access", webAccess.Category)
+	require.Contains(t, webAccess.ParityRefs, "Web search")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

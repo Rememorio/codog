@@ -159,6 +159,7 @@ var scenarioOrder = []string{
 	"bash_permission_prompt_denied",
 	"sandbox_bypass_status_roundtrip",
 	"notebook_read_edit_roundtrip",
+	"web_access_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -635,6 +636,7 @@ func Run(ctx context.Context) (Report, error) {
 		},
 		sandboxBypassStatusScenario(),
 		notebookReadEditScenario(),
+		webAccessScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1177,6 +1179,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Description: "Reads a Jupyter notebook cell with outputs, edits notebook cells, and verifies the persisted notebook content.",
 		ParityRefs:  []string{"Notebook read", "Notebook edit", "Code intelligence"},
 	},
+	"web_access_roundtrip": {
+		Category:    "web-access",
+		Description: "Fetches HTML content and searches a configured endpoint with domain filtering and source result blocks.",
+		ParityRefs:  []string{"Web fetch", "Web search", "Sources block"},
+	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
 		Description: "Exercises plugin lifecycle metadata loading without invoking a tool.",
@@ -1690,6 +1697,83 @@ func notebookReadEditScenario() scenario {
 				RequestCount: 4,
 			}, nil
 		},
+	}
+}
+
+func webAccessScenario() scenario {
+	return scenario{
+		name: "web_access_roundtrip",
+		runLocal: func(ctx context.Context, _ string) (localScenarioResult, error) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/page":
+					w.Header().Set("Content-Type", "text/html")
+					io.WriteString(w, `<html><head><title>Codog Web Parity</title><script>ignored()</script></head><body><main><h1>Fetch Summary</h1><p>Codog fetches local HTML text for grounded answers.</p></main></body></html>`)
+				case "/search":
+					if got := r.URL.Query().Get("q"); got != "codog web parity" {
+						http.Error(w, "unexpected query "+got, http.StatusBadRequest)
+						return
+					}
+					w.Header().Set("Content-Type", "text/html")
+					io.WriteString(w, `
+<html><body>
+  <a class="result__a" href="https://example.com/codog">Codog docs</a>
+  <div class="result__snippet">Go implementation notes for Codog web parity.</div>
+  <a class="result__a" href="https://blocked.example/skip">Blocked result</a>
+  <div class="result__snippet">This result should be filtered.</div>
+</body></html>`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			fetchInput := json.RawMessage(fmt.Sprintf(`{"url":%q,"prompt":"Return the title","timeout_ms":5000}`, server.URL+"/page"))
+			fetchOut, err := tools.WebFetchTool{}.Execute(ctx, fetchInput)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"code": 200`, `"codeText": "OK"`, `"title": "Codog Web Parity"`, `"summary": "Title: Codog Web Parity"`, `"durationMs":`} {
+				if !strings.Contains(fetchOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("web fetch output missing %s", expected)
+				}
+			}
+
+			restoreSearchEnv := setenvForScenario("CODOG_WEB_SEARCH_BASE_URL", server.URL+"/search")
+			defer restoreSearchEnv()
+			searchOut, err := tools.WebSearchTool{}.Execute(ctx, json.RawMessage(`{"query":"codog web parity","max_results":1,"allowed_domains":["example.com"],"timeout_ms":5000}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"query": "codog web parity"`, `"tool_use_id": "web_search_1"`, `"title": "Codog docs"`, `"url": "https://example.com/codog"`, `"hits": [`, `"durationSeconds":`} {
+				if !strings.Contains(searchOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("web search output missing %s", expected)
+				}
+			}
+			if strings.Contains(searchOut, "Blocked result") || strings.Contains(searchOut, "blocked.example") {
+				return localScenarioResult{}, fmt.Errorf("web search output included filtered result: %s", searchOut)
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{fetchOut, searchOut}, "\n"),
+				FinalMessage: "web access harness ok",
+				ToolCalls:    2,
+				ToolUses:     []string{"web_fetch", "web_search"},
+				RequestCount: 2,
+			}, nil
+		},
+	}
+}
+
+func setenvForScenario(key string, value string) func() {
+	previous, hadPrevious := os.LookupEnv(key)
+	_ = os.Setenv(key, value)
+	return func() {
+		if hadPrevious {
+			_ = os.Setenv(key, previous)
+			return
+		}
+		_ = os.Unsetenv(key)
 	}
 }
 
