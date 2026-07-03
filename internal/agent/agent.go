@@ -27771,6 +27771,12 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.runResumedAntTraceSlash(ctx, resumeSlashArgs("ant-trace", args, format), format)
 	case "/mock-limits":
 		return a.runResumedMockLimitsSlash(resumeSlashArgs("mock-limits", args, format), resumed, format)
+	case "/mock-parity", "/parity", "/self-test":
+		defaultFormat := "text"
+		if name == "/self-test" {
+			defaultFormat = "json"
+		}
+		return runMockParityCommand(ctx, a.Out, args, format, defaultFormat)
 	case "/extra-usage":
 		return a.runResumedExtraUsageSlash(resumeSlashArgs("extra-usage", args, format), format)
 	case "/install-slack-app":

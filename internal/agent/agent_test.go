@@ -2524,6 +2524,40 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("mock-parity"))
 }
 
+func TestMockParityResumedSlashContracts(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("resume-parity", anthropic.TextMessage("user", "run parity manifest")))
+
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-parity", "--output-format", "json", "/mock-parity", "manifest"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var manifest harness.Manifest
+	require.NoError(t, json.Unmarshal([]byte(out), &manifest))
+	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
+	require.Equal(t, 24, manifest.ScenarioCount)
+	require.Equal(t, "streaming_text", manifest.Scenarios[0].Name)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "resume-parity", "/self-test", "manifest"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &manifest))
+	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
+}
+
 func mockParityCoverageTotal(coverage []harness.CategoryReport) int {
 	total := 0
 	for _, category := range coverage {
