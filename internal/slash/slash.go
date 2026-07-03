@@ -148,7 +148,7 @@ func Specs() []Spec {
 		{Name: "/history", Usage: "/history [limit]", Description: "Show recent prompts recorded for the current session."},
 		{Name: "/summary", Usage: "/summary", Description: "Summarize the current session."},
 		{Name: "/todos", Usage: "/todos [list|add|start|done|pending|clear]", Description: "Show or update the workspace todo list."},
-		{Name: "/session", Usage: "/session [list|exists|switch|fork|delete]", Description: "Manage saved sessions."},
+		{Name: "/session", Usage: "/session [list|show|exists|switch|fork|rename|prune|delete]", Description: "Manage saved sessions."},
 		{Name: "/bookmarks", Usage: "/bookmarks [list|add|show|delete|clear]", Description: "Manage saved workspace/session bookmarks."},
 		{Name: "/backfill-sessions", Usage: "/backfill-sessions [--json]", Description: "Persist prompt history records for older sessions."},
 		{Name: "/prompt-history", Usage: "/prompt-history [limit]", Description: "Alias for /history."},

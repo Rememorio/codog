@@ -27150,6 +27150,22 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 			return fmt.Errorf("delete: refusing to delete the active session %q", target.ID)
 		}
 		return a.SessionsCommand(args)
+	case "prune":
+		req, err := parseSessionPruneArgs("codog sessions prune", args[1:], "text")
+		if err != nil {
+			return err
+		}
+		report, err := a.pruneSessionsWithReport(req, overrides.Resume)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionPruneText(a.Out, report)
+		return nil
 	case "show", "rename":
 		if len(args) == 1 || strings.HasPrefix(strings.TrimSpace(args[1]), "-") {
 			withSession := append([]string{args[0], overrides.Resume}, args[1:]...)

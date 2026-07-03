@@ -9842,6 +9842,31 @@ func TestResumedSessionForkAndSwitchReportsTargetSession(t *testing.T) {
 	require.Len(t, sessions, 3)
 }
 
+func TestResumedSessionPruneSkipsActiveSession(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	_, err := store.Create("active-empty")
+	require.NoError(t, err)
+	_, err = store.Create("other-empty")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	app := &App{Sessions: store, Out: &out}
+
+	require.NoError(t, app.runResumedSessionSlash([]string{"prune", "--confirm", "--json"}, config.FlagOverrides{Resume: "active-empty"}))
+	var report session.PruneReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_prune", report.Kind)
+	require.Equal(t, "ok", report.Status)
+	require.False(t, report.DryRun)
+	require.Equal(t, 1, report.DeletedCount)
+	require.Equal(t, "other-empty", report.Deleted[0].ID)
+	ok, existsErr := store.Exists("active-empty")
+	require.NoError(t, existsErr)
+	require.True(t, ok)
+	ok, existsErr = store.Exists("other-empty")
+	require.NoError(t, existsErr)
+	require.False(t, ok)
+}
+
 func TestResumedSessionShowJSONDefaultsToActiveSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
