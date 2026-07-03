@@ -69,12 +69,15 @@ The strongest surfaces are:
 - permission modes, allow and deny rules, hooks, audit events, and basic sandbox
   toggles;
 - slash commands, skills, templates, MCP client/server paths, provider profiles,
-  background tasks, and bridge surfaces.
+  background tasks, and bridge surfaces;
+- deterministic mock parity scenarios for remote control, IDE bridge commands,
+  MCP auth recovery, policy checks, updater manifests, background agents, and
+  command validation.
 
-Some larger surfaces exist but should still be treated as implementation
-workbench code until you validate them in your environment: remote sessions, IDE
-bridge behavior, OAuth, enterprise policy, marketplace flows, updater flows,
-multi-agent orchestration, and cross-platform sandbox integrations.
+The broad integration surfaces still need real deployment hardening before they
+should be relied on for multi-user or enterprise use, especially around hosted
+remote sessions, organization policy rollout, marketplace distribution, and
+cross-platform sandbox enforcement.
 
 ## Design Principles
 

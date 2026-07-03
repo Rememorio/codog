@@ -121,6 +121,7 @@ func TestMarkdownAvoidsProgressTrackingDocs(t *testing.T) {
 				"6-12 months",
 				"claude code-class",
 				"progress tracking",
+				"workbench code",
 			} {
 				require.NotContains(t, lower, disallowed)
 			}
