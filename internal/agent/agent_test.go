@@ -11394,6 +11394,14 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"Editor launch skipped."`)
 	out.Reset()
 
+	require.NoError(t, app.Memory([]string{"reset", ".codog/instructions.md", "--confirm", "--json"}))
+	require.Contains(t, out.String(), `"action": "reset"`)
+	require.Contains(t, out.String(), `"reset_count": 1`)
+	data, err = os.ReadFile(filepath.Join(workspace, ".codog", "instructions.md"))
+	require.NoError(t, err)
+	require.Empty(t, data)
+	out.Reset()
+
 	require.True(t, app.handleSlash(context.Background(), "/memory show AGENTS.md", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory")
 	out.Reset()
@@ -11405,6 +11413,13 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 
 	require.True(t, app.handleSlash(context.Background(), "/memory edit --no-open", &session.Session{ID: "session"}))
 	require.Contains(t, out.String(), "Memory File")
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/memory reset --all --confirm", &session.Session{ID: "session"}))
+	require.Contains(t, out.String(), "Memory Reset")
+	data, err = os.ReadFile(filepath.Join(workspace, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Empty(t, data)
 }
 
 func TestMemoryCommandJSONErrors(t *testing.T) {
@@ -11431,11 +11446,11 @@ func TestMemoryCommandJSONErrors(t *testing.T) {
 	out.Reset()
 
 	err = app.Memory([]string{"--json", "reset"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "unsupported_memory_action", "")
+	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "confirmation_required", "")
 	out.Reset()
 
 	err = app.Memory([]string{"reset", "--output-format", "json"})
-	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "unsupported_memory_action", "")
+	requireStructuredMemoryError(t, err, out.Bytes(), "reset", "confirmation_required", "")
 }
 
 func requireStructuredMemoryError(t *testing.T, err error, data []byte, action string, errorKind string, argument string) {

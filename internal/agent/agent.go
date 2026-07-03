@@ -21185,12 +21185,14 @@ func initProject(out io.Writer, workspace string, args []string, setupHook func(
 }
 
 type memoryRequest struct {
-	Action string
-	Format string
-	Editor string
-	Limit  int
-	NoOpen bool
-	Rest   []string
+	Action  string
+	Format  string
+	Editor  string
+	Limit   int
+	NoOpen  bool
+	All     bool
+	Confirm bool
+	Rest    []string
 }
 
 func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
@@ -21282,6 +21284,21 @@ func renderMemoryCommand(out io.Writer, workspace string, args []string) error {
 			return nil
 		}
 		memory.RenderFileReport(out, report)
+	case "reset":
+		report, err := memory.Reset(workspace, memory.ResetOptions{
+			Target:  strings.Join(req.Rest, " "),
+			All:     req.All,
+			Confirm: req.Confirm,
+		})
+		if err != nil {
+			return renderMemoryError(out, req.Action, err, req.Format)
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(out, string(data))
+			return nil
+		}
+		memory.RenderResetReport(out, report)
 	default:
 		return renderMemoryError(out, req.Action, fmt.Errorf("unknown memory action %q", req.Action), req.Format)
 	}
@@ -21334,12 +21351,16 @@ func buildMemoryErrorReport(action string, err error) actionErrorReport {
 		report.ErrorKind = "missing_argument"
 		report.Argument = "query"
 		report.Hint = "Usage: codog memory search QUERY [--limit N] [--json|--output-format text|json]."
+	case strings.Contains(message, "memory reset confirmation required"):
+		report.ErrorKind = "confirmation_required"
+		report.Message = "memory reset requires --confirm"
+		report.Hint = "Run `codog memory reset PATH --confirm` to clear one memory file, or `codog memory reset --all --confirm` to clear all discovered memory files."
 	case strings.Contains(message, "unknown memory action"):
 		report.ErrorKind = "unsupported_memory_action"
-		report.Hint = "Supported memory actions are list, show, search, relevant, add, path, ensure, and edit."
+		report.Hint = "Supported memory actions are list, show, search, relevant, add, path, ensure, edit, and reset."
 	case strings.Contains(message, "unknown memory flag"):
 		report.ErrorKind = "unknown_option"
-		report.Hint = "Usage: codog memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]."
+		report.Hint = "Usage: codog memory [list|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]."
 	case strings.Contains(message, "unknown memory output format"):
 		report.ErrorKind = "invalid_output_format"
 		report.Argument = "output_format"
@@ -21377,6 +21398,10 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 			req.Format = "json"
 		case arg == "--no-open":
 			req.NoOpen = true
+		case arg == "--all":
+			req.All = true
+		case arg == "--confirm":
+			req.Confirm = true
 		case arg == "--editor":
 			if i+1 >= len(args) {
 				return req, errors.New("memory editor is required")
@@ -21415,7 +21440,7 @@ func parseMemoryArgs(args []string) (memoryRequest, error) {
 			if !actionSet {
 				action := strings.ToLower(arg)
 				switch action {
-				case "list", "show", "add", "search", "relevant", "path", "ensure", "edit":
+				case "list", "show", "add", "search", "relevant", "path", "ensure", "edit", "reset":
 					req.Action = action
 					actionSet = true
 					continue
@@ -47561,8 +47586,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"memory",
 			"memory",
-			"codog memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--output-format text|json]",
-			"Memory\n\nUsage:\n  codog memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--output-format text|json]\n\nDiscovers project memory files, shows or edits them, appends guidance, and searches loaded memory lines for relevant instructions.\n",
+			"codog memory [list|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--output-format text|json]",
+			"Memory\n\nUsage:\n  codog memory [list|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--output-format text|json]\n\nDiscovers project memory files, shows or edits them, appends guidance, searches loaded memory lines, and clears selected memory files with confirmation.\n",
 			[]string{"working_directory", "instruction_files", "files", "matches", "path"},
 			[]string{"ok", "ready", "created", "opened", "error"},
 			true,
@@ -48398,7 +48423,7 @@ Usage:
   %s [flags] init-verifiers [--target claude|codog] [--dry-run] [--force] [--json|--output-format text|json]
   %s [flags] onboarding [--path PATH] [--json|--output-format text|json]
   %s [flags] state [--json|--output-format text|json]
-  %s [flags] memory [list|show|search|relevant|add|path|ensure|edit] [ARGS...] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
+  %s [flags] memory [list|show|search|relevant|add|path|ensure|edit|reset] [ARGS...] [--all] [--confirm] [--limit N] [--editor COMMAND] [--no-open] [--json|--output-format text|json]
   %s [flags] project [--json|--output-format text|json]
   %s [flags] env [--json|--output-format text|json]
   %s [flags] files [PATH] [--glob GLOB] [--limit N] [--hidden] [--json|--output-format text|json]

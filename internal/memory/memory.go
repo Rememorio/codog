@@ -127,6 +127,30 @@ type FileReport struct {
 	Message string `json:"message,omitempty"`
 }
 
+type ResetOptions struct {
+	Target  string
+	All     bool
+	Confirm bool
+}
+
+type ResetFile struct {
+	Path         string `json:"path"`
+	Name         string `json:"name"`
+	Scope        string `json:"scope"`
+	BytesRemoved int    `json:"bytes_removed"`
+}
+
+type ResetReport struct {
+	Kind             string      `json:"kind"`
+	Action           string      `json:"action"`
+	Status           string      `json:"status"`
+	WorkingDirectory string      `json:"working_directory"`
+	Target           string      `json:"target,omitempty"`
+	All              bool        `json:"all,omitempty"`
+	ResetCount       int         `json:"reset_count"`
+	Files            []ResetFile `json:"files"`
+}
+
 // Discover loads project-memory files between the workspace and its boundary.
 func Discover(workspace string) ([]File, error) {
 	workspace = strings.TrimSpace(workspace)
@@ -281,6 +305,76 @@ func Edit(workspace string, target string, editor string, openEditor bool) (File
 	report.Editor = editor
 	report.Message = "Opened memory file in editor."
 	return report, nil
+}
+
+// Reset clears one or more discovered project-memory files after confirmation.
+func Reset(workspace string, opts ResetOptions) (ResetReport, error) {
+	if !opts.Confirm {
+		return ResetReport{}, fmt.Errorf("memory reset confirmation required")
+	}
+	absWorkspace, err := absWorkspacePath(workspace)
+	if err != nil {
+		return ResetReport{}, err
+	}
+	files, err := Discover(absWorkspace)
+	if err != nil {
+		return ResetReport{}, err
+	}
+	selected, err := selectResetFiles(files, opts)
+	if err != nil {
+		return ResetReport{}, err
+	}
+	report := ResetReport{
+		Kind:             "memory",
+		Action:           "reset",
+		Status:           "ok",
+		WorkingDirectory: canonicalPath(absWorkspace),
+		Target:           strings.TrimSpace(opts.Target),
+		All:              opts.All,
+		Files:            make([]ResetFile, 0, len(selected)),
+	}
+	for _, file := range selected {
+		info, err := os.Stat(file.Path)
+		if err != nil {
+			return ResetReport{}, err
+		}
+		if info.IsDir() {
+			return ResetReport{}, fmt.Errorf("memory file not found: %s", file.Path)
+		}
+		if err := os.Truncate(file.Path, 0); err != nil {
+			return ResetReport{}, err
+		}
+		report.Files = append(report.Files, ResetFile{
+			Path:         file.Path,
+			Name:         file.Name,
+			Scope:        file.Scope,
+			BytesRemoved: int(info.Size()),
+		})
+	}
+	report.ResetCount = len(report.Files)
+	return report, nil
+}
+
+func selectResetFiles(files []File, opts ResetOptions) ([]File, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no memory files found")
+	}
+	target := strings.TrimSpace(opts.Target)
+	if opts.All {
+		return append([]File(nil), files...), nil
+	}
+	if target == "" {
+		if len(files) != 1 {
+			return nil, fmt.Errorf("memory file path is required when multiple files exist")
+		}
+		return []File{files[0]}, nil
+	}
+	for _, file := range files {
+		if matchesTarget(file, target) {
+			return []File{file}, nil
+		}
+	}
+	return nil, fmt.Errorf("memory file not found: %s", target)
 }
 
 // ResolvePath converts a memory target into a workspace-contained absolute path.
@@ -457,6 +551,17 @@ func RenderFileReport(w io.Writer, report FileReport) {
 	}
 	if report.Message != "" {
 		fmt.Fprintf(w, "  Message          %s\n", report.Message)
+	}
+}
+
+// RenderResetReport writes a human-readable memory reset report.
+func RenderResetReport(w io.Writer, report ResetReport) {
+	fmt.Fprintln(w, "Memory Reset")
+	fmt.Fprintf(w, "  Working directory %s\n", report.WorkingDirectory)
+	fmt.Fprintf(w, "  Reset files       %d\n", report.ResetCount)
+	for i, file := range report.Files {
+		fmt.Fprintf(w, "  %d. %s\n", i+1, file.Path)
+		fmt.Fprintf(w, "     source=%s bytes_removed=%d\n", file.Name, file.BytesRemoved)
 	}
 }
 

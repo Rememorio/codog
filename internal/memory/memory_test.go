@@ -269,6 +269,40 @@ func TestPathEnsureAndEditMemoryFile(t *testing.T) {
 	require.Contains(t, err.Error(), "escapes workspace")
 }
 
+func TestResetClearsSelectedAndAllMemoryFiles(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".codog"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Project memory\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".codog", "instructions.md"), []byte("Codog memory\n"), 0o644))
+
+	_, err := Reset(root, ResetOptions{Target: "AGENTS.md"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "confirmation required")
+
+	report, err := Reset(root, ResetOptions{Target: "AGENTS.md", Confirm: true})
+	require.NoError(t, err)
+	require.Equal(t, "memory", report.Kind)
+	require.Equal(t, "reset", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, 1, report.ResetCount)
+	require.Equal(t, "AGENTS.md", report.Files[0].Name)
+	require.Greater(t, report.Files[0].BytesRemoved, 0)
+	data, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Empty(t, data)
+	data, err = os.ReadFile(filepath.Join(root, ".codog", "instructions.md"))
+	require.NoError(t, err)
+	require.Equal(t, "Codog memory\n", string(data))
+
+	report, err = Reset(root, ResetOptions{All: true, Confirm: true})
+	require.NoError(t, err)
+	require.True(t, report.All)
+	require.Equal(t, 2, report.ResetCount)
+	data, err = os.ReadFile(filepath.Join(root, ".codog", "instructions.md"))
+	require.NoError(t, err)
+	require.Empty(t, data)
+}
+
 func TestRenderReportWithAndWithoutFiles(t *testing.T) {
 	var out bytes.Buffer
 	RenderReport(&out, Report{WorkingDirectory: "/repo", InstructionFiles: 0})
