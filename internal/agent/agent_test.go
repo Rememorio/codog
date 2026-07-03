@@ -990,6 +990,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "lane_event_projection")
 	require.Contains(t, report.Features, "mcp_server")
 	require.Contains(t, report.Features, "mcp_config_load_degraded")
+	require.Contains(t, report.Features, "memory_age_scan")
 	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "policy_engine")
 	require.Contains(t, report.Features, "plugin_lifecycle")
@@ -1581,7 +1582,10 @@ func TestPrefetchCommandReportsLocalStartupReadiness(t *testing.T) {
 	require.Equal(t, "status", report.Action)
 	require.Equal(t, "ok", report.Status)
 	require.Equal(t, report.TaskCount, len(report.Tasks))
-	require.Equal(t, float64(1), prefetchTaskByName(t, report, "memory_scan").Evidence["instruction_files"])
+	memoryScan := prefetchTaskByName(t, report, "memory_scan")
+	require.Equal(t, float64(1), memoryScan.Evidence["instruction_files"])
+	require.Equal(t, float64(2), memoryScan.Evidence["words"])
+	require.Equal(t, float64(len("Prefetch memory.\n")), memoryScan.Evidence["bytes"])
 	require.Equal(t, float64(1), prefetchTaskByName(t, report, "mcp_prefetch").Evidence["valid_count"])
 	require.Equal(t, "ok", prefetchTaskByName(t, report, "session_store").Status)
 }
@@ -14492,6 +14496,8 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), "Memory")
 	require.Contains(t, out.String(), "Instruction files 1")
 	require.Contains(t, out.String(), "preview=Memory first line")
+	require.Contains(t, out.String(), "words=5")
+	require.Contains(t, out.String(), "bytes=29")
 	require.NotContains(t, out.String(), "secret body")
 	out.Reset()
 
@@ -14499,6 +14505,9 @@ func TestMemoryCommandAndSlash(t *testing.T) {
 	require.Contains(t, out.String(), `"kind": "memory"`)
 	require.Contains(t, out.String(), `"instruction_files": 1`)
 	require.Contains(t, out.String(), `"preview": "Memory first line"`)
+	require.Contains(t, out.String(), `"words": 5`)
+	require.Contains(t, out.String(), `"size_bytes": 29`)
+	require.Contains(t, out.String(), `"modified_at":`)
 	require.NotContains(t, out.String(), "secret body")
 	out.Reset()
 

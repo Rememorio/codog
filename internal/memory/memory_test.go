@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -135,7 +136,10 @@ func TestRenderMemoryBlock(t *testing.T) {
 
 func TestBuildReportSummarizesMemoryFiles(t *testing.T) {
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("First line\nSecond line\n"), 0o644))
+	path := filepath.Join(root, "AGENTS.md")
+	require.NoError(t, os.WriteFile(path, []byte("First line\nSecond line\n"), 0o644))
+	modifiedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(path, modifiedAt, modifiedAt))
 
 	report, err := BuildReport(root)
 
@@ -146,11 +150,37 @@ func TestBuildReportSummarizesMemoryFiles(t *testing.T) {
 	require.Equal(t, 1, report.InstructionFiles)
 	require.Equal(t, "AGENTS.md", report.Files[0].Name)
 	require.Equal(t, 2, report.Files[0].Lines)
+	require.Equal(t, 4, report.Files[0].Words)
 	require.Equal(t, "First line", report.Files[0].Preview)
+	require.Equal(t, int64(len("First line\nSecond line\n")), report.Files[0].SizeBytes)
+	require.Equal(t, "2026-07-01T12:00:00Z", report.Files[0].ModifiedAt)
+	require.False(t, report.Files[0].Empty)
+	require.GreaterOrEqual(t, report.Files[0].AgeSeconds, int64(0))
 
 	data, err := json.Marshal(report)
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "Second line")
+}
+
+func TestSummariesAtReportsMemoryAgeAndEmptyState(t *testing.T) {
+	modifiedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	now := modifiedAt.Add(90 * time.Second)
+	summaries := SummariesAt([]File{{
+		Path:       "/repo/AGENTS.md",
+		Name:       "AGENTS.md",
+		Scope:      "/repo",
+		Chars:      0,
+		SizeBytes:  0,
+		ModifiedAt: modifiedAt,
+		Body:       " \n",
+	}}, now)
+
+	require.Len(t, summaries, 1)
+	require.Equal(t, int64(90), summaries[0].AgeSeconds)
+	require.True(t, summaries[0].Empty)
+	require.Equal(t, 1, summaries[0].Lines)
+	require.Equal(t, 0, summaries[0].Words)
+	require.Equal(t, "2026-07-01T12:00:00Z", summaries[0].ModifiedAt)
 }
 
 func TestMetadataForReportsClaudeCompatibleMemoryFields(t *testing.T) {
@@ -174,6 +204,10 @@ func TestMetadataForReportsClaudeCompatibleMemoryFields(t *testing.T) {
 	require.Equal(t, canonicalRoot, metadata[0].ScopePath)
 	require.True(t, metadata[0].OutsideProject)
 	require.True(t, metadata[0].Contributes)
+	require.Equal(t, 1, metadata[0].Lines)
+	require.Equal(t, 2, metadata[0].Words)
+	require.False(t, metadata[0].Empty)
+	require.NotEmpty(t, metadata[0].ModifiedAt)
 	require.Equal(t, ".codog/instructions.md", metadata[1].Name)
 	require.Equal(t, "codog_instructions", metadata[1].Source)
 	require.Equal(t, "workspace", metadata[1].Origin)

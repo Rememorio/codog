@@ -23752,19 +23752,35 @@ func (a *App) prefetchMemoryScan() (prefetchTaskResult, error) {
 		return prefetchTaskResult{}, err
 	}
 	chars := 0
+	words := 0
+	bytesSeen := int64(0)
+	empty := 0
 	truncated := 0
-	for _, file := range files {
-		chars += file.Chars
-		if file.Truncated {
+	oldestAge := int64(0)
+	for _, summary := range memory.SummariesAt(files, time.Now()) {
+		chars += summary.Chars
+		words += summary.Words
+		bytesSeen += summary.SizeBytes
+		if summary.Empty {
+			empty++
+		}
+		if summary.Truncated {
 			truncated++
+		}
+		if summary.AgeSeconds > oldestAge {
+			oldestAge = summary.AgeSeconds
 		}
 	}
 	return prefetchTaskResult{
 		Detail: "loaded project memory candidates",
 		Evidence: map[string]any{
-			"instruction_files": len(files),
-			"chars":             chars,
-			"truncated_files":   truncated,
+			"instruction_files":  len(files),
+			"chars":              chars,
+			"words":              words,
+			"bytes":              bytesSeen,
+			"empty_files":        empty,
+			"truncated_files":    truncated,
+			"oldest_age_seconds": oldestAge,
 		},
 	}, nil
 }
@@ -26154,6 +26170,7 @@ func codogCapabilityFeatures() []string {
 		"mcp_config_load_degraded",
 		"mcp_client",
 		"mcp_server",
+		"memory_age_scan",
 		"metrics",
 		"mock_parity_harness",
 		"multi_agent",

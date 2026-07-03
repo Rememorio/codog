@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -32,12 +33,14 @@ var CandidateNames = []string{
 
 // File is a loaded project-memory instruction file.
 type File struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	Scope     string `json:"scope"`
-	Chars     int    `json:"chars"`
-	Truncated bool   `json:"truncated,omitempty"`
-	Body      string `json:"-"`
+	Path       string    `json:"path"`
+	Name       string    `json:"name"`
+	Scope      string    `json:"scope"`
+	Chars      int       `json:"chars"`
+	SizeBytes  int64     `json:"size_bytes"`
+	ModifiedAt time.Time `json:"modified_at"`
+	Truncated  bool      `json:"truncated,omitempty"`
+	Body       string    `json:"-"`
 }
 
 // Metadata is a JSON-safe description of one loaded project-memory file.
@@ -50,19 +53,30 @@ type Metadata struct {
 	ScopePath      string `json:"scope_path"`
 	OutsideProject bool   `json:"outside_project"`
 	Chars          int    `json:"chars"`
+	Lines          int    `json:"lines"`
+	Words          int    `json:"words"`
+	SizeBytes      int64  `json:"size_bytes"`
+	ModifiedAt     string `json:"modified_at,omitempty"`
+	AgeSeconds     int64  `json:"age_seconds,omitempty"`
+	Empty          bool   `json:"empty"`
 	Contributes    bool   `json:"contributes"`
 	Truncated      bool   `json:"truncated,omitempty"`
 }
 
 // Summary is the JSON-safe metadata view of a memory file.
 type Summary struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	Scope     string `json:"scope"`
-	Lines     int    `json:"lines"`
-	Chars     int    `json:"chars"`
-	Preview   string `json:"preview"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Path       string `json:"path"`
+	Name       string `json:"name"`
+	Scope      string `json:"scope"`
+	Lines      int    `json:"lines"`
+	Words      int    `json:"words"`
+	Chars      int    `json:"chars"`
+	SizeBytes  int64  `json:"size_bytes"`
+	ModifiedAt string `json:"modified_at,omitempty"`
+	AgeSeconds int64  `json:"age_seconds,omitempty"`
+	Empty      bool   `json:"empty"`
+	Preview    string `json:"preview"`
+	Truncated  bool   `json:"truncated,omitempty"`
 }
 
 // Report describes discovered project-memory files for a workspace.
@@ -582,6 +596,9 @@ func MetadataFor(workspace string, files []File) []Metadata {
 		fileForOrigin := file
 		fileForOrigin.Path = path
 		fileForOrigin.Scope = scope
+		lines := countLines(file.Body)
+		words := countWords(file.Body)
+		empty := strings.TrimSpace(file.Body) == ""
 		metadata = append(metadata, Metadata{
 			Path:           path,
 			Name:           file.Name,
@@ -591,7 +608,13 @@ func MetadataFor(workspace string, files []File) []Metadata {
 			ScopePath:      scope,
 			OutsideProject: !isWithin(path, projectRoot),
 			Chars:          file.Chars,
-			Contributes:    strings.TrimSpace(file.Body) != "",
+			Lines:          lines,
+			Words:          words,
+			SizeBytes:      file.SizeBytes,
+			ModifiedAt:     formatMemoryTime(file.ModifiedAt),
+			AgeSeconds:     memoryAgeSeconds(file.ModifiedAt, time.Now()),
+			Empty:          empty,
+			Contributes:    !empty,
 			Truncated:      file.Truncated,
 		})
 	}
@@ -600,16 +623,28 @@ func MetadataFor(workspace string, files []File) []Metadata {
 
 // Summaries converts loaded memory files to metadata-only summaries.
 func Summaries(files []File) []Summary {
+	return SummariesAt(files, time.Now())
+}
+
+// SummariesAt converts loaded memory files to metadata-only summaries using a
+// caller-provided clock for age calculation.
+func SummariesAt(files []File, now time.Time) []Summary {
 	summaries := make([]Summary, 0, len(files))
 	for _, file := range files {
+		body := file.Body
 		summaries = append(summaries, Summary{
-			Path:      file.Path,
-			Name:      file.Name,
-			Scope:     file.Scope,
-			Lines:     countLines(file.Body),
-			Chars:     file.Chars,
-			Preview:   preview(file.Body),
-			Truncated: file.Truncated,
+			Path:       file.Path,
+			Name:       file.Name,
+			Scope:      file.Scope,
+			Lines:      countLines(body),
+			Words:      countWords(body),
+			Chars:      file.Chars,
+			SizeBytes:  file.SizeBytes,
+			ModifiedAt: formatMemoryTime(file.ModifiedAt),
+			AgeSeconds: memoryAgeSeconds(file.ModifiedAt, now),
+			Empty:      strings.TrimSpace(body) == "",
+			Preview:    preview(body),
+			Truncated:  file.Truncated,
 		})
 	}
 	return summaries
@@ -667,7 +702,11 @@ func RenderReport(w io.Writer, report Report) {
 		if file.Truncated {
 			truncated = " truncated=true"
 		}
-		fmt.Fprintf(w, "     source=%s lines=%d chars=%d preview=%s%s\n", file.Name, file.Lines, file.Chars, file.Preview, truncated)
+		empty := ""
+		if file.Empty {
+			empty = " empty=true"
+		}
+		fmt.Fprintf(w, "     source=%s lines=%d words=%d chars=%d bytes=%d age_seconds=%d preview=%s%s%s\n", file.Name, file.Lines, file.Words, file.Chars, file.SizeBytes, file.AgeSeconds, file.Preview, truncated, empty)
 	}
 }
 
@@ -788,12 +827,14 @@ func readCandidate(path string, scope string, name string) (File, bool, error) {
 	}
 	body := string(data)
 	return File{
-		Path:      path,
-		Name:      filepath.ToSlash(name),
-		Scope:     scope,
-		Chars:     len([]rune(body)),
-		Truncated: truncated,
-		Body:      body,
+		Path:       path,
+		Name:       filepath.ToSlash(name),
+		Scope:      scope,
+		Chars:      len([]rune(body)),
+		SizeBytes:  info.Size(),
+		ModifiedAt: info.ModTime().UTC(),
+		Truncated:  truncated,
+		Body:       body,
 	}, true, nil
 }
 
@@ -814,6 +855,30 @@ func preview(body string) string {
 		return "<empty>"
 	}
 	return line
+}
+
+func countWords(body string) int {
+	return len(strings.FieldsFunc(body, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-'
+	}))
+}
+
+func formatMemoryTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func memoryAgeSeconds(modifiedAt time.Time, now time.Time) int64 {
+	if modifiedAt.IsZero() || now.IsZero() {
+		return 0
+	}
+	age := now.Sub(modifiedAt)
+	if age < 0 {
+		return 0
+	}
+	return int64(age.Seconds())
 }
 
 func searchTerms(query string) []string {
