@@ -133,6 +133,7 @@ var topLevelFields = []fieldSpec{
 	{"mcpServers", FieldObject},
 	{"future", FieldObject},
 	{"sandbox", FieldObject},
+	{"updater", FieldObject},
 }
 
 var deprecatedTopLevelFields = []deprecatedField{
@@ -306,6 +307,12 @@ var marketplaceFields = []fieldSpec{
 	{"sources", FieldStringArray},
 	{"public_keys", FieldObject},
 	{"publicKeys", FieldObject},
+}
+
+var updaterFields = []fieldSpec{
+	{"manifest_url", FieldString},
+	{"manifestURL", FieldString},
+	{"url", FieldString},
 }
 
 var sandboxFields = []fieldSpec{
@@ -519,6 +526,9 @@ func validateKnownNestedObjects(result *Result, object map[string]any, source []
 	}
 	if marketplace, ok := objectAt(object, "marketplace"); ok {
 		validateObject(result, marketplace, marketplaceFields, "marketplace", source, path)
+	}
+	if updater, ok := objectAt(object, "updater"); ok {
+		validateObject(result, updater, updaterFields, "updater", source, path)
 	}
 	if nested, ok := objectAt(object, "future"); ok {
 		validateObject(result, nested, futureFields, "future", source, path)

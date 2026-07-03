@@ -13445,6 +13445,7 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 			RemoteEnabled:             true,
 			RemoteAuthToken:           "remote-secret",
 			RemoteLeaseSeconds:        45,
+			UpdaterManifestURL:        "https://updates.example/manifest.json",
 			SandboxStrategy:           "detect",
 			Sandbox: config.SandboxConfig{
 				FilesystemMode: "allow-list",
@@ -13513,6 +13514,11 @@ func TestRenderConfigInspectionSections(t *testing.T) {
 	require.Contains(t, out.String(), `"strategy": "detect"`)
 	require.Contains(t, out.String(), `"filesystem_mode": "allow-list"`)
 	require.Contains(t, out.String(), `"logs"`)
+	out.Reset()
+
+	require.NoError(t, renderConfigInspection(&out, cfg, nil, []string{"get", "updater", "--output-format", "json"}))
+	require.Contains(t, out.String(), `"manifest_url": "https://updates.example/manifest.json"`)
+	require.Contains(t, out.String(), `"manifest_configured": true`)
 }
 
 func TestToolRegistryUsesRAGConfig(t *testing.T) {
@@ -13799,6 +13805,27 @@ func TestResetMarketplaceConfigSection(t *testing.T) {
 	require.NotContains(t, string(data), `"marketplace"`)
 	require.NotContains(t, string(data), "plugin_marketplaces")
 	require.NotContains(t, string(data), "plugin_marketplace_public_keys")
+	require.Contains(t, string(data), `"model": "keep"`)
+}
+
+func TestResetUpdaterConfigSection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{
+		"model": "keep",
+		"updater": {"manifest_url": "https://updates.example/manifest.json"},
+		"future": {"updater_manifest_url": "https://old.example/manifest.json"}
+	}`), 0o644))
+
+	report, changed, err := resetConfigAtPath(configPath, "updater", "reset", false)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "updater", report.Section)
+	require.ElementsMatch(t, []string{"updater", "future.updater_manifest_url"}, report.ResetKeys)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"updater"`)
+	require.NotContains(t, string(data), "updater_manifest_url")
 	require.Contains(t, string(data), `"model": "keep"`)
 }
 
@@ -27099,7 +27126,7 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 
 	var out bytes.Buffer
 	app := &App{
-		Config:     config.Config{ConfigHome: dir},
+		Config:     config.Config{ConfigHome: dir, Future: config.FutureConfig{UpdaterManifestURL: "https://updates.example/manifest.json"}},
 		Executable: target,
 		Out:        &out,
 	}
@@ -27121,6 +27148,8 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 			BackupPath     string `json:"backup_path"`
 			BackupPresent  bool   `json:"backup_present"`
 			TargetPresent  bool   `json:"target_present"`
+			ManifestURL    string `json:"manifest_url"`
+			ManifestSet    bool   `json:"manifest_configured"`
 			Artifacts      []struct {
 				Name       string `json:"name"`
 				Path       string `json:"path"`
@@ -27148,6 +27177,8 @@ func TestUpdaterStatusDefaults(t *testing.T) {
 	require.Equal(t, target+".bak", report.Result.BackupPath)
 	require.True(t, report.Result.BackupPresent)
 	require.True(t, report.Result.TargetPresent)
+	require.Equal(t, "https://updates.example/manifest.json", report.Result.ManifestURL)
+	require.True(t, report.Result.ManifestSet)
 	require.Equal(t, 1, report.Result.ArtifactCount)
 	require.Len(t, report.Result.Artifacts, 1)
 	require.Equal(t, "codog-0.2.0-test", report.Result.Artifacts[0].Name)
@@ -27210,6 +27241,32 @@ func TestInstallStatusDefaults(t *testing.T) {
 	require.Equal(t, target, report.Result.Updater.DefaultTarget)
 	require.True(t, report.Result.Updater.TargetPresent)
 	require.Contains(t, report.Result.Updater.Commands, "install")
+}
+
+func TestUpdaterCheckUsesConfiguredManifestURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(updater.Manifest{Version: "0.2.0"}))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{Future: config.FutureConfig{UpdaterManifestURL: server.URL}},
+		Out:    &out,
+	}
+	require.NoError(t, app.Updater(context.Background(), []string{"check"}))
+	var report struct {
+		Kind   string              `json:"kind"`
+		Action string              `json:"action"`
+		Status string              `json:"status"`
+		Result updater.CheckResult `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "updater", report.Kind)
+	require.Equal(t, "check", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, "0.2.0", report.Result.LatestVersion)
+	require.True(t, report.Result.UpdateAvailable)
 }
 
 func TestUpdaterVerifyCommand(t *testing.T) {
@@ -27311,10 +27368,11 @@ func TestUpdaterErrorsHonorGlobalJSONFormat(t *testing.T) {
 func TestUpdaterDownloadCommandReportsStructuredResult(t *testing.T) {
 	payload := []byte("codog cli updater binary")
 	sum := sha256.Sum256(payload)
+	platform := updater.PlatformKey()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/manifest.json":
-			_, _ = fmt.Fprintf(w, `{"version":"0.4.0","downloads":{"test":"bin/codog"},"checksums":{"test":"sha256:%s"}}`, hex.EncodeToString(sum[:]))
+			_, _ = fmt.Fprintf(w, `{"version":"0.4.0","downloads":{"test":"bin/codog","%s":"bin/codog"},"checksums":{"test":"sha256:%s","%s":"sha256:%s"}}`, platform, hex.EncodeToString(sum[:]), platform, hex.EncodeToString(sum[:]))
 		case "/bin/codog":
 			_, _ = w.Write(payload)
 		default:
@@ -27339,6 +27397,15 @@ func TestUpdaterDownloadCommandReportsStructuredResult(t *testing.T) {
 	require.Equal(t, "0.4.0", report.Result.Version)
 	require.Equal(t, server.URL+"/bin/codog", report.Result.URL)
 	require.Equal(t, hex.EncodeToString(sum[:]), report.Result.SHA256)
+	require.FileExists(t, report.Result.Path)
+
+	out.Reset()
+	app.Config.Future.UpdaterManifestURL = server.URL + "/manifest.json"
+	require.NoError(t, app.Updater(context.Background(), []string{"download"}))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "download", report.Action)
+	require.Equal(t, platform, report.Result.Platform)
+	require.Equal(t, server.URL+"/bin/codog", report.Result.URL)
 	require.FileExists(t, report.Result.Path)
 }
 

@@ -446,6 +446,43 @@ type FutureConfig struct {
 	GuestPassVisitCount       int               `json:"guest_pass_visit_count,omitempty"`
 }
 
+// UpdaterConfig holds manifest-based binary update configuration.
+type UpdaterConfig struct {
+	ManifestURL string `json:"manifest_url,omitempty"`
+}
+
+// UnmarshalJSON accepts snake_case, camelCase, and short URL aliases.
+func (u *UpdaterConfig) UnmarshalJSON(data []byte) error {
+	type plain UpdaterConfig
+	var parsed plain
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	readStringAlias := func(target *string, keys ...string) error {
+		for _, key := range keys {
+			value, ok := raw[key]
+			if !ok {
+				continue
+			}
+			var parsed string
+			if err := json.Unmarshal(value, &parsed); err != nil {
+				return fmt.Errorf("invalid updater.%s: %w", key, err)
+			}
+			*target = parsed
+		}
+		return nil
+	}
+	if err := readStringAlias(&parsed.ManifestURL, "manifestURL", "manifest_url", "url"); err != nil {
+		return err
+	}
+	*u = UpdaterConfig(parsed)
+	return nil
+}
+
 // EnterpriseConfig holds managed organization policy configuration.
 type EnterpriseConfig struct {
 	Policy          string `json:"policy,omitempty"`
@@ -788,6 +825,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		Marketplace         MarketplaceConfig          `json:"marketplace,omitempty"`
 		Sandbox             SandboxConfig              `json:"sandbox,omitempty"`
 		Remote              RemoteConfig               `json:"remote,omitempty"`
+		Updater             UpdaterConfig              `json:"updater,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aliases); err != nil {
 		return err
@@ -858,6 +896,9 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	if marketplaceConfigSet(aliases.Marketplace) {
 		mergeMarketplaceConfigIntoFuture(&parsed.Future, aliases.Marketplace)
+	}
+	if updaterConfigSet(aliases.Updater) {
+		mergeUpdaterConfigIntoFuture(&parsed.Future, aliases.Updater)
 	}
 	*c = Config(parsed)
 	return nil
@@ -1853,6 +1894,10 @@ func marketplaceConfigSet(cfg MarketplaceConfig) bool {
 		len(cfg.PublicKeys) != 0
 }
 
+func updaterConfigSet(cfg UpdaterConfig) bool {
+	return cfg.ManifestURL != ""
+}
+
 func sandboxConfigSet(cfg SandboxConfig) bool {
 	return cfg.Strategy != "" ||
 		cfg.Enabled != nil ||
@@ -1898,6 +1943,12 @@ func mergeMarketplaceConfigIntoFuture(dst *FutureConfig, src MarketplaceConfig) 
 	}
 	if src.publicKeysSet || len(src.PublicKeys) != 0 {
 		dst.PluginMarketplaceKeys = cloneStringMap(src.PublicKeys)
+	}
+}
+
+func mergeUpdaterConfigIntoFuture(dst *FutureConfig, src UpdaterConfig) {
+	if src.ManifestURL != "" {
+		dst.UpdaterManifestURL = src.ManifestURL
 	}
 }
 

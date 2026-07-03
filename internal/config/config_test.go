@@ -90,6 +90,41 @@ func TestLoadEnterpriseConfigCompatibility(t *testing.T) {
 	}
 }
 
+func TestLoadUpdaterConfigCompatibility(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name        string
+		body        string
+		manifestURL string
+	}{
+		{
+			name:        "legacy future manifest URL",
+			body:        `{"future":{"updater_manifest_url":"https://updates.example/manifest.json"}}`,
+			manifestURL: "https://updates.example/manifest.json",
+		},
+		{
+			name:        "formal updater aliases",
+			body:        `{"updater":{"manifestURL":"https://updates.example/manifest.json"}}`,
+			manifestURL: "https://updates.example/manifest.json",
+		},
+		{
+			name:        "formal updater wins",
+			body:        `{"future":{"updater_manifest_url":"https://old.example/manifest.json"},"updater":{"url":"https://updates.example/manifest.json"}}`,
+			manifestURL: "https://updates.example/manifest.json",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(dir, strings.ReplaceAll(tc.name, " ", "-")+".json")
+			require.NoError(t, os.WriteFile(configPath, []byte(tc.body), 0o644))
+
+			cfg, _, err := LoadForInspection(FlagOverrides{ConfigPath: configPath})
+			require.NoError(t, err)
+			require.Equal(t, tc.manifestURL, cfg.Future.UpdaterManifestURL)
+		})
+	}
+}
+
 func TestLoadRejectsInvalidPermissionMode(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

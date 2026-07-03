@@ -3867,15 +3867,21 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 	case "status", "show":
 		payload = a.updaterStatusReport(action)
 	case "check":
-		if len(args) < 2 {
-			return requiredArgumentError{Command: "updater check", Argument: "URL", Usage: "codog updater check URL [PUBLIC_KEY]"}
+		manifestURL := ""
+		if len(args) > 1 {
+			manifestURL = args[1]
+		} else {
+			manifestURL = strings.TrimSpace(a.Config.Future.UpdaterManifestURL)
+		}
+		if manifestURL == "" {
+			return requiredArgumentError{Command: "updater check", Argument: "URL", Usage: "codog updater check [URL] [PUBLIC_KEY]"}
 		}
 		var result updater.CheckResult
 		var err error
 		if len(args) > 2 {
-			result, err = updater.CheckSigned(ctx, version, args[1], args[2])
+			result, err = updater.CheckSigned(ctx, version, manifestURL, args[2])
 		} else {
-			result, err = updater.Check(ctx, version, args[1])
+			result, err = updater.Check(ctx, version, manifestURL)
 		}
 		if err != nil {
 			return err
@@ -3891,8 +3897,14 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		}
 		payload = result
 	case "download":
-		if len(args) < 2 {
-			return requiredArgumentError{Command: "updater download", Argument: "URL", Usage: "codog updater download URL [PLATFORM] [DEST] [PUBLIC_KEY]"}
+		manifestURL := ""
+		if len(args) > 1 {
+			manifestURL = args[1]
+		} else {
+			manifestURL = strings.TrimSpace(a.Config.Future.UpdaterManifestURL)
+		}
+		if manifestURL == "" {
+			return requiredArgumentError{Command: "updater download", Argument: "URL", Usage: "codog updater download [URL] [PLATFORM] [DEST] [PUBLIC_KEY]"}
 		}
 		platform := ""
 		if len(args) > 2 {
@@ -3905,9 +3917,9 @@ func (a *App) Updater(ctx context.Context, args []string) error {
 		var result updater.DownloadResult
 		var err error
 		if len(args) > 4 {
-			result, err = updater.DownloadSigned(ctx, args[1], platform, dest, args[4])
+			result, err = updater.DownloadSigned(ctx, manifestURL, platform, dest, args[4])
 		} else {
-			result, err = updater.Download(ctx, args[1], platform, dest)
+			result, err = updater.Download(ctx, manifestURL, platform, dest)
 		}
 		if err != nil {
 			return err
@@ -3992,6 +4004,8 @@ type updaterStatusReport struct {
 	Artifacts      []updater.ArtifactInfo `json:"artifacts"`
 	ArtifactCount  int                    `json:"artifact_count"`
 	Warnings       []string               `json:"warnings,omitempty"`
+	ManifestURL    string                 `json:"manifest_url,omitempty"`
+	ManifestSet    bool                   `json:"manifest_configured"`
 	Commands       []string               `json:"commands"`
 }
 
@@ -4071,6 +4085,8 @@ func (a *App) updaterStatusReport(action string) updaterStatusReport {
 		Artifacts:      artifacts,
 		ArtifactCount:  len(artifacts),
 		Warnings:       warnings,
+		ManifestURL:    strings.TrimSpace(a.Config.Future.UpdaterManifestURL),
+		ManifestSet:    strings.TrimSpace(a.Config.Future.UpdaterManifestURL) != "",
 		Commands:       []string{"status", "show", "check", "verify", "download", "install", "rollback"},
 	}
 }
@@ -36285,7 +36301,7 @@ func buildConfigHelpReport() configHelpReport {
 }
 
 func availableConfigSections() []string {
-	sections := []string{"auth", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills"}
+	sections := []string{"auth", "editor_bridge", "enterprise", "hooks", "interface", "marketplace", "mcp", "model", "permissions", "privacy", "sandbox", "skills", "updater"}
 	sort.Strings(sections)
 	return sections
 }
@@ -36628,6 +36644,7 @@ var resetSectionKeys = map[string][]string{
 	"remote":        []string{"remote", "future.remote_enabled", "future.remote_auth_token", "future.remote_lease_seconds"},
 	"sandbox":       []string{"sandbox", "future.sandbox_strategy", "future.sandbox"},
 	"skills":        []string{"enabled_skills"},
+	"updater":       []string{"updater", "future.updater_manifest_url"},
 	"voice":         []string{"voice_enabled", "voice_command", "speech_command"},
 }
 
@@ -36665,6 +36682,8 @@ var resetSectionAliases = map[string]string{
 	"sandbox":           "sandbox",
 	"skills":            "skills",
 	"ui":                "interface",
+	"updater":           "updater",
+	"upgrade":           "updater",
 	"voice":             "voice",
 }
 
@@ -36917,6 +36936,8 @@ func (a *App) applyConfigReset(section string) {
 		a.Config.Future.Sandbox = config.SandboxConfig{}
 	case "skills":
 		a.Config.EnabledSkills = nil
+	case "updater":
+		a.Config.Future.UpdaterManifestURL = ""
 	case "voice":
 		a.Config.VoiceEnabled = nil
 		a.Config.VoiceCommand = ""
@@ -36976,6 +36997,11 @@ func configSectionPayload(cfg config.Config, args []string) (any, error) {
 		}, nil
 	case "sandbox":
 		return map[string]any{"strategy": cfg.Future.SandboxStrategy, "settings": cfg.Future.Sandbox}, nil
+	case "updater", "upgrade":
+		return map[string]any{
+			"manifest_url":        cfg.Future.UpdaterManifestURL,
+			"manifest_configured": strings.TrimSpace(cfg.Future.UpdaterManifestURL) != "",
+		}, nil
 	case "rag", "retrieve-context", "retrieve_context":
 		return map[string]any{
 			"rag_base_url":            cfg.RAGBaseURL,
