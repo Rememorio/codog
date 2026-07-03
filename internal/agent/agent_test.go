@@ -2421,14 +2421,17 @@ func TestApprovalSlashAliasesReturnInteractiveOnly(t *testing.T) {
 }
 
 func TestMockParityCommandAndHelp(t *testing.T) {
+	reportPath := filepath.Join(t.TempDir(), "reports", "mock-parity.json")
 	out, err := captureStdout(t, func() error {
-		return RunCLI(context.Background(), []string{"mock-parity", "--json"}, config.FlagOverrides{})
+		return RunCLI(context.Background(), []string{"mock-parity", "--json", "--report", reportPath}, config.FlagOverrides{})
 	})
 	require.NoError(t, err)
 	var report harness.Report
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
+	require.Equal(t, report.Total, report.ScenarioCount)
+	require.Greater(t, report.RequestCount, 0)
 	require.GreaterOrEqual(t, report.Total, 12)
 	require.NotEmpty(t, report.Scenarios)
 	require.NotEmpty(t, report.Coverage)
@@ -2441,11 +2444,22 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Equal(t, "codog harness ok", readFile.FinalMessage)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 
+	reportData, err := os.ReadFile(reportPath)
+	require.NoError(t, err)
+	var persisted harness.Report
+	require.NoError(t, json.Unmarshal(reportData, &persisted))
+	require.Equal(t, report.Total, persisted.Total)
+	require.Equal(t, report.ScenarioCount, persisted.ScenarioCount)
+	require.Equal(t, report.RequestCount, persisted.RequestCount)
+	require.Equal(t, readFile.FinalMessage, findMockParityScenario(t, persisted, "read_file_roundtrip").FinalMessage)
+
 	var text bytes.Buffer
 	renderMockParityText(&text, harness.Report{
 		OK:            true,
 		Passed:        1,
 		Total:         1,
+		ScenarioCount: 1,
+		RequestCount:  1,
 		Coverage:      []harness.CategoryReport{{Category: "baseline", OK: true, Passed: 1, Total: 1, Scenarios: []string{"streaming_text"}}},
 		ToolCalls:     2,
 		MessageCount:  3,
@@ -2456,6 +2470,7 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Contains(t, text.String(), "Mock Parity Harness")
 	require.Contains(t, text.String(), "1/1 passed")
 	require.Contains(t, text.String(), "Coverage      1 categories")
+	require.Contains(t, text.String(), "Requests      1")
 	require.Contains(t, text.String(), "streaming_text [baseline] - Validates streamed text.: ok")
 
 	out, err = captureStdout(t, func() error {
@@ -2467,6 +2482,9 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Equal(t, "mock-parity", help.Topic)
 	require.Contains(t, help.Aliases, "parity")
 	require.Contains(t, help.Aliases, "self-test")
+	require.Contains(t, help.OutputFields, "request_count")
+	require.Contains(t, help.OutputFields, "scenario_count")
+	require.Contains(t, help.OutputFields, "coverage")
 	require.NotNil(t, help.RequiresProviderRequest)
 	require.False(t, *help.RequiresProviderRequest)
 	require.True(t, commandAcceptsGlobalOutputFormat("mock-parity"))
@@ -2489,6 +2507,24 @@ func findMockParityScenario(t *testing.T, report harness.Report, name string) ha
 	}
 	t.Fatalf("missing mock parity scenario %q in %#v", name, report.Scenarios)
 	return harness.ScenarioReport{}
+}
+
+func TestParseMockParityReportPath(t *testing.T) {
+	t.Setenv("MOCK_PARITY_REPORT_PATH", "from-env.json")
+	req, err := parseMockParityArgs([]string{"check", "--output-format=json"}, "", "text")
+	require.NoError(t, err)
+	require.Equal(t, "json", req.Format)
+	require.Equal(t, "from-env.json", req.ReportPath)
+
+	req, err = parseMockParityArgs([]string{"--report", "from-flag.json"}, "", "text")
+	require.NoError(t, err)
+	require.Equal(t, "text", req.Format)
+	require.Equal(t, "from-flag.json", req.ReportPath)
+
+	_, err = parseMockParityArgs([]string{"--report"}, "", "text")
+	var missing missingFlagValueError
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, "--report", missing.Flag)
 }
 
 func TestMockParityErrorsHonorGlobalJSONFormat(t *testing.T) {

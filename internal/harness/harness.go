@@ -29,6 +29,8 @@ type Report struct {
 	OK            bool             `json:"ok"`
 	Passed        int              `json:"passed"`
 	Total         int              `json:"total"`
+	ScenarioCount int              `json:"scenario_count"`
+	RequestCount  int              `json:"request_count"`
 	Coverage      []CategoryReport `json:"coverage"`
 	Workspace     string           `json:"workspace"`
 	Output        string           `json:"output"`
@@ -59,6 +61,7 @@ type ScenarioReport struct {
 	Workspace            string        `json:"workspace"`
 	Output               string        `json:"output,omitempty"`
 	Iterations           int           `json:"iterations,omitempty"`
+	RequestCount         int           `json:"request_count"`
 	MessageCount         int           `json:"message_count,omitempty"`
 	ToolCalls            int           `json:"tool_calls,omitempty"`
 	ToolUses             []string      `json:"tool_uses"`
@@ -635,7 +638,7 @@ func Run(ctx context.Context) (Report, error) {
 		},
 	}
 
-	report := Report{Total: len(scenarios)}
+	report := Report{Total: len(scenarios), ScenarioCount: len(scenarios)}
 	for _, item := range scenarios {
 		scenarioReport := runScenario(ctx, item)
 		report.Scenarios = append(report.Scenarios, scenarioReport)
@@ -645,6 +648,7 @@ func Run(ctx context.Context) (Report, error) {
 		report.Workspace = scenarioReport.Workspace
 		report.Output = scenarioReport.Output
 		report.Iterations = scenarioReport.Iterations
+		report.RequestCount += scenarioReport.RequestCount
 		report.MessageCount = scenarioReport.MessageCount
 		report.ToolCalls = scenarioReport.ToolCalls
 		report.UsageSummary = addUsageSummary(report.UsageSummary, scenarioReport.UsageSummary)
@@ -749,6 +753,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 		Workspace:            workspace,
 		Output:               out.String(),
 		Iterations:           result.Iterations,
+		RequestCount:         len(requests),
 		MessageCount:         len(result.Messages),
 		ToolCalls:            len(result.ToolCalls),
 		ToolUses:             toolUseNames(result.ToolCalls),

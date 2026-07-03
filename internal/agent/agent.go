@@ -47583,8 +47583,13 @@ func (a *App) MockParity(ctx context.Context, args []string) error {
 	return runMockParityCommand(ctx, a.Out, args, "", "text")
 }
 
+type mockParityRequest struct {
+	Format     string
+	ReportPath string
+}
+
 func runMockParityCommand(ctx context.Context, out io.Writer, args []string, fallbackFormat string, defaultFormat string) error {
-	format, err := parseMockParityArgs(args, fallbackFormat, defaultFormat)
+	req, err := parseMockParityArgs(args, fallbackFormat, defaultFormat)
 	if err != nil {
 		return err
 	}
@@ -47592,7 +47597,12 @@ func runMockParityCommand(ctx context.Context, out io.Writer, args []string, fal
 	if err != nil {
 		return err
 	}
-	if format == "json" {
+	if req.ReportPath != "" {
+		if err := writeMockParityReport(req.ReportPath, report); err != nil {
+			return err
+		}
+	}
+	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(out, string(data))
 	} else {
@@ -47604,8 +47614,8 @@ func runMockParityCommand(ctx context.Context, out io.Writer, args []string, fal
 	return nil
 }
 
-func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat string) (string, error) {
-	const usage = "codog mock-parity [run|check] [--output-format text|json]"
+func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat string) (mockParityRequest, error) {
+	const usage = "codog mock-parity [run|check] [--report PATH] [--output-format text|json]"
 	format := strings.TrimSpace(fallbackFormat)
 	if format == "" {
 		format = strings.TrimSpace(defaultFormat)
@@ -47613,6 +47623,7 @@ func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat str
 	if format == "" {
 		format = "text"
 	}
+	req := mockParityRequest{Format: format, ReportPath: strings.TrimSpace(os.Getenv("MOCK_PARITY_REPORT_PATH"))}
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
 		switch {
@@ -47621,7 +47632,7 @@ func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat str
 		case arg == "--output-format" || arg == "-o":
 			index++
 			if index >= len(args) {
-				return "", missingFlagValueError{
+				return mockParityRequest{}, missingFlagValueError{
 					Command: "mock-parity",
 					Flag:    arg,
 					Usage:   usage,
@@ -47630,9 +47641,23 @@ func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat str
 			format = args[index]
 		case strings.HasPrefix(arg, "--output-format="):
 			format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--report" || arg == "--report-path":
+			index++
+			if index >= len(args) {
+				return mockParityRequest{}, missingFlagValueError{
+					Command: "mock-parity",
+					Flag:    arg,
+					Usage:   usage,
+				}
+			}
+			req.ReportPath = args[index]
+		case strings.HasPrefix(arg, "--report="):
+			req.ReportPath = strings.TrimPrefix(arg, "--report=")
+		case strings.HasPrefix(arg, "--report-path="):
+			req.ReportPath = strings.TrimPrefix(arg, "--report-path=")
 		case strings.EqualFold(arg, "run") || strings.EqualFold(arg, "check"):
 		default:
-			return "", unexpectedExtraArgsError{
+			return mockParityRequest{}, unexpectedExtraArgsError{
 				Command: "mock-parity",
 				Args:    []string{arg},
 				Usage:   usage,
@@ -47641,9 +47666,29 @@ func parseMockParityArgs(args []string, fallbackFormat string, defaultFormat str
 	}
 	normalized, err := normalizeOutputFormat("mock-parity", format, []string{"text", "json"})
 	if err != nil {
-		return "", err
+		return mockParityRequest{}, err
 	}
-	return normalized, nil
+	req.Format = normalized
+	req.ReportPath = strings.TrimSpace(req.ReportPath)
+	return req, nil
+}
+
+func writeMockParityReport(path string, report harness.Report) error {
+	cleanPath := filepath.Clean(path)
+	dir := filepath.Dir(cleanPath)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("write mock parity report: %w", err)
+		}
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("write mock parity report: %w", err)
+	}
+	if err := os.WriteFile(cleanPath, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write mock parity report: %w", err)
+	}
+	return nil
 }
 
 func renderMockParityText(out io.Writer, report harness.Report) {
@@ -47657,6 +47702,7 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 	if len(report.Coverage) > 0 {
 		fmt.Fprintf(out, "  Coverage      %d categories\n", len(report.Coverage))
 	}
+	fmt.Fprintf(out, "  Requests      %d\n", report.RequestCount)
 	fmt.Fprintf(out, "  Tool calls    %d\n", report.ToolCalls)
 	fmt.Fprintf(out, "  Messages      %d\n", report.MessageCount)
 	fmt.Fprintf(out, "  Tokens        %d\n", report.UsageSummary.TotalTokens)
@@ -51418,9 +51464,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"mock-parity",
 			"mock-parity",
-			"codog mock-parity [run|check] [--output-format text|json]",
-			"Mock Parity\n\nUsage:\n  codog mock-parity [run|check] [--output-format text|json]\n  codog parity [same flags]\n  codog self-test [same flags]\n\nRuns the deterministic mock provider parity harness against the local agent loop. It exercises streaming, tool calls, permission prompts, plugin tools, auto-compaction, and usage/cost accounting without contacting a real provider.\n",
-			[]string{"ok", "passed", "total", "scenarios", "usage_summary", "estimated_cost"},
+			"codog mock-parity [run|check] [--report PATH] [--output-format text|json]",
+			"Mock Parity\n\nUsage:\n  codog mock-parity [run|check] [--report PATH] [--output-format text|json]\n  codog parity [same flags]\n  codog self-test [same flags]\n\nRuns the deterministic mock provider parity harness against the local agent loop. It exercises streaming, tool calls, permission prompts, plugin tools, auto-compaction, and usage/cost accounting without contacting a real provider. Set MOCK_PARITY_REPORT_PATH or pass --report to write the machine-readable report to disk.\n",
+			[]string{"ok", "passed", "total", "scenario_count", "request_count", "coverage", "scenarios", "usage_summary", "estimated_cost"},
 			[]string{"ok", "error"},
 			false,
 		)
@@ -51958,7 +52004,7 @@ Usage:
   %s [flags] reset-limits [--target user|project|local] [--path PATH] [--json|--output-format text|json]
   %s [flags] ant-trace [--no-request] [--message TEXT] [--timeout-ms N] [--write|--output PATH] [--json|--output-format text|json]
   %s [flags] mock-limits [serve|ADDR] [--failures N] [--retry-after-ms N] [--addr ADDR] [--json|--output-format text|json]
-  %s [flags] mock-parity [run|check] [--json|--output-format text|json]
+  %s [flags] mock-parity [run|check] [--report PATH] [--json|--output-format text|json]
   %s [flags] plan|ultraplan [show|enter|set|exit|clear] [TEXT] [--json|--output-format text|json]
   %s [flags] doctor [--json|--output-format text|json]
   %s [flags] branch [list|current|freshness [BRANCH] [BASE]|create NAME [START] [--switch]|switch NAME|delete NAME [--force]|rename [OLD] NEW] [--base REF] [--json|--output-format text|json]

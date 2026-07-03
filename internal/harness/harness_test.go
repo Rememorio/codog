@@ -12,10 +12,13 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, report.OK)
 	require.Equal(t, report.Total, report.Passed)
+	require.Equal(t, report.Total, report.ScenarioCount)
 	require.GreaterOrEqual(t, report.Total, 20)
 	require.Equal(t, "actual", report.UsageSummary.Source)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 	require.Greater(t, report.EstimatedCost, 0.0)
+	require.Greater(t, report.RequestCount, 0)
+	require.Equal(t, report.RequestCount, scenarioRequestCountTotal(report.Scenarios))
 	require.GreaterOrEqual(t, len(report.Coverage), 8)
 	require.Equal(t, report.Total, categoryCoverageTotal(report.Coverage))
 	for _, scenario := range report.Scenarios {
@@ -39,6 +42,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "file-tools", readFile.Category)
 	require.NotEmpty(t, readFile.Description)
 	require.Contains(t, readFile.ParityRefs, "File tools")
+	require.Equal(t, 2, readFile.RequestCount)
 	require.Equal(t, []string{"read_file"}, readFile.ToolUses)
 	require.Equal(t, 0, readFile.ToolErrorCount)
 	require.Equal(t, "codog harness ok", readFile.FinalMessage)
@@ -124,6 +128,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	sessionResume := findScenario(t, report, "session_resume_jsonl_roundtrip")
 	require.True(t, sessionResume.OK)
 	require.Equal(t, 0, sessionResume.ToolCalls)
+	require.Equal(t, 1, sessionResume.RequestCount)
 	require.Equal(t, []int{3}, sessionResume.RequestMessageCounts)
 	require.Equal(t, 4, sessionResume.MessageCount)
 	require.Contains(t, sessionResume.Output, "resume harness ok")
@@ -157,6 +162,14 @@ func categoryCoverageTotal(coverage []CategoryReport) int {
 	total := 0
 	for _, category := range coverage {
 		total += category.Total
+	}
+	return total
+}
+
+func scenarioRequestCountTotal(scenarios []ScenarioReport) int {
+	total := 0
+	for _, scenario := range scenarios {
+		total += scenario.RequestCount
 	}
 	return total
 }
