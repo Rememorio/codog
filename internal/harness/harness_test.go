@@ -145,6 +145,17 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, remoteTrigger.ToolCalls)
 	require.Contains(t, remoteTrigger.Output, "remote trigger harness ok")
 
+	remoteAPI := findScenario(t, report, "remote_api_listener_roundtrip")
+	require.True(t, remoteAPI.OK)
+	require.Equal(t, "remote-control", remoteAPI.Category)
+	require.Equal(t, 0, remoteAPI.ToolCalls)
+	require.Equal(t, 3, remoteAPI.RequestCount)
+	require.Contains(t, remoteAPI.Output, "remote api listener harness ok")
+	remoteControl := findCategory(t, report, "remote-control")
+	require.True(t, remoteControl.OK)
+	require.Equal(t, 2, remoteControl.Total)
+	require.ElementsMatch(t, []string{"remote_api_listener_roundtrip", "remote_trigger_roundtrip"}, remoteControl.Scenarios)
+
 	autoCompact := findScenario(t, report, "auto_compact_triggered")
 	require.Equal(t, "session-compaction", autoCompact.Category)
 	require.True(t, autoCompact.OK)
@@ -193,6 +204,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	require.Equal(t, "file-tools", readFile.Category)
 	require.NotEmpty(t, readFile.Description)
 	require.Contains(t, readFile.ParityRefs, "File tools")
+
+	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
+	require.Equal(t, "remote-control", remoteAPI.Category)
+	require.Contains(t, remoteAPI.ParityRefs, "Control API listener")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Rememorio/codog/internal/anthropic"
 	"github.com/Rememorio/codog/internal/config"
+	"github.com/Rememorio/codog/internal/control"
 	"github.com/Rememorio/codog/internal/mockanthropic"
 	"github.com/Rememorio/codog/internal/plugins"
 	"github.com/Rememorio/codog/internal/runloop"
@@ -122,6 +123,17 @@ type scenario struct {
 	prepare             func(string) ([]mockanthropic.Turn, func(), error)
 	verify              func(string, runloop.TurnResult, string) error
 	verifyRequests      func([]anthropic.Request) error
+	runLocal            func(context.Context, string) (localScenarioResult, error)
+}
+
+type localScenarioResult struct {
+	Output         string
+	FinalMessage   string
+	ToolUses       []string
+	ToolCalls      int
+	ToolErrorCount int
+	MessageCount   int
+	RequestCount   int
 }
 
 var scenarioOrder = []string{
@@ -147,6 +159,7 @@ var scenarioOrder = []string{
 	"session_resume_jsonl_roundtrip",
 	"plugin_lifecycle_roundtrip",
 	"remote_trigger_roundtrip",
+	"remote_api_listener_roundtrip",
 	"auto_compact_triggered",
 	"token_cost_reporting",
 }
@@ -649,6 +662,7 @@ func Run(ctx context.Context) (Report, error) {
 		sessionResumeJSONLRoundtripScenario(),
 		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
+		remoteAPIListenerScenario(),
 		{
 			name: "auto_compact_triggered",
 			turns: []mockanthropic.Turn{
@@ -831,6 +845,29 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			return scenarioErrorReport(item.name, metadata, workspace, err)
 		}
 		turns = preparedTurns
+	}
+	if item.runLocal != nil {
+		localResult, err := item.runLocal(ctx, workspace)
+		report := ScenarioReport{
+			Name:           item.name,
+			Category:       metadata.Category,
+			Description:    metadata.Description,
+			ParityRefs:     append([]string(nil), metadata.ParityRefs...),
+			Workspace:      workspace,
+			Output:         localResult.Output,
+			RequestCount:   localResult.RequestCount,
+			MessageCount:   localResult.MessageCount,
+			ToolCalls:      localResult.ToolCalls,
+			ToolUses:       append([]string(nil), localResult.ToolUses...),
+			ToolErrorCount: localResult.ToolErrorCount,
+			FinalMessage:   localResult.FinalMessage,
+		}
+		if err != nil {
+			report.Error = err.Error()
+			return report
+		}
+		report.OK = true
+		return report
 	}
 
 	var requests []anthropic.Request
@@ -1126,6 +1163,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "remote-control",
 		Description: "Executes the remote trigger tool against a local control endpoint.",
 		ParityRefs:  []string{"Remote sessions", "Control endpoint trigger"},
+	},
+	"remote_api_listener_roundtrip": {
+		Category:    "remote-control",
+		Description: "Starts the local control API handler and verifies public health plus authenticated session routes.",
+		ParityRefs:  []string{"Remote sessions", "IDE bridge", "Control API listener"},
 	},
 }
 
@@ -1581,6 +1623,72 @@ func remoteTriggerScenario() scenario {
 				}
 			}
 			return nil
+		},
+	}
+}
+
+func remoteAPIListenerScenario() scenario {
+	return scenario{
+		name: "remote_api_listener_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			store := session.NewWorkspaceStore(configHome, workspace)
+			server := httptest.NewServer(control.Server{
+				Sessions:   store,
+				ConfigHome: configHome,
+				Workspace:  workspace,
+				AuthToken:  "secret-token",
+			}.Handler())
+			defer server.Close()
+
+			resp, err := http.Get(server.URL + "/health")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if resp.StatusCode != http.StatusOK {
+				_ = resp.Body.Close()
+				return localScenarioResult{}, fmt.Errorf("health returned %d", resp.StatusCode)
+			}
+			_ = resp.Body.Close()
+
+			resp, err = http.Get(server.URL + "/sessions")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if resp.StatusCode != http.StatusUnauthorized {
+				_ = resp.Body.Close()
+				return localScenarioResult{}, fmt.Errorf("unauthenticated sessions returned %d", resp.StatusCode)
+			}
+			_ = resp.Body.Close()
+
+			req, err := http.NewRequest(http.MethodGet, server.URL+"/sessions", nil)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			req.Header.Set("authorization", "Bearer secret-token")
+			resp, err = http.DefaultClient.Do(req)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return localScenarioResult{}, fmt.Errorf("authenticated sessions returned %d", resp.StatusCode)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			var sessions []json.RawMessage
+			if err := json.Unmarshal(body, &sessions); err != nil {
+				return localScenarioResult{}, fmt.Errorf("sessions response was not a JSON array: %w", err)
+			}
+
+			message := "remote api listener harness ok"
+			return localScenarioResult{
+				Output:       fmt.Sprintf("%s %s", message, server.URL),
+				FinalMessage: message,
+				RequestCount: 3,
+			}, nil
 		},
 	}
 }

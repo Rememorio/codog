@@ -1056,7 +1056,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.ResumeSafeSlashCommands, "/capabilities")
 	require.Contains(t, report.ResumeSafeSlashCommands, "/mock-parity")
 	require.Equal(t, harness.ManifestSchemaVersion, report.MockParity.SchemaVersion)
-	require.Equal(t, 24, report.MockParity.ScenarioCount)
+	require.Equal(t, harness.ScenarioManifest().ScenarioCount, report.MockParity.ScenarioCount)
 	require.GreaterOrEqual(t, len(report.MockParity.Categories), 8)
 	require.Equal(t, "streaming_text", report.MockParity.Scenarios[0].Name)
 	require.Greater(t, report.ToolCount, 10)
@@ -2620,7 +2620,7 @@ func TestMockParityResumedSlashContracts(t *testing.T) {
 	var manifest harness.Manifest
 	require.NoError(t, json.Unmarshal([]byte(out), &manifest))
 	require.Equal(t, harness.ManifestSchemaVersion, manifest.SchemaVersion)
-	require.Equal(t, 24, manifest.ScenarioCount)
+	require.Equal(t, harness.ScenarioManifest().ScenarioCount, manifest.ScenarioCount)
 	require.Equal(t, "streaming_text", manifest.Scenarios[0].Name)
 
 	out, err = captureStdout(t, func() error {
