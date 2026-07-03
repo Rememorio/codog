@@ -20745,6 +20745,7 @@ var acpJSONRPCMethods = []string{
 	"session/history",
 	"session/rename",
 	"session/delete",
+	"session/prune",
 	"prompt",
 	"shutdown",
 }
@@ -20797,7 +20798,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21050,6 +21051,26 @@ func (a *App) serveACP(ctx context.Context) error {
 				Path:         sess.Path,
 				MessageCount: len(sess.Messages),
 			}, nil
+		},
+		PruneSessions: func(_ context.Context, req acpserver.SessionPruneRequest) (any, error) {
+			if a.Sessions == nil {
+				return nil, errors.New("session store is unavailable")
+			}
+			emptyOnly := false
+			if req.EmptyOnly != nil {
+				emptyOnly = *req.EmptyOnly
+			} else if req.Keep == 0 {
+				emptyOnly = true
+			}
+			if req.Keep == 0 && !emptyOnly {
+				return nil, errors.New("empty_only=false requires keep")
+			}
+			return a.Sessions.Prune(session.PruneOptions{
+				ExcludeID: strings.TrimSpace(req.ExcludeID),
+				Keep:      req.Keep,
+				EmptyOnly: emptyOnly,
+				Confirm:   req.Confirm,
+			})
 		},
 		Prompt: func(ctx context.Context, req acpserver.PromptRequest) (acpserver.PromptResult, error) {
 			if a.Sessions == nil {

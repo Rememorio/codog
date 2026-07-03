@@ -21,6 +21,7 @@ type Handlers struct {
 	History       func(context.Context, SessionHistoryRequest) (SessionHistory, error)
 	RenameSession func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
 	DeleteSession func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
+	PruneSessions func(context.Context, SessionPruneRequest) (any, error)
 	Prompt        func(context.Context, PromptRequest) (PromptResult, error)
 	Status        func(context.Context) (any, error)
 }
@@ -100,6 +101,13 @@ type SessionMutationResult struct {
 	NewSessionID string `json:"new_session_id,omitempty"`
 	Path         string `json:"path,omitempty"`
 	MessageCount int    `json:"message_count,omitempty"`
+}
+
+type SessionPruneRequest struct {
+	Keep      int    `json:"keep,omitempty"`
+	EmptyOnly *bool  `json:"empty_only,omitempty"`
+	Confirm   bool   `json:"confirm,omitempty"`
+	ExcludeID string `json:"exclude_id,omitempty"`
 }
 
 type PromptRequest struct {
@@ -185,6 +193,8 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleRenameSession(ctx, out, handlers, req)
 	case "session/delete", "sessions/delete":
 		return false, handleDeleteSession(ctx, out, handlers, req)
+	case "session/prune", "sessions/prune":
+		return false, handlePruneSessions(ctx, out, handlers, req)
 	case "prompt", "session/prompt":
 		return false, handlePrompt(ctx, out, handlers, req)
 	default:
@@ -208,6 +218,7 @@ func initializeResult(opts Options) map[string]any {
 				"history": true,
 				"rename":  true,
 				"delete":  true,
+				"prune":   true,
 			},
 			"prompt": true,
 			"status": true,
@@ -346,6 +357,21 @@ func handleDeleteSession(ctx context.Context, out io.Writer, handlers Handlers, 
 	return writeResult(out, req.ID, result)
 }
 
+func handlePruneSessions(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.PruneSessions == nil {
+		return writeError(out, req.ID, -32603, "session prune handler is not configured")
+	}
+	pruneReq, err := parseSessionPruneRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.PruneSessions(ctx, pruneReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
 func handlePrompt(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
 	if handlers.Prompt == nil {
 		return writeError(out, req.ID, -32603, "prompt handler is not configured")
@@ -426,6 +452,34 @@ func parseSessionRenameRequest(params json.RawMessage) (SessionRenameRequest, er
 		return SessionRenameRequest{}, fmt.Errorf("new_session_id is required")
 	}
 	return SessionRenameRequest{SessionID: sessionID, NewSessionID: newSessionID}, nil
+}
+
+func parseSessionPruneRequest(params json.RawMessage) (SessionPruneRequest, error) {
+	var raw struct {
+		Keep                  int    `json:"keep"`
+		EmptyOnly             *bool  `json:"empty_only"`
+		Confirm               bool   `json:"confirm"`
+		ExcludeID             string `json:"exclude_id"`
+		ExcludeSessionID      string `json:"exclude_session_id"`
+		ExcludeSessionIDCamel string `json:"excludeSessionId"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionPruneRequest{}, err
+		}
+	}
+	if raw.Keep < 0 {
+		return SessionPruneRequest{}, fmt.Errorf("keep must be non-negative")
+	}
+	if raw.Keep == 0 && raw.EmptyOnly != nil && !*raw.EmptyOnly {
+		return SessionPruneRequest{}, fmt.Errorf("empty_only=false requires keep")
+	}
+	return SessionPruneRequest{
+		Keep:      raw.Keep,
+		EmptyOnly: raw.EmptyOnly,
+		Confirm:   raw.Confirm,
+		ExcludeID: firstNonEmpty(raw.ExcludeID, raw.ExcludeSessionID, raw.ExcludeSessionIDCamel),
+	}, nil
 }
 
 func parsePromptRequest(params json.RawMessage) (PromptRequest, error) {
