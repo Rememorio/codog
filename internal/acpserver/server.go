@@ -46,6 +46,8 @@ type Handlers struct {
 	CodeHover       func(context.Context, CodeHoverRequest) (any, error)
 	CodeCompletion  func(context.Context, CodeCompletionRequest) (any, error)
 	CodeFormat      func(context.Context, CodeFormatRequest) (any, error)
+	NotebookRead    func(context.Context, NotebookReadRequest) (any, error)
+	NotebookEdit    func(context.Context, NotebookEditRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -211,6 +213,30 @@ type CodeFormatRequest struct {
 	Write bool   `json:"write,omitempty"`
 }
 
+type NotebookReadRequest struct {
+	Path           string `json:"path,omitempty"`
+	NotebookPath   string `json:"notebook_path,omitempty"`
+	CellIndex      *int   `json:"cell_index,omitempty"`
+	Index          *int   `json:"index,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+	IncludeOutputs bool   `json:"include_outputs,omitempty"`
+	Outputs        *bool  `json:"outputs,omitempty"`
+}
+
+type NotebookEditRequest struct {
+	Path         string  `json:"path,omitempty"`
+	NotebookPath string  `json:"notebook_path,omitempty"`
+	Mode         string  `json:"mode,omitempty"`
+	EditMode     string  `json:"edit_mode,omitempty"`
+	CellIndex    *int    `json:"cell_index,omitempty"`
+	Index        *int    `json:"index,omitempty"`
+	CellID       string  `json:"cell_id,omitempty"`
+	CellType     string  `json:"cell_type,omitempty"`
+	Type         string  `json:"type,omitempty"`
+	Source       *string `json:"source,omitempty"`
+	NewSource    *string `json:"new_source,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -300,6 +326,10 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleCodeCompletion(ctx, out, handlers, req)
 	case "code/format":
 		return false, handleCodeFormat(ctx, out, handlers, req)
+	case "notebook/read":
+		return false, handleNotebookRead(ctx, out, handlers, req)
+	case "notebook/edit":
+		return false, handleNotebookEdit(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -374,6 +404,10 @@ func initializeResult(opts Options) map[string]any {
 				"hover":      true,
 				"completion": true,
 				"format":     true,
+			},
+			"notebook": map[string]any{
+				"read": true,
+				"edit": true,
 			},
 			"prompt": true,
 			"status": true,
@@ -600,6 +634,36 @@ func handleCodeFormat(ctx context.Context, out io.Writer, handlers Handlers, req
 		return writeError(out, req.ID, -32602, err.Error())
 	}
 	result, err := handlers.CodeFormat(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleNotebookRead(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.NotebookRead == nil {
+		return writeError(out, req.ID, -32603, "notebook read handler is not configured")
+	}
+	var request NotebookReadRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.NotebookRead(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleNotebookEdit(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.NotebookEdit == nil {
+		return writeError(out, req.ID, -32603, "notebook edit handler is not configured")
+	}
+	var request NotebookEditRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.NotebookEdit(ctx, request)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}

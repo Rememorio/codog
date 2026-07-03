@@ -20753,6 +20753,8 @@ var acpJSONRPCMethods = []string{
 	"code/hover",
 	"code/completion",
 	"code/format",
+	"notebook/read",
+	"notebook/edit",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20817,7 +20819,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21054,6 +21056,85 @@ func (a *App) serveACP(ctx context.Context) error {
 				return nil, err
 			}
 			return map[string]any{"kind": "format", "write": req.Write, "result": result}, nil
+		},
+		NotebookRead: func(_ context.Context, req acpserver.NotebookReadRequest) (any, error) {
+			cellIndex := req.CellIndex
+			if cellIndex == nil {
+				cellIndex = req.Index
+			}
+			if cellIndex != nil && *cellIndex < 0 {
+				return nil, errors.New("cell_index must be non-negative")
+			}
+			includeOutputs := req.IncludeOutputs
+			if req.Outputs != nil {
+				includeOutputs = *req.Outputs
+			}
+			path, err := a.resolveCodeIntelNotebookPath(firstNonEmpty(req.NotebookPath, req.Path))
+			if err != nil {
+				return nil, err
+			}
+			result, err := codeintel.ReadNotebook(path, codeintel.NotebookReadOptions{
+				CellIndex:      cellIndex,
+				Limit:          req.Limit,
+				IncludeOutputs: includeOutputs,
+			})
+			if err != nil {
+				return nil, err
+			}
+			result.Path = displayCodeIntelNotebookPath(a.Workspace, path)
+			return result, nil
+		},
+		NotebookEdit: func(_ context.Context, req acpserver.NotebookEditRequest) (any, error) {
+			cellIndex := req.CellIndex
+			if cellIndex == nil {
+				cellIndex = req.Index
+			}
+			if cellIndex != nil && *cellIndex < 0 {
+				return nil, errors.New("cell_index must be non-negative")
+			}
+			if cellIndex != nil && strings.TrimSpace(req.CellID) != "" {
+				return nil, errors.New("notebook/edit accepts either cell_index or cell_id, not both")
+			}
+			mode := strings.ToLower(firstNonEmpty(req.Mode, req.EditMode))
+			if mode == "" {
+				mode = "replace"
+			}
+			switch mode {
+			case "replace", "insert", "delete":
+			default:
+				return nil, fmt.Errorf("unknown notebook edit mode %q", mode)
+			}
+			source, sourceSet := "", false
+			if req.Source != nil {
+				source = *req.Source
+				sourceSet = true
+			}
+			if req.NewSource != nil {
+				source = *req.NewSource
+				sourceSet = true
+			}
+			if (mode == "replace" || mode == "insert") && !sourceSet {
+				return nil, errors.New("new_source is required for insert and replace edits")
+			}
+			path, err := a.resolveCodeIntelNotebookPath(firstNonEmpty(req.NotebookPath, req.Path))
+			if err != nil {
+				return nil, err
+			}
+			index, err := codeintel.ResolveNotebookEditIndex(path, cellIndex, req.CellID, mode)
+			if err != nil {
+				return nil, err
+			}
+			result, err := codeintel.EditNotebook(path, codeintel.NotebookEditOptions{
+				Index:    index,
+				CellType: firstNonEmpty(req.CellType, req.Type),
+				Source:   source,
+				Mode:     mode,
+			})
+			if err != nil {
+				return nil, err
+			}
+			result.Path = displayCodeIntelNotebookPath(a.Workspace, path)
+			return map[string]any{"kind": "notebook_edit", "result": result}, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {
@@ -28468,7 +28549,21 @@ func displayCodeIntelNotebookPath(workspace string, path string) string {
 	if workspace == "" {
 		return path
 	}
-	rel, err := filepath.Rel(workspace, path)
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		absWorkspace = workspace
+	}
+	if resolvedWorkspace, err := filepath.EvalSymlinks(absWorkspace); err == nil {
+		absWorkspace = resolvedWorkspace
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	if resolvedPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		absPath = resolvedPath
+	}
+	rel, err := filepath.Rel(absWorkspace, absPath)
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return path
 	}

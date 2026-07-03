@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -125,6 +126,9 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, codeCaps["hover"])
 	require.Equal(t, true, codeCaps["completion"])
 	require.Equal(t, true, codeCaps["format"])
+	notebookCaps := capabilities["notebook"].(map[string]any)
+	require.Equal(t, true, notebookCaps["read"])
+	require.Equal(t, true, notebookCaps["edit"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -331,6 +335,44 @@ func TestServeHandlesCodeIntelRequests(t *testing.T) {
 	require.Equal(t, "hover", responses[4]["result"].(map[string]any)["kind"])
 	require.Equal(t, "completion", responses[5]["result"].(map[string]any)["kind"])
 	require.Equal(t, "format", responses[6]["result"].(map[string]any)["kind"])
+}
+
+func TestServeHandlesNotebookRequests(t *testing.T) {
+	source := "print('hello')\n"
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"notebook/read","params":{"notebook_path":"nb.ipynb","index":0,"limit":1,"outputs":true}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"notebook/edit","params":{"path":"nb.ipynb","mode":"insert","cell_index":0,"cell_type":"code","new_source":` + strconv.Quote(source) + `}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		NotebookRead: func(_ context.Context, req NotebookReadRequest) (any, error) {
+			require.Equal(t, "nb.ipynb", req.NotebookPath)
+			require.NotNil(t, req.Index)
+			require.Equal(t, 0, *req.Index)
+			require.Equal(t, 1, req.Limit)
+			require.NotNil(t, req.Outputs)
+			require.True(t, *req.Outputs)
+			return map[string]any{"kind": "notebook_read", "path": req.NotebookPath, "cell_count": 1}, nil
+		},
+		NotebookEdit: func(_ context.Context, req NotebookEditRequest) (any, error) {
+			require.Equal(t, "nb.ipynb", req.Path)
+			require.Equal(t, "insert", req.Mode)
+			require.NotNil(t, req.CellIndex)
+			require.Equal(t, 0, *req.CellIndex)
+			require.Equal(t, "code", req.CellType)
+			require.NotNil(t, req.NewSource)
+			require.Equal(t, source, *req.NewSource)
+			return map[string]any{"kind": "notebook_edit", "result": map[string]any{"path": req.Path, "mode": req.Mode}}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 2)
+	require.Equal(t, "notebook_read", responses[0]["result"].(map[string]any)["kind"])
+	require.Equal(t, "notebook_edit", responses[1]["result"].(map[string]any)["kind"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {

@@ -5899,6 +5899,8 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "code/hover")
 	require.Contains(t, report.Protocol.Methods, "code/completion")
 	require.Contains(t, report.Protocol.Methods, "code/format")
+	require.Contains(t, report.Protocol.Methods, "notebook/read")
+	require.Contains(t, report.Protocol.Methods, "notebook/edit")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6313,6 +6315,69 @@ func main(){ _ = Run() }
 	require.EqualValues(t, 0, diagnostics["total"])
 }
 
+func TestACPServeExposesNotebookReadAndEdit(t *testing.T) {
+	workspace := t.TempDir()
+	notebookPath := filepath.Join(workspace, "notes.ipynb")
+	require.NoError(t, os.WriteFile(notebookPath, []byte(`{
+  "metadata": {"kernelspec": {"language": "python"}},
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "id": "intro",
+      "metadata": {},
+      "source": ["# Title\n"]
+    }
+  ]
+}`), 0o644))
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	insertSource := "print('hello')\n"
+	replaceSource := "print('updated')\n"
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"notebook/read","params":{"path":"notes.ipynb","limit":1}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"notebook/edit","params":{"path":"notes.ipynb","mode":"insert","cell_id":"intro","cell_type":"code","new_source":` + fmt.Sprintf("%q", insertSource) + `}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"notebook/read","params":{"path":"notes.ipynb","cell_index":1}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"notebook/edit","params":{"notebook_path":"notes.ipynb","edit_mode":"replace","cell_id":"cell-2","type":"code","source":` + fmt.Sprintf("%q", replaceSource) + `}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"notebook/read","params":{"path":"notes.ipynb","index":1}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 6)
+	readInitial := responses[0]["result"].(map[string]any)
+	require.Equal(t, "notebook_read", readInitial["kind"])
+	require.Equal(t, "notes.ipynb", readInitial["path"])
+	require.EqualValues(t, 1, readInitial["cell_count"])
+	insert := responses[1]["result"].(map[string]any)
+	require.Equal(t, "notebook_edit", insert["kind"])
+	insertResult := insert["result"].(map[string]any)
+	require.Equal(t, "notes.ipynb", insertResult["path"])
+	require.Equal(t, "insert", insertResult["mode"])
+	require.Equal(t, "cell-2", insertResult["cell_id"])
+	readInserted := responses[2]["result"].(map[string]any)
+	insertedCells := readInserted["cells"].([]any)
+	require.Equal(t, insertSource, insertedCells[0].(map[string]any)["source"])
+	replace := responses[3]["result"].(map[string]any)
+	require.Equal(t, "notebook_edit", replace["kind"])
+	replaceResult := replace["result"].(map[string]any)
+	require.Equal(t, "replace", replaceResult["mode"])
+	readReplaced := responses[4]["result"].(map[string]any)
+	replacedCells := readReplaced["cells"].([]any)
+	require.Equal(t, replaceSource, replacedCells[0].(map[string]any)["source"])
+	data, err := os.ReadFile(notebookPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "print('updated')")
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6356,6 +6421,9 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, codeCaps["hover"])
 			require.Equal(t, true, codeCaps["completion"])
 			require.Equal(t, true, codeCaps["format"])
+			notebookCaps := capabilities["notebook"].(map[string]any)
+			require.Equal(t, true, notebookCaps["read"])
+			require.Equal(t, true, notebookCaps["edit"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])
