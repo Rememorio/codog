@@ -216,6 +216,24 @@ For narrower checks, run `go test ./...`, `go vet ./...`,
 Keep changes portable. Avoid committing generated caches, API keys,
 machine-specific setup snippets, local absolute paths, or tool attribution text.
 
+## Mock Parity
+
+`codog mock-parity` runs deterministic compatibility scenarios without calling a
+live model provider. A mock provider emits assistant text and tool-use blocks,
+then Codog executes its real run loop, tools, permissions, hooks, sessions,
+MCP paths, and reporting surfaces.
+
+Use it when changing core runtime behavior:
+
+```sh
+codog mock-parity
+codog mock-parity manifest --output-format json
+```
+
+The command is not a claim that Codog is identical to Claude Code. It is a
+repeatable contract for the Claude-Code-style workflows this implementation
+currently supports.
+
 ## License
 
 Codog is released under the [MIT License](LICENSE).

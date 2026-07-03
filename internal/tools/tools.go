@@ -525,6 +525,8 @@ var claudeToolAliasDisplay = map[string]string{
 	"WriteTool":                    "write_file",
 }
 
+// ClaudeToolAliases returns the Claude-style display aliases accepted by the
+// tool registry, keyed by alias and mapped to Codog's canonical tool names.
 func ClaudeToolAliases() map[string]string {
 	aliases := make(map[string]string, len(claudeToolAliasDisplay))
 	for alias, canonical := range claudeToolAliasDisplay {
@@ -533,6 +535,8 @@ func ClaudeToolAliases() map[string]string {
 	return aliases
 }
 
+// CanonicalToolName normalizes a model-supplied tool name or known alias into
+// the canonical registry name used for permission and execution checks.
 func CanonicalToolName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -555,6 +559,8 @@ func toolAliasKey(name string) string {
 	return builder.String()
 }
 
+// Prompter decides whether a tool invocation may run under the active
+// permission mode and records the decision for callers that need audit data.
 type Prompter struct {
 	Mode           Permission
 	AllowRules     []string
@@ -570,6 +576,8 @@ type Prompter struct {
 	OnDecision     func(PermissionDecision)
 }
 
+// PermissionDecision captures the resolved permission outcome for one proposed
+// tool invocation.
 type PermissionDecision struct {
 	ToolName    string
 	Required    Permission
@@ -581,16 +589,21 @@ type PermissionDecision struct {
 	Message     string
 }
 
+// NewRegistry constructs the default tool registry for a workspace.
 func NewRegistry(workspace string) *Registry {
 	return NewRegistryWithOptions(workspace, RegistryOptions{})
 }
 
+// NewRegistryWithOptions constructs the default tool registry and wires optional
+// integrations such as MCP servers, sandbox defaults, config state, and plugin
+// execution settings.
 func NewRegistryWithOptions(workspace string, opts RegistryOptions) *Registry {
 	reg := &Registry{tools: map[string]Tool{}, mcpServers: cloneMCPServers(opts.MCPServers)}
 	reg.registerBuiltinTools(workspace, opts)
 	return reg
 }
 
+// Register adds or replaces a tool by the name declared in its definition.
 func (r *Registry) Register(tool Tool) {
 	if r.tools == nil {
 		r.tools = map[string]Tool{}
@@ -598,6 +611,8 @@ func (r *Registry) Register(tool Tool) {
 	r.tools[tool.Definition().Name] = tool
 }
 
+// UpdateBuiltinScope re-registers built-in tools with a new workspace or
+// execution configuration while preserving the registry object.
 func (r *Registry) UpdateBuiltinScope(workspace string, opts RegistryOptions) {
 	r.registerBuiltinTools(workspace, opts)
 }
@@ -716,11 +731,15 @@ func configuredRAGBaseURL(explicit string) string {
 	return strings.TrimSpace(os.Getenv("RAG_BASE_URL"))
 }
 
+// Has reports whether a tool name or supported alias resolves to a registered
+// tool.
 func (r *Registry) Has(name string) bool {
 	_, _, ok := r.resolve(name)
 	return ok
 }
 
+// Definitions returns sorted model-facing definitions for every registered
+// tool.
 func (r *Registry) Definitions() []anthropic.ToolDefinition {
 	defs := make([]anthropic.ToolDefinition, 0, len(r.tools))
 	for _, tool := range r.tools {
@@ -730,6 +749,8 @@ func (r *Registry) Definitions() []anthropic.ToolDefinition {
 	return defs
 }
 
+// DefinitionsForPlanMode returns the subset of tool definitions visible while
+// the model is planning rather than executing workspace changes.
 func (r *Registry) DefinitionsForPlanMode() []anthropic.ToolDefinition {
 	defs := make([]anthropic.ToolDefinition, 0, len(r.tools))
 	for _, tool := range r.tools {
@@ -742,6 +763,8 @@ func (r *Registry) DefinitionsForPlanMode() []anthropic.ToolDefinition {
 	return defs
 }
 
+// ToolVisibleInPlanMode reports whether a tool should be advertised while plan
+// mode is active.
 func ToolVisibleInPlanMode(name string, permission Permission) bool {
 	if permission == PermissionReadOnly {
 		return true
@@ -749,10 +772,13 @@ func ToolVisibleInPlanMode(name string, permission Permission) bool {
 	return CanonicalToolName(name) == "bash"
 }
 
+// ToolAllowedInPlanMode reports whether a tool may execute while plan mode is
+// active.
 func ToolAllowedInPlanMode(name string, permission Permission) bool {
 	return ToolVisibleInPlanMode(name, permission)
 }
 
+// ReadOnlyPrompter derives a prompter that only allows read-only tools.
 func ReadOnlyPrompter(base *Prompter, workspace string) *Prompter {
 	if base == nil {
 		return &Prompter{Mode: PermissionReadOnly, Workspace: workspace}
@@ -1199,6 +1225,8 @@ func (t CommandTool) Execute(ctx context.Context, input json.RawMessage) (string
 	return pretty(result), nil
 }
 
+// NewMCPToolName returns the canonical registry name for a tool exposed by an
+// MCP server.
 func NewMCPToolName(serverName, toolName string) string {
 	return mcp.ToolName(serverName, toolName)
 }
@@ -1240,6 +1268,7 @@ func (t MCPTool) Execute(ctx context.Context, input json.RawMessage) (string, er
 	return string(result.Result), nil
 }
 
+// MCPDispatchTool calls a named tool on one configured MCP server.
 type MCPDispatchTool struct {
 	Servers map[string]config.MCPServerConfig
 }
@@ -1309,6 +1338,8 @@ func (t MCPDispatchTool) Execute(ctx context.Context, input json.RawMessage) (st
 	return string(result.Result), nil
 }
 
+// MCPAuthTool reports or refreshes authentication readiness for a configured
+// MCP server.
 type MCPAuthTool struct {
 	Servers      map[string]config.MCPServerConfig
 	ConfigHome   string
@@ -1382,6 +1413,7 @@ func (t MCPAuthTool) Execute(ctx context.Context, input json.RawMessage) (string
 	return pretty(mcpauthdiag.Build(result, t.ConfigHome, t.OAuthProfile, now)), nil
 }
 
+// ListMCPResourcesTool lists resources exposed by configured MCP servers.
 type ListMCPResourcesTool struct {
 	Servers map[string]config.MCPServerConfig
 }
@@ -1442,6 +1474,7 @@ func (t ListMCPResourcesTool) Execute(ctx context.Context, input json.RawMessage
 	}), nil
 }
 
+// ReadMCPResourceTool reads one resource URI from a configured MCP server.
 type ReadMCPResourceTool struct {
 	Servers map[string]config.MCPServerConfig
 }
@@ -1499,6 +1532,8 @@ func (t ReadMCPResourceTool) Execute(ctx context.Context, input json.RawMessage)
 	return pretty(result), nil
 }
 
+// ListMCPResourceTemplatesTool lists resource templates exposed by configured
+// MCP servers.
 type ListMCPResourceTemplatesTool struct {
 	Servers map[string]config.MCPServerConfig
 }
@@ -1548,6 +1583,7 @@ func (t ListMCPResourceTemplatesTool) Execute(ctx context.Context, input json.Ra
 	return pretty(map[string]any{"kind": "mcp_resource_templates", "servers": results, "total": len(results)}), nil
 }
 
+// ListMCPPromptsTool lists prompts exposed by configured MCP servers.
 type ListMCPPromptsTool struct {
 	Servers map[string]config.MCPServerConfig
 }
@@ -1597,6 +1633,7 @@ func (t ListMCPPromptsTool) Execute(ctx context.Context, input json.RawMessage) 
 	return pretty(map[string]any{"kind": "mcp_prompts", "servers": results, "total": len(results)}), nil
 }
 
+// GetMCPPromptTool renders one prompt exposed by a configured MCP server.
 type GetMCPPromptTool struct {
 	Servers map[string]config.MCPServerConfig
 }
