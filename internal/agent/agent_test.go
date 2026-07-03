@@ -9800,12 +9800,12 @@ func TestResumedSessionDeleteRefusesActiveSession(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestResumedSessionForkCreatesSessionAndSwitchRequiresInteractiveSession(t *testing.T) {
+func TestResumedSessionForkAndSwitchReportsTargetSession(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active")))
 	require.NoError(t, store.Append("other", anthropic.TextMessage("user", "other")))
 	var out bytes.Buffer
-	app := &App{Sessions: store, Out: &out}
+	app := &App{Sessions: store, Out: &out, Executable: "codog"}
 
 	require.NoError(t, app.runResumedSessionSlash([]string{"fork", "incident", "--json"}, config.FlagOverrides{Resume: "active"}))
 	var forkReport sessionForkReport
@@ -9819,15 +9819,23 @@ func TestResumedSessionForkCreatesSessionAndSwitchRequiresInteractiveSession(t *
 	require.NotEmpty(t, forkReport.Path)
 	out.Reset()
 
-	err := app.runResumedSessionSlash([]string{"switch", "other", "--json"}, config.FlagOverrides{Resume: "active"})
-	require.Error(t, err)
-	var exitErr *ExitError
-	require.ErrorAs(t, err, &exitErr)
-	require.True(t, exitErr.Silent)
-	var report slashErrorReport
-	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-	require.Equal(t, "unsupported_resumed_slash_command", report.ErrorKind)
-	require.Equal(t, "/session switch", report.Command)
+	require.NoError(t, app.runResumedSessionSlash([]string{"switch", "other", "--json"}, config.FlagOverrides{Resume: "active"}))
+	var switchReport sessionSwitchReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &switchReport))
+	require.Equal(t, "session_switch", switchReport.Kind)
+	require.Equal(t, "switch", switchReport.Action)
+	require.Equal(t, "ok", switchReport.Status)
+	require.Equal(t, "active", switchReport.PreviousSessionID)
+	require.Equal(t, "other", switchReport.RequestedSession)
+	require.Equal(t, "other", switchReport.SessionID)
+	require.Equal(t, 1, switchReport.MessageCount)
+	require.Contains(t, switchReport.ContinueCommands[0], "--resume 'other' repl")
+	out.Reset()
+
+	require.NoError(t, app.runResumedSessionSlash([]string{"switch", "other"}, config.FlagOverrides{Resume: "active"}))
+	require.Contains(t, out.String(), "Session switched")
+	require.Contains(t, out.String(), "Previous         active")
+	require.Contains(t, out.String(), "Session          other")
 
 	sessions, err := store.List()
 	require.NoError(t, err)

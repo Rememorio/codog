@@ -27118,15 +27118,21 @@ func (a *App) runResumedSessionSlash(args []string, overrides config.FlagOverrid
 		renderSessionForkText(a.Out, report)
 		return nil
 	case "switch":
-		format := "text"
-		if argsHaveOutputFormat(args[1:]) {
-			parsed, _, err := parseTemplateOutputArgs("sessions "+args[0], args[1:])
-			if err != nil {
-				return err
-			}
-			format = parsed
+		req, err := parseSessionSwitchArgs("codog sessions switch", args[1:], "text")
+		if err != nil {
+			return err
 		}
-		return renderUnsupportedResumedSlashCommand(a.Out, resumedSlashCommandLabel("/session", args[0]), format)
+		report, err := a.switchSessionWithReport(overrides.Resume, req.ID)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionSwitchText(a.Out, report)
+		return nil
 	case "delete":
 		req, err := parseSessionDeleteArgs("codog sessions delete", args[1:])
 		if err != nil {
@@ -40145,6 +40151,82 @@ type sessionForkReport struct {
 	Identity        session.SessionIdentity `json:"identity,omitempty"`
 }
 
+type sessionSwitchRequest struct {
+	ID     string
+	Format string
+}
+
+type sessionSwitchReport struct {
+	Kind              string                  `json:"kind"`
+	Action            string                  `json:"action"`
+	Status            string                  `json:"status"`
+	PreviousSessionID string                  `json:"previous_session_id,omitempty"`
+	RequestedSession  string                  `json:"requested_session"`
+	SessionID         string                  `json:"session_id"`
+	Path              string                  `json:"path"`
+	MessageCount      int                     `json:"message_count"`
+	Identity          session.SessionIdentity `json:"identity,omitempty"`
+	ContinueCommands  []string                `json:"continue_commands"`
+}
+
+func parseSessionSwitchArgs(command string, args []string, defaultFormat string) (sessionSwitchRequest, error) {
+	format, rest, err := parseTemplateOutputArgs(command, args)
+	if err != nil {
+		return sessionSwitchRequest{}, err
+	}
+	if defaultFormat != "" && !argsHaveOutputFormat(args) {
+		format = defaultFormat
+	}
+	if len(rest) != 1 {
+		return sessionSwitchRequest{}, fmt.Errorf("usage: %s ID [--json|--output-format text|json]", command)
+	}
+	id := strings.TrimSpace(rest[0])
+	if id == "" {
+		return sessionSwitchRequest{}, fmt.Errorf("usage: %s ID [--json|--output-format text|json]", command)
+	}
+	return sessionSwitchRequest{ID: id, Format: format}, nil
+}
+
+func (a *App) switchSessionWithReport(previousID string, requestedID string) (sessionSwitchReport, error) {
+	sess, err := a.Sessions.OpenExisting(requestedID)
+	if err != nil {
+		return sessionSwitchReport{}, err
+	}
+	exe := strings.TrimSpace(a.Executable)
+	if exe == "" {
+		exe = "codog"
+	}
+	return sessionSwitchReport{
+		Kind:              "session_switch",
+		Action:            "switch",
+		Status:            "ok",
+		PreviousSessionID: strings.TrimSpace(previousID),
+		RequestedSession:  strings.TrimSpace(requestedID),
+		SessionID:         sess.ID,
+		Path:              sess.Path,
+		MessageCount:      len(sess.Messages),
+		Identity:          sess.Identity,
+		ContinueCommands:  resumeContinueCommands(exe, sess.ID),
+	}, nil
+}
+
+func renderSessionSwitchText(out io.Writer, report sessionSwitchReport) {
+	fmt.Fprintln(out, "Session switched")
+	if report.PreviousSessionID != "" {
+		fmt.Fprintf(out, "  Previous         %s\n", report.PreviousSessionID)
+	}
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	fmt.Fprintf(out, "  Requested        %s\n", report.RequestedSession)
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	fmt.Fprintf(out, "  File             %s\n", report.Path)
+	if len(report.ContinueCommands) > 0 {
+		fmt.Fprintln(out, "  Continue")
+		for _, command := range report.ContinueCommands {
+			fmt.Fprintf(out, "    %s\n", command)
+		}
+	}
+}
+
 func parseSessionForkArgs(command string, args []string, defaultSourceID string, defaultFormat string) (sessionForkRequest, error) {
 	req := sessionForkRequest{SourceID: strings.TrimSpace(defaultSourceID), Format: defaultFormat}
 	if req.Format == "" {
@@ -40586,10 +40668,7 @@ func (a *App) ResumeCommand(args []string) error {
 		SessionID:        sess.ID,
 		MessageCount:     len(sess.Messages),
 		Path:             sess.Path,
-		ContinueCommands: []string{
-			strings.Join([]string{shellQuote(exe), "--resume", shellQuote(sess.ID), "repl"}, " "),
-			strings.Join([]string{shellQuote(exe), "--resume", shellQuote(sess.ID), "prompt", shellQuote("...")}, " "),
-		},
+		ContinueCommands: resumeContinueCommands(exe, sess.ID),
 	}
 	if format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
@@ -40598,6 +40677,17 @@ func (a *App) ResumeCommand(args []string) error {
 	}
 	renderResumeCommand(a.Out, report)
 	return nil
+}
+
+func resumeContinueCommands(executable string, sessionID string) []string {
+	executable = strings.TrimSpace(executable)
+	if executable == "" {
+		executable = "codog"
+	}
+	return []string{
+		strings.Join([]string{shellQuote(executable), "--resume", shellQuote(sessionID), "repl"}, " "),
+		strings.Join([]string{shellQuote(executable), "--resume", shellQuote(sessionID), "prompt", shellQuote("...")}, " "),
+	}
 }
 
 func renderResumeCommand(out io.Writer, report resumeCommandReport) {

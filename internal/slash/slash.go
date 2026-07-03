@@ -57,7 +57,7 @@ func Specs() []Spec {
 		{Name: "/settings", Usage: "/settings [section]", Description: "Alias for /config."},
 		{Name: "/api-key", Usage: "/api-key [status|set KEY|clear]", Description: "Show, store, or clear the configured API key with redacted output."},
 		{Name: "/model", Usage: "/model [name]", Description: "Show or switch the current model."},
-		{Name: "/models", Usage: "/models [list|aliases|routes|show [MODEL]|current]", Description: "Inspect local model aliases, routes, and current model diagnostics."},
+		{Name: "/models", Usage: "/models [list|aliases|routes|search QUERY|show [MODEL]|current]", Description: "Inspect local model aliases, routes, and current model diagnostics."},
 		{Name: "/advisor", Usage: "/advisor [model|off]", Description: "Show or change the advisor model preference."},
 		{Name: "/budget", Usage: "/budget [status|set|reset]", Description: "Show or change token budget limits."},
 		{Name: "/max-tokens", Usage: "/max-tokens [count]", Description: "Show or switch max output tokens."},
