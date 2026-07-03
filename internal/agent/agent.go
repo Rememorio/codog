@@ -20799,6 +20799,16 @@ var acpJSONRPCMethods = []string{
 	"agent-runs/heartbeat",
 	"agent-runs/stop",
 	"agent-runs/prune",
+	"mcp/list",
+	"mcp/show",
+	"mcp/auth",
+	"mcp/tools",
+	"mcp/call",
+	"mcp/resources",
+	"mcp/resource-templates",
+	"mcp/read",
+	"mcp/prompts",
+	"mcp/prompt",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20863,7 +20873,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, agent-runs/list, agent-runs/get, agent-runs/logs, agent-runs/board, agent-runs/heartbeat, agent-runs/stop, agent-runs/prune, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, background/watch, agent-runs/list, agent-runs/get, agent-runs/logs, agent-runs/board, agent-runs/heartbeat, agent-runs/stop, agent-runs/prune, mcp/list, mcp/show, mcp/auth, mcp/tools, mcp/call, mcp/resources, mcp/resource-templates, mcp/read, mcp/prompts, mcp/prompt, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21018,6 +21028,14 @@ func (a *App) serveACP(ctx context.Context) error {
 			return agentruns.Store{}, background.Store{}, errors.New("config home is required")
 		}
 		return agentruns.NewStore(a.Config.ConfigHome), background.NewStore(a.Config.ConfigHome), nil
+	}
+	mcpServer := func(name string) (config.MCPServerConfig, error) {
+		name = strings.TrimSpace(name)
+		server, ok := a.Config.MCPServers[name]
+		if !ok {
+			return config.MCPServerConfig{}, fmt.Errorf("mcp server %q is not configured", name)
+		}
+		return server, nil
 	}
 	return acpserver.Serve(ctx, in, out, acpserver.Handlers{
 		NewSession: func(context.Context) (acpserver.SessionInfo, error) {
@@ -21562,6 +21580,142 @@ func (a *App) serveACP(ctx context.Context) error {
 				options.Keep = *req.Keep
 			}
 			return agentruns.Prune(runStore, taskStore, options)
+		},
+		MCPList: func(ctx context.Context, req acpserver.MCPListRequest) (any, error) {
+			names := sortedMCPServerNames(a.Config.MCPServers)
+			descriptors := make([]mcp.ServerDescriptor, 0, len(names))
+			for _, name := range names {
+				descriptors = append(descriptors, mcp.DescribeServer(name, a.Config.MCPServers[name]))
+			}
+			inspect := true
+			if req.Inspect != nil {
+				inspect = *req.Inspect
+			}
+			result := map[string]any{
+				"kind":        "mcp_list",
+				"count":       len(names),
+				"servers":     names,
+				"descriptors": descriptors,
+			}
+			if inspect {
+				result["statuses"] = mcp.InspectAll(ctx, a.Config.MCPServers)
+			}
+			return result, nil
+		},
+		MCPShow: func(ctx context.Context, req acpserver.MCPServerRequest) (any, error) {
+			name := firstNonEmpty(req.Server, req.Name)
+			server, err := mcpServer(name)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"kind":       "mcp_show",
+				"server":     name,
+				"descriptor": mcp.DescribeServer(name, server),
+				"status":     mcp.Inspect(ctx, name, server),
+			}, nil
+		},
+		MCPAuth: func(ctx context.Context, req acpserver.MCPServerRequest) (any, error) {
+			name := firstNonEmpty(req.Server, req.Name)
+			if strings.TrimSpace(name) != "" {
+				server, err := mcpServer(name)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"kind": "mcp_auth", "server": name, "result": mcp.InspectAuth(ctx, name, server)}, nil
+			}
+			names := sortedMCPServerNames(a.Config.MCPServers)
+			results := make([]mcp.AuthStatusResult, 0, len(names))
+			for _, name := range names {
+				results = append(results, mcp.InspectAuth(ctx, name, a.Config.MCPServers[name]))
+			}
+			return map[string]any{"kind": "mcp_auth", "count": len(results), "servers": results}, nil
+		},
+		MCPTools: func(ctx context.Context, req acpserver.MCPServerRequest) (any, error) {
+			name := firstNonEmpty(req.Server, req.Name)
+			if strings.TrimSpace(name) != "" {
+				server, err := mcpServer(name)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"kind": "mcp_tools", "server": name, "result": mcp.ListTools(ctx, name, server)}, nil
+			}
+			names := sortedMCPServerNames(a.Config.MCPServers)
+			results := make([]mcp.ToolListResult, 0, len(names))
+			for _, name := range names {
+				results = append(results, mcp.ListTools(ctx, name, a.Config.MCPServers[name]))
+			}
+			return map[string]any{"kind": "mcp_tools", "count": len(results), "servers": results}, nil
+		},
+		MCPCall: func(ctx context.Context, req acpserver.MCPCallRequest) (any, error) {
+			server, err := mcpServer(req.Server)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "mcp_call", "server": req.Server, "tool": req.Tool, "result": mcp.CallTool(ctx, req.Server, server, req.Tool, req.Arguments)}, nil
+		},
+		MCPResources: func(ctx context.Context, req acpserver.MCPServerRequest) (any, error) {
+			name := firstNonEmpty(req.Server, req.Name)
+			if strings.TrimSpace(name) != "" {
+				server, err := mcpServer(name)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"kind": "mcp_resources", "server": name, "result": mcp.ListResources(ctx, name, server)}, nil
+			}
+			names := sortedMCPServerNames(a.Config.MCPServers)
+			results := make([]mcp.ResourceListResult, 0, len(names))
+			for _, name := range names {
+				results = append(results, mcp.ListResources(ctx, name, a.Config.MCPServers[name]))
+			}
+			return map[string]any{"kind": "mcp_resources", "count": len(results), "servers": results}, nil
+		},
+		MCPResourceTemplates: func(ctx context.Context, req acpserver.MCPServerRequest) (any, error) {
+			name := firstNonEmpty(req.Server, req.Name)
+			if strings.TrimSpace(name) != "" {
+				server, err := mcpServer(name)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"kind": "mcp_resource_templates", "server": name, "result": mcp.ListResourceTemplates(ctx, name, server)}, nil
+			}
+			names := sortedMCPServerNames(a.Config.MCPServers)
+			results := make([]mcp.ResourceTemplateListResult, 0, len(names))
+			for _, name := range names {
+				results = append(results, mcp.ListResourceTemplates(ctx, name, a.Config.MCPServers[name]))
+			}
+			return map[string]any{"kind": "mcp_resource_templates", "count": len(results), "servers": results}, nil
+		},
+		MCPRead: func(ctx context.Context, req acpserver.MCPReadRequest) (any, error) {
+			server, err := mcpServer(req.Server)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "mcp_read", "server": req.Server, "uri": req.URI, "result": mcp.ReadResource(ctx, req.Server, server, req.URI)}, nil
+		},
+		MCPPrompts: func(ctx context.Context, req acpserver.MCPServerRequest) (any, error) {
+			name := firstNonEmpty(req.Server, req.Name)
+			if strings.TrimSpace(name) != "" {
+				server, err := mcpServer(name)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"kind": "mcp_prompts", "server": name, "result": mcp.ListPrompts(ctx, name, server)}, nil
+			}
+			names := sortedMCPServerNames(a.Config.MCPServers)
+			results := make([]mcp.PromptListResult, 0, len(names))
+			for _, name := range names {
+				results = append(results, mcp.ListPrompts(ctx, name, a.Config.MCPServers[name]))
+			}
+			return map[string]any{"kind": "mcp_prompts", "count": len(results), "servers": results}, nil
+		},
+		MCPPrompt: func(ctx context.Context, req acpserver.MCPPromptRequest) (any, error) {
+			name := firstNonEmpty(req.Prompt, req.Name)
+			server, err := mcpServer(req.Server)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "mcp_prompt", "server": req.Server, "prompt": name, "result": mcp.GetPrompt(ctx, req.Server, server, name, req.Arguments)}, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

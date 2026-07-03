@@ -5927,6 +5927,16 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "agent-runs/heartbeat")
 	require.Contains(t, report.Protocol.Methods, "agent-runs/stop")
 	require.Contains(t, report.Protocol.Methods, "agent-runs/prune")
+	require.Contains(t, report.Protocol.Methods, "mcp/list")
+	require.Contains(t, report.Protocol.Methods, "mcp/show")
+	require.Contains(t, report.Protocol.Methods, "mcp/auth")
+	require.Contains(t, report.Protocol.Methods, "mcp/tools")
+	require.Contains(t, report.Protocol.Methods, "mcp/call")
+	require.Contains(t, report.Protocol.Methods, "mcp/resources")
+	require.Contains(t, report.Protocol.Methods, "mcp/resource-templates")
+	require.Contains(t, report.Protocol.Methods, "mcp/read")
+	require.Contains(t, report.Protocol.Methods, "mcp/prompts")
+	require.Contains(t, report.Protocol.Methods, "mcp/prompt")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6779,6 +6789,78 @@ func TestACPServeExposesAgentRunsControls(t *testing.T) {
 	require.NotNil(t, responses[7]["result"])
 }
 
+func TestACPServeExposesMCPControls(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	server := config.MCPServerConfig{
+		Command:  os.Args[0],
+		Args:     []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env:      []string{"CODOG_AGENT_MCP_HELPER=1"},
+		Required: true,
+	}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"mcp/list","params":{"inspect":false}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"mcp/show","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"mcp/auth","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"mcp/tools","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"mcp/call","params":{"server":"test","tool":"echo","arguments":{"text":"hi"}}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"mcp/resources","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"mcp/resource-templates","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"mcp/read","params":{"server":"test","uri":"codog://note"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"mcp/prompts","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"mcp/prompt","params":{"server":"test","prompt":"review","arguments":{"topic":"hooks"}}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome: configHome,
+			MCPServers: map[string]config.MCPServerConfig{"test": server},
+		},
+		Workspace: workspace,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 11)
+	list := responses[0]["result"].(map[string]any)
+	require.Equal(t, "mcp_list", list["kind"])
+	require.EqualValues(t, 1, list["count"])
+	require.NotContains(t, list, "statuses")
+	show := responses[1]["result"].(map[string]any)
+	require.Equal(t, "mcp_show", show["kind"])
+	require.Equal(t, "test", show["server"])
+	descriptor := show["descriptor"].(map[string]any)
+	require.Equal(t, "test", descriptor["name"])
+	auth := responses[2]["result"].(map[string]any)
+	require.Equal(t, "mcp_auth", auth["kind"])
+	authResult := auth["result"].(map[string]any)
+	require.Equal(t, "ok", authResult["status"])
+	require.EqualValues(t, 1, authResult["tool_count"])
+	tools := responses[3]["result"].(map[string]any)
+	toolResult := tools["result"].(map[string]any)
+	toolList := toolResult["tools"].([]any)
+	require.Equal(t, "echo", toolList[0].(map[string]any)["name"])
+	call := responses[4]["result"].(map[string]any)
+	callResult := call["result"].(map[string]any)
+	require.Contains(t, fmt.Sprint(callResult["result"]), "hi")
+	resources := responses[5]["result"].(map[string]any)
+	require.Contains(t, fmt.Sprint(resources["result"]), "codog://note")
+	templates := responses[6]["result"].(map[string]any)
+	require.Contains(t, fmt.Sprint(templates["result"]), "codog://notes/{name}")
+	read := responses[7]["result"].(map[string]any)
+	require.Contains(t, fmt.Sprint(read["result"]), "note body")
+	prompts := responses[8]["result"].(map[string]any)
+	require.Contains(t, fmt.Sprint(prompts["result"]), "review")
+	prompt := responses[9]["result"].(map[string]any)
+	require.Contains(t, fmt.Sprint(prompt["result"]), "Review hooks")
+	require.NotNil(t, responses[10]["result"])
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6853,6 +6935,17 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, agentRunCaps["heartbeat"])
 			require.Equal(t, true, agentRunCaps["stop"])
 			require.Equal(t, true, agentRunCaps["prune"])
+			mcpCaps := capabilities["mcp"].(map[string]any)
+			require.Equal(t, true, mcpCaps["list"])
+			require.Equal(t, true, mcpCaps["show"])
+			require.Equal(t, true, mcpCaps["auth"])
+			require.Equal(t, true, mcpCaps["tools"])
+			require.Equal(t, true, mcpCaps["call"])
+			require.Equal(t, true, mcpCaps["resources"])
+			require.Equal(t, true, mcpCaps["resource_templates"])
+			require.Equal(t, true, mcpCaps["read"])
+			require.Equal(t, true, mcpCaps["prompts"])
+			require.Equal(t, true, mcpCaps["prompt"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])

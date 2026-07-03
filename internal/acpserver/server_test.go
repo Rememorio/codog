@@ -159,6 +159,17 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, agentRunCaps["heartbeat"])
 	require.Equal(t, true, agentRunCaps["stop"])
 	require.Equal(t, true, agentRunCaps["prune"])
+	mcpCaps := capabilities["mcp"].(map[string]any)
+	require.Equal(t, true, mcpCaps["list"])
+	require.Equal(t, true, mcpCaps["show"])
+	require.Equal(t, true, mcpCaps["auth"])
+	require.Equal(t, true, mcpCaps["tools"])
+	require.Equal(t, true, mcpCaps["call"])
+	require.Equal(t, true, mcpCaps["resources"])
+	require.Equal(t, true, mcpCaps["resource_templates"])
+	require.Equal(t, true, mcpCaps["read"])
+	require.Equal(t, true, mcpCaps["prompts"])
+	require.Equal(t, true, mcpCaps["prompt"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -658,6 +669,87 @@ func TestServeHandlesAgentRunsRequests(t *testing.T) {
 	require.Equal(t, "agent_run_heartbeat", responses[4]["result"].(map[string]any)["kind"])
 	require.Equal(t, "agent_run_stop", responses[5]["result"].(map[string]any)["kind"])
 	require.Equal(t, "agent_run_prune", responses[6]["result"].(map[string]any)["kind"])
+}
+
+func TestServeHandlesMCPRequests(t *testing.T) {
+	inspect := false
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"mcp/list","params":{"inspect":false}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"mcp/show","params":"test"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"mcp/auth","params":{"name":"test"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"mcp/tools","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"mcp/call","params":{"server":"test","tool":"echo","arguments":{"text":"hi"}}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"mcp/resources","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"mcp/resource-templates","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"mcp/read","params":{"server":"test","uri":"codog://note"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"mcp/prompts","params":{"server":"test"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"mcp/prompt","params":{"server":"test","name":"review","arguments":{"topic":"hooks"}}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		MCPList: func(_ context.Context, req MCPListRequest) (any, error) {
+			require.NotNil(t, req.Inspect)
+			require.Equal(t, inspect, *req.Inspect)
+			return map[string]any{"kind": "mcp_list"}, nil
+		},
+		MCPShow: func(_ context.Context, req MCPServerRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			return map[string]any{"kind": "mcp_show"}, nil
+		},
+		MCPAuth: func(_ context.Context, req MCPServerRequest) (any, error) {
+			require.Equal(t, "test", req.Name)
+			return map[string]any{"kind": "mcp_auth"}, nil
+		},
+		MCPTools: func(_ context.Context, req MCPServerRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			return map[string]any{"kind": "mcp_tools"}, nil
+		},
+		MCPCall: func(_ context.Context, req MCPCallRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			require.Equal(t, "echo", req.Tool)
+			require.JSONEq(t, `{"text":"hi"}`, string(req.Arguments))
+			return map[string]any{"kind": "mcp_call"}, nil
+		},
+		MCPResources: func(_ context.Context, req MCPServerRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			return map[string]any{"kind": "mcp_resources"}, nil
+		},
+		MCPResourceTemplates: func(_ context.Context, req MCPServerRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			return map[string]any{"kind": "mcp_resource_templates"}, nil
+		},
+		MCPRead: func(_ context.Context, req MCPReadRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			require.Equal(t, "codog://note", req.URI)
+			return map[string]any{"kind": "mcp_read"}, nil
+		},
+		MCPPrompts: func(_ context.Context, req MCPServerRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			return map[string]any{"kind": "mcp_prompts"}, nil
+		},
+		MCPPrompt: func(_ context.Context, req MCPPromptRequest) (any, error) {
+			require.Equal(t, "test", req.Server)
+			require.Equal(t, "review", req.Name)
+			require.JSONEq(t, `{"topic":"hooks"}`, string(req.Arguments))
+			return map[string]any{"kind": "mcp_prompt"}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 10)
+	require.Equal(t, "mcp_list", responses[0]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_show", responses[1]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_auth", responses[2]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_tools", responses[3]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_call", responses[4]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_resources", responses[5]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_resource_templates", responses[6]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_read", responses[7]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_prompts", responses[8]["result"].(map[string]any)["kind"])
+	require.Equal(t, "mcp_prompt", responses[9]["result"].(map[string]any)["kind"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {

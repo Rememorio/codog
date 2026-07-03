@@ -20,61 +20,71 @@ type Options struct {
 }
 
 type Handlers struct {
-	NewSession          func(context.Context) (SessionInfo, error)
-	OpenSession         func(context.Context, SessionOpenRequest) (SessionDetail, error)
-	ListSessions        func(context.Context) (SessionList, error)
-	GetSession          func(context.Context, SessionLookupRequest) (SessionDetail, error)
-	History             func(context.Context, SessionHistoryRequest) (SessionHistory, error)
-	AppendMessage       func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
-	AppendInput         func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
-	RewindSession       func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
-	ForkSession         func(context.Context, SessionForkRequest) (SessionMutationResult, error)
-	RenameSession       func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
-	DeleteSession       func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
-	PruneSessions       func(context.Context, SessionPruneRequest) (any, error)
-	Prompt              func(context.Context, PromptRequest) (PromptResult, error)
-	Status              func(context.Context) (any, error)
-	WorkspaceInfo       func(context.Context) (workspaceops.InfoResult, error)
-	WorkspaceFiles      func(context.Context, workspaceops.FilesOptions) (workspaceops.FilesResult, error)
-	WorkspaceSearch     func(context.Context, workspaceops.SearchOptions) (workspaceops.SearchResult, error)
-	FileRead            func(context.Context, workspaceops.ReadOptions) (workspaceops.ReadResult, error)
-	FileWrite           func(context.Context, workspaceops.WriteOptions) (workspaceops.WriteResult, error)
-	FileEdit            func(context.Context, workspaceops.EditOptions) (workspaceops.EditResult, error)
-	FileDiff            func(context.Context, workspaceops.DiffOptions) (workspaceops.DiffResult, error)
-	DiagnosticsGo       func(context.Context, DiagnosticsRequest) (any, error)
-	CodeSymbols         func(context.Context, CodeSymbolsRequest) (any, error)
-	CodeReferences      func(context.Context, CodeReferencesRequest) (any, error)
-	CodeDefinition      func(context.Context, CodeDefinitionRequest) (any, error)
-	CodeHover           func(context.Context, CodeHoverRequest) (any, error)
-	CodeCompletion      func(context.Context, CodeCompletionRequest) (any, error)
-	CodeFormat          func(context.Context, CodeFormatRequest) (any, error)
-	NotebookRead        func(context.Context, NotebookReadRequest) (any, error)
-	NotebookEdit        func(context.Context, NotebookEditRequest) (any, error)
-	LSPActions          func(context.Context) (any, error)
-	LSPDiscover         func(context.Context) (any, error)
-	LSPList             func(context.Context) (any, error)
-	LSPStart            func(context.Context, LSPStartRequest) (any, error)
-	LSPStatus           func(context.Context, LSPStatusRequest) (any, error)
-	LSPStop             func(context.Context, LSPStopRequest) (any, error)
-	LSPQuery            func(context.Context, LSPQueryRequest) (any, error)
-	BackgroundList      func(context.Context, BackgroundListRequest) (any, error)
-	BackgroundRun       func(context.Context, BackgroundRunRequest) (any, error)
-	BackgroundGet       func(context.Context, BackgroundIDRequest) (any, error)
-	BackgroundLogs      func(context.Context, BackgroundLogsRequest) (any, error)
-	BackgroundBoard     func(context.Context, BackgroundBoardRequest) (any, error)
-	BackgroundHeartbeat func(context.Context, BackgroundHeartbeatRequest) (any, error)
-	BackgroundStop      func(context.Context, BackgroundIDRequest) (any, error)
-	BackgroundRestart   func(context.Context, BackgroundIDRequest) (any, error)
-	BackgroundPrune     func(context.Context, BackgroundPruneRequest) (any, error)
-	BackgroundSupervise func(context.Context, BackgroundSuperviseRequest) (any, error)
-	BackgroundWatch     func(context.Context, BackgroundWatchRequest, func(background.WatchEvent) error) (any, error)
-	AgentRunsList       func(context.Context, AgentRunsListRequest) (any, error)
-	AgentRunsGet        func(context.Context, AgentRunIDRequest) (any, error)
-	AgentRunsLogs       func(context.Context, AgentRunLogsRequest) (any, error)
-	AgentRunsBoard      func(context.Context, AgentRunsBoardRequest) (any, error)
-	AgentRunsHeartbeat  func(context.Context, AgentRunHeartbeatRequest) (any, error)
-	AgentRunsStop       func(context.Context, AgentRunIDRequest) (any, error)
-	AgentRunsPrune      func(context.Context, AgentRunsPruneRequest) (any, error)
+	NewSession           func(context.Context) (SessionInfo, error)
+	OpenSession          func(context.Context, SessionOpenRequest) (SessionDetail, error)
+	ListSessions         func(context.Context) (SessionList, error)
+	GetSession           func(context.Context, SessionLookupRequest) (SessionDetail, error)
+	History              func(context.Context, SessionHistoryRequest) (SessionHistory, error)
+	AppendMessage        func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
+	AppendInput          func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
+	RewindSession        func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
+	ForkSession          func(context.Context, SessionForkRequest) (SessionMutationResult, error)
+	RenameSession        func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
+	DeleteSession        func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
+	PruneSessions        func(context.Context, SessionPruneRequest) (any, error)
+	Prompt               func(context.Context, PromptRequest) (PromptResult, error)
+	Status               func(context.Context) (any, error)
+	WorkspaceInfo        func(context.Context) (workspaceops.InfoResult, error)
+	WorkspaceFiles       func(context.Context, workspaceops.FilesOptions) (workspaceops.FilesResult, error)
+	WorkspaceSearch      func(context.Context, workspaceops.SearchOptions) (workspaceops.SearchResult, error)
+	FileRead             func(context.Context, workspaceops.ReadOptions) (workspaceops.ReadResult, error)
+	FileWrite            func(context.Context, workspaceops.WriteOptions) (workspaceops.WriteResult, error)
+	FileEdit             func(context.Context, workspaceops.EditOptions) (workspaceops.EditResult, error)
+	FileDiff             func(context.Context, workspaceops.DiffOptions) (workspaceops.DiffResult, error)
+	DiagnosticsGo        func(context.Context, DiagnosticsRequest) (any, error)
+	CodeSymbols          func(context.Context, CodeSymbolsRequest) (any, error)
+	CodeReferences       func(context.Context, CodeReferencesRequest) (any, error)
+	CodeDefinition       func(context.Context, CodeDefinitionRequest) (any, error)
+	CodeHover            func(context.Context, CodeHoverRequest) (any, error)
+	CodeCompletion       func(context.Context, CodeCompletionRequest) (any, error)
+	CodeFormat           func(context.Context, CodeFormatRequest) (any, error)
+	NotebookRead         func(context.Context, NotebookReadRequest) (any, error)
+	NotebookEdit         func(context.Context, NotebookEditRequest) (any, error)
+	LSPActions           func(context.Context) (any, error)
+	LSPDiscover          func(context.Context) (any, error)
+	LSPList              func(context.Context) (any, error)
+	LSPStart             func(context.Context, LSPStartRequest) (any, error)
+	LSPStatus            func(context.Context, LSPStatusRequest) (any, error)
+	LSPStop              func(context.Context, LSPStopRequest) (any, error)
+	LSPQuery             func(context.Context, LSPQueryRequest) (any, error)
+	BackgroundList       func(context.Context, BackgroundListRequest) (any, error)
+	BackgroundRun        func(context.Context, BackgroundRunRequest) (any, error)
+	BackgroundGet        func(context.Context, BackgroundIDRequest) (any, error)
+	BackgroundLogs       func(context.Context, BackgroundLogsRequest) (any, error)
+	BackgroundBoard      func(context.Context, BackgroundBoardRequest) (any, error)
+	BackgroundHeartbeat  func(context.Context, BackgroundHeartbeatRequest) (any, error)
+	BackgroundStop       func(context.Context, BackgroundIDRequest) (any, error)
+	BackgroundRestart    func(context.Context, BackgroundIDRequest) (any, error)
+	BackgroundPrune      func(context.Context, BackgroundPruneRequest) (any, error)
+	BackgroundSupervise  func(context.Context, BackgroundSuperviseRequest) (any, error)
+	BackgroundWatch      func(context.Context, BackgroundWatchRequest, func(background.WatchEvent) error) (any, error)
+	AgentRunsList        func(context.Context, AgentRunsListRequest) (any, error)
+	AgentRunsGet         func(context.Context, AgentRunIDRequest) (any, error)
+	AgentRunsLogs        func(context.Context, AgentRunLogsRequest) (any, error)
+	AgentRunsBoard       func(context.Context, AgentRunsBoardRequest) (any, error)
+	AgentRunsHeartbeat   func(context.Context, AgentRunHeartbeatRequest) (any, error)
+	AgentRunsStop        func(context.Context, AgentRunIDRequest) (any, error)
+	AgentRunsPrune       func(context.Context, AgentRunsPruneRequest) (any, error)
+	MCPList              func(context.Context, MCPListRequest) (any, error)
+	MCPShow              func(context.Context, MCPServerRequest) (any, error)
+	MCPAuth              func(context.Context, MCPServerRequest) (any, error)
+	MCPTools             func(context.Context, MCPServerRequest) (any, error)
+	MCPCall              func(context.Context, MCPCallRequest) (any, error)
+	MCPResources         func(context.Context, MCPServerRequest) (any, error)
+	MCPResourceTemplates func(context.Context, MCPServerRequest) (any, error)
+	MCPRead              func(context.Context, MCPReadRequest) (any, error)
+	MCPPrompts           func(context.Context, MCPServerRequest) (any, error)
+	MCPPrompt            func(context.Context, MCPPromptRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -371,6 +381,33 @@ type AgentRunsPruneRequest struct {
 	Keep             *int `json:"keep,omitempty"`
 }
 
+type MCPListRequest struct {
+	Inspect *bool `json:"inspect,omitempty"`
+}
+
+type MCPServerRequest struct {
+	Server string `json:"server,omitempty"`
+	Name   string `json:"name,omitempty"`
+}
+
+type MCPCallRequest struct {
+	Server    string          `json:"server,omitempty"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+type MCPReadRequest struct {
+	Server string `json:"server,omitempty"`
+	URI    string `json:"uri"`
+}
+
+type MCPPromptRequest struct {
+	Server    string          `json:"server,omitempty"`
+	Prompt    string          `json:"prompt,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -520,6 +557,26 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleAgentRunsStop(ctx, out, handlers, req)
 	case "agent-runs/prune":
 		return false, handleAgentRunsPrune(ctx, out, handlers, req)
+	case "mcp/list":
+		return false, handleMCPList(ctx, out, handlers, req)
+	case "mcp/show":
+		return false, handleMCPShow(ctx, out, handlers, req)
+	case "mcp/auth":
+		return false, handleMCPAuth(ctx, out, handlers, req)
+	case "mcp/tools":
+		return false, handleMCPTools(ctx, out, handlers, req)
+	case "mcp/call":
+		return false, handleMCPCall(ctx, out, handlers, req)
+	case "mcp/resources":
+		return false, handleMCPResources(ctx, out, handlers, req)
+	case "mcp/resource-templates", "mcp/resources-templates":
+		return false, handleMCPResourceTemplates(ctx, out, handlers, req)
+	case "mcp/read":
+		return false, handleMCPRead(ctx, out, handlers, req)
+	case "mcp/prompts":
+		return false, handleMCPPrompts(ctx, out, handlers, req)
+	case "mcp/prompt":
+		return false, handleMCPPrompt(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -629,6 +686,18 @@ func initializeResult(opts Options) map[string]any {
 				"heartbeat": true,
 				"stop":      true,
 				"prune":     true,
+			},
+			"mcp": map[string]any{
+				"list":               true,
+				"show":               true,
+				"auth":               true,
+				"tools":              true,
+				"call":               true,
+				"resources":          true,
+				"resource_templates": true,
+				"read":               true,
+				"prompts":            true,
+				"prompt":             true,
 			},
 			"prompt": true,
 			"status": true,
@@ -1329,6 +1398,168 @@ func handleAgentRunsPrune(ctx context.Context, out io.Writer, handlers Handlers,
 	return writeResult(out, req.ID, result)
 }
 
+func handleMCPList(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPList == nil {
+		return writeError(out, req.ID, -32603, "mcp list handler is not configured")
+	}
+	var request MCPListRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.MCPList(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPShow(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPShow == nil {
+		return writeError(out, req.ID, -32603, "mcp show handler is not configured")
+	}
+	request, err := parseMCPServerRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if firstNonEmpty(request.Server, request.Name) == "" {
+		return writeError(out, req.ID, -32602, "server is required")
+	}
+	result, err := handlers.MCPShow(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPAuth(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPAuth == nil {
+		return writeError(out, req.ID, -32603, "mcp auth handler is not configured")
+	}
+	request, err := parseMCPServerRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.MCPAuth(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPTools(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPTools == nil {
+		return writeError(out, req.ID, -32603, "mcp tools handler is not configured")
+	}
+	request, err := parseMCPServerRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.MCPTools(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPCall(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPCall == nil {
+		return writeError(out, req.ID, -32603, "mcp call handler is not configured")
+	}
+	var request MCPCallRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.Tool) == "" {
+		return writeError(out, req.ID, -32602, "tool is required")
+	}
+	result, err := handlers.MCPCall(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPResources(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPResources == nil {
+		return writeError(out, req.ID, -32603, "mcp resources handler is not configured")
+	}
+	request, err := parseMCPServerRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.MCPResources(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPResourceTemplates(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPResourceTemplates == nil {
+		return writeError(out, req.ID, -32603, "mcp resource templates handler is not configured")
+	}
+	request, err := parseMCPServerRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.MCPResourceTemplates(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPRead(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPRead == nil {
+		return writeError(out, req.ID, -32603, "mcp read handler is not configured")
+	}
+	var request MCPReadRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.URI) == "" {
+		return writeError(out, req.ID, -32602, "uri is required")
+	}
+	result, err := handlers.MCPRead(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPPrompts(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPPrompts == nil {
+		return writeError(out, req.ID, -32603, "mcp prompts handler is not configured")
+	}
+	request, err := parseMCPServerRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.MCPPrompts(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleMCPPrompt(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.MCPPrompt == nil {
+		return writeError(out, req.ID, -32603, "mcp prompt handler is not configured")
+	}
+	var request MCPPromptRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if firstNonEmpty(request.Prompt, request.Name) == "" {
+		return writeError(out, req.ID, -32602, "prompt is required")
+	}
+	result, err := handlers.MCPPrompt(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
 func handleNewSession(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
 	if handlers.NewSession == nil {
 		return writeError(out, req.ID, -32603, "session handler is not configured")
@@ -1911,6 +2142,23 @@ func parseAgentRunIDRequest(params json.RawMessage) (AgentRunIDRequest, error) {
 	}
 	if strings.TrimSpace(raw.ID) == "" {
 		return AgentRunIDRequest{}, fmt.Errorf("id is required")
+	}
+	return raw, nil
+}
+
+func parseMCPServerRequest(params json.RawMessage) (MCPServerRequest, error) {
+	var raw MCPServerRequest
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err == nil && firstNonEmpty(raw.Server, raw.Name) != "" {
+			return raw, nil
+		}
+		var server string
+		if err := json.Unmarshal(params, &server); err == nil && strings.TrimSpace(server) != "" {
+			return MCPServerRequest{Server: server}, nil
+		}
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return MCPServerRequest{}, err
+		}
 	}
 	return raw, nil
 }
