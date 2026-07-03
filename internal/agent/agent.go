@@ -7416,6 +7416,9 @@ func (a *App) Marketplace(args []string) error {
 		return a.marketplaceSourcesCommand(append([]string{"remove"}, args[1:]...), format)
 	case "settings":
 		return a.marketplaceSettings(format)
+	case "health", "healthcheck", "lifecycle":
+		report := a.pluginHealthReport(args[0])
+		return renderPluginHealthReport(a.Out, report, format)
 	case "remote", "browse", "discover":
 		structuredRemote := marketplaceRemoteUsesStructuredReport(args[1:])
 		if args[0] != "remote" && len(args) == 1 {
@@ -7558,7 +7561,7 @@ func (a *App) Marketplace(args []string) error {
 			Status:    "error",
 			ErrorKind: "unknown_plugins_action",
 			Message:   fmt.Sprintf("unknown plugins action %q", args[0]),
-			Hint:      "Use `codog plugins list`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
+			Hint:      "Use `codog plugins list`, `health`, `show|info|describe`, `validate`, `sources`, `remote`, `updates`, `install`, `enable`, `disable`, or `remove`.",
 		}, format)
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
@@ -7609,6 +7612,307 @@ type pluginValidationReport struct {
 	Status string `json:"status"`
 	Source string `json:"source"`
 	plugins.ValidationResult
+}
+
+type pluginHealthReport struct {
+	Kind         string              `json:"kind"`
+	Action       string              `json:"action"`
+	Status       string              `json:"status"`
+	Workspace    string              `json:"workspace"`
+	PluginRoot   string              `json:"plugin_root"`
+	Total        int                 `json:"total"`
+	Healthy      int                 `json:"healthy"`
+	Degraded     int                 `json:"degraded"`
+	Failed       int                 `json:"failed"`
+	Stopped      int                 `json:"stopped"`
+	Unconfigured int                 `json:"unconfigured"`
+	Plugins      []pluginHealthcheck `json:"plugins"`
+	LoadError    string              `json:"load_error,omitempty"`
+	Message      string              `json:"message,omitempty"`
+}
+
+type pluginHealthcheck struct {
+	PluginID      string               `json:"plugin_id"`
+	Name          string               `json:"name,omitempty"`
+	Enabled       bool                 `json:"enabled"`
+	State         string               `json:"state"`
+	StartupEvent  string               `json:"startup_event,omitempty"`
+	Servers       []pluginServerHealth `json:"servers,omitempty"`
+	DegradedMode  *pluginDegradedMode  `json:"degraded_mode,omitempty"`
+	Surfaces      []string             `json:"surfaces,omitempty"`
+	Errors        []string             `json:"errors,omitempty"`
+	Warnings      []string             `json:"warnings,omitempty"`
+	Available     []string             `json:"available_capabilities,omitempty"`
+	Unavailable   []string             `json:"unavailable_capabilities,omitempty"`
+	LastCheckUnix int64                `json:"last_check_unix"`
+}
+
+type pluginServerHealth struct {
+	ServerName   string   `json:"server_name"`
+	Status       string   `json:"status"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	LastError    string   `json:"last_error,omitempty"`
+}
+
+type pluginDegradedMode struct {
+	AvailableCapabilities   []string `json:"available_capabilities,omitempty"`
+	UnavailableCapabilities []string `json:"unavailable_capabilities,omitempty"`
+	Reason                  string   `json:"reason"`
+}
+
+func (a *App) pluginHealthReport(action string) pluginHealthReport {
+	manifests, err := plugins.Load(a.Workspace)
+	report := pluginHealthReport{
+		Kind:       "plugin_health",
+		Action:     normalizePluginHealthAction(action),
+		Status:     "healthy",
+		Workspace:  a.Workspace,
+		PluginRoot: plugins.Root(a.Workspace),
+	}
+	if err != nil {
+		report.Status = "failed"
+		report.LoadError = err.Error()
+		report.Message = "plugin health could not load installed plugin manifests"
+		return report
+	}
+	report.Total = len(manifests)
+	report.Plugins = make([]pluginHealthcheck, 0, len(manifests))
+	for _, manifest := range manifests {
+		check := pluginHealthcheckForManifest(manifest)
+		report.Plugins = append(report.Plugins, check)
+		switch check.State {
+		case "healthy":
+			report.Healthy++
+		case "degraded":
+			report.Degraded++
+		case "failed":
+			report.Failed++
+		case "stopped":
+			report.Stopped++
+		default:
+			report.Unconfigured++
+		}
+	}
+	switch {
+	case report.Failed > 0:
+		report.Status = "failed"
+	case report.Degraded > 0:
+		report.Status = "degraded"
+	case report.Total == 0:
+		report.Status = "unconfigured"
+	case report.Healthy > 0:
+		report.Status = "healthy"
+	default:
+		report.Status = "stopped"
+	}
+	report.Message = pluginHealthMessage(report)
+	return report
+}
+
+func normalizePluginHealthAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "healthcheck":
+		return "healthcheck"
+	case "lifecycle":
+		return "lifecycle"
+	default:
+		return "health"
+	}
+}
+
+func pluginHealthcheckForManifest(manifest plugins.Manifest) pluginHealthcheck {
+	validation := pluginCompatibilityValidationForSource(manifest.ID, manifest.Root)
+	check := pluginHealthcheck{
+		PluginID:      manifest.ID,
+		Name:          manifest.Name,
+		Enabled:       manifest.Enabled,
+		State:         "healthy",
+		Surfaces:      pluginManifestSurfaces(manifest),
+		Servers:       pluginServerHealthForManifest(manifest),
+		LastCheckUnix: time.Now().Unix(),
+	}
+	for _, issue := range validation.Errors {
+		check.Errors = append(check.Errors, issue.Message)
+	}
+	for _, issue := range validation.Warnings {
+		check.Warnings = append(check.Warnings, issue.Message)
+	}
+	check.Available = pluginAvailableCapabilities(manifest, check.Servers)
+	check.Unavailable = pluginUnavailableCapabilities(check.Servers)
+	switch {
+	case !manifest.Enabled:
+		check.State = "stopped"
+	case len(check.Errors) > 0:
+		if len(check.Available) == 0 {
+			check.State = "failed"
+		} else {
+			check.State = "degraded"
+			check.DegradedMode = pluginDegradedModeFor(check.Available, check.Unavailable, "manifest validation errors leave only partial plugin functionality available")
+		}
+	case len(check.Surfaces) == 0:
+		check.State = "unconfigured"
+	case pluginServerFailureCount(check.Servers) > 0:
+		if len(check.Available) == 0 {
+			check.State = "failed"
+		} else {
+			check.State = "degraded"
+			check.DegradedMode = pluginDegradedModeFor(check.Available, check.Unavailable, fmt.Sprintf("%d capabilities available, %d unavailable", len(check.Available), len(check.Unavailable)))
+		}
+	}
+	check.StartupEvent = pluginStartupEvent(check.State)
+	sort.Strings(check.Available)
+	sort.Strings(check.Unavailable)
+	return check
+}
+
+func pluginServerHealthForManifest(manifest plugins.Manifest) []pluginServerHealth {
+	names := make([]string, 0, len(manifest.MCPServers))
+	for name := range manifest.MCPServers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]pluginServerHealth, 0, len(names))
+	for _, name := range names {
+		server := manifest.MCPServers[name]
+		status := "healthy"
+		lastError := ""
+		if strings.TrimSpace(server.Command) == "" && strings.TrimSpace(server.URL) == "" {
+			status = "failed"
+			lastError = "missing command or url"
+		}
+		capabilities := []string{"mcp:" + name}
+		out = append(out, pluginServerHealth{
+			ServerName:   name,
+			Status:       status,
+			Capabilities: capabilities,
+			LastError:    lastError,
+		})
+	}
+	return out
+}
+
+func pluginAvailableCapabilities(manifest plugins.Manifest, servers []pluginServerHealth) []string {
+	capabilities := []string{}
+	for _, tool := range manifest.Tools {
+		if strings.TrimSpace(tool.Name) != "" {
+			capabilities = append(capabilities, "tool:"+tool.Name)
+		}
+	}
+	for _, command := range manifest.Commands {
+		if strings.TrimSpace(command) != "" {
+			capabilities = append(capabilities, "command:"+command)
+		}
+	}
+	for _, skill := range manifest.Skills {
+		if strings.TrimSpace(skill) != "" {
+			capabilities = append(capabilities, "skill:"+skill)
+		}
+	}
+	for _, agent := range manifest.Agents {
+		if strings.TrimSpace(agent) != "" {
+			capabilities = append(capabilities, "agent:"+agent)
+		}
+	}
+	for _, hook := range manifest.Hooks {
+		if strings.TrimSpace(hook) != "" {
+			capabilities = append(capabilities, "hook:"+hook)
+		}
+	}
+	for _, server := range servers {
+		if server.Status != "failed" {
+			capabilities = append(capabilities, server.Capabilities...)
+		}
+	}
+	sort.Strings(capabilities)
+	return capabilities
+}
+
+func pluginUnavailableCapabilities(servers []pluginServerHealth) []string {
+	capabilities := []string{}
+	for _, server := range servers {
+		if server.Status == "failed" {
+			capabilities = append(capabilities, server.Capabilities...)
+		}
+	}
+	sort.Strings(capabilities)
+	return capabilities
+}
+
+func pluginDegradedModeFor(available []string, unavailable []string, reason string) *pluginDegradedMode {
+	return &pluginDegradedMode{
+		AvailableCapabilities:   append([]string(nil), available...),
+		UnavailableCapabilities: append([]string(nil), unavailable...),
+		Reason:                  reason,
+	}
+}
+
+func pluginServerFailureCount(servers []pluginServerHealth) int {
+	count := 0
+	for _, server := range servers {
+		if server.Status == "failed" {
+			count++
+		}
+	}
+	return count
+}
+
+func pluginStartupEvent(state string) string {
+	switch state {
+	case "healthy":
+		return "startup_healthy"
+	case "degraded":
+		return "startup_degraded"
+	case "failed":
+		return "startup_failed"
+	default:
+		return ""
+	}
+}
+
+func pluginHealthMessage(report pluginHealthReport) string {
+	switch report.Status {
+	case "healthy":
+		return "all enabled plugin startup surfaces are healthy"
+	case "degraded":
+		return "some plugin startup surfaces are degraded but usable capabilities remain"
+	case "failed":
+		return "one or more plugin startup surfaces failed"
+	case "stopped":
+		return "installed plugins are disabled"
+	default:
+		return "no installed plugins were found"
+	}
+}
+
+func renderPluginHealthReport(out io.Writer, report pluginHealthReport, format string) error {
+	if strings.EqualFold(format, "json") {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+	fmt.Fprintln(out, "Plugin Health")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Plugins          total=%d healthy=%d degraded=%d failed=%d stopped=%d unconfigured=%d\n", report.Total, report.Healthy, report.Degraded, report.Failed, report.Stopped, report.Unconfigured)
+	if report.LoadError != "" {
+		fmt.Fprintf(out, "  Load error       %s\n", report.LoadError)
+	}
+	for _, check := range report.Plugins {
+		fmt.Fprintf(out, "  - %s %-10s enabled=%t", check.PluginID, check.State, check.Enabled)
+		if check.StartupEvent != "" {
+			fmt.Fprintf(out, " event=%s", check.StartupEvent)
+		}
+		fmt.Fprintln(out)
+		if len(check.Errors) > 0 {
+			fmt.Fprintf(out, "    errors=%s\n", strings.Join(check.Errors, "; "))
+		}
+		if check.DegradedMode != nil {
+			fmt.Fprintf(out, "    degraded=%s\n", check.DegradedMode.Reason)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+	return nil
 }
 
 func renderPluginValidation(out io.Writer, source string, result plugins.ValidationResult, format string) error {
@@ -7982,7 +8286,7 @@ func parsePluginCompatibilityInvocation(args []string) pluginCompatibilityParsed
 	parsed := pluginCompatibilityParsedArgs{
 		Raw:    append([]string(nil), args...),
 		Action: "list",
-		Usage:  "codog plugins list|show|info|describe|validate|install|install-remote|update|enable|disable|remove [ID|PATH]",
+		Usage:  "codog plugins list|health|show|info|describe|validate|install|install-remote|update|enable|disable|remove [ID|PATH]",
 	}
 	if len(args) == 0 {
 		parsed.LocalCommand = []string{"codog", "plugins", "list"}
@@ -8026,7 +8330,7 @@ type pluginActionInfo struct {
 
 func pluginActionMetadata(action string) pluginActionInfo {
 	switch action {
-	case "list", "remote", "updates", "settings", "sources":
+	case "list", "health", "remote", "updates", "settings", "sources":
 		return pluginActionInfo{known: true}
 	case "show", "validate":
 		return pluginActionInfo{known: true, requiresTarget: true}
@@ -8041,6 +8345,8 @@ func pluginActionCommandPrefix(action string) []string {
 	switch action {
 	case "list":
 		return []string{"codog", "plugins", "list"}
+	case "health":
+		return []string{"codog", "plugins", "health"}
 	case "show":
 		return []string{"codog", "plugins", "show"}
 	case "validate":
@@ -8135,6 +8441,7 @@ func pluginCompatibilityCommand(topic string) string {
 func pluginCompatibilityOptions() []string {
 	return []string{
 		"codog plugins list",
+		"codog plugins health",
 		"codog plugins show|info|describe ID",
 		"codog plugins validate PATH",
 		"codog marketplace sources",
@@ -8151,6 +8458,8 @@ func normalizePluginAction(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "list", "ls":
 		return "list"
+	case "health", "healthcheck", "lifecycle":
+		return "health"
 	case "show", "info", "describe", "details", "detail":
 		return "show"
 	case "sources", "source", "marketplaces", "manage-marketplaces":
@@ -25046,6 +25355,7 @@ func codogCapabilityFeatures() []string {
 		"openai_compatible_streaming",
 		"permission_confirmation",
 		"policy_engine",
+		"plugin_lifecycle",
 		"plugin_marketplace",
 		"plugins_config_load_degraded",
 		"powershell_output_contract",
@@ -49907,10 +50217,10 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			command,
 			"marketplace",
-			"codog marketplace [list|show|info|describe ID|validate PATH|sources [list|add|remove|clear]|remote [list|search|show]|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
-			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace show|info|describe ID\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace remote list|search QUERY|show ID [--url URL] [--public-key KEY] [--page N] [--per-page N]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, configures trusted marketplace index URLs, browses and searches remote marketplace indexes, installs signed remote plugins, and updates installed plugins. `info` and `describe` are aliases for `show`.\n",
-			[]string{"plugins", "sources", "marketplace_url", "signature_valid", "checksum_valid", "path"},
-			[]string{"ok", "error"},
+			"codog marketplace [list|health|show|info|describe ID|validate PATH|sources [list|add|remove|clear]|remote [list|search|show]|browse|updates|install|install-remote|update|enable|disable|remove|settings]",
+			"Marketplace\n\nUsage:\n  codog marketplace list\n  codog marketplace health\n  codog marketplace show|info|describe ID\n  codog marketplace sources [list|add URL [PUBLIC_KEY]|remove URL|clear] [--target user|project|local]\n  codog marketplace remote [URL] [PUBLIC_KEY]\n  codog marketplace remote list|search QUERY|show ID [--url URL] [--public-key KEY] [--page N] [--per-page N]\n  codog marketplace install PATH\n  codog marketplace install-remote ID [URL] [PUBLIC_KEY]\n  codog marketplace update ID [URL] [PUBLIC_KEY]\n  codog marketplace settings\n\nManages local plugins, validates plugin manifests, reports plugin startup health, configures trusted marketplace index URLs, browses and searches remote marketplace indexes, installs signed remote plugins, and updates installed plugins. `info` and `describe` are aliases for `show`.\n",
+			[]string{"plugins", "plugin_health", "sources", "marketplace_url", "signature_valid", "checksum_valid", "path"},
+			[]string{"ok", "healthy", "degraded", "failed", "error"},
 			true,
 		), true
 	case "pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "plugintrustwarning", "unifiedinstalledcell", "parseargs", "plugindetailshelpers", "usepagination":
@@ -50406,7 +50716,7 @@ Usage:
   %s agents list [FILTER] | agents show|info|describe NAME | agents create NAME | agents run [--worktree] NAME PROMPT | agents runs [AGENT] | agents board [seconds] | agents status RUN_ID | agents heartbeat RUN_ID [FLAGS] | agents stop RUN_ID | agents update RUN_ID MESSAGE | agents output RUN_ID [bytes] | agents prune [days] [keep] | agents run-remove RUN_ID | agents worktrees | agents worktree-remove ID [--json|--output-format text|json]
   %s subagent list [AGENT] | subagent steer RUN_ID MESSAGE | subagent kill RUN_ID | subagent status RUN_ID | subagent logs RUN_ID [bytes] [--json|--output-format text|json]
   %s reload-plugins [--json|--output-format text|json]
-  %s plugin|plugins|marketplace list|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
+  %s plugin|plugins|marketplace list|health|show|info|describe|validate|sources|remote list|search|show|browse|updates|install|install-remote|update|enable|disable|remove|settings | providers status|list|show|set
   %s login [browser|device] PROFILE [ARGS...] | oauth-refresh [PROFILE] | logout [PROFILE]
   %s oauth pkce | oauth discover ISSUER_URL | oauth provider save|list|show|delete | oauth device start|poll|login | oauth browser start|exchange|login | oauth status [PROFILE] | oauth logout [PROFILE] | oauth token save|show|refresh|revoke|delete
   %s sandbox | code-intel symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp

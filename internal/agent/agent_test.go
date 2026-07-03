@@ -985,6 +985,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Features, "mcp_config_load_degraded")
 	require.Contains(t, report.Features, "metrics")
 	require.Contains(t, report.Features, "policy_engine")
+	require.Contains(t, report.Features, "plugin_lifecycle")
 	require.Contains(t, report.Features, "plugins_config_load_degraded")
 	require.Contains(t, report.Features, "providers_config_load_degraded")
 	require.Contains(t, report.Features, "sampling_temperature")
@@ -24066,6 +24067,91 @@ func TestMarketplaceAcceptsOutputFormatFlags(t *testing.T) {
 	require.Contains(t, out.String(), `"summary"`)
 }
 
+func TestMarketplacePluginHealthReportsLifecycle(t *testing.T) {
+	workspace := t.TempDir()
+	writePluginManifest := func(id string, body string) {
+		t.Helper()
+		dir := filepath.Join(workspace, ".codog", "plugins", id)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(body), 0o644))
+	}
+	writePluginManifest("healthy", `{
+		"id":"healthy",
+		"name":"healthy",
+		"version":"1.0.0",
+		"description":"Healthy plugin",
+		"tools":[{"name":"healthy_tool","command":"echo ok","permission":"read-only"}]
+	}`)
+	writePluginManifest("degraded", `{
+		"id":"degraded",
+		"name":"degraded",
+		"version":"1.0.0",
+		"description":"Degraded plugin",
+		"tools":[{"name":"degraded_tool","command":"echo ok","permission":"read-only"}],
+		"mcp_servers":{"broken":{}}
+	}`)
+	writePluginManifest("failed", `{
+		"id":"failed",
+		"name":"failed",
+		"version":"1.0.0",
+		"description":"Failed plugin",
+		"commands":[""]
+	}`)
+
+	var out bytes.Buffer
+	app := &App{Workspace: workspace, Out: &out, Err: io.Discard}
+	require.NoError(t, app.Marketplace([]string{"health", "--json"}))
+	var report pluginHealthReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "plugin_health", report.Kind)
+	require.Equal(t, "health", report.Action)
+	require.Equal(t, "failed", report.Status)
+	require.Equal(t, 3, report.Total)
+	require.Equal(t, 1, report.Healthy)
+	require.Equal(t, 1, report.Degraded)
+	require.Equal(t, 1, report.Failed)
+
+	healthy := pluginHealthcheckByID(report.Plugins, "healthy")
+	require.NotNil(t, healthy)
+	require.Equal(t, "healthy", healthy.State)
+	require.Equal(t, "startup_healthy", healthy.StartupEvent)
+	require.Contains(t, healthy.Available, "tool:healthy_tool")
+
+	degraded := pluginHealthcheckByID(report.Plugins, "degraded")
+	require.NotNil(t, degraded)
+	require.Equal(t, "degraded", degraded.State)
+	require.Equal(t, "startup_degraded", degraded.StartupEvent)
+	require.NotNil(t, degraded.DegradedMode)
+	require.Contains(t, degraded.Available, "tool:degraded_tool")
+	require.Contains(t, degraded.Unavailable, "mcp:broken")
+
+	failed := pluginHealthcheckByID(report.Plugins, "failed")
+	require.NotNil(t, failed)
+	require.Equal(t, "failed", failed.State)
+	require.Equal(t, "startup_failed", failed.StartupEvent)
+	require.NotEmpty(t, failed.Errors)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"lifecycle", "--json"}))
+	var lifecycle pluginHealthReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &lifecycle))
+	require.Equal(t, "lifecycle", lifecycle.Action)
+	out.Reset()
+
+	require.NoError(t, app.Marketplace([]string{"health"}))
+	require.Contains(t, out.String(), "Plugin Health")
+	require.Contains(t, out.String(), "startup_degraded")
+}
+
+func pluginHealthcheckByID(checks []pluginHealthcheck, id string) *pluginHealthcheck {
+	for index := range checks {
+		if checks[index].PluginID == id {
+			return &checks[index]
+		}
+	}
+	return nil
+}
+
 func TestMarketplaceSourcesManageConfigAndBrowse(t *testing.T) {
 	workspace := t.TempDir()
 	configHome := t.TempDir()
@@ -24346,6 +24432,18 @@ func TestPluginCompatibilityHelperCommands(t *testing.T) {
 	require.Equal(t, "show", parseInfoReport.ParsedArgs.Action)
 	require.Equal(t, "demo", parseInfoReport.ParsedArgs.Target)
 	require.Equal(t, "codog plugins show demo", parseInfoReport.ParsedArgs.NextCommand)
+	out.Reset()
+
+	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"health", "--json"}))
+	var parseHealthReport pluginCompatibilityReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &parseHealthReport))
+	require.Equal(t, "health", parseHealthReport.NormalizedAction)
+	require.NotNil(t, parseHealthReport.ParsedArgs)
+	require.Equal(t, "health", parseHealthReport.ParsedArgs.Action)
+	require.False(t, parseHealthReport.ParsedArgs.Mutation)
+	require.False(t, parseHealthReport.ParsedArgs.RequiresTarget)
+	require.Equal(t, []string{"codog", "plugins", "health"}, parseHealthReport.ParsedArgs.LocalCommand)
+	require.Equal(t, "codog plugins health", parseHealthReport.ParsedArgs.NextCommand)
 	out.Reset()
 
 	require.NoError(t, app.PluginCompatibility("parseArgs", []string{"enable", "--json"}))
