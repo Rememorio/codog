@@ -20752,6 +20752,7 @@ var acpJSONRPCMethods = []string{
 	"code/definition",
 	"code/hover",
 	"code/completion",
+	"code/format",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20816,7 +20817,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21046,6 +21047,13 @@ func (a *App) serveACP(ctx context.Context) error {
 				return nil, err
 			}
 			return map[string]any{"kind": "completion", "query": strings.TrimSpace(req.Query), "total": len(completions), "completions": completions}, nil
+		},
+		CodeFormat: func(_ context.Context, req acpserver.CodeFormatRequest) (any, error) {
+			result, err := codeintel.FormatGoFile(a.Workspace, req.Path, req.Write)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"kind": "format", "write": req.Write, "result": result}, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

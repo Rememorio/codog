@@ -45,6 +45,7 @@ type Handlers struct {
 	CodeDefinition  func(context.Context, CodeDefinitionRequest) (any, error)
 	CodeHover       func(context.Context, CodeHoverRequest) (any, error)
 	CodeCompletion  func(context.Context, CodeCompletionRequest) (any, error)
+	CodeFormat      func(context.Context, CodeFormatRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -205,6 +206,11 @@ type CodeCompletionRequest struct {
 	Limit int    `json:"limit,omitempty"`
 }
 
+type CodeFormatRequest struct {
+	Path  string `json:"path"`
+	Write bool   `json:"write,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -292,6 +298,8 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleCodeHover(ctx, out, handlers, req)
 	case "code/completion":
 		return false, handleCodeCompletion(ctx, out, handlers, req)
+	case "code/format":
+		return false, handleCodeFormat(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -365,6 +373,7 @@ func initializeResult(opts Options) map[string]any {
 				"definition": true,
 				"hover":      true,
 				"completion": true,
+				"format":     true,
 			},
 			"prompt": true,
 			"status": true,
@@ -576,6 +585,21 @@ func handleCodeCompletion(ctx context.Context, out io.Writer, handlers Handlers,
 		return writeError(out, req.ID, -32602, err.Error())
 	}
 	result, err := handlers.CodeCompletion(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleCodeFormat(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.CodeFormat == nil {
+		return writeError(out, req.ID, -32603, "code format handler is not configured")
+	}
+	var request CodeFormatRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.CodeFormat(ctx, request)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}

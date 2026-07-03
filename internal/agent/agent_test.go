@@ -5898,6 +5898,7 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "code/definition")
 	require.Contains(t, report.Protocol.Methods, "code/hover")
 	require.Contains(t, report.Protocol.Methods, "code/completion")
+	require.Contains(t, report.Protocol.Methods, "code/format")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6227,14 +6228,12 @@ func TestACPServeExposesCodeIntelQueries(t *testing.T) {
 
 type Runner struct{}
 
-func Run() string {
-	return "ok"
-}
+func Run() string { return "ok" }
 
-func main() {
-	_ = Run()
-}
+func main(){ _ = Run() }
 `), 0o644))
+	unformatted, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
 	store := session.NewWorkspaceStore(t.TempDir(), workspace)
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"code/symbols","params":{"path":"main.go"}}`,
@@ -6242,7 +6241,7 @@ func main() {
 		`{"jsonrpc":"2.0","id":3,"method":"code/references","params":{"symbol":"Run","limit":5}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"code/hover","params":{"symbol":"Run","context_lines":1}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"code/completion","params":{"query":"Ru","limit":5}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"diagnostics/go","params":{"patterns":["./..."]}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"code/format","params":{"path":"main.go"}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
@@ -6280,7 +6279,36 @@ func main() {
 	require.Equal(t, "completion", completion["kind"])
 	require.Equal(t, "Ru", completion["query"])
 	require.GreaterOrEqual(t, int(completion["total"].(float64)), 1)
-	diagnostics := responses[5]["result"].(map[string]any)
+	formatPreview := responses[5]["result"].(map[string]any)
+	require.Equal(t, "format", formatPreview["kind"])
+	require.Equal(t, false, formatPreview["write"])
+	previewResult := formatPreview["result"].(map[string]any)
+	require.Equal(t, true, previewResult["changed"])
+	require.Contains(t, previewResult["content"], "func main()")
+	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Equal(t, string(unformatted), string(data))
+
+	writeInput := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"code/format","params":{"path":"main.go","write":true}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"diagnostics/go","params":{"patterns":["./..."]}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	out.Reset()
+	app.In = strings.NewReader(writeInput)
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses = decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 3)
+	formatWrite := responses[0]["result"].(map[string]any)
+	require.Equal(t, "format", formatWrite["kind"])
+	require.Equal(t, true, formatWrite["write"])
+	writeResult := formatWrite["result"].(map[string]any)
+	require.Equal(t, true, writeResult["changed"])
+	data, err = os.ReadFile(filepath.Join(workspace, "main.go"))
+	require.NoError(t, err)
+	require.Equal(t, writeResult["content"], string(data))
+	diagnostics := responses[1]["result"].(map[string]any)
 	require.Equal(t, "diagnostics", diagnostics["kind"])
 	require.EqualValues(t, 0, diagnostics["total"])
 }
@@ -6327,6 +6355,7 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, codeCaps["definition"])
 			require.Equal(t, true, codeCaps["hover"])
 			require.Equal(t, true, codeCaps["completion"])
+			require.Equal(t, true, codeCaps["format"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])

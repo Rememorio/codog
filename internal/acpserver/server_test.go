@@ -124,6 +124,7 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, codeCaps["definition"])
 	require.Equal(t, true, codeCaps["hover"])
 	require.Equal(t, true, codeCaps["completion"])
+	require.Equal(t, true, codeCaps["format"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -280,6 +281,7 @@ func TestServeHandlesCodeIntelRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"code/definition","params":{"symbol":"Run"}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"code/hover","params":{"symbol":"Run","context_lines":1}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"code/completion","params":{"query":"Ru","limit":3}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"code/format","params":{"path":"main.go","write":true}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -312,17 +314,23 @@ func TestServeHandlesCodeIntelRequests(t *testing.T) {
 			require.Equal(t, 3, req.Limit)
 			return map[string]any{"kind": "completion", "query": req.Query, "total": 1}, nil
 		},
+		CodeFormat: func(_ context.Context, req CodeFormatRequest) (any, error) {
+			require.Equal(t, "main.go", req.Path)
+			require.True(t, req.Write)
+			return map[string]any{"kind": "format", "write": req.Write, "result": map[string]any{"path": req.Path, "changed": true}}, nil
+		},
 	}, Options{})
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 6)
+	require.Len(t, responses, 7)
 	require.Equal(t, "diagnostics", responses[0]["result"].(map[string]any)["kind"])
 	require.Equal(t, "symbols", responses[1]["result"].(map[string]any)["kind"])
 	require.Equal(t, "references", responses[2]["result"].(map[string]any)["kind"])
 	require.Equal(t, "definition", responses[3]["result"].(map[string]any)["kind"])
 	require.Equal(t, "hover", responses[4]["result"].(map[string]any)["kind"])
 	require.Equal(t, "completion", responses[5]["result"].(map[string]any)["kind"])
+	require.Equal(t, "format", responses[6]["result"].(map[string]any)["kind"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {
