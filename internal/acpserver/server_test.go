@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rememorio/codog/internal/workspaceops"
 	"github.com/stretchr/testify/require"
@@ -137,6 +138,17 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, lspCaps["status"])
 	require.Equal(t, true, lspCaps["stop"])
 	require.Equal(t, true, lspCaps["query"])
+	backgroundCaps := capabilities["background"].(map[string]any)
+	require.Equal(t, true, backgroundCaps["list"])
+	require.Equal(t, true, backgroundCaps["run"])
+	require.Equal(t, true, backgroundCaps["get"])
+	require.Equal(t, true, backgroundCaps["logs"])
+	require.Equal(t, true, backgroundCaps["board"])
+	require.Equal(t, true, backgroundCaps["heartbeat"])
+	require.Equal(t, true, backgroundCaps["stop"])
+	require.Equal(t, true, backgroundCaps["restart"])
+	require.Equal(t, true, backgroundCaps["prune"])
+	require.Equal(t, true, backgroundCaps["supervise"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
@@ -441,6 +453,97 @@ func TestServeHandlesLSPRequests(t *testing.T) {
 	require.Equal(t, "lsp_query", responses[4]["result"].(map[string]any)["kind"])
 	require.Equal(t, "lsp_status", responses[5]["result"].(map[string]any)["kind"])
 	require.Equal(t, "lsp_stop", responses[6]["result"].(map[string]any)["kind"])
+}
+
+func TestServeHandlesBackgroundRequests(t *testing.T) {
+	observedAt := time.Date(2026, 7, 3, 1, 0, 0, 0, time.UTC)
+	keep := 2
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf acp","kind":"terminal","session_id":"session-1","restart_policy":{"enabled":true,"max_attempts":1}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"background/list","params":{"session_id":"session-1","kind":"terminal"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"background/get","params":{"id":"task-1"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"background/logs","params":{"id":"task-1","limit":4096}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"background/board","params":{"stalled_after_ms":500}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"background/heartbeat","params":{"id":"task-1","status":"working","transport_alive":false,"observed_at":"` + observedAt.Format(time.RFC3339) + `"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"background/stop","params":"task-1"}`,
+		`{"jsonrpc":"2.0","id":8,"method":"background/restart","params":{"id":"task-1"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"background/prune","params":{"older_than_seconds":60,"keep":2}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"background/supervise","params":{"now":"` + observedAt.Format(time.RFC3339) + `"}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+
+	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
+		BackgroundRun: func(_ context.Context, req BackgroundRunRequest) (any, error) {
+			require.Equal(t, "printf acp", req.Command)
+			require.Equal(t, "terminal", req.Kind)
+			require.Equal(t, "session-1", req.SessionID)
+			require.NotNil(t, req.RestartPolicy)
+			require.True(t, req.RestartPolicy.Enabled)
+			require.Equal(t, 1, req.RestartPolicy.MaxAttempts)
+			return map[string]any{"kind": "background_run", "id": "task-1"}, nil
+		},
+		BackgroundList: func(_ context.Context, req BackgroundListRequest) (any, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, "terminal", req.Kind)
+			return []map[string]any{{"id": "task-1"}}, nil
+		},
+		BackgroundGet: func(_ context.Context, req BackgroundIDRequest) (any, error) {
+			require.Equal(t, "task-1", req.ID)
+			return map[string]any{"kind": "background_get", "id": req.ID}, nil
+		},
+		BackgroundLogs: func(_ context.Context, req BackgroundLogsRequest) (any, error) {
+			require.Equal(t, "task-1", req.ID)
+			require.EqualValues(t, 4096, req.Limit)
+			return map[string]any{"kind": "background_logs", "id": req.ID, "logs": "acp"}, nil
+		},
+		BackgroundBoard: func(_ context.Context, req BackgroundBoardRequest) (any, error) {
+			require.Equal(t, 500, req.StalledAfterMS)
+			return map[string]any{"kind": "background_board"}, nil
+		},
+		BackgroundHeartbeat: func(_ context.Context, req BackgroundHeartbeatRequest) (any, error) {
+			require.Equal(t, "task-1", req.ID)
+			require.Equal(t, "working", req.Status)
+			require.NotNil(t, req.TransportAlive)
+			require.False(t, *req.TransportAlive)
+			require.NotNil(t, req.ObservedAt)
+			require.Equal(t, observedAt, req.ObservedAt.UTC())
+			return map[string]any{"kind": "background_heartbeat", "id": req.ID}, nil
+		},
+		BackgroundStop: func(_ context.Context, req BackgroundIDRequest) (any, error) {
+			require.Equal(t, "task-1", req.ID)
+			return map[string]any{"kind": "background_stop", "id": req.ID}, nil
+		},
+		BackgroundRestart: func(_ context.Context, req BackgroundIDRequest) (any, error) {
+			require.Equal(t, "task-1", req.ID)
+			return map[string]any{"kind": "background_restart", "id": "task-2"}, nil
+		},
+		BackgroundPrune: func(_ context.Context, req BackgroundPruneRequest) (any, error) {
+			require.Equal(t, 60, req.OlderThanSeconds)
+			require.NotNil(t, req.Keep)
+			require.Equal(t, keep, *req.Keep)
+			return map[string]any{"kind": "background_prune", "removed_count": 1}, nil
+		},
+		BackgroundSupervise: func(_ context.Context, req BackgroundSuperviseRequest) (any, error) {
+			require.NotNil(t, req.Now)
+			require.Equal(t, observedAt, req.Now.UTC())
+			return map[string]any{"kind": "background_supervise"}, nil
+		},
+	}, Options{})
+	require.NoError(t, err)
+
+	responses := decodeACPResponses(t, out.String())
+	require.Len(t, responses, 10)
+	require.Equal(t, "background_run", responses[0]["result"].(map[string]any)["kind"])
+	require.Len(t, responses[1]["result"].([]any), 1)
+	require.Equal(t, "background_get", responses[2]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_logs", responses[3]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_board", responses[4]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_heartbeat", responses[5]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_stop", responses[6]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_restart", responses[7]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_prune", responses[8]["result"].(map[string]any)["kind"])
+	require.Equal(t, "background_supervise", responses[9]["result"].(map[string]any)["kind"])
 }
 
 func TestServeReportsWorkspaceValidationErrors(t *testing.T) {

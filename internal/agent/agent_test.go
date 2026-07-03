@@ -5909,6 +5909,16 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.Contains(t, report.Protocol.Methods, "lsp/status")
 	require.Contains(t, report.Protocol.Methods, "lsp/stop")
 	require.Contains(t, report.Protocol.Methods, "lsp/query")
+	require.Contains(t, report.Protocol.Methods, "background/list")
+	require.Contains(t, report.Protocol.Methods, "background/run")
+	require.Contains(t, report.Protocol.Methods, "background/get")
+	require.Contains(t, report.Protocol.Methods, "background/logs")
+	require.Contains(t, report.Protocol.Methods, "background/board")
+	require.Contains(t, report.Protocol.Methods, "background/heartbeat")
+	require.Contains(t, report.Protocol.Methods, "background/stop")
+	require.Contains(t, report.Protocol.Methods, "background/restart")
+	require.Contains(t, report.Protocol.Methods, "background/prune")
+	require.Contains(t, report.Protocol.Methods, "background/supervise")
 	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
@@ -6486,6 +6496,127 @@ func TestACPServeExposesLSPLifecycleAndQuery(t *testing.T) {
 	require.Equal(t, "ok", stop["status"])
 }
 
+func TestACPServeExposesBackgroundControls(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	now := time.Now().UTC().Truncate(time.Second)
+	oldCompleted := now.Add(-48 * time.Hour)
+	bgDir := filepath.Join(configHome, "background")
+	require.NoError(t, os.MkdirAll(bgDir, 0o755))
+	oldLog := filepath.Join(bgDir, "old.log")
+	failedLog := filepath.Join(bgDir, "failed.log")
+	require.NoError(t, os.WriteFile(oldLog, []byte("old"), 0o644))
+	require.NoError(t, os.WriteFile(failedLog, []byte("failed"), 0o644))
+	for _, task := range []background.Task{
+		{
+			ID:          "old",
+			Command:     "printf old",
+			Status:      "completed",
+			StartedAt:   oldCompleted.Add(-time.Minute),
+			CompletedAt: &oldCompleted,
+			LogPath:     oldLog,
+		},
+		{
+			ID:            "failed",
+			Command:       "printf acp-supervise",
+			Status:        "failed",
+			Workspace:     workspace,
+			StartedAt:     now.Add(-time.Minute),
+			CompletedAt:   &now,
+			LogPath:       failedLog,
+			RestartPolicy: &background.RestartPolicy{Enabled: true, MaxAttempts: 1},
+		},
+	} {
+		data, err := json.MarshalIndent(task, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(bgDir, task.ID+".json"), append(data, '\n'), 0o644))
+	}
+
+	runInput := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/run","params":{"command":"printf acp-bg","kind":"terminal","session_id":"ide-session"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Config:    config.Config{ConfigHome: configHome},
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(runInput),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 2)
+	runTask := responses[0]["result"].(map[string]any)
+	taskID := runTask["id"].(string)
+	require.NotEmpty(t, taskID)
+	require.Equal(t, "terminal", runTask["kind"])
+	require.Equal(t, "ide-session", runTask["session_id"])
+	require.Eventually(t, func() bool {
+		logs, err := background.NewStore(configHome).Logs(taskID, 4096)
+		return err == nil && strings.Contains(logs, "acp-bg")
+	}, 2*time.Second, 50*time.Millisecond)
+
+	observedAt := now.Format(time.RFC3339)
+	out.Reset()
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/list","params":{"session_id":"ide-session","kind":"terminal"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"background/get","params":{"id":"` + taskID + `"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"background/logs","params":{"id":"` + taskID + `","limit":4096}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"background/heartbeat","params":{"id":"` + taskID + `","status":"working","transport_alive":true,"observed_at":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"background/board","params":{"stalled_after_seconds":3600}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"background/restart","params":{"id":"` + taskID + `"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"background/prune","params":{"older_than_days":1,"keep":0}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"background/supervise","params":{"now":"` + observedAt + `"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	app.In = strings.NewReader(input)
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses = decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 9)
+	list := responses[0]["result"].([]any)
+	require.Len(t, list, 1)
+	get := responses[1]["result"].(map[string]any)
+	require.Equal(t, taskID, get["id"])
+	logs := responses[2]["result"].(map[string]any)
+	require.Equal(t, taskID, logs["id"])
+	require.Contains(t, logs["logs"], "acp-bg")
+	heartbeat := responses[3]["result"].(map[string]any)
+	heartbeatPayload := heartbeat["heartbeat"].(map[string]any)
+	require.Equal(t, "working", heartbeatPayload["status"])
+	board := responses[4]["result"].(map[string]any)
+	require.NotNil(t, board["generated_at"])
+	restart := responses[5]["result"].(map[string]any)
+	restartedID := restart["id"].(string)
+	require.NotEmpty(t, restartedID)
+	require.Equal(t, taskID, restart["restarted_from"])
+	prune := responses[6]["result"].(map[string]any)
+	require.EqualValues(t, 1, prune["removed_count"])
+	removed := prune["removed"].([]any)
+	require.Contains(t, removed, "old")
+	require.NoFileExists(t, filepath.Join(bgDir, "old.json"))
+	supervise := responses[7]["result"].(map[string]any)
+	restarted := supervise["restarted"].([]any)
+	require.Len(t, restarted, 1)
+	require.Equal(t, "failed", restarted[0].(map[string]any)["restarted_from"])
+
+	out.Reset()
+	app.In = strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"background/stop","params":{"id":"` + restartedID + `"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n"))
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses = decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 2)
+	stopped := responses[0]["result"].(map[string]any)
+	require.Equal(t, restartedID, stopped["id"])
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6540,6 +6671,17 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, true, lspCaps["status"])
 			require.Equal(t, true, lspCaps["stop"])
 			require.Equal(t, true, lspCaps["query"])
+			backgroundCaps := capabilities["background"].(map[string]any)
+			require.Equal(t, true, backgroundCaps["list"])
+			require.Equal(t, true, backgroundCaps["run"])
+			require.Equal(t, true, backgroundCaps["get"])
+			require.Equal(t, true, backgroundCaps["logs"])
+			require.Equal(t, true, backgroundCaps["board"])
+			require.Equal(t, true, backgroundCaps["heartbeat"])
+			require.Equal(t, true, backgroundCaps["stop"])
+			require.Equal(t, true, backgroundCaps["restart"])
+			require.Equal(t, true, backgroundCaps["prune"])
+			require.Equal(t, true, backgroundCaps["supervise"])
 			sessions := capabilities["sessions"].(map[string]any)
 			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])

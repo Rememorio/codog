@@ -20762,6 +20762,16 @@ var acpJSONRPCMethods = []string{
 	"lsp/status",
 	"lsp/stop",
 	"lsp/query",
+	"background/list",
+	"background/run",
+	"background/get",
+	"background/logs",
+	"background/board",
+	"background/heartbeat",
+	"background/stop",
+	"background/restart",
+	"background/prune",
+	"background/supervise",
 	"session/new",
 	"session/open",
 	"session/list",
@@ -20826,7 +20836,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, workspace/info, workspace/files, workspace/search, file/read, file/write, file/edit, file/diff, diagnostics/go, code/symbols, code/references, code/definition, code/hover, code/completion, code/format, notebook/read, notebook/edit, lsp/actions, lsp/discover, lsp/list, lsp/start, lsp/status, lsp/stop, lsp/query, background/list, background/run, background/get, background/logs, background/board, background/heartbeat, background/stop, background/restart, background/prune, background/supervise, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -20969,6 +20979,12 @@ func (a *App) serveACP(ctx context.Context) error {
 	out := a.Out
 	if out == nil {
 		out = os.Stdout
+	}
+	backgroundStore := func() (background.Store, error) {
+		if strings.TrimSpace(a.Config.ConfigHome) == "" {
+			return background.Store{}, errors.New("config home is required")
+		}
+		return background.NewStore(a.Config.ConfigHome), nil
 	}
 	return acpserver.Serve(ctx, in, out, acpserver.Handlers{
 		NewSession: func(context.Context) (acpserver.SessionInfo, error) {
@@ -21210,6 +21226,155 @@ func (a *App) serveACP(ctx context.Context) error {
 				Line:      req.Line,
 				Character: req.Character,
 			})
+		},
+		BackgroundList: func(_ context.Context, req acpserver.BackgroundListRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			tasks, err := store.List()
+			if err != nil {
+				return nil, err
+			}
+			tasks = background.FilterBySession(tasks, req.SessionID)
+			tasks = background.FilterByKind(tasks, req.Kind)
+			return tasks, nil
+		},
+		BackgroundRun: func(_ context.Context, req acpserver.BackgroundRunRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			task, err := store.RunWithOptions(req.Command, a.Workspace, background.RunOptions{
+				Kind:          req.Kind,
+				SessionID:     req.SessionID,
+				RestartPolicy: req.RestartPolicy,
+			})
+			if err != nil {
+				return nil, err
+			}
+			a.runTaskCreatedHook(context.Background(), task)
+			a.runNotificationHook(context.Background(), "background_task_started", "Background task started", fmt.Sprintf("Background task %s started: %s", task.ID, task.Command))
+			return task, nil
+		},
+		BackgroundGet: func(_ context.Context, req acpserver.BackgroundIDRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			return store.Status(req.ID)
+		},
+		BackgroundLogs: func(_ context.Context, req acpserver.BackgroundLogsRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			limit := req.Limit
+			if limit <= 0 {
+				limit = 64 * 1024
+			}
+			logs, err := store.Logs(req.ID, limit)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"id": req.ID, "logs": logs}, nil
+		},
+		BackgroundBoard: func(_ context.Context, req acpserver.BackgroundBoardRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			stalledAfter := 30 * time.Second
+			switch {
+			case req.StalledAfterMS > 0:
+				stalledAfter = time.Duration(req.StalledAfterMS) * time.Millisecond
+			case req.StalledAfterSeconds > 0:
+				stalledAfter = time.Duration(req.StalledAfterSeconds) * time.Second
+			}
+			return store.LaneBoard(stalledAfter)
+		},
+		BackgroundHeartbeat: func(_ context.Context, req acpserver.BackgroundHeartbeatRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			transportAlive := true
+			if req.TransportAlive != nil {
+				transportAlive = *req.TransportAlive
+			}
+			heartbeat := background.LaneHeartbeat{
+				TransportAlive: transportAlive,
+				Status:         req.Status,
+			}
+			if req.ObservedAt != nil {
+				heartbeat.ObservedAt = *req.ObservedAt
+			}
+			return store.UpdateHeartbeat(req.ID, heartbeat)
+		},
+		BackgroundStop: func(_ context.Context, req acpserver.BackgroundIDRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			task, err := store.Stop(req.ID)
+			if err != nil {
+				return nil, err
+			}
+			a.runTaskCompletedHook(context.Background(), task, "manual")
+			a.runNotificationHook(context.Background(), "background_task_stopped", "Background task stopped", fmt.Sprintf("Background task %s stopped: %s", task.ID, task.Command))
+			if task.Kind == "agent" {
+				a.runSubagentStopHook(context.Background(), task.ID, subagentTypeForTask(task), task.LogPath, lastBackgroundLogLine(store, task), false)
+			}
+			return task, nil
+		},
+		BackgroundRestart: func(_ context.Context, req acpserver.BackgroundIDRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			task, err := store.Restart(req.ID, a.Workspace)
+			if err != nil {
+				return nil, err
+			}
+			a.runTaskCreatedHook(context.Background(), task)
+			a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+			return task, nil
+		},
+		BackgroundPrune: func(_ context.Context, req acpserver.BackgroundPruneRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			options := background.DefaultPruneOptions()
+			switch {
+			case req.OlderThanSeconds > 0:
+				options.OlderThan = time.Duration(req.OlderThanSeconds) * time.Second
+			case req.OlderThanDays > 0:
+				options.OlderThan = time.Duration(req.OlderThanDays) * 24 * time.Hour
+			}
+			if req.Keep != nil {
+				options.Keep = *req.Keep
+			}
+			return store.Prune(options)
+		},
+		BackgroundSupervise: func(_ context.Context, req acpserver.BackgroundSuperviseRequest) (any, error) {
+			store, err := backgroundStore()
+			if err != nil {
+				return nil, err
+			}
+			now := time.Now().UTC()
+			if req.Now != nil {
+				now = req.Now.UTC()
+			}
+			result, err := store.SuperviseOnce(now)
+			if err != nil {
+				return nil, err
+			}
+			for _, task := range result.Restarted {
+				a.runTaskCreatedHook(context.Background(), task)
+				a.runNotificationHook(context.Background(), "background_task_restarted", "Background task restarted", fmt.Sprintf("Background task %s restarted: %s", task.ID, task.Command))
+			}
+			return result, nil
 		},
 		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
 			if a.Sessions == nil {

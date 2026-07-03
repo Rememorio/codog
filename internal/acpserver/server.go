@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/Rememorio/codog/internal/anthropic"
+	"github.com/Rememorio/codog/internal/background"
 	"github.com/Rememorio/codog/internal/workspaceops"
 )
 
@@ -18,43 +20,53 @@ type Options struct {
 }
 
 type Handlers struct {
-	NewSession      func(context.Context) (SessionInfo, error)
-	OpenSession     func(context.Context, SessionOpenRequest) (SessionDetail, error)
-	ListSessions    func(context.Context) (SessionList, error)
-	GetSession      func(context.Context, SessionLookupRequest) (SessionDetail, error)
-	History         func(context.Context, SessionHistoryRequest) (SessionHistory, error)
-	AppendMessage   func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
-	AppendInput     func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
-	RewindSession   func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
-	ForkSession     func(context.Context, SessionForkRequest) (SessionMutationResult, error)
-	RenameSession   func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
-	DeleteSession   func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
-	PruneSessions   func(context.Context, SessionPruneRequest) (any, error)
-	Prompt          func(context.Context, PromptRequest) (PromptResult, error)
-	Status          func(context.Context) (any, error)
-	WorkspaceInfo   func(context.Context) (workspaceops.InfoResult, error)
-	WorkspaceFiles  func(context.Context, workspaceops.FilesOptions) (workspaceops.FilesResult, error)
-	WorkspaceSearch func(context.Context, workspaceops.SearchOptions) (workspaceops.SearchResult, error)
-	FileRead        func(context.Context, workspaceops.ReadOptions) (workspaceops.ReadResult, error)
-	FileWrite       func(context.Context, workspaceops.WriteOptions) (workspaceops.WriteResult, error)
-	FileEdit        func(context.Context, workspaceops.EditOptions) (workspaceops.EditResult, error)
-	FileDiff        func(context.Context, workspaceops.DiffOptions) (workspaceops.DiffResult, error)
-	DiagnosticsGo   func(context.Context, DiagnosticsRequest) (any, error)
-	CodeSymbols     func(context.Context, CodeSymbolsRequest) (any, error)
-	CodeReferences  func(context.Context, CodeReferencesRequest) (any, error)
-	CodeDefinition  func(context.Context, CodeDefinitionRequest) (any, error)
-	CodeHover       func(context.Context, CodeHoverRequest) (any, error)
-	CodeCompletion  func(context.Context, CodeCompletionRequest) (any, error)
-	CodeFormat      func(context.Context, CodeFormatRequest) (any, error)
-	NotebookRead    func(context.Context, NotebookReadRequest) (any, error)
-	NotebookEdit    func(context.Context, NotebookEditRequest) (any, error)
-	LSPActions      func(context.Context) (any, error)
-	LSPDiscover     func(context.Context) (any, error)
-	LSPList         func(context.Context) (any, error)
-	LSPStart        func(context.Context, LSPStartRequest) (any, error)
-	LSPStatus       func(context.Context, LSPStatusRequest) (any, error)
-	LSPStop         func(context.Context, LSPStopRequest) (any, error)
-	LSPQuery        func(context.Context, LSPQueryRequest) (any, error)
+	NewSession          func(context.Context) (SessionInfo, error)
+	OpenSession         func(context.Context, SessionOpenRequest) (SessionDetail, error)
+	ListSessions        func(context.Context) (SessionList, error)
+	GetSession          func(context.Context, SessionLookupRequest) (SessionDetail, error)
+	History             func(context.Context, SessionHistoryRequest) (SessionHistory, error)
+	AppendMessage       func(context.Context, SessionAppendMessageRequest) (SessionMutationResult, error)
+	AppendInput         func(context.Context, SessionAppendInputRequest) (SessionMutationResult, error)
+	RewindSession       func(context.Context, SessionRewindRequest) (SessionRewindResult, error)
+	ForkSession         func(context.Context, SessionForkRequest) (SessionMutationResult, error)
+	RenameSession       func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
+	DeleteSession       func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
+	PruneSessions       func(context.Context, SessionPruneRequest) (any, error)
+	Prompt              func(context.Context, PromptRequest) (PromptResult, error)
+	Status              func(context.Context) (any, error)
+	WorkspaceInfo       func(context.Context) (workspaceops.InfoResult, error)
+	WorkspaceFiles      func(context.Context, workspaceops.FilesOptions) (workspaceops.FilesResult, error)
+	WorkspaceSearch     func(context.Context, workspaceops.SearchOptions) (workspaceops.SearchResult, error)
+	FileRead            func(context.Context, workspaceops.ReadOptions) (workspaceops.ReadResult, error)
+	FileWrite           func(context.Context, workspaceops.WriteOptions) (workspaceops.WriteResult, error)
+	FileEdit            func(context.Context, workspaceops.EditOptions) (workspaceops.EditResult, error)
+	FileDiff            func(context.Context, workspaceops.DiffOptions) (workspaceops.DiffResult, error)
+	DiagnosticsGo       func(context.Context, DiagnosticsRequest) (any, error)
+	CodeSymbols         func(context.Context, CodeSymbolsRequest) (any, error)
+	CodeReferences      func(context.Context, CodeReferencesRequest) (any, error)
+	CodeDefinition      func(context.Context, CodeDefinitionRequest) (any, error)
+	CodeHover           func(context.Context, CodeHoverRequest) (any, error)
+	CodeCompletion      func(context.Context, CodeCompletionRequest) (any, error)
+	CodeFormat          func(context.Context, CodeFormatRequest) (any, error)
+	NotebookRead        func(context.Context, NotebookReadRequest) (any, error)
+	NotebookEdit        func(context.Context, NotebookEditRequest) (any, error)
+	LSPActions          func(context.Context) (any, error)
+	LSPDiscover         func(context.Context) (any, error)
+	LSPList             func(context.Context) (any, error)
+	LSPStart            func(context.Context, LSPStartRequest) (any, error)
+	LSPStatus           func(context.Context, LSPStatusRequest) (any, error)
+	LSPStop             func(context.Context, LSPStopRequest) (any, error)
+	LSPQuery            func(context.Context, LSPQueryRequest) (any, error)
+	BackgroundList      func(context.Context, BackgroundListRequest) (any, error)
+	BackgroundRun       func(context.Context, BackgroundRunRequest) (any, error)
+	BackgroundGet       func(context.Context, BackgroundIDRequest) (any, error)
+	BackgroundLogs      func(context.Context, BackgroundLogsRequest) (any, error)
+	BackgroundBoard     func(context.Context, BackgroundBoardRequest) (any, error)
+	BackgroundHeartbeat func(context.Context, BackgroundHeartbeatRequest) (any, error)
+	BackgroundStop      func(context.Context, BackgroundIDRequest) (any, error)
+	BackgroundRestart   func(context.Context, BackgroundIDRequest) (any, error)
+	BackgroundPrune     func(context.Context, BackgroundPruneRequest) (any, error)
+	BackgroundSupervise func(context.Context, BackgroundSuperviseRequest) (any, error)
 }
 
 type SessionInfo struct {
@@ -267,6 +279,49 @@ type LSPQueryRequest struct {
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
 }
 
+type BackgroundListRequest struct {
+	SessionID string `json:"session_id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+}
+
+type BackgroundRunRequest struct {
+	Command       string                    `json:"command"`
+	Kind          string                    `json:"kind,omitempty"`
+	SessionID     string                    `json:"session_id,omitempty"`
+	RestartPolicy *background.RestartPolicy `json:"restart_policy,omitempty"`
+}
+
+type BackgroundIDRequest struct {
+	ID string `json:"id"`
+}
+
+type BackgroundLogsRequest struct {
+	ID    string `json:"id"`
+	Limit int64  `json:"limit,omitempty"`
+}
+
+type BackgroundBoardRequest struct {
+	StalledAfterSeconds int `json:"stalled_after_seconds,omitempty"`
+	StalledAfterMS      int `json:"stalled_after_ms,omitempty"`
+}
+
+type BackgroundHeartbeatRequest struct {
+	ID             string     `json:"id"`
+	Status         string     `json:"status,omitempty"`
+	TransportAlive *bool      `json:"transport_alive,omitempty"`
+	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+}
+
+type BackgroundPruneRequest struct {
+	OlderThanSeconds int  `json:"older_than_seconds,omitempty"`
+	OlderThanDays    int  `json:"older_than_days,omitempty"`
+	Keep             *int `json:"keep,omitempty"`
+}
+
+type BackgroundSuperviseRequest struct {
+	Now *time.Time `json:"now,omitempty"`
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -374,6 +429,26 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleLSPStop(ctx, out, handlers, req)
 	case "lsp/query", "lsp/request":
 		return false, handleLSPQuery(ctx, out, handlers, req)
+	case "background/list":
+		return false, handleBackgroundList(ctx, out, handlers, req)
+	case "background/run":
+		return false, handleBackgroundRun(ctx, out, handlers, req)
+	case "background/get", "background/status":
+		return false, handleBackgroundGet(ctx, out, handlers, req)
+	case "background/logs":
+		return false, handleBackgroundLogs(ctx, out, handlers, req)
+	case "background/board":
+		return false, handleBackgroundBoard(ctx, out, handlers, req)
+	case "background/heartbeat":
+		return false, handleBackgroundHeartbeat(ctx, out, handlers, req)
+	case "background/stop":
+		return false, handleBackgroundStop(ctx, out, handlers, req)
+	case "background/restart":
+		return false, handleBackgroundRestart(ctx, out, handlers, req)
+	case "background/prune":
+		return false, handleBackgroundPrune(ctx, out, handlers, req)
+	case "background/supervise":
+		return false, handleBackgroundSupervise(ctx, out, handlers, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
 	case "session/open", "sessions/open":
@@ -461,6 +536,18 @@ func initializeResult(opts Options) map[string]any {
 				"status":   true,
 				"stop":     true,
 				"query":    true,
+			},
+			"background": map[string]any{
+				"list":      true,
+				"run":       true,
+				"get":       true,
+				"logs":      true,
+				"board":     true,
+				"heartbeat": true,
+				"stop":      true,
+				"restart":   true,
+				"prune":     true,
+				"supervise": true,
 			},
 			"prompt": true,
 			"status": true,
@@ -819,6 +906,183 @@ func handleLSPQuery(ctx context.Context, out io.Writer, handlers Handlers, req r
 		return writeError(out, req.ID, -32602, "timeout_ms must be non-negative")
 	}
 	result, err := handlers.LSPQuery(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundList(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundList == nil {
+		return writeError(out, req.ID, -32603, "background list handler is not configured")
+	}
+	var request BackgroundListRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.BackgroundList(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundRun(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundRun == nil {
+		return writeError(out, req.ID, -32603, "background run handler is not configured")
+	}
+	var request BackgroundRunRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.Command) == "" {
+		return writeError(out, req.ID, -32602, "command is required")
+	}
+	result, err := handlers.BackgroundRun(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundGet(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundGet == nil {
+		return writeError(out, req.ID, -32603, "background get handler is not configured")
+	}
+	request, err := parseBackgroundIDRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.BackgroundGet(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundLogs(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundLogs == nil {
+		return writeError(out, req.ID, -32603, "background logs handler is not configured")
+	}
+	var request BackgroundLogsRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.ID) == "" {
+		return writeError(out, req.ID, -32602, "id is required")
+	}
+	if request.Limit < 0 {
+		return writeError(out, req.ID, -32602, "limit must be non-negative")
+	}
+	result, err := handlers.BackgroundLogs(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundBoard(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundBoard == nil {
+		return writeError(out, req.ID, -32603, "background board handler is not configured")
+	}
+	var request BackgroundBoardRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if request.StalledAfterMS < 0 {
+		return writeError(out, req.ID, -32602, "stalled_after_ms must be non-negative")
+	}
+	if request.StalledAfterSeconds < 0 {
+		return writeError(out, req.ID, -32602, "stalled_after_seconds must be non-negative")
+	}
+	result, err := handlers.BackgroundBoard(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundHeartbeat(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundHeartbeat == nil {
+		return writeError(out, req.ID, -32603, "background heartbeat handler is not configured")
+	}
+	var request BackgroundHeartbeatRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if strings.TrimSpace(request.ID) == "" {
+		return writeError(out, req.ID, -32602, "id is required")
+	}
+	result, err := handlers.BackgroundHeartbeat(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundStop(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundStop == nil {
+		return writeError(out, req.ID, -32603, "background stop handler is not configured")
+	}
+	request, err := parseBackgroundIDRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.BackgroundStop(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundRestart(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundRestart == nil {
+		return writeError(out, req.ID, -32603, "background restart handler is not configured")
+	}
+	request, err := parseBackgroundIDRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.BackgroundRestart(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundPrune(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundPrune == nil {
+		return writeError(out, req.ID, -32603, "background prune handler is not configured")
+	}
+	var request BackgroundPruneRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	if request.OlderThanSeconds < 0 {
+		return writeError(out, req.ID, -32602, "older_than_seconds must be non-negative")
+	}
+	if request.OlderThanDays < 0 {
+		return writeError(out, req.ID, -32602, "older_than_days must be non-negative")
+	}
+	if request.Keep != nil && *request.Keep < 0 {
+		return writeError(out, req.ID, -32602, "keep must be non-negative")
+	}
+	result, err := handlers.BackgroundPrune(ctx, request)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	return writeResult(out, req.ID, result)
+}
+
+func handleBackgroundSupervise(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.BackgroundSupervise == nil {
+		return writeError(out, req.ID, -32603, "background supervise handler is not configured")
+	}
+	var request BackgroundSuperviseRequest
+	if err := unmarshalParams(req.Params, &request); err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.BackgroundSupervise(ctx, request)
 	if err != nil {
 		return writeError(out, req.ID, -32603, err.Error())
 	}
@@ -1369,6 +1633,26 @@ func parseLSPCommandArgs(command json.RawMessage, commandArgs []string, args []s
 		return nil, nil
 	}
 	return []string{"sh", "-lc", raw}, nil
+}
+
+func parseBackgroundIDRequest(params json.RawMessage) (BackgroundIDRequest, error) {
+	var raw BackgroundIDRequest
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err == nil && strings.TrimSpace(raw.ID) != "" {
+			return raw, nil
+		}
+		var id string
+		if err := json.Unmarshal(params, &id); err == nil && strings.TrimSpace(id) != "" {
+			return BackgroundIDRequest{ID: id}, nil
+		}
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return BackgroundIDRequest{}, err
+		}
+	}
+	if strings.TrimSpace(raw.ID) == "" {
+		return BackgroundIDRequest{}, fmt.Errorf("id is required")
+	}
+	return raw, nil
 }
 
 func firstNonEmpty(values ...string) string {
