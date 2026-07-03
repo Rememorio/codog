@@ -2431,6 +2431,9 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.Equal(t, report.Total, report.Passed)
 	require.GreaterOrEqual(t, report.Total, 12)
 	require.NotEmpty(t, report.Scenarios)
+	require.NotEmpty(t, report.Coverage)
+	require.Equal(t, report.Total, mockParityCoverageTotal(report.Coverage))
+	require.Equal(t, "file-tools", findMockParityScenario(t, report, "read_file_roundtrip").Category)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 
 	var text bytes.Buffer
@@ -2438,15 +2441,17 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 		OK:            true,
 		Passed:        1,
 		Total:         1,
+		Coverage:      []harness.CategoryReport{{Category: "baseline", OK: true, Passed: 1, Total: 1, Scenarios: []string{"streaming_text"}}},
 		ToolCalls:     2,
 		MessageCount:  3,
 		UsageSummary:  usage.Summary{TotalTokens: 42},
 		EstimatedCost: 0.001,
-		Scenarios:     []harness.ScenarioReport{{Name: "streaming_text", OK: true}},
+		Scenarios:     []harness.ScenarioReport{{Name: "streaming_text", Category: "baseline", OK: true}},
 	})
 	require.Contains(t, text.String(), "Mock Parity Harness")
 	require.Contains(t, text.String(), "1/1 passed")
-	require.Contains(t, text.String(), "streaming_text: ok")
+	require.Contains(t, text.String(), "Coverage      1 categories")
+	require.Contains(t, text.String(), "streaming_text [baseline]: ok")
 
 	out, err = captureStdout(t, func() error {
 		return RunCLI(context.Background(), []string{"mock-parity", "--help", "--json"}, config.FlagOverrides{})
@@ -2460,6 +2465,25 @@ func TestMockParityCommandAndHelp(t *testing.T) {
 	require.NotNil(t, help.RequiresProviderRequest)
 	require.False(t, *help.RequiresProviderRequest)
 	require.True(t, commandAcceptsGlobalOutputFormat("mock-parity"))
+}
+
+func mockParityCoverageTotal(coverage []harness.CategoryReport) int {
+	total := 0
+	for _, category := range coverage {
+		total += category.Total
+	}
+	return total
+}
+
+func findMockParityScenario(t *testing.T, report harness.Report, name string) harness.ScenarioReport {
+	t.Helper()
+	for _, scenario := range report.Scenarios {
+		if scenario.Name == name {
+			return scenario
+		}
+	}
+	t.Fatalf("missing mock parity scenario %q in %#v", name, report.Scenarios)
+	return harness.ScenarioReport{}
 }
 
 func TestMockParityErrorsHonorGlobalJSONFormat(t *testing.T) {

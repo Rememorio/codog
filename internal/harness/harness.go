@@ -29,6 +29,7 @@ type Report struct {
 	OK            bool             `json:"ok"`
 	Passed        int              `json:"passed"`
 	Total         int              `json:"total"`
+	Coverage      []CategoryReport `json:"coverage"`
 	Workspace     string           `json:"workspace"`
 	Output        string           `json:"output"`
 	Iterations    int              `json:"iterations"`
@@ -39,9 +40,19 @@ type Report struct {
 	Scenarios     []ScenarioReport `json:"scenarios"`
 }
 
+// CategoryReport summarizes mock parity results for one behavioral category.
+type CategoryReport struct {
+	Category  string   `json:"category"`
+	OK        bool     `json:"ok"`
+	Passed    int      `json:"passed"`
+	Total     int      `json:"total"`
+	Scenarios []string `json:"scenarios"`
+}
+
 // ScenarioReport records the outcome of one mock parity scenario.
 type ScenarioReport struct {
 	Name                 string        `json:"name"`
+	Category             string        `json:"category"`
 	OK                   bool          `json:"ok"`
 	Workspace            string        `json:"workspace"`
 	Output               string        `json:"output,omitempty"`
@@ -635,25 +646,27 @@ func Run(ctx context.Context) (Report, error) {
 		report.EstimatedCost = report.UsageSummary.EstimatedUSD
 	}
 	report.OK = report.Passed == report.Total
+	report.Coverage = categoryCoverage(report.Scenarios)
 	return report, nil
 }
 
 func runScenario(ctx context.Context, item scenario) ScenarioReport {
+	category := scenarioCategory(item.name)
 	workspace, err := os.MkdirTemp("", "codog-harness-*")
 	if err != nil {
-		return ScenarioReport{Name: item.name, Error: err.Error()}
+		return ScenarioReport{Name: item.name, Category: category, Error: err.Error()}
 	}
 	defer os.RemoveAll(workspace)
 	if item.setup != nil {
 		if err := item.setup(workspace); err != nil {
-			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
 		}
 	}
 	previous := item.previous
 	if item.loadPrevious != nil {
 		loaded, err := item.loadPrevious(workspace)
 		if err != nil {
-			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
 		}
 		previous = loaded
 	}
@@ -664,7 +677,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 			defer cleanup()
 		}
 		if err != nil {
-			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
 		}
 		turns = preparedTurns
 	}
@@ -695,12 +708,12 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	if item.configHome {
 		configHome = filepath.Join(workspace, "config-home")
 		if err := os.MkdirAll(configHome, 0o755); err != nil {
-			return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+			return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
 		}
 	}
 	registry, err := registryForScenario(workspace, configHome, item)
 	if err != nil {
-		return ScenarioReport{Name: item.name, Workspace: workspace, Error: err.Error()}
+		return ScenarioReport{Name: item.name, Category: category, Workspace: workspace, Error: err.Error()}
 	}
 	runner := runloop.Runner{
 		Config: config.Config{
@@ -725,6 +738,7 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport := ScenarioReport{
 		Name:                 item.name,
+		Category:             category,
 		Workspace:            workspace,
 		Output:               out.String(),
 		Iterations:           result.Iterations,
@@ -753,6 +767,73 @@ func runScenario(ctx context.Context, item scenario) ScenarioReport {
 	}
 	scenarioReport.OK = true
 	return scenarioReport
+}
+
+func categoryCoverage(scenarios []ScenarioReport) []CategoryReport {
+	byCategory := map[string]*CategoryReport{}
+	for _, scenario := range scenarios {
+		category := strings.TrimSpace(scenario.Category)
+		if category == "" {
+			category = "uncategorized"
+		}
+		report := byCategory[category]
+		if report == nil {
+			report = &CategoryReport{Category: category, OK: true}
+			byCategory[category] = report
+		}
+		report.Total++
+		if scenario.OK {
+			report.Passed++
+		} else {
+			report.OK = false
+		}
+		report.Scenarios = append(report.Scenarios, scenario.Name)
+	}
+	categories := make([]string, 0, len(byCategory))
+	for category := range byCategory {
+		categories = append(categories, category)
+	}
+	slices.Sort(categories)
+	out := make([]CategoryReport, 0, len(categories))
+	for _, category := range categories {
+		report := *byCategory[category]
+		slices.Sort(report.Scenarios)
+		out = append(out, report)
+	}
+	return out
+}
+
+func scenarioCategory(name string) string {
+	switch name {
+	case "streaming_text":
+		return "baseline"
+	case "prompt_attachments_roundtrip":
+		return "attachments"
+	case "read_file_roundtrip", "write_file_allowed", "grep_chunk_assembly":
+		return "file-tools"
+	case "write_file_denied", "bash_permission_prompt_approved", "bash_permission_prompt_denied":
+		return "permissions"
+	case "pre_tool_hook_updates_input", "user_prompt_hook_adds_context", "stop_hook_adds_feedback", "post_tool_hook_blocks_result", "post_tool_hook_adds_feedback", "file_changed_hook_adds_feedback":
+		return "hooks"
+	case "multi_tool_turn_roundtrip":
+		return "multi-tool-turns"
+	case "bash_stdout_roundtrip", "bash_output_truncation_roundtrip":
+		return "bash"
+	case "plugin_tool_roundtrip", "plugin_lifecycle_roundtrip":
+		return "plugin-paths"
+	case "config_precedence_roundtrip":
+		return "config"
+	case "session_resume_jsonl_roundtrip":
+		return "session-resume"
+	case "remote_trigger_roundtrip":
+		return "remote-control"
+	case "auto_compact_triggered":
+		return "session-compaction"
+	case "token_cost_reporting":
+		return "token-usage"
+	default:
+		return "runtime"
+	}
 }
 
 func configPrecedenceScenario() scenario {

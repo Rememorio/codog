@@ -16,14 +16,26 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, "actual", report.UsageSummary.Source)
 	require.Greater(t, report.UsageSummary.TotalTokens, 0)
 	require.Greater(t, report.EstimatedCost, 0.0)
+	require.GreaterOrEqual(t, len(report.Coverage), 8)
+	require.Equal(t, report.Total, categoryCoverageTotal(report.Coverage))
+	fileTools := findCategory(t, report, "file-tools")
+	require.True(t, fileTools.OK)
+	require.Equal(t, 3, fileTools.Total)
+	require.ElementsMatch(t, []string{"grep_chunk_assembly", "read_file_roundtrip", "write_file_allowed"}, fileTools.Scenarios)
+	hooks := findCategory(t, report, "hooks")
+	require.Equal(t, 6, hooks.Total)
+	permissions := findCategory(t, report, "permissions")
+	require.Equal(t, 3, permissions.Total)
 
 	readFile := findScenario(t, report, "read_file_roundtrip")
+	require.Equal(t, "file-tools", readFile.Category)
 	require.Contains(t, readFile.Output, "codog harness ok")
 	require.Equal(t, 2, readFile.Iterations)
 	require.Equal(t, 1, readFile.ToolCalls)
 	require.GreaterOrEqual(t, readFile.MessageCount, 4)
 
 	attachments := findScenario(t, report, "prompt_attachments_roundtrip")
+	require.Equal(t, "attachments", attachments.Category)
 	require.True(t, attachments.OK)
 	require.Equal(t, 0, attachments.ToolCalls)
 	require.Contains(t, attachments.Output, "attachment harness ok")
@@ -109,6 +121,7 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, remoteTrigger.Output, "remote trigger harness ok")
 
 	autoCompact := findScenario(t, report, "auto_compact_triggered")
+	require.Equal(t, "session-compaction", autoCompact.Category)
 	require.True(t, autoCompact.OK)
 	require.Equal(t, 1, autoCompact.Compactions)
 	require.Equal(t, []int{2}, autoCompact.RequestMessageCounts)
@@ -120,6 +133,25 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Greater(t, tokenCost.UsageSummary.TotalTokens, 0)
 	require.Greater(t, tokenCost.EstimatedCost, 0.0)
 	require.Contains(t, tokenCost.Output, "token cost harness ok")
+}
+
+func categoryCoverageTotal(coverage []CategoryReport) int {
+	total := 0
+	for _, category := range coverage {
+		total += category.Total
+	}
+	return total
+}
+
+func findCategory(t *testing.T, report Report, category string) CategoryReport {
+	t.Helper()
+	for _, candidate := range report.Coverage {
+		if candidate.Category == category {
+			return candidate
+		}
+	}
+	t.Fatalf("missing category %q in %#v", category, report.Coverage)
+	return CategoryReport{}
 }
 
 func findScenario(t *testing.T, report Report, name string) ScenarioReport {

@@ -47654,6 +47654,9 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 	fmt.Fprintln(out, "Mock Parity Harness")
 	fmt.Fprintf(out, "  Status        %s\n", status)
 	fmt.Fprintf(out, "  Scenarios     %d/%d passed\n", report.Passed, report.Total)
+	if len(report.Coverage) > 0 {
+		fmt.Fprintf(out, "  Coverage      %d categories\n", len(report.Coverage))
+	}
 	fmt.Fprintf(out, "  Tool calls    %d\n", report.ToolCalls)
 	fmt.Fprintf(out, "  Messages      %d\n", report.MessageCount)
 	fmt.Fprintf(out, "  Tokens        %d\n", report.UsageSummary.TotalTokens)
@@ -47667,10 +47670,14 @@ func renderMockParityText(out io.Writer, report harness.Report) {
 		if !scenario.OK {
 			caseStatus = "error"
 		}
+		label := scenario.Name
+		if strings.TrimSpace(scenario.Category) != "" {
+			label += " [" + scenario.Category + "]"
+		}
 		if scenario.Error != "" {
-			fmt.Fprintf(out, "    - %s: %s (%s)\n", scenario.Name, caseStatus, scenario.Error)
+			fmt.Fprintf(out, "    - %s: %s (%s)\n", label, caseStatus, scenario.Error)
 		} else {
-			fmt.Fprintf(out, "    - %s: %s\n", scenario.Name, caseStatus)
+			fmt.Fprintf(out, "    - %s: %s\n", label, caseStatus)
 		}
 	}
 }
