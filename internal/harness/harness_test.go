@@ -159,6 +159,21 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 1, webAccessCategory.Total)
 	require.ElementsMatch(t, []string{"web_access_roundtrip"}, webAccessCategory.Scenarios)
 
+	gitWorkspace := findScenario(t, report, "git_workspace_roundtrip")
+	require.True(t, gitWorkspace.OK)
+	require.Equal(t, "git-workspace", gitWorkspace.Category)
+	require.Equal(t, 6, gitWorkspace.ToolCalls)
+	require.Equal(t, []string{"git_status", "git_diff", "git_log", "git_show", "git_blame", "branch_freshness"}, gitWorkspace.ToolUses)
+	require.Contains(t, gitWorkspace.Output, "notes.txt")
+	require.Contains(t, gitWorkspace.Output, "+beta")
+	require.Contains(t, gitWorkspace.Output, "initial notes")
+	require.Contains(t, gitWorkspace.Output, `"status": "stale"`)
+	require.Contains(t, gitWorkspace.Output, `"verification_blocked": true`)
+	gitWorkspaceCategory := findCategory(t, report, "git-workspace")
+	require.True(t, gitWorkspaceCategory.OK)
+	require.Equal(t, 1, gitWorkspaceCategory.Total)
+	require.ElementsMatch(t, []string{"git_workspace_roundtrip"}, gitWorkspaceCategory.Scenarios)
+
 	pluginTool := findScenario(t, report, "plugin_tool_roundtrip")
 	require.True(t, pluginTool.OK)
 	require.Equal(t, 1, pluginTool.ToolCalls)
@@ -314,6 +329,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	webAccess := findManifestScenario(t, manifest, "web_access_roundtrip")
 	require.Equal(t, "web-access", webAccess.Category)
 	require.Contains(t, webAccess.ParityRefs, "Web search")
+
+	gitWorkspace := findManifestScenario(t, manifest, "git_workspace_roundtrip")
+	require.Equal(t, "git-workspace", gitWorkspace.Category)
+	require.Contains(t, gitWorkspace.ParityRefs, "Branch freshness")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -160,6 +161,7 @@ var scenarioOrder = []string{
 	"sandbox_bypass_status_roundtrip",
 	"notebook_read_edit_roundtrip",
 	"web_access_roundtrip",
+	"git_workspace_roundtrip",
 	"plugin_tool_roundtrip",
 	"config_precedence_roundtrip",
 	"session_resume_jsonl_roundtrip",
@@ -637,6 +639,7 @@ func Run(ctx context.Context) (Report, error) {
 		sandboxBypassStatusScenario(),
 		notebookReadEditScenario(),
 		webAccessScenario(),
+		gitWorkspaceScenario(),
 		{
 			name:    "plugin_tool_roundtrip",
 			plugins: true,
@@ -1183,6 +1186,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "web-access",
 		Description: "Fetches HTML content and searches a configured endpoint with domain filtering and source result blocks.",
 		ParityRefs:  []string{"Web fetch", "Web search", "Sources block"},
+	},
+	"git_workspace_roundtrip": {
+		Category:    "git-workspace",
+		Description: "Exercises git status, diff, log, show, blame, and stale-branch freshness checks against a local repository.",
+		ParityRefs:  []string{"Git tools", "Branch freshness", "Workspace state"},
 	},
 	"plugin_lifecycle_roundtrip": {
 		Category:    "plugin-paths",
@@ -1775,6 +1783,124 @@ func setenvForScenario(key string, value string) func() {
 		}
 		_ = os.Unsetenv(key)
 	}
+}
+
+func gitWorkspaceScenario() scenario {
+	return scenario{
+		name: "git_workspace_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			if err := runHarnessGit(workspace, "init", "-q", "-b", "main"); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"config", "user.email", "codog@example.test"},
+				{"config", "user.name", "Codog Test"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			notesPath := filepath.Join(workspace, "notes.txt")
+			if err := os.WriteFile(notesPath, []byte("alpha\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"add", "notes.txt"},
+				{"commit", "-q", "-m", "initial notes"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			if err := os.WriteFile(notesPath, []byte("alpha\nbeta\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			statusOut, err := tools.GitStatusTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(statusOut, `"output"`) || !strings.Contains(statusOut, "notes.txt") {
+				return localScenarioResult{}, fmt.Errorf("unexpected git status output: %s", statusOut)
+			}
+			diffOut, err := tools.GitDiffTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"path":"notes.txt"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(diffOut, "+beta") {
+				return localScenarioResult{}, fmt.Errorf("git diff output missing edit: %s", diffOut)
+			}
+			logOut, err := tools.GitLogTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"count":1,"oneline":true}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(logOut, "initial notes") {
+				return localScenarioResult{}, fmt.Errorf("git log output missing commit subject: %s", logOut)
+			}
+			showOut, err := tools.GitShowTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"commit":"HEAD","format":"metadata"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(showOut, "initial notes") {
+				return localScenarioResult{}, fmt.Errorf("git show output missing metadata: %s", showOut)
+			}
+			blameOut, err := tools.GitBlameTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"path":"notes.txt","start_line":1,"end_line":1}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if !strings.Contains(blameOut, "alpha") || !strings.Contains(blameOut, "Codog Test") {
+				return localScenarioResult{}, fmt.Errorf("git blame output missing line attribution: %s", blameOut)
+			}
+
+			for _, args := range [][]string{
+				{"restore", "notes.txt"},
+				{"switch", "-q", "-c", "topic"},
+				{"switch", "-q", "main"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "fix.txt"), []byte("fix\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, args := range [][]string{
+				{"add", "fix.txt"},
+				{"commit", "-q", "-m", "fix: main update"},
+			} {
+				if err := runHarnessGit(workspace, args...); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+			freshnessOut, err := tools.BranchFreshnessTool{Workspace: workspace}.Execute(ctx, json.RawMessage(`{"branch":"topic","base":"main"}`))
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			for _, expected := range []string{`"kind": "branch_freshness"`, `"status": "stale"`, `"verification_blocked": true`, `"lane_event": "branch.stale_against_main"`, `"recovery_scenario": "stale_branch"`} {
+				if !strings.Contains(freshnessOut, expected) {
+					return localScenarioResult{}, fmt.Errorf("branch freshness output missing %s", expected)
+				}
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{statusOut, diffOut, logOut, showOut, blameOut, freshnessOut}, "\n"),
+				FinalMessage: "git workspace harness ok",
+				ToolCalls:    6,
+				ToolUses:     []string{"git_status", "git_diff", "git_log", "git_show", "git_blame", "branch_freshness"},
+				RequestCount: 6,
+			}, nil
+		},
+	}
+}
+
+func runHarnessGit(workspace string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = workspace
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func pluginLifecycleScenario() scenario {
