@@ -4402,6 +4402,16 @@ func risky(value any) {
 	require.Equal(t, "plugin", resumedPlugins.Kind)
 	require.Equal(t, "list", resumedPlugins.Action)
 
+	out, err = runResumedJSON("/plugins", "health")
+	require.NoError(t, err)
+	var resumedPluginHealth pluginHealthReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedPluginHealth))
+	require.Equal(t, "plugin_health", resumedPluginHealth.Kind)
+	require.Equal(t, "health", resumedPluginHealth.Action)
+	require.Equal(t, "healthy", resumedPluginHealth.Status)
+	require.Equal(t, 1, resumedPluginHealth.Total)
+	require.Equal(t, 1, resumedPluginHealth.Healthy)
+
 	out, err = runResumedJSON("/plugins", "install", pluginInstallSource)
 	require.NoError(t, err)
 	var resumedPluginInstall plugins.Manifest
