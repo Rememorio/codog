@@ -4201,6 +4201,40 @@ func risky(value any) {
 		require.Contains(t, resumedDebugBranchFreshness.Output, `"base": "`+currentBranch+`"`)
 	}
 
+	out, err = runResumedJSON("/debug-tool-call", "RecoveryRecipeTool", `{"scenario":"stale_branch"}`)
+	require.NoError(t, err)
+	var resumedDebugRecoveryRecipe debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugRecoveryRecipe))
+	require.Equal(t, "debug_tool_call", resumedDebugRecoveryRecipe.Kind)
+	require.Equal(t, "recovery_recipe", resumedDebugRecoveryRecipe.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugRecoveryRecipe.Permission)
+	require.True(t, resumedDebugRecoveryRecipe.Success)
+	require.Contains(t, resumedDebugRecoveryRecipe.Output, `"kind": "recovery_recipe"`)
+	require.Contains(t, resumedDebugRecoveryRecipe.Output, `"kind": "merge_forward_branch"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "RecoveryStatusTool", `{"scenario":"stale_branch"}`)
+	require.NoError(t, err)
+	var resumedDebugRecoveryStatus debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugRecoveryStatus))
+	require.Equal(t, "debug_tool_call", resumedDebugRecoveryStatus.Kind)
+	require.Equal(t, "recovery_status", resumedDebugRecoveryStatus.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugRecoveryStatus.Permission)
+	require.True(t, resumedDebugRecoveryStatus.Success)
+	require.Contains(t, resumedDebugRecoveryStatus.Output, `"kind": "recovery_status"`)
+	require.Contains(t, resumedDebugRecoveryStatus.Output, `"attempted": false`)
+
+	out, err = runResumedJSON("/debug-tool-call", "RecoveryAttemptTool", `{"scenario":"stale_branch","failure_summary":"resume debug recovery"}`)
+	require.NoError(t, err)
+	var resumedDebugRecoveryAttempt debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugRecoveryAttempt))
+	require.Equal(t, "debug_tool_call", resumedDebugRecoveryAttempt.Kind)
+	require.Equal(t, "recovery_attempt", resumedDebugRecoveryAttempt.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugRecoveryAttempt.Permission)
+	require.True(t, resumedDebugRecoveryAttempt.Success)
+	require.Contains(t, resumedDebugRecoveryAttempt.Output, `"kind": "recovery_attempt"`)
+	require.Contains(t, resumedDebugRecoveryAttempt.Output, `"kind": "recovered"`)
+	require.Contains(t, resumedDebugRecoveryAttempt.Output, `"state": "succeeded"`)
+
 	out, err = runResumedJSON("/debug-tool-call", "RetrieveContextTool", `{"query":" resumed debug routing ","top_k":9}`)
 	require.NoError(t, err)
 	var resumedDebugRetrieveContext debugToolCallReport
@@ -5738,6 +5772,34 @@ func risky(value any) {
 	require.False(t, resumedPlanClear.State.Active)
 	require.NoFileExists(t, planmode.Path(workspace))
 
+	out, err = runResumedJSON("/debug-tool-call", "EnterPlanModeTool", `{"plan":"resume debug tool plan"}`)
+	require.NoError(t, err)
+	var resumedDebugEnterPlan debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugEnterPlan))
+	require.Equal(t, "debug_tool_call", resumedDebugEnterPlan.Kind)
+	require.Equal(t, "enter_plan_mode", resumedDebugEnterPlan.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugEnterPlan.Permission)
+	require.True(t, resumedDebugEnterPlan.Success)
+	require.Contains(t, resumedDebugEnterPlan.Output, `"kind": "plan"`)
+	require.Contains(t, resumedDebugEnterPlan.Output, `"active": true`)
+	require.Contains(t, resumedDebugEnterPlan.Output, "resume debug tool plan")
+
+	out, err = runResumedJSON("/debug-tool-call", "ExitPlanModeTool", `{"plan":"resume debug final plan"}`)
+	require.NoError(t, err)
+	var resumedDebugExitPlan debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugExitPlan))
+	require.Equal(t, "debug_tool_call", resumedDebugExitPlan.Kind)
+	require.Equal(t, "exit_plan_mode", resumedDebugExitPlan.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugExitPlan.Permission)
+	require.True(t, resumedDebugExitPlan.Success)
+	require.Contains(t, resumedDebugExitPlan.Output, `"kind": "plan"`)
+	require.Contains(t, resumedDebugExitPlan.Output, `"active": false`)
+	require.FileExists(t, planmode.Path(workspace))
+	resumedDebugPlanState, err := planmode.Load(workspace)
+	require.NoError(t, err)
+	require.False(t, resumedDebugPlanState.Active)
+	require.Equal(t, "resume debug final plan", resumedDebugPlanState.Plan)
+
 	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "ConfigTool", `{"setting":"model"}`)
 	require.NoError(t, err)
 	var resumedDebugConfig debugToolCallReport
@@ -5749,6 +5811,46 @@ func risky(value any) {
 	require.Contains(t, resumedDebugConfig.Output, `"success": true`)
 	require.Contains(t, resumedDebugConfig.Output, `"operation": "get"`)
 	require.Contains(t, resumedDebugConfig.Output, `"setting": "model"`)
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "CronCreateTool", `{"schedule":"@hourly","prompt":"resume debug cron","description":"debug cron entry"}`)
+	require.NoError(t, err)
+	var resumedDebugCronCreate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugCronCreate))
+	require.Equal(t, "debug_tool_call", resumedDebugCronCreate.Kind)
+	require.Equal(t, "cron_create", resumedDebugCronCreate.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugCronCreate.Permission)
+	require.True(t, resumedDebugCronCreate.Success)
+	require.Contains(t, resumedDebugCronCreate.Output, `"schedule": "@hourly"`)
+	require.Contains(t, resumedDebugCronCreate.Output, `"prompt": "resume debug cron"`)
+	var debugCronEntry struct {
+		CronID string `json:"cron_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resumedDebugCronCreate.Output), &debugCronEntry))
+	require.NotEmpty(t, debugCronEntry.CronID)
+
+	out, err = runResumedJSON("/debug-tool-call", "CronListTool", `{}`)
+	require.NoError(t, err)
+	var resumedDebugCronList debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugCronList))
+	require.Equal(t, "debug_tool_call", resumedDebugCronList.Kind)
+	require.Equal(t, "cron_list", resumedDebugCronList.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugCronList.Permission)
+	require.True(t, resumedDebugCronList.Success)
+	require.Contains(t, resumedDebugCronList.Output, `"prompt": "resume debug cron"`)
+	require.Contains(t, resumedDebugCronList.Output, `"count":`)
+
+	cronDeleteInput, err := json.Marshal(map[string]string{"cron_id": debugCronEntry.CronID})
+	require.NoError(t, err)
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "CronDeleteTool", string(cronDeleteInput))
+	require.NoError(t, err)
+	var resumedDebugCronDelete debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugCronDelete))
+	require.Equal(t, "debug_tool_call", resumedDebugCronDelete.Kind)
+	require.Equal(t, "cron_delete", resumedDebugCronDelete.Tool)
+	require.Equal(t, tools.PermissionDanger, resumedDebugCronDelete.Permission)
+	require.True(t, resumedDebugCronDelete.Success)
+	require.Contains(t, resumedDebugCronDelete.Output, `"cron_id": "`+debugCronEntry.CronID+`"`)
+	require.Contains(t, resumedDebugCronDelete.Output, `"status": "deleted"`)
 
 	out, err = runResumedJSON("/debug-tool-call", "TodoWrite", `{"todos":[{"content":"resume debug todo","activeForm":"tracking resume debug todo","status":"in_progress","priority":"high"}]}`)
 	require.NoError(t, err)
