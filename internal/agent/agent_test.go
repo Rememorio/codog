@@ -2797,6 +2797,20 @@ func TestResumedSlashCLIContracts(t *testing.T) {
 	t.Cleanup(oauthServer.Close)
 	antTraceServer := httptest.NewServer(mockanthropic.Server{Text: "resumed trace ok"}.Handler())
 	t.Cleanup(antTraceServer.Close)
+	webServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<html><head><title>Resume Web</title></head><body><p>resumed web fetch body.</p></body></html>`)
+		case "/search":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<a class="result__a" href="https://example.com/resume">Resume Search</a><div class="result__snippet">A resumed search summary.</div>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(webServer.Close)
+	t.Setenv("CODOG_WEB_SEARCH_BASE_URL", webServer.URL+"/search")
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "default", oauthServer.URL, "client-resume", []string{"profile"})
 	require.NoError(t, err)
 	_, err = oauth.SaveProviderProfile(context.Background(), configHome, "work", oauthServer.URL, "client-work", []string{"profile"})
@@ -4040,6 +4054,28 @@ func risky(value any) {
 	require.Equal(t, tools.PermissionReadOnly, resumedDebugToolCall.Permission)
 	require.True(t, resumedDebugToolCall.Success)
 	require.Contains(t, resumedDebugToolCall.Output, "helper")
+
+	out, err = runResumedJSON("/debug-tool-call", "WebFetch", `{"url":"`+webServer.URL+`/page","prompt":"title"}`)
+	require.NoError(t, err)
+	var resumedDebugWebFetch debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWebFetch))
+	require.Equal(t, "debug_tool_call", resumedDebugWebFetch.Kind)
+	require.Equal(t, "web_fetch", resumedDebugWebFetch.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWebFetch.Permission)
+	require.True(t, resumedDebugWebFetch.Success)
+	require.Contains(t, resumedDebugWebFetch.Output, "Resume Web")
+	require.Contains(t, resumedDebugWebFetch.Output, `"code": 200`)
+
+	out, err = runResumedJSON("/debug-tool-call", "WebSearch", `{"query":"resume search"}`)
+	require.NoError(t, err)
+	var resumedDebugWebSearch debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugWebSearch))
+	require.Equal(t, "debug_tool_call", resumedDebugWebSearch.Kind)
+	require.Equal(t, "web_search", resumedDebugWebSearch.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugWebSearch.Permission)
+	require.True(t, resumedDebugWebSearch.Success)
+	require.Contains(t, resumedDebugWebSearch.Output, "Resume Search")
+	require.Contains(t, resumedDebugWebSearch.Output, "A resumed search summary.")
 
 	out, err = runResumedJSON("/debug-tool-call", "bash", `{"command":"echo resumed-debug-bash"}`)
 	require.NoError(t, err)

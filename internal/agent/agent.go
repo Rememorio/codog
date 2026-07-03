@@ -27265,6 +27265,8 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"kill_bash",
 		"todo_read",
 		"todo_write",
+		"web_fetch",
+		"web_search",
 		"grep",
 		"glob",
 		"ls",
