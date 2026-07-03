@@ -15,19 +15,20 @@ func TestServeHandlesACPRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":2,"method":"session/new","params":{}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"prompt","params":{"session_id":"session-1","prompt":"hello"}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"status","params":{}}`,
-		`{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":6,"method":"session/get","params":{"sessionId":"session-1"}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"session/history","params":{"session_id":"session-1","limit":1}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"session/append_input","params":{"session_id":"session-1","input":"next prompt"}}`,
-		`{"jsonrpc":"2.0","id":9,"method":"session/append_message","params":{"session_id":"session-1","role":"assistant","text":"saved answer"}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"session/rewind","params":{"session_id":"session-1","removeMessages":1}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"session/fork","params":{"session_id":"session-1","branchName":"scratch"}}`,
-		`{"jsonrpc":"2.0","id":12,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":13,"method":"session/delete","params":{"session_id":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":14,"method":"session/prune","params":{"keep":3,"confirm":true,"excludeSessionId":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":15,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/open","params":{"id":"session-opened"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"prompt","params":{"session_id":"session-1","prompt":"hello"}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"status","params":{}}`,
+		`{"jsonrpc":"2.0","id":6,"method":"session/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"session/get","params":{"sessionId":"session-1"}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"session/history","params":{"session_id":"session-1","limit":1}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"session/append_input","params":{"session_id":"session-1","input":"next prompt"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"session/append_message","params":{"session_id":"session-1","role":"assistant","text":"saved answer"}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"session/rewind","params":{"session_id":"session-1","removeMessages":1}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"session/fork","params":{"session_id":"session-1","branchName":"scratch"}}`,
+		`{"jsonrpc":"2.0","id":13,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":14,"method":"session/delete","params":{"session_id":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":15,"method":"session/prune","params":{"keep":3,"confirm":true,"excludeSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":16,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -35,6 +36,10 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	err := Serve(context.Background(), strings.NewReader(input), &out, Handlers{
 		NewSession: func(context.Context) (SessionInfo, error) {
 			return SessionInfo{SessionID: "session-1"}, nil
+		},
+		OpenSession: func(_ context.Context, req SessionOpenRequest) (SessionDetail, error) {
+			require.Equal(t, "session-opened", req.SessionID)
+			return SessionDetail{SessionID: req.SessionID, MessageCount: 0}, nil
 		},
 		Prompt: func(_ context.Context, req PromptRequest) (PromptResult, error) {
 			require.Equal(t, "session-1", req.SessionID)
@@ -97,11 +102,12 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 15)
+	require.Len(t, responses, 16)
 	require.Equal(t, "test", responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)["version"])
 	capabilities := responses[0]["result"].(map[string]any)["capabilities"].(map[string]any)
 	require.Equal(t, true, capabilities["prompt"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
+	require.Equal(t, true, sessionCaps["open"])
 	require.Equal(t, true, sessionCaps["history"])
 	require.Equal(t, true, sessionCaps["append"])
 	require.Equal(t, true, sessionCaps["rewind"])
@@ -110,46 +116,49 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.Equal(t, true, sessionCaps["delete"])
 	require.Equal(t, true, sessionCaps["prune"])
 	require.Equal(t, "session-1", responses[1]["result"].(map[string]any)["session_id"])
-	promptResult := responses[2]["result"].(map[string]any)
+	openResult := responses[2]["result"].(map[string]any)
+	require.Equal(t, "session-opened", openResult["session_id"])
+	require.EqualValues(t, 0, openResult["message_count"])
+	promptResult := responses[3]["result"].(map[string]any)
 	require.Equal(t, "world", promptResult["text"])
-	require.Equal(t, "ok", responses[3]["result"].(map[string]any)["status"])
-	listResult := responses[4]["result"].(map[string]any)
+	require.Equal(t, "ok", responses[4]["result"].(map[string]any)["status"])
+	listResult := responses[5]["result"].(map[string]any)
 	require.Equal(t, "session_list", listResult["kind"])
 	require.EqualValues(t, 1, listResult["count"])
-	getResult := responses[5]["result"].(map[string]any)
+	getResult := responses[6]["result"].(map[string]any)
 	require.Equal(t, "session-1", getResult["session_id"])
 	require.EqualValues(t, 2, getResult["message_count"])
-	historyResult := responses[6]["result"].(map[string]any)
+	historyResult := responses[7]["result"].(map[string]any)
 	require.Equal(t, "session_history", historyResult["kind"])
 	require.Equal(t, "session-1", historyResult["session_id"])
-	appendInputResult := responses[7]["result"].(map[string]any)
+	appendInputResult := responses[8]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", appendInputResult["kind"])
 	require.Equal(t, "append_input", appendInputResult["action"])
 	require.Equal(t, "session-1", appendInputResult["session_id"])
-	appendMessageResult := responses[8]["result"].(map[string]any)
+	appendMessageResult := responses[9]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", appendMessageResult["kind"])
 	require.Equal(t, "append_message", appendMessageResult["action"])
 	require.Equal(t, "session-1", appendMessageResult["session_id"])
-	rewindResult := responses[9]["result"].(map[string]any)
+	rewindResult := responses[10]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", rewindResult["kind"])
 	require.Equal(t, "rewind", rewindResult["action"])
 	require.EqualValues(t, 1, rewindResult["removed_messages"])
-	forkResult := responses[10]["result"].(map[string]any)
+	forkResult := responses[11]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", forkResult["kind"])
 	require.Equal(t, "fork", forkResult["action"])
 	require.Equal(t, "session-fork", forkResult["session_id"])
-	renameResult := responses[11]["result"].(map[string]any)
+	renameResult := responses[12]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", renameResult["kind"])
 	require.Equal(t, "rename", renameResult["action"])
 	require.Equal(t, "session-2", renameResult["new_session_id"])
-	deleteResult := responses[12]["result"].(map[string]any)
+	deleteResult := responses[13]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", deleteResult["kind"])
 	require.Equal(t, "delete", deleteResult["action"])
 	require.Equal(t, "session-2", deleteResult["session_id"])
-	pruneResult := responses[13]["result"].(map[string]any)
+	pruneResult := responses[14]["result"].(map[string]any)
 	require.Equal(t, "session_prune", pruneResult["kind"])
 	require.EqualValues(t, 1, pruneResult["deleted_count"])
-	require.NotNil(t, responses[14]["result"])
+	require.NotNil(t, responses[15]["result"])
 }
 
 func TestServeReportsPromptValidationErrors(t *testing.T) {

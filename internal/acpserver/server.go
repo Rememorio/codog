@@ -18,6 +18,7 @@ type Options struct {
 
 type Handlers struct {
 	NewSession    func(context.Context) (SessionInfo, error)
+	OpenSession   func(context.Context, SessionOpenRequest) (SessionDetail, error)
 	ListSessions  func(context.Context) (SessionList, error)
 	GetSession    func(context.Context, SessionLookupRequest) (SessionDetail, error)
 	History       func(context.Context, SessionHistoryRequest) (SessionHistory, error)
@@ -65,6 +66,10 @@ type SessionList struct {
 }
 
 type SessionLookupRequest struct {
+	SessionID string `json:"session_id,omitempty"`
+}
+
+type SessionOpenRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
@@ -222,6 +227,8 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleStatus(ctx, out, handlers, opts, req)
 	case "session/new", "session/create", "sessions/new":
 		return false, handleNewSession(ctx, out, handlers, opts, req)
+	case "session/open", "sessions/open":
+		return false, handleOpenSession(ctx, out, handlers, opts, req)
 	case "session/list", "sessions/list":
 		return false, handleListSessions(ctx, out, handlers, opts, req)
 	case "session/get", "sessions/get", "session/read":
@@ -260,6 +267,7 @@ func initializeResult(opts Options) map[string]any {
 		"capabilities": map[string]any{
 			"sessions": map[string]any{
 				"new":     true,
+				"open":    true,
 				"list":    true,
 				"get":     true,
 				"history": true,
@@ -303,6 +311,24 @@ func handleNewSession(ctx context.Context, out io.Writer, handlers Handlers, opt
 		info.Workspace = opts.Workspace
 	}
 	return writeResult(out, req.ID, info)
+}
+
+func handleOpenSession(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
+	if handlers.OpenSession == nil {
+		return writeError(out, req.ID, -32603, "session open handler is not configured")
+	}
+	openReq, err := parseSessionOpenRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	detail, err := handlers.OpenSession(ctx, openReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(detail.Workspace) == "" {
+		detail.Workspace = opts.Workspace
+	}
+	return writeResult(out, req.ID, detail)
 }
 
 func handleListSessions(ctx context.Context, out io.Writer, handlers Handlers, opts Options, req request) error {
@@ -357,6 +383,20 @@ func handleHistory(ctx context.Context, out io.Writer, handlers Handlers, req re
 		history.Kind = "session_history"
 	}
 	return writeResult(out, req.ID, history)
+}
+
+func parseSessionOpenRequest(params json.RawMessage) (SessionOpenRequest, error) {
+	var raw struct {
+		SessionID      string `json:"session_id"`
+		SessionIDCamel string `json:"sessionId"`
+		ID             string `json:"id"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionOpenRequest{}, err
+		}
+	}
+	return SessionOpenRequest{SessionID: firstNonEmpty(raw.SessionID, raw.SessionIDCamel, raw.ID)}, nil
 }
 
 func handleAppendMessage(ctx context.Context, out io.Writer, handlers Handlers, req request) error {

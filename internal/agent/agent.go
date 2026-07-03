@@ -20740,6 +20740,7 @@ var acpJSONRPCMethods = []string{
 	"initialize",
 	"status",
 	"session/new",
+	"session/open",
 	"session/list",
 	"session/get",
 	"session/history",
@@ -20802,7 +20803,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/open, session/list, session/get, session/history, session/append_message, session/append_input, session/rewind, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -20957,6 +20958,16 @@ func (a *App) serveACP(ctx context.Context) error {
 			}
 			return acpserver.SessionInfo{SessionID: sess.ID, Workspace: a.Workspace}, nil
 		},
+		OpenSession: func(_ context.Context, req acpserver.SessionOpenRequest) (acpserver.SessionDetail, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionDetail{}, errors.New("session store is unavailable")
+			}
+			sess, err := a.Sessions.Open(req.SessionID)
+			if err != nil {
+				return acpserver.SessionDetail{}, err
+			}
+			return acpSessionDetail(a.Workspace, sess), nil
+		},
 		ListSessions: func(context.Context) (acpserver.SessionList, error) {
 			if a.Sessions == nil {
 				return acpserver.SessionList{}, errors.New("session store is unavailable")
@@ -20980,7 +20991,7 @@ func (a *App) serveACP(ctx context.Context) error {
 			if a.Sessions == nil {
 				return acpserver.SessionDetail{}, errors.New("session store is unavailable")
 			}
-			sess, err := a.Sessions.Open(req.SessionID)
+			sess, err := a.Sessions.OpenExisting(req.SessionID)
 			if err != nil {
 				return acpserver.SessionDetail{}, err
 			}

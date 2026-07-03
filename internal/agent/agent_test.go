@@ -5885,6 +5885,7 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.NotNil(t, report.Protocol.Endpoint)
 	require.True(t, report.Protocol.ServeStartsDaemon)
 	require.Contains(t, report.Protocol.Methods, "initialize")
+	require.Contains(t, report.Protocol.Methods, "session/open")
 	require.Contains(t, report.Protocol.Methods, "session/list")
 	require.Contains(t, report.Protocol.Methods, "session/append_message")
 	require.Contains(t, report.Protocol.Methods, "session/append_input")
@@ -6073,6 +6074,42 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.True(t, forkedExists)
 }
 
+func TestACPServeOpenCreatesAndGetRequiresExisting(t *testing.T) {
+	workspace := t.TempDir()
+	store := session.NewWorkspaceStore(t.TempDir(), workspace)
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"session/open","params":{"sessionId":"opened-from-acp"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/get","params":{"session_id":"opened-from-acp"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"session/get","params":{"session_id":"missing-from-acp"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}}`,
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	app := &App{
+		Workspace: workspace,
+		Sessions:  store,
+		In:        strings.NewReader(input),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.ACP(context.Background(), []string{"serve"}))
+	responses := decodeJSONRPCResponses(t, out.String())
+	require.Len(t, responses, 4)
+	openResult := responses[0]["result"].(map[string]any)
+	require.Equal(t, "opened-from-acp", openResult["session_id"])
+	require.EqualValues(t, 0, openResult["message_count"])
+	getResult := responses[1]["result"].(map[string]any)
+	require.Equal(t, "opened-from-acp", getResult["session_id"])
+	require.EqualValues(t, 0, getResult["message_count"])
+	errPayload := responses[2]["error"].(map[string]any)
+	require.EqualValues(t, -32603, errPayload["code"])
+	require.Contains(t, errPayload["message"], "missing-from-acp")
+	exists, err := store.Exists("missing-from-acp")
+	require.NoError(t, err)
+	require.False(t, exists)
+}
+
 func TestACPServeAliasesStartAndStdio(t *testing.T) {
 	for _, alias := range []string{"start", "stdio"} {
 		t.Run(alias, func(t *testing.T) {
@@ -6099,6 +6136,7 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, "codog-acp-0.1", result["protocolVersion"])
 			capabilities := result["capabilities"].(map[string]any)
 			sessions := capabilities["sessions"].(map[string]any)
+			require.Equal(t, true, sessions["open"])
 			require.Equal(t, true, sessions["append"])
 			require.Equal(t, true, sessions["rewind"])
 			require.Equal(t, true, sessions["fork"])
