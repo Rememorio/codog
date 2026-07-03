@@ -363,10 +363,17 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, mcpLifecycle.Output, `"kind":"mcp_show"`)
 	require.Contains(t, mcpLifecycle.Output, `"phase":"ready"`)
 	require.Contains(t, mcpLifecycle.Output, "mcp lifecycle harness ok")
+
+	mcpToolHook := findScenario(t, report, "mcp_tool_hook_roundtrip")
+	require.True(t, mcpToolHook.OK)
+	require.Equal(t, "mcp-lifecycle", mcpToolHook.Category)
+	require.Equal(t, 1, mcpToolHook.ToolCalls)
+	require.Equal(t, []string{"mcp__workflow__echo"}, mcpToolHook.ToolUses)
+	require.Contains(t, mcpToolHook.Output, "mcp tool hook harness ok")
 	mcpCategory := findCategory(t, report, "mcp-lifecycle")
 	require.True(t, mcpCategory.OK)
-	require.Equal(t, 1, mcpCategory.Total)
-	require.ElementsMatch(t, []string{"mcp_lifecycle_roundtrip"}, mcpCategory.Scenarios)
+	require.Equal(t, 2, mcpCategory.Total)
+	require.ElementsMatch(t, []string{"mcp_lifecycle_roundtrip", "mcp_tool_hook_roundtrip"}, mcpCategory.Scenarios)
 
 	mcpAuth := findScenario(t, report, "mcp_auth_oauth_refresh_roundtrip")
 	require.True(t, mcpAuth.OK)
@@ -472,6 +479,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	mcpLifecycle := findManifestScenario(t, manifest, "mcp_lifecycle_roundtrip")
 	require.Equal(t, "mcp-lifecycle", mcpLifecycle.Category)
 	require.Contains(t, mcpLifecycle.ParityRefs, "MCP lifecycle")
+
+	mcpToolHook := findManifestScenario(t, manifest, "mcp_tool_hook_roundtrip")
+	require.Equal(t, "mcp-lifecycle", mcpToolHook.Category)
+	require.Contains(t, mcpToolHook.ParityRefs, "MCP tool calls")
 
 	mcpAuth := findManifestScenario(t, manifest, "mcp_auth_oauth_refresh_roundtrip")
 	require.Equal(t, "mcp-auth", mcpAuth.Category)

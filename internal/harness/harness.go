@@ -142,6 +142,7 @@ type scenario struct {
 	prepare             func(string) ([]mockanthropic.Turn, func(), error)
 	verify              func(string, runloop.TurnResult, string) error
 	verifyRequests      func([]anthropic.Request) error
+	configureRegistry   func(*tools.Registry) error
 	runLocal            func(context.Context, string) (localScenarioResult, error)
 }
 
@@ -196,6 +197,7 @@ var scenarioOrder = []string{
 	"remote_api_listener_roundtrip",
 	"remote_bridge_workspace_roundtrip",
 	"mcp_lifecycle_roundtrip",
+	"mcp_tool_hook_roundtrip",
 	"mcp_auth_oauth_refresh_roundtrip",
 	"mcp_auth_recovery_roundtrip",
 	"acp_stdio_roundtrip",
@@ -719,6 +721,7 @@ func Run(ctx context.Context) (Report, error) {
 		remoteAPIListenerScenario(),
 		remoteBridgeWorkspaceScenario(),
 		mcpLifecycleScenario(),
+		mcpToolHookScenario(),
 		mcpAuthOAuthRefreshScenario(),
 		mcpAuthRecoveryScenario(),
 		acpStdioScenario(),
@@ -1312,6 +1315,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "mcp-lifecycle",
 		Description: "Exercises HTTP MCP initialize, initialized notification, tool discovery, and tool invocation through the control API.",
 		ParityRefs:  []string{"MCP client", "MCP lifecycle", "Control API MCP bridge"},
+	},
+	"mcp_tool_hook_roundtrip": {
+		Category:    "mcp-lifecycle",
+		Description: "Executes an MCP tool through the model loop with PreToolUse input updates and PostToolUse feedback.",
+		ParityRefs:  []string{"MCP tool calls", "PreToolUse hooks", "PostToolUse hooks"},
 	},
 	"mcp_auth_oauth_refresh_roundtrip": {
 		Category:    "mcp-auth",
@@ -3826,6 +3834,130 @@ func mcpLifecycleScenario() scenario {
 	}
 }
 
+func mcpToolHookScenario() scenario {
+	toolName := tools.NewMCPToolName("workflow", "echo")
+	var serverURL string
+	seenMethods := []string{}
+	seenHookedArgument := false
+	return scenario{
+		name:       "mcp_tool_hook_roundtrip",
+		permission: tools.PermissionWorkspace,
+		hooks: config.HookConfig{
+			PreToolUseCommands: []config.HookCommand{{
+				Matcher: toolName,
+				Command: `printf '%s' '{"systemMessage":"mcp pre hook","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"mcp hook ok","updatedInput":{"text":"hooked mcp input"}}}'`,
+			}},
+			PostToolUseCommands: []config.HookCommand{{
+				Matcher: toolName,
+				Command: `printf '%s' '{"systemMessage":"mcp post hook"}'`,
+			}},
+		},
+		prepare: func(_ string) ([]mockanthropic.Turn, func(), error) {
+			mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				var req map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				method, _ := req["method"].(string)
+				seenMethods = append(seenMethods, method)
+				id := req["id"]
+				switch method {
+				case "initialize":
+					w.Header().Set("Mcp-Session-Id", "mcp-tool-hook-session")
+					writeMCPHarnessResponse(w, id, map[string]any{
+						"protocolVersion": "2024-11-05",
+						"capabilities": map[string]any{
+							"tools": map[string]any{},
+						},
+						"serverInfo": map[string]any{"name": "mcp-tool-hook", "version": "1.0.0"},
+					})
+				case "notifications/initialized":
+					w.WriteHeader(http.StatusAccepted)
+				case "tools/call":
+					params, _ := req["params"].(map[string]any)
+					if params["name"] != "echo" {
+						writeMCPHarnessError(w, id, fmt.Sprintf("unexpected tool name %v", params["name"]))
+						return
+					}
+					args, _ := params["arguments"].(map[string]any)
+					text, _ := args["text"].(string)
+					if text != "hooked mcp input" {
+						writeMCPHarnessError(w, id, "pre hook did not update MCP input")
+						return
+					}
+					seenHookedArgument = true
+					writeMCPHarnessResponse(w, id, map[string]any{"content": []map[string]any{{
+						"type": "text",
+						"text": "mcp tool hook saw hooked mcp input",
+					}}})
+				default:
+					writeMCPHarnessError(w, id, "unsupported method: "+method)
+				}
+			}))
+			serverURL = mcpServer.URL + "/mcp"
+			turns := []mockanthropic.Turn{
+				{ToolUses: []mockanthropic.ToolUse{{
+					ID:    "tool-1",
+					Name:  toolName,
+					Input: json.RawMessage(`{"text":"original mcp input"}`),
+				}}},
+				{Text: "mcp tool hook harness ok"},
+			}
+			return turns, mcpServer.Close, nil
+		},
+		configureRegistry: func(registry *tools.Registry) error {
+			if strings.TrimSpace(serverURL) == "" {
+				return errors.New("MCP server URL was not prepared")
+			}
+			registry.Register(tools.MCPTool{
+				Name:        toolName,
+				ServerName:  "workflow",
+				RemoteName:  "echo",
+				Description: "Echo text through the MCP hook harness.",
+				Schema: map[string]any{
+					"type":                 "object",
+					"additionalProperties": true,
+				},
+				Server: config.MCPServerConfig{URL: serverURL},
+			})
+			return nil
+		},
+		prompt: "call hooked MCP tool",
+		verify: func(_ string, result runloop.TurnResult, output string) error {
+			if !strings.Contains(output, "mcp tool hook harness ok") {
+				return fmt.Errorf("missing MCP tool hook final response")
+			}
+			if err := expectToolCalls(result, 1, false); err != nil {
+				return err
+			}
+			if result.ToolCalls[0].Name != toolName {
+				return fmt.Errorf("unexpected MCP tool name %q", result.ToolCalls[0].Name)
+			}
+			if result.ToolCalls[0].Input != `{"text":"hooked mcp input"}` {
+				return fmt.Errorf("MCP tool input was not updated by hook: %s", result.ToolCalls[0].Input)
+			}
+			if !strings.Contains(result.ToolCalls[0].Output, "mcp tool hook saw hooked mcp input") ||
+				!strings.Contains(result.ToolCalls[0].Output, "Hook feedback:\nmcp post hook") {
+				return fmt.Errorf("MCP tool output missing result or post-hook feedback: %s", result.ToolCalls[0].Output)
+			}
+			for _, expectedMethod := range []string{"initialize", "notifications/initialized", "tools/call"} {
+				if !slices.Contains(seenMethods, expectedMethod) {
+					return fmt.Errorf("MCP hook server did not receive %s; methods=%v", expectedMethod, seenMethods)
+				}
+			}
+			if !seenHookedArgument {
+				return fmt.Errorf("MCP hook server did not receive the updated argument")
+			}
+			return nil
+		},
+	}
+}
+
 func mcpAuthOAuthRefreshScenario() scenario {
 	return scenario{
 		name: "mcp_auth_oauth_refresh_roundtrip",
@@ -4240,6 +4372,11 @@ func compactRequestCount(requests []anthropic.Request) int {
 
 func registryForScenario(workspace string, configHome string, item scenario) (*tools.Registry, error) {
 	registry := tools.NewRegistryWithOptions(workspace, tools.RegistryOptions{ConfigHome: configHome})
+	if item.configureRegistry != nil {
+		if err := item.configureRegistry(registry); err != nil {
+			return nil, err
+		}
+	}
 	if !item.plugins {
 		return registry, nil
 	}

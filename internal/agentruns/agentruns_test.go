@@ -62,8 +62,11 @@ func TestStatusForTaskReportsHealth(t *testing.T) {
 	workspace := t.TempDir()
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
 
-	task, err := taskStore.RunWithOptions("printf ok", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer"})
+	task, err := taskStore.RunWithOptions("sleep 60", workspace, background.RunOptions{Kind: "agent", AgentType: "reviewer"})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = taskStore.Stop(task.ID)
+	})
 	_, err = taskStore.UpdateHeartbeat(task.ID, background.LaneHeartbeat{
 		ObservedAt:     now.Add(-5 * time.Second),
 		TransportAlive: true,
