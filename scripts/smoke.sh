@@ -116,6 +116,25 @@ grep -q '"schema_version": "codog.mock_parity_manifest.v1"' "${artifact_dir}/cap
 grep -q '"id": "mock_parity_report"' "${artifact_dir}/report-schema-registry.json" || die "report schema registry does not catalog mock parity reports"
 grep -q '"id": "mock_parity_manifest"' "${artifact_dir}/report-schema-registry.json" || die "report schema registry does not catalog mock parity manifests"
 
+cat >"${artifact_dir}/artifact-index.json" <<'JSON'
+{
+  "schema_version": "codog.smoke_artifacts.v1",
+  "kind": "smoke_artifacts",
+  "producer": "scripts/smoke.sh",
+  "artifacts": [
+    {"path": "version.json", "kind": "version", "producer": "codog --version --json"},
+    {"path": "mock-parity-report.json", "kind": "mock_parity_report", "schema_version": "codog.mock_parity.v1", "producer": "codog mock-parity --output-format json"},
+    {"path": "mock-parity-stdout.json", "kind": "mock_parity_report", "schema_version": "codog.mock_parity.v1", "producer": "codog mock-parity --output-format json"},
+    {"path": "mock-parity-manifest.json", "kind": "mock_parity_manifest", "schema_version": "codog.mock_parity_manifest.v1", "producer": "codog mock-parity manifest --output-format json"},
+    {"path": "capabilities.json", "kind": "capabilities", "producer": "codog capabilities --output-format json"},
+    {"path": "report-schema-registry.json", "kind": "report_schema_registry", "schema_version": "claw.report.v1", "producer": "codog report-schema registry --output-format json"}
+  ]
+}
+JSON
+test -s "${artifact_dir}/artifact-index.json" || die "artifact index was not written"
+grep -q '"schema_version": "codog.smoke_artifacts.v1"' "${artifact_dir}/artifact-index.json" || die "artifact index schema version is missing"
+grep -q '"path": "mock-parity-manifest.json"' "${artifact_dir}/artifact-index.json" || die "artifact index does not list mock parity manifest"
+
 if [ "${keep_artifacts}" = "1" ] || [ "${artifact_dir_is_temp}" != "1" ]; then
   printf '\nArtifacts written to %s\n' "${artifact_dir}"
 fi
