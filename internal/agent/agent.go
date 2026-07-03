@@ -49246,6 +49246,7 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	outputFormat := ""
 	allowedTools := stringListFlag(base.AllowedTools)
 	disallowedTools := stringListFlag(base.DisallowedTools)
+	promptAttachments := stringListFlag{}
 	flags.StringVar(&base.ConfigPath, "config", base.ConfigPath, "config path")
 	flags.StringVar(&base.CWD, "cwd", base.CWD, "run as if Codog was started in this directory")
 	flags.StringVar(&base.CWD, "C", base.CWD, "alias for --cwd")
@@ -49270,6 +49271,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 	flags.Var(&allowedTools, "allowedTools", "allow a tool or tool rule; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowed-tools", "deny a tool; repeat or comma-separate")
 	flags.Var(&disallowedTools, "disallowedTools", "deny a tool; repeat or comma-separate")
+	flags.Var(&promptAttachments, "attach", "attach a local text, image, or PDF file to a prompt; repeat or comma-separate")
+	flags.Var(&promptAttachments, "attachment", "alias for --attach")
+	flags.Var(&promptAttachments, "file", "alias for --attach")
 	flags.IntVar(&base.MaxTurns, "max-turns", base.MaxTurns, "max model/tool loop iterations")
 	flags.IntVar(&base.MaxTokens, "max-tokens", base.MaxTokens, "maximum output tokens")
 	flags.Var(optionalFloatFlag{value: &base.Temperature}, "temperature", "sampling temperature from 0 to 1")
@@ -49299,6 +49303,9 @@ func parseFlags(args []string, base config.FlagOverrides) (config.FlagOverrides,
 		}
 		outputFormat = normalized
 		rest = injectGlobalOutputFormat("prompt", rest, outputFormat)
+		for _, attachment := range promptAttachments {
+			rest = append(rest, "--attach", attachment)
+		}
 		if compactPromptMode {
 			rest = append(rest, "--compact")
 		}
@@ -49429,7 +49436,8 @@ func globalFlagConsumesNext(arg string) bool {
 		"--append-system-prompt", "-append-system-prompt", "--session", "-session",
 		"--resume", "-resume", "--output-format", "-output-format", "-o", "--o",
 		"--permission-mode", "-permission-mode", "--max-turns", "-max-turns",
-		"--max-tokens", "-max-tokens", "--temperature", "-temperature":
+		"--max-tokens", "-max-tokens", "--temperature", "-temperature",
+		"--attach", "-attach", "--attachment", "-attachment", "--file", "-file":
 		return true
 	default:
 		return false

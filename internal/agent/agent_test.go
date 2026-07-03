@@ -8704,6 +8704,11 @@ func TestParseFlagsSupportsPrintAliases(t *testing.T) {
 	require.Equal(t, "prompt", command)
 	require.Equal(t, []string{"hello"}, rest)
 	require.False(t, overrides.SkipPermissions)
+
+	_, command, rest, err = parseFlags([]string{"-p", "--attach", "notes.txt", "--file=image.png", "describe"}, config.FlagOverrides{})
+	require.NoError(t, err)
+	require.Equal(t, "prompt", command)
+	require.Equal(t, []string{"describe", "--attach", "notes.txt", "--attach", "image.png"}, rest)
 }
 
 func TestParseFlagsSupportsCompactPromptMode(t *testing.T) {
@@ -9894,6 +9899,58 @@ func TestPromptWithAttachmentsBuildsStructuredUserContent(t *testing.T) {
 	require.Equal(t, "base64", body.Messages[0].Content[2].Source.Type)
 	require.Equal(t, "image/png", body.Messages[0].Content[2].Source.MediaType)
 	require.NotEmpty(t, body.Messages[0].Content[2].Source.Data)
+}
+
+func TestPrintPromptAcceptsGlobalAttachments(t *testing.T) {
+	captured := make(chan json.RawMessage, 1)
+	server := httptest.NewServer(mockanthropic.Server{
+		Text: "print attachment done",
+		OnRequest: func(raw json.RawMessage) {
+			select {
+			case captured <- append(json.RawMessage(nil), raw...):
+			default:
+			}
+		},
+	}.Handler())
+	defer server.Close()
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]any{
+		"config_home":     configHome,
+		"base_url":        server.URL,
+		"api_key":         "test-key",
+		"model":           "mock",
+		"max_turns":       1,
+		"permission_mode": "read-only",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "notes.txt"), []byte("print attachment notes\n"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{
+			"--config", configPath,
+			"--cwd", workspace,
+			"-p",
+			"--attach", "notes.txt",
+			"--output-format", "json",
+			"Describe print attachment",
+		}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report promptReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "print attachment done", report.Response)
+
+	var raw json.RawMessage
+	select {
+	case raw = <-captured:
+	default:
+		require.FailNow(t, "expected provider request to be captured")
+	}
+	require.Contains(t, string(raw), "Describe print attachment")
+	require.Contains(t, string(raw), "print attachment notes")
 }
 
 func TestAttachSlashSendsStructuredUserContent(t *testing.T) {
