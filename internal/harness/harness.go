@@ -185,6 +185,7 @@ var scenarioOrder = []string{
 	"config_precedence_roundtrip",
 	"provider_routing_roundtrip",
 	"session_resume_jsonl_roundtrip",
+	"resume_slash_command_roundtrip",
 	"plugin_lifecycle_roundtrip",
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
@@ -703,6 +704,7 @@ func Run(ctx context.Context) (Report, error) {
 		configPrecedenceScenario(),
 		providerRoutingScenario(),
 		sessionResumeJSONLRoundtripScenario(),
+		resumeSlashCommandScenario(),
 		pluginLifecycleScenario(),
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
@@ -1207,6 +1209,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "session-resume",
 		Description: "Loads previous JSONL session messages and sends them with the resumed prompt.",
 		ParityRefs:  []string{"Session JSONL", "Resume"},
+	},
+	"resume_slash_command_roundtrip": {
+		Category:    "session-resume",
+		Description: "Runs direct and resumed /resume slash commands through the real CLI dispatcher.",
+		ParityRefs:  []string{"Session JSONL", "Slash commands", "Resume"},
 	},
 	"bash_output_truncation_roundtrip": {
 		Category:    "bash",
@@ -1955,6 +1962,118 @@ func sessionResumeJSONLRoundtripScenario() scenario {
 			}
 			return nil
 		},
+	}
+}
+
+func resumeSlashCommandScenario() scenario {
+	return scenario{
+		name: "resume_slash_command_roundtrip",
+		runLocal: func(ctx context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			configPath := filepath.Join(workspace, "config.json")
+			if err := os.MkdirAll(configHome, 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			configData, err := json.Marshal(map[string]string{"config_home": configHome})
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			store := session.NewWorkspaceStore(configHome, workspace)
+			for id, text := range map[string]string{
+				"active": "active session prompt",
+				"other":  "other session prompt",
+			} {
+				if err := store.Append(id, anthropic.TextMessage("user", text)); err != nil {
+					return localScenarioResult{}, err
+				}
+			}
+
+			directOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--output-format", "json", "/resume", "other")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := requireResumeSlashCLIReport(directOut, "other"); err != nil {
+				return localScenarioResult{}, fmt.Errorf("direct /resume: %w", err)
+			}
+
+			resumedOut, err := runHarnessCodog(ctx, workspace, "--config", configPath, "--resume", "active", "--output-format", "json", "/resume", "other")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := requireResumeSlashCLIReport(resumedOut, "other"); err != nil {
+				return localScenarioResult{}, fmt.Errorf("resumed /resume: %w", err)
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join([]string{directOut, resumedOut}, "\n"),
+				FinalMessage: "resume slash command harness ok",
+				RequestCount: 2,
+				MessageCount: 2,
+			}, nil
+		},
+	}
+}
+
+func requireResumeSlashCLIReport(output string, wantSessionID string) error {
+	var report struct {
+		Kind             string   `json:"kind"`
+		ErrorKind        string   `json:"error_kind"`
+		Status           string   `json:"status"`
+		SessionID        string   `json:"session_id"`
+		RequestedSession string   `json:"requested_session"`
+		ContinueCommands []string `json:"continue_commands"`
+	}
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return err
+	}
+	if report.ErrorKind != "" {
+		return fmt.Errorf("unexpected error_kind %q in %s", report.ErrorKind, output)
+	}
+	if report.Kind != "resume" || report.Status != "ok" {
+		return fmt.Errorf("unexpected resume report: %s", output)
+	}
+	if report.SessionID != wantSessionID || report.RequestedSession != wantSessionID {
+		return fmt.Errorf("unexpected session id/requested session: %#v", report)
+	}
+	if len(report.ContinueCommands) == 0 {
+		return fmt.Errorf("missing continue commands in %s", output)
+	}
+	return nil
+}
+
+func runHarnessCodog(ctx context.Context, workspace string, args ...string) (string, error) {
+	root, err := findRepoRoot()
+	if err != nil {
+		return "", err
+	}
+	commandArgs := append([]string{"run", "./cmd/codog", "--cwd", workspace}, args...)
+	cmd := exec.CommandContext(ctx, "go", commandArgs...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("go %s failed: %w: %s", strings.Join(commandArgs, " "), err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func findRepoRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found from %s", dir)
+		}
+		dir = parent
 	}
 }
 
