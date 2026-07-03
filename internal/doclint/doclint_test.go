@@ -34,6 +34,16 @@ func TestCommandsHaveCommandDocs(t *testing.T) {
 	}
 }
 
+func TestInternalPackagesHaveTests(t *testing.T) {
+	root := repoRoot(t)
+	for _, pkg := range listInternalPackages(t, root) {
+		t.Run(pkg, func(t *testing.T) {
+			dir := filepath.Join(root, filepath.FromSlash(pkg))
+			requirePackageTests(t, pkg, dir)
+		})
+	}
+}
+
 func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	root := repoRoot(t)
 	packages := []string{
@@ -231,6 +241,18 @@ func requireCommandDoc(t *testing.T, pkg string, files []*ast.File) {
 		}
 	}
 	t.Fatalf("%s is missing a command doc comment", pkg)
+}
+
+func requirePackageTests(t *testing.T, pkg string, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), "_test.go") {
+			return
+		}
+	}
+	t.Fatalf("%s is missing a Go test file", pkg)
 }
 
 func requireExportedDocComments(t *testing.T, pkg string, files []*ast.File) {
