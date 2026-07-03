@@ -4103,6 +4103,30 @@ func risky(value any) {
 	require.True(t, resumedDebugSleep.Success)
 	require.Contains(t, resumedDebugSleep.Output, "Slept for 1ms")
 
+	out, err = runResumedJSON("/debug-tool-call", "PolicyEvaluateTool", `{"lane_id":"resume-lane","green_level":3,"green_contract_satisfied":true,"review_status":"approved","diff_scope":"scoped","branch_status":"stale","branch_behind":2,"verification_blocked":true,"completed":true}`)
+	require.NoError(t, err)
+	var resumedDebugPolicyEvaluate debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugPolicyEvaluate))
+	require.Equal(t, "debug_tool_call", resumedDebugPolicyEvaluate.Kind)
+	require.Equal(t, "policy_evaluate", resumedDebugPolicyEvaluate.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugPolicyEvaluate.Permission)
+	require.True(t, resumedDebugPolicyEvaluate.Success)
+	require.Contains(t, resumedDebugPolicyEvaluate.Output, `"kind": "policy_evaluation"`)
+	require.Contains(t, resumedDebugPolicyEvaluate.Output, `"kind": "merge_forward"`)
+	require.Contains(t, resumedDebugPolicyEvaluate.Output, `"kind": "closeout_lane"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "TestingPermission", `{"target_tool":"Bash","input":{"command":"pwd"}}`)
+	require.NoError(t, err)
+	var resumedDebugTestingPermission debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugTestingPermission))
+	require.Equal(t, "debug_tool_call", resumedDebugTestingPermission.Kind)
+	require.Equal(t, "testing_permission", resumedDebugTestingPermission.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugTestingPermission.Permission)
+	require.True(t, resumedDebugTestingPermission.Success)
+	require.Contains(t, resumedDebugTestingPermission.Output, `"kind": "permission_check"`)
+	require.Contains(t, resumedDebugTestingPermission.Output, `"canonical_tool": "bash"`)
+	require.Contains(t, resumedDebugTestingPermission.Output, `"allowed": true`)
+
 	out, err = runResumedJSON("/debug-tool-call", "RetrieveContextTool", `{"query":" resumed debug routing ","top_k":9}`)
 	require.NoError(t, err)
 	var resumedDebugRetrieveContext debugToolCallReport

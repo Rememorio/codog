@@ -27272,6 +27272,8 @@ func resumedDebugToolCallAllowed(name string) bool {
 		"sleep",
 		"repl",
 		"retrieve_context",
+		"policy_evaluate",
+		"testing_permission",
 		"grep",
 		"glob",
 		"ls",
