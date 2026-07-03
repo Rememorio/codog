@@ -1513,6 +1513,21 @@ func TestDeferredInitCommandReportsTrustGatedStartup(t *testing.T) {
 	require.Equal(t, 1, deferredInitTaskByName(t, report, "mcp_prefetch").Configured)
 	require.Equal(t, "enabled", deferredInitTaskByName(t, report, "session_hooks").Status)
 	require.Equal(t, "enabled", deferredInitTaskByName(t, report, "notification_hooks").Status)
+	out.Reset()
+
+	require.NoError(t, app.DeferredInit("deferred-init", []string{"run", "--json"}))
+	var runReport deferredInitReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runReport))
+	require.Equal(t, "deferred_init", runReport.Kind)
+	require.Equal(t, "run", runReport.Action)
+	require.Equal(t, "ready", runReport.Status)
+	require.True(t, runReport.Executed)
+	require.NotNil(t, runReport.Prefetch)
+	require.Equal(t, "prefetch", runReport.Prefetch.Kind)
+	require.Equal(t, "deferred-init", runReport.Prefetch.Action)
+	require.Equal(t, runReport.Prefetch.TaskCount, len(runReport.Prefetch.Tasks))
+	require.Equal(t, "ok", prefetchTaskByName(t, *runReport.Prefetch, "project_scan").Status)
+	require.Equal(t, "deferred init executed", runReport.Message)
 }
 
 func TestDeferredInitSkipsUntrustedWorkspace(t *testing.T) {
@@ -1544,6 +1559,16 @@ func TestDeferredInitSkipsUntrustedWorkspace(t *testing.T) {
 	require.False(t, report.MCPPrefetch)
 	require.False(t, report.SessionHooks)
 	require.Equal(t, "skipped", deferredInitTaskByName(t, report, "mcp_prefetch").Status)
+	out.Reset()
+
+	require.NoError(t, app.DeferredInit("deferred-init", []string{"run", "--json"}))
+	var runReport deferredInitReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &runReport))
+	require.Equal(t, "run", runReport.Action)
+	require.False(t, runReport.Executed)
+	require.Nil(t, runReport.Prefetch)
+	require.Equal(t, "skipped", runReport.Status)
+	require.Contains(t, runReport.Message, "not trusted")
 }
 
 func TestDeferredInitDegradesOnMalformedConfigFile(t *testing.T) {
@@ -1563,6 +1588,17 @@ func TestDeferredInitDegradesOnMalformedConfigFile(t *testing.T) {
 	require.Equal(t, "config_load_failed", report.ConfigLoadErrorKind)
 	require.Contains(t, report.ConfigLoadError, "broken.json")
 	require.False(t, report.PluginInit)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "deferred-init", "run", "--json"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "run", report.Action)
+	require.False(t, report.Executed)
+	require.Nil(t, report.Prefetch)
+	require.Equal(t, "warn", report.Status)
+	require.Contains(t, report.Message, "config did not load cleanly")
 }
 
 func TestPrefetchCommandReportsLocalStartupReadiness(t *testing.T) {

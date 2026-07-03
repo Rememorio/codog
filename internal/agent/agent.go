@@ -23283,6 +23283,8 @@ type deferredInitReport struct {
 	SessionHooks        bool               `json:"session_hooks"`
 	TaskCount           int                `json:"task_count"`
 	Tasks               []deferredInitTask `json:"tasks"`
+	Executed            bool               `json:"executed"`
+	Prefetch            *prefetchReport    `json:"prefetch,omitempty"`
 	ConfigLoadError     string             `json:"config_load_error,omitempty"`
 	ConfigLoadErrorKind string             `json:"config_load_error_kind,omitempty"`
 	Message             string             `json:"message,omitempty"`
@@ -23299,18 +23301,90 @@ type deferredInitTask struct {
 }
 
 func (a *App) DeferredInit(command string, args []string) error {
-	format, err := parseSimpleOutputFormat(command, args)
+	req, err := parseDeferredInitArgs(command, args)
 	if err != nil {
 		return err
 	}
-	report := a.buildDeferredInitReport(command)
-	if format == "json" {
+	report := a.buildDeferredInitReport(req.Action)
+	if req.Run {
+		a.executeDeferredInit(&report)
+	}
+	if req.Format == "json" {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(a.Out, string(data))
 		return nil
 	}
 	renderDeferredInitText(a.Out, report)
 	return nil
+}
+
+type deferredInitRequest struct {
+	Action string
+	Format string
+	Run    bool
+}
+
+func parseDeferredInitArgs(command string, args []string) (deferredInitRequest, error) {
+	req := deferredInitRequest{Action: strings.TrimSpace(command), Format: "text"}
+	usage := "codog " + command + " [status|run] [--json|--output-format text|json]"
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+			continue
+		case strings.EqualFold(arg, "status") || strings.EqualFold(arg, "check"):
+			req.Action = strings.TrimSpace(command)
+		case strings.EqualFold(arg, "run"):
+			req.Action = "run"
+			req.Run = true
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, missingFlagValueError{Command: command, Flag: arg, Usage: usage}
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		default:
+			return req, unexpectedExtraArgsError{Command: command, Args: []string{arg}, Usage: usage}
+		}
+	}
+	normalized, err := normalizeOutputFormat(command, req.Format, []string{"text", "json"})
+	if err != nil {
+		return req, err
+	}
+	req.Format = normalized
+	return req, nil
+}
+
+func (a *App) executeDeferredInit(report *deferredInitReport) {
+	if report == nil {
+		return
+	}
+	if strings.TrimSpace(report.ConfigLoadError) != "" {
+		report.Status = "warn"
+		report.Message = "deferred init run skipped because config did not load cleanly"
+		return
+	}
+	if !report.Trusted {
+		report.Status = "skipped"
+		report.Message = "deferred init run skipped because the workspace is not trusted"
+		return
+	}
+	prefetch := a.buildPrefetchReport("deferred-init")
+	report.Executed = true
+	report.Prefetch = &prefetch
+	if prefetch.Status == "warn" {
+		report.Status = "warn"
+		report.Message = "deferred init executed with warnings"
+		return
+	}
+	report.Status = "ready"
+	report.Message = "deferred init executed"
 }
 
 func (a *App) buildDeferredInitReport(action string) deferredInitReport {
@@ -23523,10 +23597,14 @@ func renderDeferredInitText(out io.Writer, report deferredInitReport) {
 	fmt.Fprintln(out, "Deferred Init")
 	fmt.Fprintf(out, "  Status           %s\n", report.Status)
 	fmt.Fprintf(out, "  Trusted          %t (%s)\n", report.Trusted, report.TrustReason)
+	fmt.Fprintf(out, "  Executed         %t\n", report.Executed)
 	fmt.Fprintf(out, "  Plugin init      %t\n", report.PluginInit)
 	fmt.Fprintf(out, "  Skill init       %t\n", report.SkillInit)
 	fmt.Fprintf(out, "  MCP prefetch     %t\n", report.MCPPrefetch)
 	fmt.Fprintf(out, "  Session hooks    %t\n", report.SessionHooks)
+	if report.Prefetch != nil {
+		fmt.Fprintf(out, "  Prefetch         %s (%d tasks)\n", report.Prefetch.Status, report.Prefetch.TaskCount)
+	}
 	if report.ConfigLoadError != "" {
 		fmt.Fprintf(out, "  Config load      degraded: %s\n", report.ConfigLoadError)
 	}
@@ -50962,9 +51040,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		spec := localCommandHelpSpec(
 			"deferred-init",
 			"deferred-init",
-			"codog deferred-init [--output-format text|json]",
-			"Deferred Init\n\nUsage:\n  codog deferred-init [--output-format text|json]\n  codog startup-report [same flags]\n\nReports the trust-gated deferred startup decisions Codog would apply after local preflight. The report mirrors claw-code's plugin_init, skill_init, mcp_prefetch, and session_hooks booleans, then adds task-level evidence for plugins, skills, MCP, hooks, notifications, and background startup without executing those side effects.\n",
-			[]string{"kind", "status", "trusted", "plugin_init", "skill_init", "mcp_prefetch", "session_hooks", "tasks", "config_load_error"},
+			"codog deferred-init [status|run] [--output-format text|json]",
+			"Deferred Init\n\nUsage:\n  codog deferred-init [status|run] [--output-format text|json]\n  codog startup-report [same flags]\n\nReports the trust-gated deferred startup decisions Codog would apply after local preflight. The report mirrors claw-code's plugin_init, skill_init, mcp_prefetch, and session_hooks booleans, then adds task-level evidence for plugins, skills, MCP, hooks, notifications, and background startup. `run` executes the trust-gated local prefetch and embeds its report when the workspace is trusted and config loaded cleanly.\n",
+			[]string{"kind", "status", "trusted", "plugin_init", "skill_init", "mcp_prefetch", "session_hooks", "executed", "prefetch", "tasks", "config_load_error"},
 			[]string{"ready", "skipped", "warn"},
 			false,
 		)
@@ -50972,7 +51050,7 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		if topic == "startup-report" {
 			spec.Topic = "startup-report"
 			spec.Command = "startup-report"
-			spec.Usage = "codog startup-report [--output-format text|json]"
+			spec.Usage = "codog startup-report [status|run] [--output-format text|json]"
 		}
 		return spec, true
 	case "status":
@@ -51995,7 +52073,7 @@ Usage:
   %s [flags] capabilities [show|list|resolve NAME] [--json|--output-format text|json]
   %s [flags] bootstrap-plan [--json|--output-format text|json]
   %s [flags] prefetch [run|status] [--json|--output-format text|json]
-  %s [flags] deferred-init|startup-report [--json|--output-format text|json]
+  %s [flags] deferred-init|startup-report [status|run] [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
   %s [flags] statusline [--json|--output-format text|json]
