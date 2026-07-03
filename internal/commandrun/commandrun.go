@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Options configures a workspace command run.
 type Options struct {
 	Workspace string
 	Command   []string
@@ -18,6 +19,7 @@ type Options struct {
 	Kind      string
 }
 
+// Result captures the outcome of a workspace command run.
 type Result struct {
 	Kind           string   `json:"kind"`
 	Workspace      string   `json:"workspace"`
@@ -29,6 +31,7 @@ type Result struct {
 	DurationMillis int64    `json:"duration_millis"`
 }
 
+// Run executes opts.Command in opts.Workspace and captures stdout, stderr, and exit status.
 func Run(ctx context.Context, opts Options) (Result, error) {
 	if len(opts.Command) == 0 || strings.TrimSpace(opts.Command[0]) == "" {
 		return Result{}, errors.New("command is required")
@@ -75,6 +78,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	return result, nil
 }
 
+// RenderText writes a human-readable command result.
 func RenderText(out io.Writer, result Result) {
 	fmt.Fprintln(out, "Command")
 	fmt.Fprintf(out, "  Kind             %s\n", result.Kind)

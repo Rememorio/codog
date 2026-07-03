@@ -1,2 +1,2 @@
-// Package commandrun stores command execution history and summaries.
+// Package commandrun executes workspace commands and renders their results.
 package commandrun

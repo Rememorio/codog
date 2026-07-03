@@ -49,6 +49,7 @@ func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 	packages := []string{
 		"internal/autofixpr",
 		"internal/codeintel",
+		"internal/commandrun",
 		"internal/control",
 		"internal/frontmatter",
 		"internal/githubcomments",
