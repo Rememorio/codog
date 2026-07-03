@@ -189,6 +189,7 @@ var scenarioOrder = []string{
 	"background_agent_run_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
+	"remote_bridge_workspace_roundtrip",
 	"mcp_lifecycle_roundtrip",
 	"mcp_auth_oauth_refresh_roundtrip",
 	"acp_stdio_roundtrip",
@@ -705,6 +706,7 @@ func Run(ctx context.Context) (Report, error) {
 		backgroundAgentRunScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
+		remoteBridgeWorkspaceScenario(),
 		mcpLifecycleScenario(),
 		mcpAuthOAuthRefreshScenario(),
 		acpStdioScenario(),
@@ -1263,6 +1265,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "remote-control",
 		Description: "Starts the local control API handler and verifies public health plus authenticated session routes.",
 		ParityRefs:  []string{"Remote sessions", "IDE bridge", "Control API listener"},
+	},
+	"remote_bridge_workspace_roundtrip": {
+		Category:    "editor-bridge",
+		Description: "Exercises authenticated remote workspace, file, session, and editor bridge operations through the control API.",
+		ParityRefs:  []string{"IDE bridge", "Remote sessions", "Workspace file operations", "Editor selection"},
 	},
 	"mcp_lifecycle_roundtrip": {
 		Category:    "mcp-lifecycle",
@@ -3097,6 +3104,157 @@ func remoteAPIListenerScenario() scenario {
 				Output:       fmt.Sprintf("%s %s", message, server.URL),
 				FinalMessage: message,
 				RequestCount: 3,
+			}, nil
+		},
+	}
+}
+
+func remoteBridgeWorkspaceScenario() scenario {
+	return scenario{
+		name: "remote_bridge_workspace_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			configHome := filepath.Join(workspace, "config-home")
+			if err := os.MkdirAll(filepath.Join(workspace, "internal"), 0o755); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("# Codog\n\nhello remote bridge\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "internal", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+				return localScenarioResult{}, err
+			}
+			store := session.NewWorkspaceStore(configHome, workspace)
+			server := httptest.NewServer(control.Server{
+				Sessions:    store,
+				ConfigHome:  configHome,
+				Workspace:   workspace,
+				AuthToken:   "secret-token",
+				EditorToken: "editor-token",
+			}.Handler())
+			defer server.Close()
+
+			authRequest := func(method, path, payload string) (int, string, error) {
+				var body io.Reader
+				if payload != "" {
+					body = strings.NewReader(payload)
+				}
+				req, err := http.NewRequest(method, server.URL+path, body)
+				if err != nil {
+					return 0, "", err
+				}
+				req.Header.Set("authorization", "Bearer secret-token")
+				if payload != "" {
+					req.Header.Set("content-type", "application/json")
+				}
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return 0, "", err
+				}
+				defer resp.Body.Close()
+				data, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return resp.StatusCode, "", err
+				}
+				return resp.StatusCode, string(data), nil
+			}
+			requireStatusContains := func(method, path, payload string, status int, contains ...string) (string, error) {
+				gotStatus, body, err := authRequest(method, path, payload)
+				if err != nil {
+					return "", err
+				}
+				if gotStatus != status {
+					return "", fmt.Errorf("%s %s returned %d: %s", method, path, gotStatus, body)
+				}
+				for _, expected := range contains {
+					if !strings.Contains(body, expected) {
+						return "", fmt.Errorf("%s %s response missing %s: %s", method, path, expected, body)
+					}
+				}
+				return body, nil
+			}
+
+			if _, err := requireStatusContains(http.MethodGet, "/workspace/info", "", http.StatusOK, `"name":"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodGet, "/workspace/files?pattern=*.md", "", http.StatusOK, `"path":"README.md"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodGet, "/workspace/search?query=remote&glob=*.md", "", http.StatusOK, `"text":"hello remote bridge"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/file/write", `{"path":"notes.txt","content":"hello world"}`, http.StatusOK, `"bytes":11`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/file/edit", `{"path":"notes.txt","old_string":"world","new_string":"codog"}`, http.StatusOK, `"replacements":1`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodGet, "/file/read?path=notes.txt", "", http.StatusOK, `"content":"hello codog"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/file/diff", `{"path":"README.md","old_string":"hello remote bridge","new_string":"hello codog bridge"}`, http.StatusOK, `-hello remote bridge`, `+hello codog bridge`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodGet, "/file/read?path=../secret.txt", "", http.StatusBadRequest, `"error"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/sessions/session-bridge/messages", `{"role":"user","text":"hello remote session"}`, http.StatusOK, `"role":"user"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodGet, "/sessions/session-bridge/history?limit=1", "", http.StatusOK, `"text":"hello remote session"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			editorWorkspace := filepath.ToSlash(workspace)
+			if _, err := requireStatusContains(http.MethodPost, "/editor/identify", `{"editor":"VS Code","workspace":"`+editorWorkspace+`","token":"wrong"}`, http.StatusBadRequest, "token is invalid"); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/editor/identify", `{"editor":"VS Code","version":"1.0","workspace":"`+editorWorkspace+`","token":"editor-token"}`, http.StatusOK, `"editor":"VS Code"`, `"trusted":true`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/editor/open", `{"path":"internal/main.go"}`, http.StatusOK, `"path":"internal/main.go"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodPost, "/editor/selection", `{"start_line":1,"start_column":1,"end_line":1,"end_column":8}`, http.StatusOK, `"text":"package"`); err != nil {
+				return localScenarioResult{}, err
+			}
+			if _, err := requireStatusContains(http.MethodGet, "/editor/state", "", http.StatusOK, `"open_file":{"path":"internal/main.go"`, `"selection":{"path":"internal/main.go"`); err != nil {
+				return localScenarioResult{}, err
+			}
+
+			report := map[string]any{
+				"kind": "remote_bridge_workspace",
+				"workspace": map[string]any{
+					"info":   true,
+					"files":  true,
+					"search": true,
+				},
+				"file": map[string]any{
+					"write":         true,
+					"edit":          true,
+					"read":          true,
+					"diff":          true,
+					"path_rejected": true,
+				},
+				"session": map[string]any{
+					"message_appended": true,
+					"history_read":     true,
+				},
+				"editor": map[string]any{
+					"token_rejected": true,
+					"identified":     true,
+					"opened":         true,
+					"selection":      true,
+					"state":          true,
+				},
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			return localScenarioResult{
+				Output:       string(data),
+				FinalMessage: "remote bridge workspace harness ok",
+				RequestCount: 16,
+				MessageCount: 1,
 			}, nil
 		},
 	}

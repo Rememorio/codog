@@ -309,6 +309,18 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 2, remoteControl.Total)
 	require.ElementsMatch(t, []string{"remote_api_listener_roundtrip", "remote_trigger_roundtrip"}, remoteControl.Scenarios)
 
+	remoteBridge := findScenario(t, report, "remote_bridge_workspace_roundtrip")
+	require.True(t, remoteBridge.OK)
+	require.Equal(t, "editor-bridge", remoteBridge.Category)
+	require.Equal(t, 0, remoteBridge.ToolCalls)
+	require.Equal(t, 16, remoteBridge.RequestCount)
+	require.Equal(t, "remote bridge workspace harness ok", remoteBridge.FinalMessage)
+	require.Contains(t, remoteBridge.Output, `"kind":"remote_bridge_workspace"`)
+	require.Contains(t, remoteBridge.Output, `"path_rejected":true`)
+	require.Contains(t, remoteBridge.Output, `"message_appended":true`)
+	require.Contains(t, remoteBridge.Output, `"token_rejected":true`)
+	require.Contains(t, remoteBridge.Output, `"selection":true`)
+
 	mcpLifecycle := findScenario(t, report, "mcp_lifecycle_roundtrip")
 	require.True(t, mcpLifecycle.OK)
 	require.Equal(t, "mcp-lifecycle", mcpLifecycle.Category)
@@ -346,8 +358,8 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Contains(t, acp.Output, `"acp-harness-session"`)
 	editorBridge := findCategory(t, report, "editor-bridge")
 	require.True(t, editorBridge.OK)
-	require.Equal(t, 1, editorBridge.Total)
-	require.ElementsMatch(t, []string{"acp_stdio_roundtrip"}, editorBridge.Scenarios)
+	require.Equal(t, 2, editorBridge.Total)
+	require.ElementsMatch(t, []string{"acp_stdio_roundtrip", "remote_bridge_workspace_roundtrip"}, editorBridge.Scenarios)
 
 	autoCompact := findScenario(t, report, "auto_compact_triggered")
 	require.Equal(t, "session-compaction", autoCompact.Category)
@@ -401,6 +413,11 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	remoteAPI := findManifestScenario(t, manifest, "remote_api_listener_roundtrip")
 	require.Equal(t, "remote-control", remoteAPI.Category)
 	require.Contains(t, remoteAPI.ParityRefs, "Control API listener")
+
+	remoteBridge := findManifestScenario(t, manifest, "remote_bridge_workspace_roundtrip")
+	require.Equal(t, "editor-bridge", remoteBridge.Category)
+	require.Contains(t, remoteBridge.ParityRefs, "Workspace file operations")
+	require.Contains(t, remoteBridge.ParityRefs, "Editor selection")
 
 	acp := findManifestScenario(t, manifest, "acp_stdio_roundtrip")
 	require.Equal(t, "editor-bridge", acp.Category)
