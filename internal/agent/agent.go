@@ -27441,6 +27441,16 @@ func (a *App) runResumedCodeIntelSlash(ctx context.Context, args []string, forma
 		return a.Symbols(resumeSlashArgs("symbols", rest, format))
 	case "diagnostics":
 		return a.Diagnostics(ctx, resumeSlashArgs("diagnostics", rest, format))
+	case "map":
+		return a.Map(resumeSlashArgs("map", rest, format))
+	case "references":
+		return a.References(resumeSlashArgs("references", rest, format))
+	case "definition":
+		return a.Definition(resumeSlashArgs("definition", rest, format))
+	case "hover":
+		return a.Hover(resumeSlashArgs("hover", rest, format))
+	case "teleport":
+		return a.Teleport(resumeSlashArgs("teleport", rest, format))
 	case "completion", "completions":
 		return a.Completion(resumeSlashArgs("completion", rest, format))
 	case "format", "formatting":
@@ -29829,6 +29839,16 @@ func (a *App) CodeIntel(args []string) error {
 		return a.Symbols(rest)
 	case "diagnostics":
 		return a.Diagnostics(context.Background(), rest)
+	case "map":
+		return a.Map(rest)
+	case "references":
+		return a.References(rest)
+	case "definition":
+		return a.Definition(rest)
+	case "hover":
+		return a.Hover(rest)
+	case "teleport":
+		return a.Teleport(rest)
 	case "completion", "completions":
 		return a.Completion(rest)
 	case "format", "formatting":
@@ -49809,9 +49829,9 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return localCommandHelpSpec(
 			"code-intel",
 			"code-intel",
-			"codog code-intel [symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp] [ARGS...] [--output-format text|json]",
-			"Code Intel\n\nUsage:\n  codog code-intel symbols [--output-format text|json]\n  codog code-intel diagnostics [patterns...] [--output-format text|json]\n  codog code-intel completion PREFIX [--output-format text|json]\n  codog code-intel format PATH [--write] [--output-format text|json]\n  codog code-intel notebook-read NOTEBOOK [--cell-index N] [--include-outputs] [--output-format text|json]\n  codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]\n  codog code-intel lsp [actions|discover|list|status|query|start|stop]\n\nRuns local code intelligence helpers, notebook inspection/editing, and LSP bridge operations without making a provider request.\n",
-			[]string{"kind", "total", "symbols", "diagnostics", "result", "path"},
+			"codog code-intel [symbols|diagnostics|map|references|definition|hover|teleport|completion|format|notebook-read|notebook-edit|lsp] [ARGS...] [--output-format text|json]",
+			"Code Intel\n\nUsage:\n  codog code-intel symbols [--output-format text|json]\n  codog code-intel diagnostics [patterns...] [--output-format text|json]\n  codog code-intel map [--depth N] [--limit N] [--output-format text|json]\n  codog code-intel references SYMBOL [--limit N] [--output-format text|json]\n  codog code-intel definition SYMBOL [--output-format text|json]\n  codog code-intel hover SYMBOL [--context N] [--output-format text|json]\n  codog code-intel teleport TARGET [--limit N] [--output-format text|json]\n  codog code-intel completion PREFIX [--output-format text|json]\n  codog code-intel format PATH [--write] [--output-format text|json]\n  codog code-intel notebook-read NOTEBOOK [--cell-index N] [--include-outputs] [--output-format text|json]\n  codog code-intel notebook-edit NOTEBOOK [--mode replace|insert|delete] [--cell-index N|--cell-id ID] [--cell-type code|markdown|raw] [--source TEXT] [--output-format text|json]\n  codog code-intel lsp [actions|discover|list|status|query|start|stop]\n\nRuns local code intelligence helpers, notebook inspection/editing, and LSP bridge operations without making a provider request.\n",
+			[]string{"kind", "total", "symbols", "diagnostics", "references", "definition", "hover", "result", "path"},
 			[]string{"ok", "error"},
 			true,
 		), true

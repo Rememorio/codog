@@ -137,7 +137,7 @@ func Specs() []Spec {
 		{Name: "/teleport", Usage: "/teleport SYMBOL|PATH", Description: "Jump to a file or Go symbol."},
 		{Name: "/completion", Usage: "/completion PREFIX", Description: "List Go completion candidates for a prefix."},
 		{Name: "/format", Usage: "/format PATH [--write]", Description: "Preview or write gofmt output for a Go file."},
-		{Name: "/code-intel", Usage: "/code-intel [symbols|diagnostics|completion|format|notebook-read|notebook-edit|lsp]", Description: "Run code intelligence, notebook, and LSP helpers."},
+		{Name: "/code-intel", Usage: "/code-intel [symbols|diagnostics|map|references|definition|hover|teleport|completion|format|notebook-read|notebook-edit|lsp]", Description: "Run code intelligence, notebook, and LSP helpers."},
 		{Name: "/notebook-read", Usage: "/notebook-read NOTEBOOK [--cell-index N] [--include-outputs]", Description: "Read cells from a Jupyter notebook."},
 		{Name: "/notebook-edit", Usage: "/notebook-edit NOTEBOOK [--mode replace|insert|delete]", Description: "Edit cells in a Jupyter notebook."},
 		{Name: "/export", Usage: "/export [file]", Description: "Export the current session transcript."},

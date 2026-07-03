@@ -5347,6 +5347,27 @@ func risky(value any) {
 	require.Equal(t, "symbols", resumedCodeIntelSymbols.Kind)
 	require.GreaterOrEqual(t, resumedCodeIntelSymbols.Total, 2)
 
+	out, err = runResumedJSON("/code-intel", "definition", "helper")
+	require.NoError(t, err)
+	var resumedCodeIntelDefinition definitionReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCodeIntelDefinition))
+	require.Equal(t, "definition", resumedCodeIntelDefinition.Kind)
+	require.True(t, resumedCodeIntelDefinition.Found)
+
+	out, err = runResumedJSON("/code-intel", "references", "helper")
+	require.NoError(t, err)
+	var resumedCodeIntelReferences referencesReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCodeIntelReferences))
+	require.Equal(t, "references", resumedCodeIntelReferences.Kind)
+	require.GreaterOrEqual(t, resumedCodeIntelReferences.Total, 1)
+
+	out, err = runResumedJSON("/code-intel", "teleport", "main.go")
+	require.NoError(t, err)
+	var resumedCodeIntelTeleport teleportReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedCodeIntelTeleport))
+	require.Equal(t, "teleport", resumedCodeIntelTeleport.Kind)
+	require.True(t, resumedCodeIntelTeleport.Found)
+
 	out, err = runResumedJSON("/code-intel", "notebook-read", "analysis.ipynb", "--cell-index", "0")
 	require.NoError(t, err)
 	var resumedCodeIntelNotebook codeIntelNotebookReadReport
@@ -12708,6 +12729,16 @@ func TestCodeIntelligenceCommandsAndSlash(t *testing.T) {
 	require.True(t, app.handleSlash(context.Background(), "/code-intel symbols --json", sess))
 	require.Contains(t, out.String(), `"kind": "symbols"`)
 	require.Contains(t, out.String(), `"runner.go"`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/code-intel definition Runner --json", sess))
+	require.Contains(t, out.String(), `"kind": "definition"`)
+	require.Contains(t, out.String(), `"found": true`)
+	out.Reset()
+
+	require.True(t, app.handleSlash(context.Background(), "/code-intel references Run --limit=1 --json", sess))
+	require.Contains(t, out.String(), `"kind": "references"`)
+	require.Contains(t, out.String(), `"total": 1`)
 	out.Reset()
 
 	require.True(t, app.handleSlash(context.Background(), "/teleport runner.go", sess))
