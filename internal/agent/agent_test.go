@@ -636,6 +636,11 @@ func TestCommandHelpShortCircuitsBeforeConfigLoad(t *testing.T) {
 			topic: "api",
 		},
 		{
+			name:  "prefetch local help",
+			args:  []string{"--config", configPath, "prefetch", "--help", "--output-format", "json"},
+			topic: "prefetch",
+		},
+		{
 			name:  "models local help",
 			args:  []string{"--config", configPath, "models", "--help", "--output-format", "json"},
 			topic: "models",
@@ -921,6 +926,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.Contains(t, report.Commands, "setupGitHubActions")
 	require.Contains(t, report.Commands, "bridge-kick")
 	require.Contains(t, report.Commands, "bootstrap-plan")
+	require.Contains(t, report.Commands, "prefetch")
 	require.Contains(t, report.Commands, "cron")
 	require.Contains(t, report.Commands, "deferred-init")
 	require.Contains(t, report.Commands, "team")
@@ -1271,6 +1277,7 @@ func TestCapabilitiesCommandOutputsTextAndJSON(t *testing.T) {
 	require.True(t, commandAcceptsGlobalOutputFormat("bridge"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bridge-kick"))
 	require.True(t, commandAcceptsGlobalOutputFormat("bootstrap-plan"))
+	require.True(t, commandAcceptsGlobalOutputFormat("prefetch"))
 	require.True(t, commandAcceptsGlobalOutputFormat("checkpoint"))
 	require.True(t, commandAcceptsGlobalOutputFormat("deferred-init"))
 	require.True(t, commandAcceptsGlobalOutputFormat("ide"))
@@ -1491,6 +1498,87 @@ func TestDeferredInitDegradesOnMalformedConfigFile(t *testing.T) {
 	require.False(t, report.PluginInit)
 }
 
+func TestPrefetchCommandReportsLocalStartupReadiness(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Prefetch memory.\n"), 0o644))
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+			MCPServers:     map[string]config.MCPServerConfig{"local": {Command: "codog-test-mcp"}},
+			EnabledSkills:  []string{"review"},
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.NoError(t, app.Prefetch(nil))
+	require.Contains(t, out.String(), "Prefetch")
+	require.Contains(t, out.String(), "project_scan")
+	out.Reset()
+
+	require.NoError(t, app.Prefetch([]string{"status", "--json"}))
+	var report prefetchReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prefetch", report.Kind)
+	require.Equal(t, "status", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, report.TaskCount, len(report.Tasks))
+	require.Equal(t, float64(1), prefetchTaskByName(t, report, "memory_scan").Evidence["instruction_files"])
+	require.Equal(t, float64(1), prefetchTaskByName(t, report, "mcp_prefetch").Evidence["valid_count"])
+	require.Equal(t, "ok", prefetchTaskByName(t, report, "session_store").Status)
+}
+
+func TestPrefetchSlashOutputsJSON(t *testing.T) {
+	workspace := t.TempDir()
+	configHome := t.TempDir()
+	var out bytes.Buffer
+	app := &App{
+		Config: config.Config{
+			ConfigHome:     configHome,
+			Model:          "claude-test",
+			PermissionMode: "workspace-write",
+		},
+		Workspace: workspace,
+		Tools:     tools.NewRegistry(workspace),
+		Sessions:  session.NewWorkspaceStore(configHome, workspace),
+		Out:       &out,
+		Err:       io.Discard,
+	}
+
+	require.True(t, app.handleSlash(context.Background(), "/prefetch --json", &session.Session{ID: "session"}))
+	var report prefetchReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "prefetch", report.Kind)
+	require.Equal(t, "ok", report.Status)
+}
+
+func TestPrefetchDegradesOnMalformedConfigFile(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	configPath := filepath.Join(t.TempDir(), "broken.json")
+	require.NoError(t, os.WriteFile(configPath, []byte("{"), 0o644))
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "prefetch"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var report prefetchReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	require.Equal(t, "prefetch", report.Kind)
+	require.Equal(t, "warn", report.Status)
+	configTask := prefetchTaskByName(t, report, "config_probe")
+	require.Equal(t, "warn", configTask.Status)
+	require.Equal(t, "config_load_failed", configTask.Evidence["config_load_error_kind"])
+	require.Contains(t, configTask.Evidence["config_load_error"], "broken.json")
+}
+
 func bootstrapPlanPhaseByName(t *testing.T, report bootstrapPlanReport, name string) bootstrapPlanPhase {
 	t.Helper()
 	for _, phase := range report.Phases {
@@ -1511,6 +1599,17 @@ func deferredInitTaskByName(t *testing.T, report deferredInitReport, name string
 	}
 	require.Failf(t, "missing deferred init task", "task %q was not reported", name)
 	return deferredInitTask{}
+}
+
+func prefetchTaskByName(t *testing.T, report prefetchReport, name string) prefetchTask {
+	t.Helper()
+	for _, task := range report.Tasks {
+		if task.Name == name {
+			return task
+		}
+	}
+	require.Failf(t, "missing prefetch task", "task %q was not reported", name)
+	return prefetchTask{}
 }
 
 func TestReasoningCommandPersistsPreference(t *testing.T) {

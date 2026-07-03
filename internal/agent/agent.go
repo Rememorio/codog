@@ -351,6 +351,9 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		if config.IsFileError(err) && isDeferredInitCommand(command) {
 			return renderDeferredInitWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
+		if config.IsFileError(err) && isPrefetchCommand(command) {
+			return renderPrefetchWithConfigLoadError(os.Stdout, rest, overrides, originalArgs, err)
+		}
 		if config.IsFileError(err) && isDoctorCommand(command) {
 			return renderDoctorWithConfigLoadError(os.Stdout, command, rest, overrides, originalArgs, err)
 		}
@@ -947,6 +950,8 @@ func RunCLI(ctx context.Context, args []string, baseOverrides config.FlagOverrid
 		return wrapStructured(app.Brief(rest))
 	case "bootstrap-plan":
 		return wrapStructured(app.BootstrapPlan(rest))
+	case "prefetch":
+		return wrapStructured(app.Prefetch(rest))
 	case "deferred-init", "startup-report":
 		return wrapStructured(app.DeferredInit(command, rest))
 	case "status":
@@ -1133,6 +1138,15 @@ func isDeferredInitCommand(command string) bool {
 	}
 }
 
+func isPrefetchCommand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "prefetch", "/prefetch":
+		return true
+	default:
+		return false
+	}
+}
+
 func isConfigCommand(command string) bool {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "config", "settings", "/config", "/settings":
@@ -1267,6 +1281,39 @@ func renderDeferredInitWithConfigLoadError(out io.Writer, command string, rest [
 		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
 	}
 	return app.DeferredInit(command, rest)
+}
+
+func renderPrefetchWithConfigLoadError(out io.Writer, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
+	cfg, err := config.Default(overrides)
+	if err != nil {
+		return renderCLIError(out, err, requestedOutputFormat(originalArgs))
+	}
+	applyStoredOAuthToken(&cfg, time.Now().UTC())
+	workspace, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	prefetchArgs := append([]string(nil), rest...)
+	if !argsHaveOutputFormat(prefetchArgs) {
+		prefetchArgs = injectGlobalOutputFormat("prefetch", prefetchArgs, requestedOutputFormat(originalArgs))
+	}
+	additionalDirs, err := pathscope.EffectiveDirs(workspace, cfg.AdditionalDirs)
+	if err != nil {
+		return err
+	}
+	app := &App{
+		Config:              cfg,
+		Client:              anthropicClientFromConfig(cfg),
+		Tools:               tools.NewRegistryWithOptions(workspace, toolRegistryOptionsFromConfig(cfg, additionalDirs, os.Stdin, os.Stderr, "")),
+		Sessions:            session.NewWorkspaceStore(cfg.ConfigHome, workspace),
+		Workspace:           workspace,
+		Out:                 out,
+		Err:                 os.Stderr,
+		In:                  os.Stdin,
+		ConfigLoadError:     strings.TrimSpace(loadErr.Error()),
+		ConfigLoadErrorKind: buildCLIErrorReport(loadErr).ErrorKind,
+	}
+	return app.Prefetch(prefetchArgs)
 }
 
 func renderDoctorWithConfigLoadError(out io.Writer, command string, rest []string, overrides config.FlagOverrides, originalArgs []string, loadErr error) error {
@@ -23451,6 +23498,335 @@ func renderDeferredInitText(out io.Writer, report deferredInitReport) {
 	}
 }
 
+type prefetchReport struct {
+	Kind       string         `json:"kind"`
+	Action     string         `json:"action"`
+	Status     string         `json:"status"`
+	Version    string         `json:"version"`
+	Workspace  string         `json:"workspace"`
+	StartedAt  string         `json:"started_at"`
+	DurationMS int64          `json:"duration_ms"`
+	TaskCount  int            `json:"task_count"`
+	Tasks      []prefetchTask `json:"tasks"`
+	Message    string         `json:"message,omitempty"`
+}
+
+type prefetchTask struct {
+	Name       string         `json:"name"`
+	Status     string         `json:"status"`
+	Started    bool           `json:"started"`
+	DurationMS int64          `json:"duration_ms"`
+	Detail     string         `json:"detail,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	Evidence   map[string]any `json:"evidence,omitempty"`
+}
+
+type prefetchTaskResult struct {
+	Status   string
+	Detail   string
+	Evidence map[string]any
+}
+
+func (a *App) Prefetch(args []string) error {
+	action, format, err := parsePrefetchArgs(args)
+	if err != nil {
+		return err
+	}
+	report := a.buildPrefetchReport(action)
+	if format == "json" {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		fmt.Fprintln(a.Out, string(data))
+		return nil
+	}
+	renderPrefetchText(a.Out, report)
+	return nil
+}
+
+func parsePrefetchArgs(args []string) (string, string, error) {
+	action := "run"
+	format := "text"
+	usage := "codog prefetch [run|status] [--json|--output-format text|json]"
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+			continue
+		case arg == "run" || arg == "status":
+			action = arg
+		case arg == "check":
+			action = "status"
+		case arg == "--json":
+			format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return "", "", missingFlagValueError{Command: "prefetch", Flag: arg, Usage: usage}
+			}
+			format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			format = strings.TrimPrefix(arg, "--output-format=")
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return "", "", unknownOptionError{Command: "prefetch", Option: arg, Usage: usage}
+			}
+			return "", "", fmt.Errorf("prefetch action must be run or status")
+		}
+	}
+	switch format {
+	case "text", "json":
+		return action, format, nil
+	default:
+		return "", "", outputFormatError{Command: "prefetch", Value: format, Expected: []string{"text", "json"}}
+	}
+}
+
+func (a *App) buildPrefetchReport(action string) prefetchReport {
+	started := time.Now().UTC()
+	tasks := []prefetchTask{
+		a.runPrefetchTask("project_scan", a.prefetchProjectScan),
+		a.runPrefetchTask("config_probe", a.prefetchConfigProbe),
+		a.runPrefetchTask("memory_scan", a.prefetchMemoryScan),
+		a.runPrefetchTask("mcp_prefetch", a.prefetchMCPValidation),
+		a.runPrefetchTask("plugin_scan", a.prefetchPluginScan),
+		a.runPrefetchTask("session_store", a.prefetchSessionStore),
+	}
+	report := prefetchReport{
+		Kind:       "prefetch",
+		Action:     action,
+		Version:    version,
+		Workspace:  a.Workspace,
+		StartedAt:  started.Format(time.RFC3339Nano),
+		DurationMS: time.Since(started).Milliseconds(),
+		TaskCount:  len(tasks),
+		Tasks:      tasks,
+	}
+	report.Status = prefetchStatus(tasks)
+	report.Message = prefetchMessage(report.Status)
+	return report
+}
+
+func (a *App) runPrefetchTask(name string, fn func() (prefetchTaskResult, error)) prefetchTask {
+	started := time.Now()
+	result, err := fn()
+	status := strings.TrimSpace(result.Status)
+	if status == "" {
+		status = "ok"
+	}
+	task := prefetchTask{
+		Name:       name,
+		Status:     status,
+		Started:    true,
+		DurationMS: time.Since(started).Milliseconds(),
+		Detail:     strings.TrimSpace(result.Detail),
+		Evidence:   compactEvidence(result.Evidence),
+	}
+	if err != nil {
+		task.Status = "error"
+		task.Error = strings.TrimSpace(err.Error())
+	}
+	return task
+}
+
+func (a *App) prefetchProjectScan() (prefetchTaskResult, error) {
+	const maxEntries = 5000
+	workspace := strings.TrimSpace(a.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	var files, dirs int
+	var bytesSeen int64
+	truncated := false
+	err := filepath.WalkDir(workspace, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if files+dirs >= maxEntries {
+			truncated = true
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if path != workspace && prefetchIgnoredDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			dirs++
+			return nil
+		}
+		files++
+		if info, err := entry.Info(); err == nil {
+			bytesSeen += info.Size()
+		}
+		return nil
+	})
+	return prefetchTaskResult{
+		Detail: "scanned workspace files for startup context",
+		Evidence: map[string]any{
+			"file_count": files,
+			"dir_count":  dirs,
+			"bytes":      bytesSeen,
+			"truncated":  truncated,
+			"limit":      maxEntries,
+		},
+	}, err
+}
+
+func prefetchIgnoredDir(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case ".git", "node_modules", "vendor", "target", "dist", "build", ".cache", ".next":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) prefetchConfigProbe() (prefetchTaskResult, error) {
+	status := "ok"
+	detail := "loaded effective config and runtime preferences"
+	evidence := map[string]any{
+		"config_home":     a.Config.ConfigHome,
+		"model":           a.Config.Model,
+		"permission_mode": a.Config.PermissionMode,
+		"mcp_servers":     len(a.Config.MCPServers),
+		"enabled_skills":  len(a.Config.EnabledSkills),
+		"hooks_disabled":  a.Config.EffectiveDisableAllHooks(),
+	}
+	if strings.TrimSpace(a.ConfigLoadError) != "" {
+		status = "warn"
+		detail = "config load failed; using defaults for remaining prefetch checks"
+		evidence["config_load_error"] = strings.TrimSpace(a.ConfigLoadError)
+		evidence["config_load_error_kind"] = strings.TrimSpace(a.ConfigLoadErrorKind)
+	}
+	return prefetchTaskResult{
+		Status:   status,
+		Detail:   detail,
+		Evidence: evidence,
+	}, nil
+}
+
+func (a *App) prefetchMemoryScan() (prefetchTaskResult, error) {
+	files, err := memory.Discover(a.Workspace)
+	if err != nil {
+		return prefetchTaskResult{}, err
+	}
+	chars := 0
+	truncated := 0
+	for _, file := range files {
+		chars += file.Chars
+		if file.Truncated {
+			truncated++
+		}
+	}
+	return prefetchTaskResult{
+		Detail: "loaded project memory candidates",
+		Evidence: map[string]any{
+			"instruction_files": len(files),
+			"chars":             chars,
+			"truncated_files":   truncated,
+		},
+	}, nil
+}
+
+func (a *App) prefetchMCPValidation() (prefetchTaskResult, error) {
+	validation := buildMCPValidation(a.Config.MCPServers)
+	status := "ok"
+	detail := "validated configured MCP server launch metadata"
+	if validation.InvalidCount > 0 {
+		status = "warn"
+		detail = "some MCP server definitions are invalid"
+	}
+	return prefetchTaskResult{
+		Status: status,
+		Detail: detail,
+		Evidence: map[string]any{
+			"configured_count": validation.TotalConfigured,
+			"valid_count":      validation.ValidCount,
+			"invalid_count":    validation.InvalidCount,
+			"required_count":   validation.RequiredCount,
+			"optional_count":   validation.OptionalCount,
+		},
+	}, nil
+}
+
+func (a *App) prefetchPluginScan() (prefetchTaskResult, error) {
+	manifests, err := plugins.Load(a.Workspace)
+	if err != nil {
+		return prefetchTaskResult{}, err
+	}
+	enabled := 0
+	toolsCount := 0
+	commandsCount := 0
+	for _, manifest := range manifests {
+		if manifest.Enabled {
+			enabled++
+		}
+		toolsCount += len(manifest.Tools)
+		commandsCount += len(manifest.Commands)
+	}
+	return prefetchTaskResult{
+		Detail: "loaded local plugin manifests",
+		Evidence: map[string]any{
+			"installed_count": len(manifests),
+			"enabled_count":   enabled,
+			"tool_count":      toolsCount,
+			"command_count":   commandsCount,
+		},
+	}, nil
+}
+
+func (a *App) prefetchSessionStore() (prefetchTaskResult, error) {
+	if a.Sessions == nil {
+		return prefetchTaskResult{Status: "warn", Detail: "session store is not configured"}, nil
+	}
+	sessions, err := a.Sessions.List()
+	if err != nil {
+		return prefetchTaskResult{}, err
+	}
+	return prefetchTaskResult{
+		Detail: "opened session store and listed saved transcripts",
+		Evidence: map[string]any{
+			"session_count": len(sessions),
+		},
+	}, nil
+}
+
+func prefetchStatus(tasks []prefetchTask) string {
+	status := "ok"
+	for _, task := range tasks {
+		switch task.Status {
+		case "error":
+			return "warn"
+		case "warn":
+			status = "warn"
+		}
+	}
+	return status
+}
+
+func prefetchMessage(status string) string {
+	if status == "ok" {
+		return "local startup prefetch completed"
+	}
+	return "local startup prefetch completed with warnings"
+}
+
+func renderPrefetchText(out io.Writer, report prefetchReport) {
+	fmt.Fprintln(out, "Prefetch")
+	fmt.Fprintf(out, "  Status           %s\n", report.Status)
+	fmt.Fprintf(out, "  Workspace        %s\n", report.Workspace)
+	fmt.Fprintf(out, "  Tasks            %d\n", report.TaskCount)
+	for _, task := range report.Tasks {
+		fmt.Fprintf(out, "    - %-18s %-5s %dms\n", task.Name, task.Status, task.DurationMS)
+		if task.Detail != "" {
+			fmt.Fprintf(out, "      %s\n", task.Detail)
+		}
+		if task.Error != "" {
+			fmt.Fprintf(out, "      error=%s\n", task.Error)
+		}
+	}
+	if report.Message != "" {
+		fmt.Fprintf(out, "  Message          %s\n", report.Message)
+	}
+}
+
 func (a *App) Status(args []string, overrides config.FlagOverrides) error {
 	format, err := parseSimpleOutputFormat("status", args)
 	if err != nil {
@@ -25408,6 +25784,7 @@ func codogCapabilityFeatures() []string {
 		"openai_compatible_streaming",
 		"permission_confirmation",
 		"policy_engine",
+		"prefetch_preflight",
 		"plugin_lifecycle",
 		"plugin_marketplace",
 		"plugins_config_load_degraded",
@@ -25628,6 +26005,7 @@ func builtInCommandNames() []string {
 		"PluginTrustWarning",
 		"plugins",
 		"pluginDetailsHelpers",
+		"prefetch",
 		"pr",
 		"pr-comments",
 		"pr_comments",
@@ -26846,6 +27224,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.MCP(ctx, resumeSlashArgs("mcp", args, format))
 	case "/capabilities":
 		return a.Capabilities(resumeSlashArgs("capabilities", args, format))
+	case "/prefetch":
+		return a.Prefetch(resumeSlashArgs("prefetch", args, format))
 	case "/acp":
 		return a.runResumedACPSlash(ctx, resumeSlashArgs("acp", args, format), resumed, format)
 	case "/skill":
@@ -32111,6 +32491,10 @@ func (a *App) handleSlash(ctx context.Context, line string, sess *session.Sessio
 		}
 	case "/capabilities":
 		if err := a.Capabilities(fields[1:]); err != nil {
+			fmt.Fprintln(a.Err, "error:", err)
+		}
+	case "/prefetch":
+		if err := a.Prefetch(fields[1:]); err != nil {
 			fmt.Fprintln(a.Err, "error:", err)
 		}
 	case "/acp":
@@ -49630,7 +50014,7 @@ func commandAcceptsGlobalOutputFormat(command string) bool {
 		"debug-tool-call", "deferred-init", "desktop", "diff", "doctor", "dump-manifests", "effort", "env", "errorstep", "exit", "existingworkflowstep",
 		"extra-usage", "extra-usage-core", "extra-usage-noninteractive", "fast", "feedback", "files", "focus", "g004", "g004-conformance", "generate-session-name", "generatesessionname", "good-claude", "green", "green-contract", "heapdump", "hooks", "installappstep", "language",
 		"help", "ide", "init", "init-verifiers", "insights", "install", "issue", "keybindings", "listen", "log", "managemarketplaces", "manageplugins", "marketplace", "max-tokens", "max-turns",
-		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "pr",
+		"mcp", "memory", "metrics", "mobile", "mock-limits", "mock-parity", "model", "models", "notebook-edit", "notebook-read", "notifications", "oauthflowstep", "onboarding", "output-style", "parity", "passes", "paste", "perf-issue", "pin", "plugin", "plugins", "prefetch", "pr",
 		"pluginerrors", "pluginoptionsdialog", "pluginoptionsflow", "pluginsettings", "plugintrustwarning", "plugindetailshelpers", "pr-comments", "profile", "prompt", "privacy-settings", "project", "providers", "parseargs", "permissions", "rate-limit", "rate-limit-options", "reasoning", "reload-plugins",
 		"remote-env", "remote-setup", "report-schema", "reset", "reset-limits", "resume", "review", "reviewremote", "review-remote", "sandbox-toggle",
 		"search", "security-review", "self-test", "settings", "setup", "setupgithubactions", "session", "sessions", "skill", "skills", "speak", "state", "status", "statusline",
@@ -50029,6 +50413,16 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 			"codog bootstrap-plan [--output-format text|json]",
 			"Bootstrap Plan\n\nUsage:\n  codog bootstrap-plan [--output-format text|json]\n\nLists the ordered local startup phases Codog prepares before dispatching a prompt or REPL turn. The report includes workspace resolution, config, memory, hooks, MCP, plugins, tool registration, session storage, startup hooks, and provider dispatch readiness without making a provider request.\n",
 			[]string{"kind", "status", "workspace", "phase_count", "phases", "evidence"},
+			[]string{"ok", "warn"},
+			false,
+		), true
+	case "prefetch":
+		return localCommandHelpSpec(
+			"prefetch",
+			"prefetch",
+			"codog prefetch [run|status] [--output-format text|json]",
+			"Prefetch\n\nUsage:\n  codog prefetch [run|status] [--output-format text|json]\n  /prefetch [run|status]\n\nRuns a read-only local startup preflight that warms workspace file metadata, effective config, project memory, MCP validation, plugin manifests, and the session store. The JSON report is stable evidence for startup readiness and degraded local surfaces without contacting a provider.\n",
+			[]string{"kind", "status", "workspace", "task_count", "tasks", "evidence"},
 			[]string{"ok", "warn"},
 			false,
 		), true
@@ -51068,6 +51462,7 @@ Usage:
   %s [flags] mcp [list|serve|self|show|add|remove|tools|auth|call|resources|resource-templates|read|prompts|prompt]
   %s [flags] capabilities [--json|--output-format text|json]
   %s [flags] bootstrap-plan [--json|--output-format text|json]
+  %s [flags] prefetch [run|status] [--json|--output-format text|json]
   %s [flags] deferred-init|startup-report [--json|--output-format text|json]
   %s acp [serve] [--json|--output-format text|json]
   %s [flags] status [--json|--output-format text|json]
