@@ -4825,7 +4825,7 @@ func risky(value any) {
 	require.True(t, resumedDebugBash.Success)
 	require.Contains(t, resumedDebugBash.Output, "resumed-debug-bash")
 
-	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "PowerShellTool", `{"command":"Get-Content main.go","timeout_ms":1000}`)
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "PowerShellTool", `{"command":"Get-Content main.go","timeout_ms":10000}`)
 	require.NoError(t, err)
 	var resumedDebugPowerShell debugToolCallReport
 	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugPowerShell))

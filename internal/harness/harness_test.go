@@ -156,6 +156,20 @@ func TestRunUsesMockProvider(t *testing.T) {
 	require.Equal(t, 2, remoteControl.Total)
 	require.ElementsMatch(t, []string{"remote_api_listener_roundtrip", "remote_trigger_roundtrip"}, remoteControl.Scenarios)
 
+	mcpLifecycle := findScenario(t, report, "mcp_lifecycle_roundtrip")
+	require.True(t, mcpLifecycle.OK)
+	require.Equal(t, "mcp-lifecycle", mcpLifecycle.Category)
+	require.Equal(t, 1, mcpLifecycle.ToolCalls)
+	require.Equal(t, []string{"mcp.echo"}, mcpLifecycle.ToolUses)
+	require.Equal(t, 4, mcpLifecycle.RequestCount)
+	require.Contains(t, mcpLifecycle.Output, `"kind":"mcp_show"`)
+	require.Contains(t, mcpLifecycle.Output, `"phase":"ready"`)
+	require.Contains(t, mcpLifecycle.Output, "mcp lifecycle harness ok")
+	mcpCategory := findCategory(t, report, "mcp-lifecycle")
+	require.True(t, mcpCategory.OK)
+	require.Equal(t, 1, mcpCategory.Total)
+	require.ElementsMatch(t, []string{"mcp_lifecycle_roundtrip"}, mcpCategory.Scenarios)
+
 	acp := findScenario(t, report, "acp_stdio_roundtrip")
 	require.True(t, acp.OK)
 	require.Equal(t, "editor-bridge", acp.Category)
@@ -224,6 +238,10 @@ func TestScenarioManifestMatchesRunScenarios(t *testing.T) {
 	acp := findManifestScenario(t, manifest, "acp_stdio_roundtrip")
 	require.Equal(t, "editor-bridge", acp.Category)
 	require.Contains(t, acp.ParityRefs, "JSON-RPC stdio")
+
+	mcpLifecycle := findManifestScenario(t, manifest, "mcp_lifecycle_roundtrip")
+	require.Equal(t, "mcp-lifecycle", mcpLifecycle.Category)
+	require.Contains(t, mcpLifecycle.ParityRefs, "MCP lifecycle")
 }
 
 func categoryCoverageTotal(coverage []CategoryReport) int {

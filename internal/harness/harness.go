@@ -161,6 +161,7 @@ var scenarioOrder = []string{
 	"plugin_lifecycle_roundtrip",
 	"remote_trigger_roundtrip",
 	"remote_api_listener_roundtrip",
+	"mcp_lifecycle_roundtrip",
 	"acp_stdio_roundtrip",
 	"auto_compact_triggered",
 	"token_cost_reporting",
@@ -665,6 +666,7 @@ func Run(ctx context.Context) (Report, error) {
 		pluginLifecycleScenario(),
 		remoteTriggerScenario(),
 		remoteAPIListenerScenario(),
+		mcpLifecycleScenario(),
 		acpStdioScenario(),
 		{
 			name: "auto_compact_triggered",
@@ -1171,6 +1173,11 @@ var scenarioMetadataByName = map[string]scenarioMetadata{
 		Category:    "remote-control",
 		Description: "Starts the local control API handler and verifies public health plus authenticated session routes.",
 		ParityRefs:  []string{"Remote sessions", "IDE bridge", "Control API listener"},
+	},
+	"mcp_lifecycle_roundtrip": {
+		Category:    "mcp-lifecycle",
+		Description: "Exercises HTTP MCP initialize, initialized notification, tool discovery, and tool invocation through the control API.",
+		ParityRefs:  []string{"MCP client", "MCP lifecycle", "Control API MCP bridge"},
 	},
 	"acp_stdio_roundtrip": {
 		Category:    "editor-bridge",
@@ -1699,6 +1706,188 @@ func remoteAPIListenerScenario() scenario {
 			}, nil
 		},
 	}
+}
+
+func mcpLifecycleScenario() scenario {
+	return scenario{
+		name: "mcp_lifecycle_roundtrip",
+		runLocal: func(_ context.Context, workspace string) (localScenarioResult, error) {
+			seenMethods := []string{}
+			seenSessionHeader := false
+			mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				if r.Header.Get("Authorization") != "Bearer lifecycle-token" {
+					http.Error(w, "missing authorization", http.StatusUnauthorized)
+					return
+				}
+				var req map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				method, _ := req["method"].(string)
+				seenMethods = append(seenMethods, method)
+				id := req["id"]
+				switch method {
+				case "initialize":
+					w.Header().Set("Mcp-Session-Id", "mcp-harness-session")
+					writeMCPHarnessResponse(w, id, map[string]any{
+						"protocolVersion": "2024-11-05",
+						"capabilities": map[string]any{
+							"tools": map[string]any{},
+						},
+						"serverInfo": map[string]any{"name": "mcp-harness", "version": "1.0.0"},
+					})
+				case "notifications/initialized":
+					if r.Header.Get("Mcp-Session-Id") == "mcp-harness-session" {
+						seenSessionHeader = true
+					}
+					w.WriteHeader(http.StatusAccepted)
+				case "tools/list":
+					if r.Header.Get("Mcp-Session-Id") != "mcp-harness-session" {
+						http.Error(w, "missing session header", http.StatusBadRequest)
+						return
+					}
+					seenSessionHeader = true
+					writeMCPHarnessResponse(w, id, map[string]any{"tools": []map[string]any{{
+						"name":        "echo",
+						"description": "Echo text from the MCP lifecycle harness.",
+						"inputSchema": map[string]any{"type": "object"},
+					}}})
+				case "tools/call":
+					if r.Header.Get("Mcp-Session-Id") != "mcp-harness-session" {
+						http.Error(w, "missing session header", http.StatusBadRequest)
+						return
+					}
+					seenSessionHeader = true
+					writeMCPHarnessResponse(w, id, map[string]any{"content": []map[string]any{{
+						"type": "text",
+						"text": "mcp lifecycle harness ok",
+					}}})
+				default:
+					writeMCPHarnessError(w, id, "unsupported method: "+method)
+				}
+			}))
+			defer mcpServer.Close()
+
+			configHome := filepath.Join(workspace, "config-home")
+			controlServer := httptest.NewServer(control.Server{
+				Sessions:   session.NewWorkspaceStore(configHome, workspace),
+				ConfigHome: configHome,
+				Workspace:  workspace,
+				MCPServers: map[string]config.MCPServerConfig{
+					"harness": {
+						URL:     mcpServer.URL + "/mcp?token=redacted-in-output",
+						Headers: map[string]string{"Authorization": "Bearer lifecycle-token"},
+					},
+				},
+			}.Handler())
+			defer controlServer.Close()
+
+			outputs := []string{}
+			listBody, err := getControlBody(controlServer.URL + "/mcp/list?inspect=false")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			outputs = append(outputs, listBody)
+			showBody, err := getControlBody(controlServer.URL + "/mcp/show?server=harness")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			outputs = append(outputs, showBody)
+			toolsBody, err := getControlBody(controlServer.URL + "/mcp/tools?server=harness")
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			outputs = append(outputs, toolsBody)
+			callBody, err := postControlBody(controlServer.URL+"/mcp/call", `{"server":"harness","tool":"echo","arguments":{"text":"hi"}}`)
+			if err != nil {
+				return localScenarioResult{}, err
+			}
+			outputs = append(outputs, callBody)
+
+			for _, expected := range []string{`"kind":"mcp_list"`, `"kind":"mcp_show"`, `"status":"ok"`, `"kind":"mcp_tools"`, `"name":"echo"`, `"kind":"mcp_call"`, "mcp lifecycle harness ok"} {
+				if !strings.Contains(strings.Join(outputs, "\n"), expected) {
+					return localScenarioResult{}, fmt.Errorf("MCP lifecycle output missing %s", expected)
+				}
+			}
+			if strings.Contains(strings.Join(outputs, "\n"), "lifecycle-token") || strings.Contains(strings.Join(outputs, "\n"), "redacted-in-output") {
+				return localScenarioResult{}, fmt.Errorf("MCP lifecycle output leaked transport secrets")
+			}
+			for _, expectedMethod := range []string{"initialize", "notifications/initialized", "tools/list", "tools/call"} {
+				if !slices.Contains(seenMethods, expectedMethod) {
+					return localScenarioResult{}, fmt.Errorf("MCP server did not receive %s; methods=%v", expectedMethod, seenMethods)
+				}
+			}
+			if !seenSessionHeader {
+				return localScenarioResult{}, fmt.Errorf("MCP lifecycle did not propagate session header")
+			}
+
+			return localScenarioResult{
+				Output:       strings.Join(outputs, "\n"),
+				FinalMessage: "mcp lifecycle harness ok",
+				ToolCalls:    1,
+				ToolUses:     []string{"mcp.echo"},
+				RequestCount: len(outputs),
+			}, nil
+		},
+	}
+}
+
+func writeMCPHarnessResponse(w http.ResponseWriter, id any, result any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  result,
+	})
+}
+
+func writeMCPHarnessError(w http.ResponseWriter, id any, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    -32601,
+			"message": message,
+		},
+	})
+}
+
+func getControlBody(url string) (string, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s returned %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return string(body), nil
+}
+
+func postControlBody(url string, payload string) (string, error) {
+	resp, err := http.Post(url, "application/json", strings.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("POST %s returned %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return string(body), nil
 }
 
 func acpStdioScenario() scenario {

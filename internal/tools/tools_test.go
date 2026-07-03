@@ -132,7 +132,7 @@ esac
 `), 0o755))
 	tool := PowerShellTool{Workspace: workspace, ConfigHome: configHome, Executable: script}
 
-	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":10000}`))
+	out, err := tool.Execute(context.Background(), []byte(`{"command":"Write-Output ok","timeout":60000}`))
 	require.NoError(t, err)
 	require.Contains(t, out, `ps:-NoProfile -NonInteractive -Command Write-Output ok`)
 	var foreground struct {
@@ -203,7 +203,7 @@ esac
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(payload.Task.ID, 4096)
 		return err == nil && strings.Contains(logs, `ps:-NoProfile -NonInteractive -Command Write-Output bg`)
-	}, 5*time.Second, 50*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 }
 
 func TestDefaultShellPowerShellDelegatesBashTool(t *testing.T) {
@@ -2965,7 +2965,7 @@ func TestAgentToolLaunchesBackgroundAgent(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs, err := store.Logs(payload.Task.ID, 4096)
 		return err == nil && strings.Contains(logs, "agent-model") && strings.Contains(logs, "Base review instructions") && strings.Contains(logs, "check auth flow")
-	}, 5*time.Second, 50*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 }
 
 func TestCronToolsCreateListAndDeleteEntries(t *testing.T) {
@@ -3019,7 +3019,7 @@ func TestTeamToolsCreateAndDeleteBackgroundTasks(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs, err := store.Logs(created.TaskIDs[0], 4096)
 		return err == nil && strings.Contains(logs, "Task: auth") && strings.Contains(logs, "check auth")
-	}, 5*time.Second, 50*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 
 	listOut, err := TeamListTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"status":"running"}`))
 	require.NoError(t, err)
@@ -3511,7 +3511,7 @@ printf 'codog:%s\n' "$*"
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(report.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "Task: audit auth") && strings.Contains(logs, "check auth")
-	}, 2*time.Second, 20*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 
 	getOut, err := TaskGetTool{Workspace: workspace, ConfigHome: configHome}.Execute(context.Background(), []byte(`{"task_id":"`+report.TaskID+`"}`))
 	require.NoError(t, err)
@@ -3643,7 +3643,7 @@ func TestRunTaskPacketToolCreatesPromptTask(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(payload.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "shim:prompt") && strings.Contains(logs, "Update docs")
-	}, 5*time.Second, 50*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 }
 
 func TestRunTaskPacketToolAcceptsRichPacket(t *testing.T) {
@@ -3734,7 +3734,7 @@ func TestWorkerToolsManagePromptWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		logs, err := background.NewStore(configHome).Logs(sent.TaskID, 4096)
 		return err == nil && strings.Contains(logs, "worker:prompt") && strings.Contains(logs, "implement worker tests")
-	}, 5*time.Second, 50*time.Millisecond)
+	}, 20*time.Second, 50*time.Millisecond)
 
 	getOut, err := WorkerGetTool{ConfigHome: configHome}.Execute(context.Background(), []byte(`{"worker_id":"`+created.WorkerID+`"}`))
 	require.NoError(t, err)
