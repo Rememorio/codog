@@ -25647,6 +25647,7 @@ type capabilitiesReport struct {
 	ToolAliasCount          int               `json:"tool_alias_count"`
 	ToolAliases             map[string]string `json:"tool_aliases,omitempty"`
 	MCP                     capabilityMCP     `json:"mcp"`
+	MockParity              harness.Manifest  `json:"mock_parity"`
 	Features                []string          `json:"features"`
 	Protocols               []string          `json:"protocols"`
 	OutputFormats           []string          `json:"output_formats"`
@@ -25849,6 +25850,7 @@ func (a *App) capabilitiesReport() capabilitiesReport {
 			LocalPrompts:           localPrompts,
 			ExposedToolCount:       len(exposed),
 		},
+		MockParity:    harness.ScenarioManifest(),
 		Features:      codogCapabilityFeatures(),
 		Protocols:     codogCapabilityProtocols(),
 		OutputFormats: []string{"text", "json", "stream-json"},
@@ -26108,6 +26110,7 @@ func renderCapabilitiesText(out io.Writer, report capabilitiesReport) {
 	fmt.Fprintf(out, "  Tool aliases      %d\n", report.ToolAliasCount)
 	fmt.Fprintf(out, "  MCP servers       %d configured\n", report.MCP.ConfiguredServerCount)
 	fmt.Fprintf(out, "  MCP local data    %d resources, %d templates, %d prompts\n", report.MCP.LocalResourceCount, report.MCP.LocalTemplateCount, report.MCP.LocalPromptCount)
+	fmt.Fprintf(out, "  Mock parity       %d scenarios, %d categories\n", report.MockParity.ScenarioCount, len(report.MockParity.Categories))
 	fmt.Fprintln(out, "  Features")
 	for _, feature := range report.Features {
 		fmt.Fprintf(out, "    - %s\n", feature)
