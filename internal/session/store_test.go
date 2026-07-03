@@ -881,6 +881,58 @@ func TestExportMarkdownJSONJSONLAndHTML(t *testing.T) {
 	require.Equal(t, "summarize-this-repo.html", DefaultExportFilenameForFormat(sess, "html"))
 }
 
+func TestImportJSONLAndExportedJSONSessions(t *testing.T) {
+	sourceHome := t.TempDir()
+	sourceWorkspace := filepath.Join(t.TempDir(), "source")
+	targetHome := t.TempDir()
+	targetWorkspace := filepath.Join(t.TempDir(), "target")
+	source := NewWorkspaceStore(sourceHome, sourceWorkspace)
+	target := NewWorkspaceStore(targetHome, targetWorkspace)
+	created, err := source.CreateWithIdentity("external", SessionIdentity{
+		Title:     "External session",
+		Workspace: sourceWorkspace,
+		Purpose:   "port this work",
+	})
+	require.NoError(t, err)
+	require.NoError(t, source.Append(created.ID, anthropic.TextMessage("user", "import this session")))
+
+	result, err := target.Import(created.Path, ImportOptions{ID: "ported"})
+	require.NoError(t, err)
+	require.Equal(t, "external", result.OriginalSessionID)
+	require.Equal(t, "ported", result.SessionID)
+	require.Equal(t, 1, result.MessageCount)
+	require.False(t, result.Overwritten)
+	require.Equal(t, canonicalWorkspace(targetWorkspace), result.Identity.Workspace)
+	imported, err := target.OpenExisting("ported")
+	require.NoError(t, err)
+	require.Equal(t, "ported", imported.ID)
+	require.Equal(t, "External session", imported.Identity.Title)
+	require.Equal(t, "port this work", imported.Identity.Purpose)
+	require.Equal(t, canonicalWorkspace(targetWorkspace), imported.Identity.Workspace)
+	require.Equal(t, "import this session", imported.Messages[0].Content[0].Text)
+	data, err := os.ReadFile(imported.Path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"session_id":"ported"`)
+	require.NotContains(t, string(data), canonicalWorkspace(sourceWorkspace))
+
+	_, err = target.Import(created.Path, ImportOptions{ID: "ported"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+	overwritten, err := target.Import(created.Path, ImportOptions{ID: "ported", Overwrite: true})
+	require.NoError(t, err)
+	require.True(t, overwritten.Overwritten)
+
+	jsonData, _, err := source.Export("external", "json")
+	require.NoError(t, err)
+	jsonPath := filepath.Join(t.TempDir(), "external.json")
+	require.NoError(t, os.WriteFile(jsonPath, jsonData, 0o644))
+	jsonImport, err := target.Import(jsonPath, ImportOptions{ID: "from-json"})
+	require.NoError(t, err)
+	require.Equal(t, "external", jsonImport.OriginalSessionID)
+	require.Equal(t, "from-json", jsonImport.SessionID)
+	require.Equal(t, 1, jsonImport.MessageCount)
+}
+
 func TestExportRequiresExistingSession(t *testing.T) {
 	store := NewStore(t.TempDir())
 	require.NoError(t, store.Append("export-session", anthropic.TextMessage("user", "hello export")))

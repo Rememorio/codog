@@ -37589,6 +37589,21 @@ func (a *App) SessionsCommand(args []string) error {
 		return a.SessionExists(existsArgs, "")
 	case "export":
 		return a.SessionExport(args[1:])
+	case "import":
+		req, err := parseSessionImportArgs("codog sessions import", args[1:], "json")
+		if err != nil {
+			return err
+		}
+		report, err := a.importSessionWithReport(req)
+		if err != nil {
+			return err
+		}
+		if req.Format == "json" {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(a.Out, string(data))
+			return nil
+		}
+		renderSessionImportText(a.Out, report)
 	case "fork":
 		req, err := parseSessionForkArgs("codog sessions fork", args[1:], "", "json")
 		if err != nil {
@@ -37672,7 +37687,7 @@ func renderSessionsCommandError(out io.Writer, err error, format string) error {
 			Status:    "error",
 			ErrorKind: "unsupported_sessions_action",
 			Message:   fmt.Sprintf("unsupported sessions action %q", action),
-			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, or `codog sessions delete ID`.",
+			Hint:      "Use `codog sessions list`, `codog sessions show ID`, `codog sessions export ID`, `codog sessions import PATH`, `codog sessions fork ID`, `codog sessions rename OLD_ID NEW_ID`, or `codog sessions delete ID`.",
 		}, format)
 	}
 	return renderCLIError(out, err, format)
@@ -37723,6 +37738,112 @@ func (a *App) SessionExport(args []string) error {
 		return err
 	}
 	return a.writeExport(req)
+}
+
+type sessionImportRequest struct {
+	Source    string
+	ID        string
+	Overwrite bool
+	Format    string
+}
+
+type sessionImportReport struct {
+	Kind              string                  `json:"kind"`
+	Action            string                  `json:"action"`
+	Status            string                  `json:"status"`
+	Source            string                  `json:"source"`
+	OriginalSessionID string                  `json:"original_session_id,omitempty"`
+	SessionID         string                  `json:"session_id"`
+	Path              string                  `json:"path"`
+	MessageCount      int                     `json:"message_count"`
+	Overwritten       bool                    `json:"overwritten"`
+	Identity          session.SessionIdentity `json:"identity"`
+}
+
+func parseSessionImportArgs(command string, args []string, defaultFormat string) (sessionImportRequest, error) {
+	req := sessionImportRequest{Format: defaultFormat}
+	if req.Format == "" {
+		req.Format = "text"
+	}
+	positionals := []string{}
+	usage := command + " PATH [--id ID|--name ID] [--force] [--json|--output-format text|json]"
+	for index := 0; index < len(args); index++ {
+		arg := strings.TrimSpace(args[index])
+		switch {
+		case arg == "":
+		case arg == "--json":
+			req.Format = "json"
+		case arg == "--output-format" || arg == "-o":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s output format is required", command)
+			}
+			req.Format = args[index]
+		case strings.HasPrefix(arg, "--output-format="):
+			req.Format = strings.TrimPrefix(arg, "--output-format=")
+		case arg == "--id" || arg == "--name" || arg == "--session":
+			index++
+			if index >= len(args) {
+				return req, fmt.Errorf("%s session id is required", command)
+			}
+			req.ID = args[index]
+		case strings.HasPrefix(arg, "--id="):
+			req.ID = strings.TrimPrefix(arg, "--id=")
+		case strings.HasPrefix(arg, "--name="):
+			req.ID = strings.TrimPrefix(arg, "--name=")
+		case strings.HasPrefix(arg, "--session="):
+			req.ID = strings.TrimPrefix(arg, "--session=")
+		case arg == "--force" || arg == "--overwrite":
+			req.Overwrite = true
+		case strings.HasPrefix(arg, "-"):
+			return req, unknownOptionError{Command: command, Option: arg, Usage: usage}
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) != 1 {
+		return req, fmt.Errorf("usage: %s", usage)
+	}
+	switch req.Format {
+	case "text", "json":
+	default:
+		return req, fmt.Errorf("unknown %s output format %q", command, req.Format)
+	}
+	req.Source = positionals[0]
+	return req, nil
+}
+
+func (a *App) importSessionWithReport(req sessionImportRequest) (sessionImportReport, error) {
+	result, err := a.Sessions.Import(req.Source, session.ImportOptions{ID: req.ID, Overwrite: req.Overwrite})
+	if err != nil {
+		return sessionImportReport{}, err
+	}
+	return sessionImportReport{
+		Kind:              "session_import",
+		Action:            "import",
+		Status:            "ok",
+		Source:            result.Source,
+		OriginalSessionID: result.OriginalSessionID,
+		SessionID:         result.SessionID,
+		Path:              result.Path,
+		MessageCount:      result.MessageCount,
+		Overwritten:       result.Overwritten,
+		Identity:          result.Identity,
+	}, nil
+}
+
+func renderSessionImportText(out io.Writer, report sessionImportReport) {
+	fmt.Fprintln(out, "Session imported")
+	fmt.Fprintf(out, "  Session          %s\n", report.SessionID)
+	if report.OriginalSessionID != "" && report.OriginalSessionID != report.SessionID {
+		fmt.Fprintf(out, "  Original         %s\n", report.OriginalSessionID)
+	}
+	fmt.Fprintf(out, "  Messages         %d\n", report.MessageCount)
+	if report.Overwritten {
+		fmt.Fprintln(out, "  Overwritten      yes")
+	}
+	fmt.Fprintf(out, "  Source           %s\n", report.Source)
+	fmt.Fprintf(out, "  File             %s\n", report.Path)
 }
 
 func parseSessionExportArgs(args []string) (exportRequest, error) {
@@ -48119,8 +48240,8 @@ func commandHelpSpecFor(topic string) (commandHelpSpec, bool) {
 		return commandHelpSpec{
 			Topic:                   "session",
 			Command:                 "session",
-			Usage:                   "codog sessions [list|show|exists|fork|rename|delete] [ARGS...]",
-			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|fork|rename|delete] [ARGS...]\n\nInspects and mutates saved session metadata. Help is local and does not open a session.\n",
+			Usage:                   "codog sessions [list|show|exists|export|import|fork|rename|delete] [ARGS...]",
+			Text:                    "Session\n\nUsage:\n  codog sessions [list|show|exists|export|import|fork|rename|delete] [ARGS...]\n  codog sessions import PATH [--id ID|--name ID] [--force] [--output-format text|json]\n\nInspects, imports, exports, and mutates saved session metadata. Help is local and does not open a session.\n",
 			LocalOnly:               true,
 			RequiresCredentials:     false,
 			RequiresProviderRequest: false,
@@ -48238,7 +48359,7 @@ Usage:
   %s [flags] tui
   %s [flags] clear [--confirm] [--json|--output-format text|json]
   %s [flags] conversation [--confirm] [--json|--output-format text|json]
-  %s [flags] sessions [list|show|exists|fork|rename|delete]
+  %s [flags] sessions [list|show|exists|export|import|fork|rename|delete]
   %s [flags] backfill-sessions [--json|--output-format text|json]
   %s [flags] generateSessionName [--session ID|--resume ID|latest] [--source first|last] [--rename] [--json|--output-format text|json]
   %s [flags] rename NEW_ID [--session ID] [--json|--output-format text|json]

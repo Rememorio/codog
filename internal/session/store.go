@@ -115,6 +115,21 @@ type ReplaceResult struct {
 	RemovedMessages   int    `json:"removed_messages"`
 }
 
+type ImportOptions struct {
+	ID        string
+	Overwrite bool
+}
+
+type ImportResult struct {
+	Source            string          `json:"source"`
+	OriginalSessionID string          `json:"original_session_id,omitempty"`
+	SessionID         string          `json:"session_id"`
+	Path              string          `json:"path"`
+	MessageCount      int             `json:"message_count"`
+	Overwritten       bool            `json:"overwritten"`
+	Identity          SessionIdentity `json:"identity"`
+}
+
 type RenameResult struct {
 	OldID        string `json:"old_id"`
 	NewID        string `json:"new_id"`
@@ -758,6 +773,73 @@ func (s *Store) Fork(id string, branchName string) (*Session, error) {
 	}}, nil
 }
 
+func (s *Store) Import(path string, opts ImportOptions) (ImportResult, error) {
+	if s.PersistenceDisabled {
+		return ImportResult{}, errors.New("session persistence is disabled")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ImportResult{}, errors.New("session import path is required")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if info.IsDir() {
+		return ImportResult{}, PathIsDirectoryError{Path: path}
+	}
+	records, originalID, err := s.importRecordsFromPath(path)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if len(records) == 0 {
+		return ImportResult{}, errors.New("session import file has no records or messages")
+	}
+	targetID := strings.TrimSpace(opts.ID)
+	if targetID == "" {
+		targetID = strings.TrimSpace(originalID)
+	}
+	if targetID == "" {
+		targetID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	if IsSessionReferenceAlias(targetID) {
+		return ImportResult{}, fmt.Errorf("session id cannot be session alias %q", targetID)
+	}
+	if err := validateSessionID(targetID); err != nil {
+		return ImportResult{}, err
+	}
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		return ImportResult{}, err
+	}
+	targetPath := filepath.Join(s.Dir, targetID+primarySessionExtension)
+	exists := false
+	if _, err := os.Stat(targetPath); err == nil {
+		exists = true
+	} else if !os.IsNotExist(err) {
+		return ImportResult{}, err
+	}
+	if exists && !opts.Overwrite {
+		return ImportResult{}, fmt.Errorf("session %q already exists", targetID)
+	}
+	records = s.normalizeImportedRecords(records, targetID)
+	if err := s.writeRecords(targetPath, records); err != nil {
+		return ImportResult{}, err
+	}
+	messages, identity, _, err := s.readSessionStrict(targetPath, targetID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return ImportResult{
+		Source:            path,
+		OriginalSessionID: strings.TrimSpace(originalID),
+		SessionID:         targetID,
+		Path:              targetPath,
+		MessageCount:      len(messages),
+		Overwritten:       exists,
+		Identity:          identity,
+	}, nil
+}
+
 func (s *Store) List() ([]Session, error) {
 	if s.PersistenceDisabled {
 		return nil, nil
@@ -1363,6 +1445,132 @@ func preservedSessionRecords(records []Record) []Record {
 		}
 	}
 	return preserved
+}
+
+func (s *Store) importRecordsFromPath(path string) ([]Record, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, "", nil
+	}
+	var exported ExportedSession
+	if err := json.Unmarshal(data, &exported); err == nil && (strings.TrimSpace(exported.ID) != "" || len(exported.Messages) > 0) {
+		return recordsFromExportedSession(exported), strings.TrimSpace(exported.ID), nil
+	}
+	records, err := recordsFromJSONL(data)
+	if err != nil {
+		return nil, "", err
+	}
+	return records, importedOriginalSessionID(records), nil
+}
+
+func recordsFromExportedSession(exported ExportedSession) []Record {
+	now := time.Now().UTC()
+	sessionID := strings.TrimSpace(exported.ID)
+	records := []Record{{
+		Type:      "session",
+		Time:      now,
+		SessionID: sessionID,
+	}}
+	if !reflect.DeepEqual(exported.Identity, SessionIdentity{}) {
+		identity := exported.Identity
+		records = append(records, Record{
+			Type:      "session_identity",
+			Time:      now,
+			SessionID: sessionID,
+			Identity:  &identity,
+		})
+	}
+	for _, msg := range exported.Messages {
+		next := msg
+		records = append(records, Record{
+			Type:      "message",
+			Time:      now,
+			Message:   &next,
+			SessionID: sessionID,
+		})
+	}
+	return records
+}
+
+func recordsFromJSONL(data []byte) ([]Record, error) {
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	records := make([]Record, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var record Record
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func importedOriginalSessionID(records []Record) string {
+	for _, record := range records {
+		if strings.TrimSpace(record.SessionID) != "" {
+			return strings.TrimSpace(record.SessionID)
+		}
+	}
+	return ""
+}
+
+func (s *Store) normalizeImportedRecords(records []Record, sessionID string) []Record {
+	now := time.Now().UTC()
+	out := make([]Record, 0, len(records)+2)
+	hasSession := false
+	hasIdentity := false
+	for _, record := range records {
+		if strings.TrimSpace(record.Type) == "" {
+			continue
+		}
+		if record.Time.IsZero() {
+			record.Time = now
+		}
+		record.SessionID = sessionID
+		if record.Type == "session" || record.Type == "fork" {
+			hasSession = true
+		}
+		if record.Type == "session_identity" && record.Identity != nil {
+			identity := rehomeSessionIdentity(sessionID, s.Workspace, *record.Identity)
+			record.Identity = &identity
+			hasIdentity = true
+		}
+		out = append(out, record)
+	}
+	if !hasSession {
+		out = append([]Record{{
+			Type:      "session",
+			Time:      now,
+			SessionID: sessionID,
+		}}, out...)
+	}
+	if !hasIdentity {
+		identity := rehomeSessionIdentity(sessionID, s.Workspace, SessionIdentity{})
+		identityRecord := Record{
+			Type:      "session_identity",
+			Time:      now,
+			SessionID: sessionID,
+			Identity:  &identity,
+		}
+		if len(out) == 0 {
+			out = append(out, identityRecord)
+		} else {
+			out = append(out[:1], append([]Record{identityRecord}, out[1:]...)...)
+		}
+	}
+	return out
+}
+
+func rehomeSessionIdentity(id string, workspace string, identity SessionIdentity) SessionIdentity {
+	identity.Workspace = canonicalWorkspace(workspace)
+	identity.Worktree = identity.Workspace
+	return normalizeSessionIdentity(id, workspace, identity)
 }
 
 func isSessionMetadataRecord(recordType string) bool {

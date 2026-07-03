@@ -7663,6 +7663,45 @@ func TestSessionsCommandExportWritesFormats(t *testing.T) {
 	require.Contains(t, string(data), "export through sessions")
 }
 
+func TestSessionsCommandImportWritesManagedSession(t *testing.T) {
+	sourceStore := session.NewStore(t.TempDir())
+	require.NoError(t, sourceStore.Append("external", anthropic.TextMessage("user", "import through sessions command")))
+	jsonData, _, err := sourceStore.Export("external", "json")
+	require.NoError(t, err)
+	sourcePath := filepath.Join(t.TempDir(), "external.json")
+	require.NoError(t, os.WriteFile(sourcePath, jsonData, 0o644))
+
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	targetStore := session.NewWorkspaceStore(configHome, workspace)
+	var out bytes.Buffer
+	app := &App{Sessions: targetStore, Workspace: workspace, Out: &out}
+
+	require.NoError(t, app.SessionsCommand([]string{"import", sourcePath, "--id", "imported"}))
+	var report sessionImportReport
+	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+	require.Equal(t, "session_import", report.Kind)
+	require.Equal(t, "import", report.Action)
+	require.Equal(t, "ok", report.Status)
+	require.Equal(t, sourcePath, report.Source)
+	require.Equal(t, "external", report.OriginalSessionID)
+	require.Equal(t, "imported", report.SessionID)
+	require.Equal(t, 1, report.MessageCount)
+	require.False(t, report.Overwritten)
+	require.NotEmpty(t, report.Path)
+	out.Reset()
+
+	imported, err := targetStore.OpenExisting("imported")
+	require.NoError(t, err)
+	require.Equal(t, "import through sessions command", imported.Messages[0].Content[0].Text)
+	require.Equal(t, report.Identity.Workspace, imported.Identity.Workspace)
+	require.NotEmpty(t, imported.Identity.Workspace)
+
+	require.NoError(t, app.SessionsCommand([]string{"import", sourcePath, "--id", "imported", "--force", "--output-format", "text"}))
+	require.Contains(t, out.String(), "Session imported")
+	require.Contains(t, out.String(), "Overwritten      yes")
+}
+
 func TestSessionsShowJSONUsesStableReport(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))
