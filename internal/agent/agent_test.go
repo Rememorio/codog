@@ -11058,6 +11058,42 @@ func TestResumeCommandReportsSessionAndContinueCommands(t *testing.T) {
 	require.Equal(t, "source", report.SessionID)
 }
 
+func TestResumeSlashRoutesToResumeCommand(t *testing.T) {
+	configHome := t.TempDir()
+	workspace := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	data, err := json.Marshal(map[string]string{"config_home": configHome})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(configPath, data, 0o644))
+
+	store := session.NewWorkspaceStore(configHome, workspace)
+	require.NoError(t, store.Append("active", anthropic.TextMessage("user", "active session")))
+	require.NoError(t, store.Append("other", anthropic.TextMessage("user", "other session")))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(workspace))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	out, err := captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--output-format", "json", "/resume", "other"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var direct resumeCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &direct))
+	require.Equal(t, "resume", direct.Kind)
+	require.Equal(t, "other", direct.SessionID)
+	require.NotEmpty(t, direct.ContinueCommands)
+
+	out, err = captureStdout(t, func() error {
+		return RunCLI(context.Background(), []string{"--config", configPath, "--resume", "active", "--output-format", "json", "/resume", "other"}, config.FlagOverrides{})
+	})
+	require.NoError(t, err)
+	var resumed resumeCommandReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumed))
+	require.Equal(t, "resume", resumed.Kind)
+	require.Equal(t, "other", resumed.SessionID)
+}
+
 func TestClearCommandReportsFreshSessionWithoutDeletingHistory(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	require.NoError(t, store.Append("source", anthropic.TextMessage("user", "hello session")))

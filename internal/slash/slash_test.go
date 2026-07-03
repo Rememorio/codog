@@ -338,6 +338,7 @@ func TestResumeSupportedMetadata(t *testing.T) {
 	require.Contains(t, names, "/remote-setup")
 	require.Contains(t, names, "/web-setup")
 	require.Contains(t, names, "/setup")
+	require.Contains(t, names, "/resume")
 	require.Contains(t, names, "/reset")
 	require.Contains(t, names, "/sandbox-toggle")
 	require.Contains(t, names, "/speak")

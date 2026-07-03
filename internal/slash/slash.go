@@ -400,6 +400,7 @@ var resumeSupportedSlashCommands = map[string]bool{
 	"/remote-env":         true,
 	"/remote-setup":       true,
 	"/rename":             true,
+	"/resume":             true,
 	"/reset":              true,
 	"/reset-limits":       true,
 	"/review":             true,

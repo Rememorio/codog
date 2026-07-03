@@ -28126,6 +28126,8 @@ func (a *App) RunResumedSlash(ctx context.Context, command string, args []string
 		return a.Conversation(resumeSlashArgs("conversation", args, format), resumed)
 	case "/session":
 		return a.runResumedSessionSlash(resumeSlashArgs("sessions", args, format), resumed)
+	case "/resume":
+		return a.ResumeCommand(resumeSlashArgs("resume", args, format))
 	case "/summary":
 		return a.Summary(resumeSlashArgs("summary", args, format), resumed)
 	case "/history", "/prompt-history":
@@ -29320,7 +29322,7 @@ func joinReadable(values []string) string {
 
 func directSlashInteractiveOnly(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach", "/new", "/resume", "/exit", "/quit":
+	case "/approve", "/yes", "/y", "/deny", "/no", "/n", "/attach", "/new", "/exit", "/quit":
 		return true
 	default:
 		return false
