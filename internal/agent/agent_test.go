@@ -2985,6 +2985,16 @@ func risky(value any) {
 			return RunCLI(context.Background(), cliArgs, config.FlagOverrides{})
 		})
 	}
+	runResumedJSONWithFlags := func(flags []string, command string, args ...string) (string, error) {
+		t.Helper()
+		cliArgs := []string{"--config", configPath, "--resume", "resume-slash", "--output-format", "json"}
+		cliArgs = append(cliArgs, flags...)
+		cliArgs = append(cliArgs, command)
+		cliArgs = append(cliArgs, args...)
+		return captureStdout(t, func() error {
+			return RunCLI(context.Background(), cliArgs, config.FlagOverrides{})
+		})
+	}
 	openedURL := ""
 	previousOpen := openExternalURL
 	openExternalURL = func(url string) (string, error) {
@@ -4126,6 +4136,70 @@ func risky(value any) {
 	require.Contains(t, resumedDebugTestingPermission.Output, `"kind": "permission_check"`)
 	require.Contains(t, resumedDebugTestingPermission.Output, `"canonical_tool": "bash"`)
 	require.Contains(t, resumedDebugTestingPermission.Output, `"allowed": true`)
+
+	out, err = runResumedJSON("/debug-tool-call", "ApprovalTokenTool", `{"action":"grant","scope":{"policy":"resume-debug","action":"inspect","repository":"codog","branch":"main"},"approving_actor":"reviewer","approved_executor":"codog","max_uses":1}`)
+	require.NoError(t, err)
+	var resumedDebugApprovalToken debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugApprovalToken))
+	require.Equal(t, "debug_tool_call", resumedDebugApprovalToken.Kind)
+	require.Equal(t, "approval_token", resumedDebugApprovalToken.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugApprovalToken.Permission)
+	require.True(t, resumedDebugApprovalToken.Success)
+	require.Contains(t, resumedDebugApprovalToken.Output, `"kind": "approval_token"`)
+	require.Contains(t, resumedDebugApprovalToken.Output, `"action": "grant"`)
+	require.Contains(t, resumedDebugApprovalToken.Output, `"status": "ok"`)
+	require.Contains(t, resumedDebugApprovalToken.Output, `"status": "approval_granted"`)
+
+	out, err = runResumedJSON("/debug-tool-call", "ListMcpResourcesTool", `{}`)
+	require.NoError(t, err)
+	var resumedDebugMCPResources debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugMCPResources))
+	require.Equal(t, "debug_tool_call", resumedDebugMCPResources.Kind)
+	require.Equal(t, "list_mcp_resources", resumedDebugMCPResources.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugMCPResources.Permission)
+	require.True(t, resumedDebugMCPResources.Success)
+	require.Contains(t, resumedDebugMCPResources.Output, `"kind": "mcp_resources"`)
+	require.Contains(t, resumedDebugMCPResources.Output, `"total": 0`)
+
+	out, err = runResumedJSON("/debug-tool-call", "ListMcpResourceTemplatesTool", `{}`)
+	require.NoError(t, err)
+	var resumedDebugMCPResourceTemplates debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugMCPResourceTemplates))
+	require.Equal(t, "debug_tool_call", resumedDebugMCPResourceTemplates.Kind)
+	require.Equal(t, "list_mcp_resource_templates", resumedDebugMCPResourceTemplates.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugMCPResourceTemplates.Permission)
+	require.True(t, resumedDebugMCPResourceTemplates.Success)
+	require.Contains(t, resumedDebugMCPResourceTemplates.Output, `"kind": "mcp_resource_templates"`)
+	require.Contains(t, resumedDebugMCPResourceTemplates.Output, `"total": 0`)
+
+	out, err = runResumedJSON("/debug-tool-call", "ListMcpPromptsTool", `{}`)
+	require.NoError(t, err)
+	var resumedDebugMCPPrompts debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugMCPPrompts))
+	require.Equal(t, "debug_tool_call", resumedDebugMCPPrompts.Kind)
+	require.Equal(t, "list_mcp_prompts", resumedDebugMCPPrompts.Tool)
+	require.Equal(t, tools.PermissionReadOnly, resumedDebugMCPPrompts.Permission)
+	require.True(t, resumedDebugMCPPrompts.Success)
+	require.Contains(t, resumedDebugMCPPrompts.Output, `"kind": "mcp_prompts"`)
+	require.Contains(t, resumedDebugMCPPrompts.Output, `"total": 0`)
+
+	if gitAvailable {
+		currentBranch, err := gitops.Branch(workspace)
+		require.NoError(t, err)
+		branchFreshnessInput, err := json.Marshal(map[string]string{"branch": currentBranch, "base": currentBranch})
+		require.NoError(t, err)
+		out, err = runResumedJSON("/debug-tool-call", "BranchFreshnessTool", string(branchFreshnessInput))
+		require.NoError(t, err)
+		var resumedDebugBranchFreshness debugToolCallReport
+		require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugBranchFreshness))
+		require.Equal(t, "debug_tool_call", resumedDebugBranchFreshness.Kind)
+		require.Equal(t, "branch_freshness", resumedDebugBranchFreshness.Tool)
+		require.Equal(t, tools.PermissionReadOnly, resumedDebugBranchFreshness.Permission)
+		require.True(t, resumedDebugBranchFreshness.Success)
+		require.Contains(t, resumedDebugBranchFreshness.Output, `"kind": "branch_freshness"`)
+		require.Contains(t, resumedDebugBranchFreshness.Output, `"branch": "`+currentBranch+`"`)
+		require.Contains(t, resumedDebugBranchFreshness.Output, `"base": "`+currentBranch+`"`)
+	}
 
 	out, err = runResumedJSON("/debug-tool-call", "RetrieveContextTool", `{"query":" resumed debug routing ","top_k":9}`)
 	require.NoError(t, err)
@@ -5663,6 +5737,18 @@ func risky(value any) {
 	require.Equal(t, "inactive", resumedPlanClear.Status)
 	require.False(t, resumedPlanClear.State.Active)
 	require.NoFileExists(t, planmode.Path(workspace))
+
+	out, err = runResumedJSONWithFlags([]string{"--permission-mode=allow"}, "/debug-tool-call", "ConfigTool", `{"setting":"model"}`)
+	require.NoError(t, err)
+	var resumedDebugConfig debugToolCallReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resumedDebugConfig))
+	require.Equal(t, "debug_tool_call", resumedDebugConfig.Kind)
+	require.Equal(t, "config", resumedDebugConfig.Tool)
+	require.Equal(t, tools.PermissionWorkspace, resumedDebugConfig.Permission)
+	require.True(t, resumedDebugConfig.Success)
+	require.Contains(t, resumedDebugConfig.Output, `"success": true`)
+	require.Contains(t, resumedDebugConfig.Output, `"operation": "get"`)
+	require.Contains(t, resumedDebugConfig.Output, `"setting": "model"`)
 
 	out, err = runResumedJSON("/debug-tool-call", "TodoWrite", `{"todos":[{"content":"resume debug todo","activeForm":"tracking resume debug todo","status":"in_progress","priority":"high"}]}`)
 	require.NoError(t, err)
