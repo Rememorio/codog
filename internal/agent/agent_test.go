@@ -5886,6 +5886,7 @@ func TestACPStatusCommandOutputsTextJSONAndUnsupported(t *testing.T) {
 	require.True(t, report.Protocol.ServeStartsDaemon)
 	require.Contains(t, report.Protocol.Methods, "initialize")
 	require.Contains(t, report.Protocol.Methods, "session/list")
+	require.Contains(t, report.Protocol.Methods, "session/fork")
 	require.Contains(t, report.Protocol.Methods, "session/prune")
 	require.Contains(t, report.Protocol.Methods, "prompt")
 	require.Contains(t, report.Protocol.Methods, "shutdown")
@@ -5953,19 +5954,17 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 		Role:    "assistant",
 		Content: []anthropic.ContentBlock{{Type: "text", Text: "answer"}},
 	}))
-	forked, err := store.Fork(sess.ID, "acp-branch")
-	require.NoError(t, err)
 	_, err = store.Create("empty-acp-session")
 	require.NoError(t, err)
 
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"session/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"session/get","params":{"session_id":"` + forked.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"session/fork","params":{"session_id":"` + sess.ID + `","branch_name":"acp-branch"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"session/history","params":{"session_id":"` + sess.ID + `","limit":1}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"session/rename","params":{"session_id":"` + sess.ID + `","new_session_id":"renamed-acp-session"}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"session/delete","params":{"session_id":"renamed-acp-session"}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"session/prune","params":{}}`,
-		`{"jsonrpc":"2.0","id":7,"method":"session/prune","params":{"confirm":true,"exclude_session_id":"` + forked.ID + `"}}`,
+		`{"jsonrpc":"2.0","id":7,"method":"session/prune","params":{"confirm":true}}`,
 		`{"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
@@ -5983,7 +5982,7 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	require.Len(t, responses, 8)
 	listResult := responses[0]["result"].(map[string]any)
 	require.Equal(t, "session_list", listResult["kind"])
-	require.EqualValues(t, 3, listResult["count"])
+	require.EqualValues(t, 2, listResult["count"])
 	sessions := listResult["sessions"].([]any)
 	sessionSummaries := map[string]map[string]any{}
 	for _, raw := range sessions {
@@ -5999,20 +5998,17 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 		}
 	}
 	require.EqualValues(t, 1, sessionSummaries[sess.ID]["message_count"])
-	require.EqualValues(t, 1, sessionSummaries[forked.ID]["message_count"])
-	require.Equal(t, sess.ID, sessionSummaries[forked.ID]["parent_session_id"])
-	require.Equal(t, "acp-branch", sessionSummaries[forked.ID]["branch_name"])
 
-	getResult := responses[1]["result"].(map[string]any)
-	require.Equal(t, forked.ID, getResult["session_id"])
-	require.EqualValues(t, 1, getResult["message_count"])
-	require.Len(t, getResult["messages"].([]any), 1)
-	require.NotZero(t, getResult["created_at_ms"])
-	require.NotZero(t, getResult["updated_at_ms"])
-	require.NotZero(t, getResult["modified_epoch_millis"])
-	require.Equal(t, sess.ID, getResult["parent_session_id"])
-	require.Equal(t, "acp-branch", getResult["branch_name"])
-	require.Equal(t, "saved_only", getResult["lifecycle"].(map[string]any)["kind"])
+	forkResult := responses[1]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", forkResult["kind"])
+	require.Equal(t, "fork", forkResult["action"])
+	forkedID := forkResult["session_id"].(string)
+	require.NotEmpty(t, forkedID)
+	forked, err := store.OpenExisting(forkedID)
+	require.NoError(t, err)
+	require.Equal(t, sess.ID, forked.Metadata.ParentSessionID)
+	require.Equal(t, "acp-branch", forked.Metadata.BranchName)
+	require.Equal(t, "fork:acp-branch", forked.Identity.Purpose)
 
 	historyResult := responses[2]["result"].(map[string]any)
 	require.Equal(t, "session_history", historyResult["kind"])
@@ -6046,7 +6042,7 @@ func TestACPServeExposesSessionQueries(t *testing.T) {
 	emptyExists, err := store.Exists("empty-acp-session")
 	require.NoError(t, err)
 	require.False(t, emptyExists)
-	forkedExists, err := store.Exists(forked.ID)
+	forkedExists, err := store.Exists(forkedID)
 	require.NoError(t, err)
 	require.True(t, forkedExists)
 }
@@ -6077,6 +6073,7 @@ func TestACPServeAliasesStartAndStdio(t *testing.T) {
 			require.Equal(t, "codog-acp-0.1", result["protocolVersion"])
 			capabilities := result["capabilities"].(map[string]any)
 			sessions := capabilities["sessions"].(map[string]any)
+			require.Equal(t, true, sessions["fork"])
 			require.Equal(t, true, sessions["prune"])
 		})
 	}

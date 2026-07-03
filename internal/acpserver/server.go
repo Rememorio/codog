@@ -19,6 +19,7 @@ type Handlers struct {
 	ListSessions  func(context.Context) (SessionList, error)
 	GetSession    func(context.Context, SessionLookupRequest) (SessionDetail, error)
 	History       func(context.Context, SessionHistoryRequest) (SessionHistory, error)
+	ForkSession   func(context.Context, SessionForkRequest) (SessionMutationResult, error)
 	RenameSession func(context.Context, SessionRenameRequest) (SessionMutationResult, error)
 	DeleteSession func(context.Context, SessionLookupRequest) (SessionMutationResult, error)
 	PruneSessions func(context.Context, SessionPruneRequest) (any, error)
@@ -86,6 +87,11 @@ type SessionHistory struct {
 	SessionID string `json:"session_id"`
 	Count     int    `json:"count"`
 	Entries   any    `json:"entries"`
+}
+
+type SessionForkRequest struct {
+	SessionID  string `json:"session_id"`
+	BranchName string `json:"branch_name,omitempty"`
 }
 
 type SessionRenameRequest struct {
@@ -189,6 +195,8 @@ func handle(ctx context.Context, out io.Writer, handlers Handlers, opts Options,
 		return false, handleGetSession(ctx, out, handlers, opts, req)
 	case "session/history", "sessions/history", "history":
 		return false, handleHistory(ctx, out, handlers, req)
+	case "session/fork", "sessions/fork":
+		return false, handleForkSession(ctx, out, handlers, req)
 	case "session/rename", "sessions/rename":
 		return false, handleRenameSession(ctx, out, handlers, req)
 	case "session/delete", "sessions/delete":
@@ -216,6 +224,7 @@ func initializeResult(opts Options) map[string]any {
 				"list":    true,
 				"get":     true,
 				"history": true,
+				"fork":    true,
 				"rename":  true,
 				"delete":  true,
 				"prune":   true,
@@ -307,6 +316,30 @@ func handleHistory(ctx context.Context, out io.Writer, handlers Handlers, req re
 		history.Kind = "session_history"
 	}
 	return writeResult(out, req.ID, history)
+}
+
+func handleForkSession(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
+	if handlers.ForkSession == nil {
+		return writeError(out, req.ID, -32603, "session fork handler is not configured")
+	}
+	forkReq, err := parseSessionForkRequest(req.Params)
+	if err != nil {
+		return writeError(out, req.ID, -32602, err.Error())
+	}
+	result, err := handlers.ForkSession(ctx, forkReq)
+	if err != nil {
+		return writeError(out, req.ID, -32603, err.Error())
+	}
+	if strings.TrimSpace(result.Kind) == "" {
+		result.Kind = "session_mutation"
+	}
+	if strings.TrimSpace(result.Action) == "" {
+		result.Action = "fork"
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "ok"
+	}
+	return writeResult(out, req.ID, result)
 }
 
 func handleRenameSession(ctx context.Context, out io.Writer, handlers Handlers, req request) error {
@@ -426,6 +459,30 @@ func parseSessionHistoryRequest(params json.RawMessage) (SessionHistoryRequest, 
 		sessionID = "latest"
 	}
 	return SessionHistoryRequest{SessionID: sessionID, Limit: raw.Limit}, nil
+}
+
+func parseSessionForkRequest(params json.RawMessage) (SessionForkRequest, error) {
+	var raw struct {
+		SessionID       string `json:"session_id"`
+		SessionIDCamel  string `json:"sessionId"`
+		ID              string `json:"id"`
+		Branch          string `json:"branch"`
+		BranchName      string `json:"branch_name"`
+		BranchNameCamel string `json:"branchName"`
+	}
+	if len(params) != 0 {
+		if err := json.Unmarshal(params, &raw); err != nil {
+			return SessionForkRequest{}, err
+		}
+	}
+	sessionID := firstNonEmpty(raw.SessionID, raw.SessionIDCamel, raw.ID)
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionForkRequest{}, fmt.Errorf("session_id is required")
+	}
+	return SessionForkRequest{
+		SessionID:  sessionID,
+		BranchName: firstNonEmpty(raw.BranchName, raw.BranchNameCamel, raw.Branch),
+	}, nil
 }
 
 func parseSessionRenameRequest(params json.RawMessage) (SessionRenameRequest, error) {

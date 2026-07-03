@@ -20743,6 +20743,7 @@ var acpJSONRPCMethods = []string{
 	"session/list",
 	"session/get",
 	"session/history",
+	"session/fork",
 	"session/rename",
 	"session/delete",
 	"session/prune",
@@ -20798,7 +20799,7 @@ func buildACPStatusReport() acpStatusReport {
 		Action:        "status",
 		Status:        "ok",
 		Supported:     true,
-		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
+		Message:       "ACP/Zed editor integration is available over stdio JSON-RPC. Start it with `codog acp serve`, `codog acp start`, or `codog acp stdio`, then use initialize, status, session/new, session/list, session/get, session/history, session/fork, session/rename, session/delete, session/prune, prompt, and shutdown requests.",
 		LaunchCommand: stringPtr("codog acp serve"),
 		Protocol: acpProtocol{
 			Name:              "ACP/Zed",
@@ -21004,6 +21005,23 @@ func (a *App) serveACP(ctx context.Context) error {
 				SessionID: sessionID,
 				Count:     len(entries),
 				Entries:   entries,
+			}, nil
+		},
+		ForkSession: func(_ context.Context, req acpserver.SessionForkRequest) (acpserver.SessionMutationResult, error) {
+			if a.Sessions == nil {
+				return acpserver.SessionMutationResult{}, errors.New("session store is unavailable")
+			}
+			forked, err := a.Sessions.Fork(req.SessionID, req.BranchName)
+			if err != nil {
+				return acpserver.SessionMutationResult{}, err
+			}
+			return acpserver.SessionMutationResult{
+				Kind:         "session_mutation",
+				Action:       "fork",
+				Status:       "ok",
+				SessionID:    forked.ID,
+				Path:         forked.Path,
+				MessageCount: len(forked.Messages),
 			}, nil
 		},
 		RenameSession: func(_ context.Context, req acpserver.SessionRenameRequest) (acpserver.SessionMutationResult, error) {

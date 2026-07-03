@@ -20,10 +20,11 @@ func TestServeHandlesACPRequests(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"session/list","params":{}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"session/get","params":{"sessionId":"session-1"}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"session/history","params":{"session_id":"session-1","limit":1}}`,
-		`{"jsonrpc":"2.0","id":8,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":9,"method":"session/delete","params":{"session_id":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":10,"method":"session/prune","params":{"keep":3,"confirm":true,"excludeSessionId":"session-2"}}`,
-		`{"jsonrpc":"2.0","id":11,"method":"shutdown","params":{}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"session/fork","params":{"session_id":"session-1","branchName":"scratch"}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"session/rename","params":{"session_id":"session-1","newSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":10,"method":"session/delete","params":{"session_id":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":11,"method":"session/prune","params":{"keep":3,"confirm":true,"excludeSessionId":"session-2"}}`,
+		`{"jsonrpc":"2.0","id":12,"method":"shutdown","params":{}}`,
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -52,6 +53,11 @@ func TestServeHandlesACPRequests(t *testing.T) {
 			require.Equal(t, 1, req.Limit)
 			return SessionHistory{SessionID: "session-1", Entries: []map[string]any{{"text": "hello"}}}, nil
 		},
+		ForkSession: func(_ context.Context, req SessionForkRequest) (SessionMutationResult, error) {
+			require.Equal(t, "session-1", req.SessionID)
+			require.Equal(t, "scratch", req.BranchName)
+			return SessionMutationResult{SessionID: "session-fork"}, nil
+		},
 		RenameSession: func(_ context.Context, req SessionRenameRequest) (SessionMutationResult, error) {
 			require.Equal(t, "session-1", req.SessionID)
 			require.Equal(t, "session-2", req.NewSessionID)
@@ -71,12 +77,13 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	require.NoError(t, err)
 
 	responses := decodeACPResponses(t, out.String())
-	require.Len(t, responses, 11)
+	require.Len(t, responses, 12)
 	require.Equal(t, "test", responses[0]["result"].(map[string]any)["serverInfo"].(map[string]any)["version"])
 	capabilities := responses[0]["result"].(map[string]any)["capabilities"].(map[string]any)
 	require.Equal(t, true, capabilities["prompt"])
 	sessionCaps := capabilities["sessions"].(map[string]any)
 	require.Equal(t, true, sessionCaps["history"])
+	require.Equal(t, true, sessionCaps["fork"])
 	require.Equal(t, true, sessionCaps["rename"])
 	require.Equal(t, true, sessionCaps["delete"])
 	require.Equal(t, true, sessionCaps["prune"])
@@ -93,18 +100,22 @@ func TestServeHandlesACPRequests(t *testing.T) {
 	historyResult := responses[6]["result"].(map[string]any)
 	require.Equal(t, "session_history", historyResult["kind"])
 	require.Equal(t, "session-1", historyResult["session_id"])
-	renameResult := responses[7]["result"].(map[string]any)
+	forkResult := responses[7]["result"].(map[string]any)
+	require.Equal(t, "session_mutation", forkResult["kind"])
+	require.Equal(t, "fork", forkResult["action"])
+	require.Equal(t, "session-fork", forkResult["session_id"])
+	renameResult := responses[8]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", renameResult["kind"])
 	require.Equal(t, "rename", renameResult["action"])
 	require.Equal(t, "session-2", renameResult["new_session_id"])
-	deleteResult := responses[8]["result"].(map[string]any)
+	deleteResult := responses[9]["result"].(map[string]any)
 	require.Equal(t, "session_mutation", deleteResult["kind"])
 	require.Equal(t, "delete", deleteResult["action"])
 	require.Equal(t, "session-2", deleteResult["session_id"])
-	pruneResult := responses[9]["result"].(map[string]any)
+	pruneResult := responses[10]["result"].(map[string]any)
 	require.Equal(t, "session_prune", pruneResult["kind"])
 	require.EqualValues(t, 1, pruneResult["deleted_count"])
-	require.NotNil(t, responses[10]["result"])
+	require.NotNil(t, responses[11]["result"])
 }
 
 func TestServeReportsPromptValidationErrors(t *testing.T) {
