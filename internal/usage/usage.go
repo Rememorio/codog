@@ -10,6 +10,7 @@ import (
 	"github.com/Rememorio/codog/internal/anthropic"
 )
 
+// Report summarizes usage for a session or message set.
 type Report struct {
 	Kind         string         `json:"kind"`
 	Action       string         `json:"action"`
@@ -23,6 +24,7 @@ type Report struct {
 	ToolUse      ToolUseSummary `json:"tool_use"`
 }
 
+// Summary contains token totals and estimated or actual cost information.
 type Summary struct {
 	InputTokens              int     `json:"input_tokens"`
 	OutputTokens             int     `json:"output_tokens"`
@@ -33,24 +35,29 @@ type Summary struct {
 	Source                   string  `json:"source"`
 }
 
+// RoleUsage reports message and token totals for one role.
 type RoleUsage struct {
 	Role     string `json:"role"`
 	Messages int    `json:"messages"`
 	Tokens   int    `json:"tokens"`
 }
 
+// BlockUsage reports block counts and token estimates for one content block type.
 type BlockUsage struct {
 	Type   string `json:"type"`
 	Count  int    `json:"count"`
 	Tokens int    `json:"tokens"`
 }
 
+// ToolUseSummary reports tool-use, tool-result, and error block counts.
 type ToolUseSummary struct {
 	ToolUses    int `json:"tool_uses"`
 	ToolResults int `json:"tool_results"`
 	Errors      int `json:"errors"`
 }
 
+// Estimate returns a token and cost estimate for messages with no provider
+// usage payloads.
 func Estimate(messages []anthropic.Message, model string) Summary {
 	var input, output int
 	for _, msg := range messages {
@@ -71,10 +78,13 @@ func Estimate(messages []anthropic.Message, model string) Summary {
 	}
 }
 
+// BuildReport returns a usage report using estimated token counts.
 func BuildReport(sessionID string, model string, messages []anthropic.Message) Report {
 	return BuildReportWithUsage(sessionID, model, messages, nil)
 }
 
+// BuildReportWithUsage returns a usage report using actual provider usage
+// payloads when they are available.
 func BuildReportWithUsage(sessionID string, model string, messages []anthropic.Message, actual []anthropic.Usage) Report {
 	roleIndex := map[string]*RoleUsage{}
 	blockIndex := map[string]*BlockUsage{}
@@ -128,6 +138,8 @@ func BuildReportWithUsage(sessionID string, model string, messages []anthropic.M
 	}
 }
 
+// ActualSummary returns an aggregate actual-usage summary when any token usage
+// payloads are present.
 func ActualSummary(usages []anthropic.Usage, model string) (Summary, bool) {
 	var input, output, cacheCreate, cacheRead int
 	for _, usage := range usages {
@@ -151,6 +163,7 @@ func ActualSummary(usages []anthropic.Usage, model string) (Summary, bool) {
 	}, true
 }
 
+// RenderText writes a human-readable usage report.
 func RenderText(w io.Writer, report Report) {
 	fmt.Fprintln(w, "Usage")
 	if report.SessionID != "" {

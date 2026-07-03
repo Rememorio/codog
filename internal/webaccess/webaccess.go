@@ -21,6 +21,7 @@ const (
 	defaultSearchBaseURL = "https://duckduckgo.com/html/"
 )
 
+// FetchInput describes a web fetch request.
 type FetchInput struct {
 	URL       string `json:"url"`
 	Prompt    string `json:"prompt,omitempty"`
@@ -28,6 +29,7 @@ type FetchInput struct {
 	MaxBytes  int64  `json:"max_bytes,omitempty"`
 }
 
+// FetchOutput reports fetched content, metadata, and extracted text.
 type FetchOutput struct {
 	URL         string `json:"url"`
 	FinalURL    string `json:"final_url"`
@@ -45,6 +47,7 @@ type FetchOutput struct {
 	DurationMs  int64  `json:"durationMs"`
 }
 
+// SearchInput describes a web search request.
 type SearchInput struct {
 	Query          string   `json:"query"`
 	MaxResults     int      `json:"max_results,omitempty"`
@@ -53,6 +56,7 @@ type SearchInput struct {
 	TimeoutMS      int      `json:"timeout_ms,omitempty"`
 }
 
+// SearchOutput reports search results and the provider/source URL.
 type SearchOutput struct {
 	Query           string         `json:"query"`
 	SourceURL       string         `json:"source_url"`
@@ -61,6 +65,7 @@ type SearchOutput struct {
 	DurationSeconds float64        `json:"durationSeconds"`
 }
 
+// SearchResult is one normalized web search result.
 type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
@@ -72,6 +77,7 @@ type searchResultBlock struct {
 	Content   []SearchResult `json:"content"`
 }
 
+// MarshalJSON emits both raw hits and Claude-compatible result blocks.
 func (o SearchOutput) MarshalJSON() ([]byte, error) {
 	type searchOutputJSON struct {
 		Query           string         `json:"query"`
@@ -94,6 +100,7 @@ func (o SearchOutput) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// Fetch retrieves a URL and returns normalized text and summary metadata.
 func Fetch(ctx context.Context, input FetchInput) (FetchOutput, error) {
 	requestURL, err := validateURL(input.URL)
 	if err != nil {
@@ -150,6 +157,7 @@ func Fetch(ctx context.Context, input FetchInput) (FetchOutput, error) {
 	}, nil
 }
 
+// Search queries the configured search endpoint and returns normalized results.
 func Search(ctx context.Context, input SearchInput) (SearchOutput, error) {
 	query := strings.TrimSpace(input.Query)
 	if query == "" {

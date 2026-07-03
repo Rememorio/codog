@@ -40,11 +40,14 @@ func TestSelectedInternalPackagesHaveGoDocComments(t *testing.T) {
 		"internal/codeintel",
 		"internal/control",
 		"internal/githubcomments",
+		"internal/harness",
 		"internal/mcp",
 		"internal/mcpserver",
 		"internal/onboarding",
 		"internal/planmode",
 		"internal/remote",
+		"internal/usage",
+		"internal/webaccess",
 		"internal/workerstate",
 	}
 
